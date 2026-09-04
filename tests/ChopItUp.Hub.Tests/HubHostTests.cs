@@ -29,7 +29,7 @@ public sealed class HubHostTests : IAsyncLifetime
     public async Task Health_is_open_and_reports_schema()
     {
         var res = await _host.Client.GetStringAsync("/health");
-        Assert.Contains("\"schema\":1", res);
+        Assert.Contains($"\"schema\":{ChopItUp.Core.Storage.ChopDb.LatestSchemaVersion}", res);
     }
 
     [Fact]
