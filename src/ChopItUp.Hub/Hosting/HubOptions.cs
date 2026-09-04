@@ -5,8 +5,11 @@ public enum HubCommand { Serve, RotateToken, PrintConfig }
 /// <summary>Resolved startup options. Precedence: CLI args, then environment, then defaults.
 /// Default data dir is <c>data\</c> beside the executable (release layout); dev and tests pass
 /// an explicit directory. Port 0 = ephemeral (tests). A non-Serve command runs against the data
-/// dir and exits: it binds no port and takes no hub lock, so it works while a hub is running.</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null)
+/// dir and exits: it binds no port and takes no hub lock, so it works while a hub is running.
+/// <paramref name="WebRoot"/> is the built web client (M3 D3): null means <c>wwwroot\</c> beside the
+/// executable, which is where the csproj's npm step lands it. It is not a CLI flag — the only reason
+/// it is settable is so tests can point at a fabricated client without writing into the test output.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null)
 {
     public const int DefaultPort = 8790;
 

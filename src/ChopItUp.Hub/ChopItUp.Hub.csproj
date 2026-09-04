@@ -3,6 +3,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>ChopItUp.Hub</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <ClientDir>$(MSBuildProjectDirectory)\client</ClientDir>
+    <ClientOutDir>$(MSBuildProjectDirectory)\wwwroot</ClientOutDir>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
@@ -13,4 +15,87 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ChopItUp.Hub.Tests" />
   </ItemGroup>
+
+  <!-- The Web SDK's default content glob claims client\*.json. Those are build inputs for npm, not
+       files to ship beside the exe; only what Vite emits into wwwroot is. -->
+  <ItemGroup>
+    <Content Remove="client\**" />
+    <None Include="client\**" Exclude="client\node_modules\**;client\dist\**" />
+  </ItemGroup>
+
+  <!--
+    Web client (brief M3, D3): the client is built into wwwroot and served by the hub, so a normal
+    `dotnet build` produces a served UI and M4 publishes one exe with no separate front-end step.
+
+    Node.js is treated as optional on purpose. CI runs on windows-latest with Node present, but a
+    machine without it must still build and test the hub: the probe below degrades to "no UI", which
+    SpaFiles answers with a 404 and an explanatory line rather than a startup failure. That is why
+    nothing here uses <Warning> or ContinueOnError — under -warnaserror either would turn a missing
+    Node into a hard build break, which is the exact outcome being avoided.
+  -->
+  <!--
+    Every "is Node here?" test below is a task-level Condition, never a Target Condition. Measured on
+    SDK 10.0.303: MSBuild evaluates a target's Condition BEFORE running its DependsOnTargets, so a
+    target conditioned on a property that a dependency sets is skipped silently — dependencies and
+    all, with no line in even a diagnostic log.
+  -->
+  <Target Name="ProbeNode">
+    <Exec Command="node --version" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
+    </Exec>
+    <PropertyGroup>
+      <HasNode Condition="'$(NodeExitCode)' == '0'">true</HasNode>
+    </PropertyGroup>
+    <Message Importance="high" Condition="'$(HasNode)' != 'true'"
+             Text="Node.js was not found (exit $(NodeExitCode)); skipping the web client build. The hub will build and run, but serve no UI." />
+  </Target>
+
+  <Target Name="ClientInstall" DependsOnTargets="ProbeNode"
+          Inputs="$(ClientDir)\package.json;$(ClientDir)\package-lock.json"
+          Outputs="$(ClientDir)\node_modules\.chopitup-install-stamp">
+    <Message Importance="high" Condition="'$(HasNode)' == 'true'" Text="Restoring web client packages (npm ci)..." />
+    <Exec Condition="'$(HasNode)' == 'true'" Command="npm ci" WorkingDirectory="$(ClientDir)" StandardOutputImportance="low" />
+    <Touch Condition="'$(HasNode)' == 'true'" Files="$(ClientDir)\node_modules\.chopitup-install-stamp" AlwaysCreate="true" />
+  </Target>
+
+  <ItemGroup>
+    <ClientSource Include="$(ClientDir)\src\**\*" />
+    <ClientSource Include="$(ClientDir)\index.html" />
+    <ClientSource Include="$(ClientDir)\vite.config.ts" />
+    <ClientSource Include="$(ClientDir)\tsconfig.json" />
+    <ClientSource Include="$(ClientDir)\package.json" />
+    <ClientSource Include="$(ClientDir)\package-lock.json" />
+  </ItemGroup>
+
+  <Target Name="ClientBuild" BeforeTargets="Build" DependsOnTargets="ProbeNode;ClientInstall"
+          Inputs="@(ClientSource)" Outputs="$(ClientOutDir)\index.html">
+    <Message Importance="high" Condition="'$(HasNode)' == 'true'" Text="Building the web client (npm run build)..." />
+    <Exec Condition="'$(HasNode)' == 'true'" Command="npm run build" WorkingDirectory="$(ClientDir)" StandardOutputImportance="low" />
+  </Target>
+
+  <!-- The hub resolves its web root beside the executable (SpaFiles.ResolveWebRoot), because MCP
+       hosts launch it from a working directory that is not ours. wwwroot is written after the SDK's
+       item globs have already been evaluated, so this copy is explicit rather than item-driven. The
+       wipe keeps hash-stamped assets from a previous build out of the output. -->
+  <Target Name="CopyClientToOutput" AfterTargets="ClientBuild" Condition="Exists('$(ClientOutDir)\index.html')">
+    <ItemGroup>
+      <ClientArtifact Include="$(ClientOutDir)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(OutDir)wwwroot" />
+    <Copy SourceFiles="@(ClientArtifact)"
+          DestinationFiles="@(ClientArtifact->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+  <!-- On a machine whose first build creates wwwroot, the SDK's glob evaluated before it existed and
+       publish would miss it. Exclude keeps a second build (where the glob did see it) from adding
+       each file twice. -->
+  <Target Name="IncludeClientInPublish" AfterTargets="ComputeFilesToPublish" Condition="Exists('$(ClientOutDir)\index.html')">
+    <ItemGroup>
+      <ClientPublishArtifact Include="$(ClientOutDir)\**\*" />
+      <ResolvedFileToPublish Include="@(ClientPublishArtifact->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>wwwroot\%(RecursiveDir)%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
 </Project>

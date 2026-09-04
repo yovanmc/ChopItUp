@@ -32,9 +32,9 @@ public sealed class HubTestHost : IAsyncDisposable
         Tokens = TokenStore.Load(dir);
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null)
     {
-        var app = HubHost.Build(new HubOptions(dir, Port: 0));
+        var app = HubHost.Build(new HubOptions(dir, Port: 0, WebRoot: webRoot));
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose);

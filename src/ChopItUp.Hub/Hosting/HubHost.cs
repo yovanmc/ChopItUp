@@ -73,6 +73,7 @@ public static class HubHost
                 if (bound is > 0) HubPortFile.Write(options.DataDir, bound.Value);
             });
             app.UseMiddleware<BearerTokenMiddleware>();
+            app.UseSpaClient(SpaFiles.ResolveWebRoot(options.WebRoot));
             app.MapGet("/health", (ChopDb d, MessageStore s) => Results.Json(new
             {
                 ok = true,
