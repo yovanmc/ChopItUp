@@ -42,7 +42,14 @@
 
 ## Task 1 — Release publish profile
 
-**Files:** `src/ChopItUp.Hub/ChopItUp.Hub.csproj`, `README.md`.
+**Files:** `src/ChopItUp.Hub/ChopItUp.Hub.csproj`, `Directory.Build.props`, `README.md`.
+
+**Amendment (Task 1 build, 2026-09-04).** `DebugType` must go in `Directory.Build.props` under a
+`Configuration == 'Release'` condition, **not** in the Hub csproj alone. Scoped to the Hub, Core
+keeps the SDK's default portable symbols and `ChopItUp.Core.pdb` lands loose in the publish root --
+measured, not predicted -- which fails Task 3's exact-loose-file assertion. The Hub's own
+`DebugType` line then becomes redundant and comes out. Publish size measured at this fix: about
+103 MB; the plan's 30 MB floor stands.
 
 Add a `Release`-flavoured publish configuration. Do **not** put `PublishSingleFile` in an unconditional `PropertyGroup` — it must not affect `dotnet build`, the test run, or CI.
 
