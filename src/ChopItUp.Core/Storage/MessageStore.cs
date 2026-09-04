@@ -1,4 +1,3 @@
-using System.Globalization;
 using ChopItUp.Core.Model;
 using Microsoft.Data.Sqlite;
 
@@ -8,9 +7,6 @@ public sealed class MessageStore(ChopDb db)
 {
     public const int DefaultLimit = 50;
     public const int MaxLimit = 200;
-
-    private static string Stamp(DateTimeOffset at) => Timestamps.Stamp(at);
-    private static DateTimeOffset Parse(string stamp) => Timestamps.Parse(stamp);
 
     public IReadOnlyList<Room> ListRooms()
     {
@@ -24,7 +20,7 @@ public sealed class MessageStore(ChopDb db)
         using var reader = cmd.ExecuteReader();
         var rooms = new List<Room>();
         while (reader.Read())
-            rooms.Add(new Room(reader.GetString(0), reader.GetString(1), Parse(reader.GetString(2)), reader.GetInt64(3), reader.GetInt32(4)));
+            rooms.Add(new Room(reader.GetString(0), reader.GetString(1), Timestamps.Parse(reader.GetString(2)), reader.GetInt64(3), reader.GetInt32(4)));
         return rooms;
     }
 
@@ -67,7 +63,7 @@ public sealed class MessageStore(ChopDb db)
         insert.Parameters.AddWithValue("$room", roomId);
         insert.Parameters.AddWithValue("$author", authorId);
         insert.Parameters.AddWithValue("$body", body);
-        insert.Parameters.AddWithValue("$at", Stamp(createdAt));
+        insert.Parameters.AddWithValue("$at", Timestamps.Stamp(createdAt));
         long id = (long)insert.ExecuteScalar()!;   // captured BEFORE the cursor upsert moves last_insert_rowid()
 
         using var cursor = conn.CreateCommand();
@@ -100,7 +96,7 @@ public sealed class MessageStore(ChopDb db)
         using var reader = cmd.ExecuteReader();
         var rows = new List<Message>(limit + 1);
         while (reader.Read())
-            rows.Add(new Message(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), Parse(reader.GetString(4))));
+            rows.Add(new Message(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), Timestamps.Parse(reader.GetString(4))));
         bool hasMore = rows.Count > limit;
         if (hasMore) rows.RemoveAt(rows.Count - 1);
         long next = rows.Count == 0 ? afterId : rows[^1].Id;

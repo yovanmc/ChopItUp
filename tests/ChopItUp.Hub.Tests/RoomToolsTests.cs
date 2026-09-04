@@ -1,7 +1,3 @@
-using System.Text.Json;
-using ModelContextProtocol.Client;
-using ModelContextProtocol.Protocol;
-
 namespace ChopItUp.Hub.Tests;
 
 public sealed class RoomToolsTests : IAsyncLifetime
@@ -12,28 +8,10 @@ public sealed class RoomToolsTests : IAsyncLifetime
     public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir);
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
-    private async Task<McpClient> ClientFor(string participant)
-    {
-        var transport = new HttpClientTransport(new HttpClientTransportOptions
-        {
-            Endpoint = new Uri(_host.BaseAddress, "mcp"),
-            TransportMode = HttpTransportMode.StreamableHttp,
-            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + _host.TokenFor(participant) },
-        });
-        return await McpClient.CreateAsync(transport);
-    }
-
-    private static JsonElement Json(CallToolResult result)
-    {
-        Assert.NotEqual(true, result.IsError);
-        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
-        return JsonDocument.Parse(text).RootElement;
-    }
-
     [Fact]
     public async Task Tools_list_is_exactly_the_four_room_tools()
     {
-        await using var client = await ClientFor("claude");
+        await using var client = await _host.ClientFor("claude");
         var tools = await client.ListToolsAsync();
         Assert.Equal(new[] { "list_rooms", "post_message", "read_messages", "wait_for_message" }, tools.Select(t => t.Name).OrderBy(n => n));
         Assert.All(tools, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
@@ -55,16 +33,16 @@ public sealed class RoomToolsTests : IAsyncLifetime
     [Fact]
     public async Task Post_is_authored_by_the_token_owner_and_read_back_in_order()
     {
-        await using var claude = await ClientFor("claude");
-        await using var codex = await ClientFor("codex");
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
 
-        var posted = Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hello from claude" }));
+        var posted = HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hello from claude" }));
         Assert.Equal("claude", posted.GetProperty("author_id").GetString());
         long firstId = posted.GetProperty("id").GetInt64();
 
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hi back" });
 
-        var page = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
+        var page = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
         var msgs = page.GetProperty("messages").EnumerateArray().ToList();
         Assert.Equal(2, msgs.Count);
         Assert.Equal(firstId, msgs[0].GetProperty("id").GetInt64());
@@ -77,53 +55,53 @@ public sealed class RoomToolsTests : IAsyncLifetime
     [Fact]
     public async Task Client_cannot_choose_its_author()
     {
-        await using var codex = await ClientFor("codex");
-        var posted = Json(await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "spoof", ["author_id"] = "claude" }));
+        await using var codex = await _host.ClientFor("codex");
+        var posted = HubTestHost.Json(await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "spoof", ["author_id"] = "claude" }));
         Assert.Equal("codex", posted.GetProperty("author_id").GetString());
     }
 
     [Fact]
     public async Task Read_without_after_id_uses_and_advances_the_callers_cursor()
     {
-        await using var claude = await ClientFor("claude");
-        await using var codex = await ClientFor("codex");
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "one" });
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "two" });
 
-        var first = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        var first = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
         Assert.Equal(2, first.GetProperty("messages").GetArrayLength());
-        var second = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        var second = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
         Assert.Equal(0, second.GetProperty("messages").GetArrayLength());
 
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "three" });
-        var third = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        var third = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
         Assert.Equal("three", third.GetProperty("messages")[0].GetProperty("body").GetString());
     }
 
     [Fact]
     public async Task Explicit_after_id_is_a_peek_and_leaves_the_cursor_alone()
     {
-        await using var claude = await ClientFor("claude");
-        await using var codex = await ClientFor("codex");
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "unread one" });
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "unread two" });
 
-        var peek = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
+        var peek = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
         Assert.Equal(2, peek.GetProperty("messages").GetArrayLength());
 
-        var rooms = Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
+        var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
         Assert.Equal(2, rooms.GetProperty("rooms")[0].GetProperty("unread_count").GetInt32());
 
-        var consume = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        var consume = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
         Assert.Equal(2, consume.GetProperty("messages").GetArrayLength());
-        var again = Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        var again = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
         Assert.Equal(0, again.GetProperty("messages").GetArrayLength());
     }
 
     [Fact]
     public async Task Unknown_room_and_empty_body_are_tool_errors_not_crashes()
     {
-        await using var claude = await ClientFor("claude");
+        await using var claude = await _host.ClientFor("claude");
         var bad = await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "nope", ["body"] = "x" });
         Assert.True(bad.IsError);
         var empty = await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "  " });
@@ -135,23 +113,23 @@ public sealed class RoomToolsTests : IAsyncLifetime
     [Fact]
     public async Task Wait_returns_promptly_when_another_participant_posts()
     {
-        await using var claude = await ClientFor("claude");
-        await using var codex = await ClientFor("codex");
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
         // CallToolAsync returns a ValueTask; AsTask() so it can be observed and awaited later.
         var waiting = claude.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0, ["timeout_seconds"] = 20 }).AsTask();
         await Task.Delay(300);
         Assert.False(waiting.IsCompleted);
         await codex.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "wake up" });
-        var page = Json(await waiting.WaitAsync(TimeSpan.FromSeconds(5)));
+        var page = HubTestHost.Json(await waiting.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal("wake up", page.GetProperty("messages")[0].GetProperty("body").GetString());
     }
 
     [Fact]
     public async Task Wait_times_out_empty_and_clamps_the_timeout()
     {
-        await using var claude = await ClientFor("claude");
+        await using var claude = await _host.ClientFor("claude");
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var page = Json(await claude.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0, ["timeout_seconds"] = 1 }));
+        var page = HubTestHost.Json(await claude.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0, ["timeout_seconds"] = 1 }));
         sw.Stop();
         Assert.Equal(0, page.GetProperty("messages").GetArrayLength());
         Assert.InRange(sw.Elapsed.TotalSeconds, 0.8, 5);
@@ -161,9 +139,9 @@ public sealed class RoomToolsTests : IAsyncLifetime
     [Fact]
     public async Task List_rooms_shows_general_with_counts_and_the_caller()
     {
-        await using var claude = await ClientFor("claude");
+        await using var claude = await _host.ClientFor("claude");
         await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "x" });
-        var rooms = Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
+        var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
         Assert.Equal("claude", rooms.GetProperty("you").GetString());
         var general = rooms.GetProperty("rooms")[0];
         Assert.Equal("general", general.GetProperty("id").GetString());

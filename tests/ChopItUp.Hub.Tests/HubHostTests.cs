@@ -71,4 +71,11 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Equal(Path.Combine(AppContext.BaseDirectory, "data"), defaults.DataDir);
         Assert.Equal(HubOptions.DefaultPort, defaults.Port);
     }
+
+    [Fact]
+    public void A_trailing_data_or_port_flag_with_no_value_throws_instead_of_silently_defaulting()
+    {
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--data"], _ => null));
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--port"], _ => null));
+    }
 }

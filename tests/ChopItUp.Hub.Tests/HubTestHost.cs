@@ -1,9 +1,12 @@
+using System.Text.Json;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace ChopItUp.Hub.Tests;
 
@@ -38,6 +41,24 @@ public sealed class HubTestHost : IAsyncDisposable
     }
 
     public string TokenFor(string participant) => Tokens.Tokens[participant];
+
+    public async Task<McpClient> ClientFor(string participant)
+    {
+        var transport = new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Endpoint = new Uri(BaseAddress, "mcp"),
+            TransportMode = HttpTransportMode.StreamableHttp,
+            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + TokenFor(participant) },
+        });
+        return await McpClient.CreateAsync(transport);
+    }
+
+    public static JsonElement Json(CallToolResult result)
+    {
+        Assert.NotEqual(true, result.IsError);
+        var text = Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text;
+        return JsonDocument.Parse(text).RootElement;
+    }
 
     public async ValueTask DisposeAsync()
     {
