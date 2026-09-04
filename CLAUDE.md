@@ -10,7 +10,7 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 - **No automation of claude.ai / chatgpt.com** (browser driving, session cookies, reverse-engineered endpoints): banned by both consumer ToS.
 - **Loopback only.** The hub binds `127.0.0.1`; no tunnel, no LAN bind, without a board row that says why.
 - **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo will be public.
-- **Public-bound repo:** `confidentiality-review` over diff + commit messages + branch names before every push.
+- **No confidentiality gate here** (owner ruling 2026-09-04): a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
 - Never `Stop-Process -Name` a GUI app (Claude, ChatGPT); kill only PIDs you launched.
 
 ## Git flow
