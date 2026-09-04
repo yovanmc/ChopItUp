@@ -7,5 +7,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ChopItUp.Hub\ChopItUp.Hub.csproj" />
+    <!-- DryRunTests.cs uses the same corpus builder tools/Invoke-M2DryRun.ps1 invokes, so the
+         script and dotnet test cannot drift (M2 Task 6, pass 2 MAJOR-9 part 2). -->
+    <ProjectReference Include="..\..\tools\ChopItUp.Corpus\ChopItUp.Corpus.csproj" />
   </ItemGroup>
 </Project>
