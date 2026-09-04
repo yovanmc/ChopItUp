@@ -1,0 +1,30 @@
+# Build output
+bin/
+obj/
+dist/
+*.user
+.vs/
+
+# Agent artifacts (never tracked)
+.claude/
+.scratch/
+.superpowers/
+
+# Front-end
+**/node_modules/
+src/ChopItUp.Hub/wwwroot/
+src/ChopItUp.Hub/client/dist/
+
+# Local data — room content, SQLite DB, generated host tokens are private
+.data/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.token
+tokens.json
+
+# Secrets — this app must never hold API keys, but belt and braces
+*.secret
+secrets.json
+appsettings.Local.json
