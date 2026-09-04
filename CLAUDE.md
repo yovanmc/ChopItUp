@@ -20,8 +20,10 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 ```powershell
 dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal   # 0 warnings
 dotnet test ChopItUp.slnx -c Debug --nologo -v minimal
+dotnet run --project src/ChopItUp.Hub -- --data .data --print-config      # host configs into .data\host-configs\
+dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 ```
-`src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3).
+`src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run).
 
 ## Deploy
 Release = single-file exe in `C:\Self Apps\ChopItUp\` with `data\` beside it (`chopitup.db`, host tokens). Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.

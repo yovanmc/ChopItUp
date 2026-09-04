@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>ChopItUp.Corpus</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Raw-SQL fixture writer + fingerprinting: same version Core uses, but deliberately no
+         ProjectReference to ChopItUp.Core — this tool must keep describing the OLD (v1) on-disk
+         shape even after ChopDb stops being able to produce a v1 (same reasoning as
+         SchemaMigrationTests' fixture). -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.11" />
+    <!-- Client-side MCP SDK for the mcp-check verb: the dry run's post_message/list_rooms checks
+         go over the real Streamable HTTP transport, the same client class HubTestHost already uses
+         in 40+ passing Hub tests, rather than a hand-rolled JSON-RPC request. -->
+    <PackageReference Include="ModelContextProtocol" Version="2.2.0" />
+  </ItemGroup>
+</Project>

@@ -54,6 +54,22 @@ public sealed class TokenStore
         });
     }
 
+    /// <summary>Reads tokens.json as it stands, minting nothing and writing nothing. Used by the
+    /// non-serving verbs, which must never create a credential as a side effect of being run against
+    /// the wrong directory (pass 2, MINOR-12): <see cref="Load"/> back-fills any missing participant
+    /// and rewrites the file, which would silently rotate a hand-edited token from a read-only
+    /// command.</summary>
+    public static IReadOnlyDictionary<string, string> ReadExisting(string dataDir)
+    {
+        var path = Path.Combine(dataDir, FileName);
+        if (!File.Exists(path)) throw new FileNotFoundException($"No {FileName} in '{dataDir}'.", path);
+        var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new();
+        var missing = Participants.Where(p => !tokens.TryGetValue(p, out var t) || string.IsNullOrWhiteSpace(t)).ToArray();
+        if (missing.Length > 0)
+            throw new InvalidOperationException($"{FileName} has no token for: {string.Join(", ", missing)}. Start the hub once to mint them.");
+        return tokens;
+    }
+
     /// <summary>Sibling temp file + rename: a crash mid-write never leaves a truncated tokens.json.</summary>
     private static void WriteAtomically(string path, string content)
     {
@@ -78,6 +94,33 @@ public sealed class TokenStore
         if (match is null) return false;
         participantId = match;
         return true;
+    }
+
+    /// <summary>Mints a fresh token for one participant, leaving the others byte-identical. Same
+    /// mutex and same atomic replace as <see cref="Load"/>.
+    ///
+    /// A running hub holds its TokenStore for the life of the process, so writing this file while a
+    /// hub is up revokes nothing — the leaked token keeps full access to every room until someone
+    /// remembers to restart. The caller must therefore refuse to rotate while a hub owns the data
+    /// dir (see <c>HostCommands.RotateToken</c>): ordering, not vigilance (pass 2, MAJOR-6).</summary>
+    public static string Rotate(string dataDir, string participant)
+    {
+        if (!Participants.Contains(participant, StringComparer.Ordinal))
+            throw new ArgumentException($"Unknown participant '{participant}'. Known: {string.Join(", ", Participants)}.", nameof(participant));
+        var path = Path.Combine(dataDir, FileName);
+        // Deliberately NOT CreateDirectory: rotating against a mistyped --data would otherwise mint a
+        // fresh token set in a directory no hub uses and print a token that authenticates nothing
+        // (critique pass 1, F8). A rotation only makes sense where tokens already live.
+        if (!File.Exists(path))
+            throw new FileNotFoundException($"No {FileName} in '{dataDir}'. Start the hub once against this data directory first, or check --data.", path);
+        return PathMutex.Run("Global\\ChopItUp.Tokens.", path, TimeSpan.FromSeconds(10), () =>
+        {
+            var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new();
+            var minted = NewToken();
+            tokens[participant] = minted;                                    // only this one changes
+            WriteAtomically(path, JsonSerializer.Serialize(tokens, new JsonSerializerOptions { WriteIndented = true }));
+            return minted;
+        });
     }
 
     private static string NewToken()

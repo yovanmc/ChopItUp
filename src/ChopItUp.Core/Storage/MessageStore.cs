@@ -44,27 +44,57 @@ public sealed class MessageStore(ChopDb db)
         return (long)cmd.ExecuteScalar()!;
     }
 
+    public const int MaxClientKeyChars = 200;
+
+    /// <summary>Back-compatible overload: a post with no retry key always inserts.</summary>
+    public Message Post(string roomId, string authorId, string body) => Post(roomId, authorId, body, null).Message;
+
     /// <summary>Appends a message and advances the author's own cursor past it (you have read what
     /// you wrote), in one transaction. Every posting path — MCP tools now, the M3 web UI later —
-    /// goes through here so the rule cannot drift.</summary>
-    public Message Post(string roomId, string authorId, string body)
+    /// goes through here so the rule cannot drift. With a <paramref name="clientKey"/> the write is
+    /// idempotent: a repeat of the same key by the same author in the same room returns the stored
+    /// message untouched. The unique index is the arbiter, not the pre-check, so two racing retries
+    /// still collapse to one row.</summary>
+    public PostResult Post(string roomId, string authorId, string body, string? clientKey)
     {
         if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("Message body is empty.", nameof(body));
+        clientKey = string.IsNullOrWhiteSpace(clientKey) ? null : clientKey.Trim();
+        if (clientKey is { Length: > MaxClientKeyChars })
+            throw new ArgumentException($"client_key exceeds {MaxClientKeyChars} characters.", nameof(clientKey));
+
         var createdAt = DateTimeOffset.UtcNow;
         using var conn = db.Open();
-        using var tx = conn.BeginTransaction();
 
-        using var insert = conn.CreateCommand();
-        insert.Transaction = tx;
-        insert.CommandText = """
-            INSERT INTO messages (room_id, author_id, body, created_at) VALUES ($room, $author, $body, $at);
-            SELECT last_insert_rowid();
-            """;
-        insert.Parameters.AddWithValue("$room", roomId);
-        insert.Parameters.AddWithValue("$author", authorId);
-        insert.Parameters.AddWithValue("$body", body);
-        insert.Parameters.AddWithValue("$at", Timestamps.Stamp(createdAt));
-        long id = (long)insert.ExecuteScalar()!;   // captured BEFORE the cursor upsert moves last_insert_rowid()
+        if (clientKey is not null && FindByClientKey(conn, roomId, authorId, clientKey) is { } already)
+            return new PostResult(already, true);
+
+        using var tx = conn.BeginTransaction();
+        long id;
+        try
+        {
+            using var insert = conn.CreateCommand();
+            insert.Transaction = tx;
+            insert.CommandText = """
+                INSERT INTO messages (room_id, author_id, body, created_at, client_key) VALUES ($room, $author, $body, $at, $key);
+                SELECT last_insert_rowid();
+                """;
+            insert.Parameters.AddWithValue("$room", roomId);
+            insert.Parameters.AddWithValue("$author", authorId);
+            insert.Parameters.AddWithValue("$body", body);
+            insert.Parameters.AddWithValue("$at", Timestamps.Stamp(createdAt));
+            insert.Parameters.AddWithValue("$key", (object?)clientKey ?? DBNull.Value);
+            id = (long)insert.ExecuteScalar()!;   // captured BEFORE the cursor upsert moves last_insert_rowid()
+        }
+        // 2067 is SQLITE_CONSTRAINT_UNIQUE. The bare code 19 is NOT usable here: a foreign-key
+        // violation (unknown room or author) is also 19, and swallowing that would turn a real
+        // integrity error into "the message could not be read back" (critique pass 1, F2).
+        catch (SqliteException e) when (clientKey is not null && e.SqliteExtendedErrorCode == 2067)
+        {
+            tx.Rollback();
+            var raced = FindByClientKey(conn, roomId, authorId, clientKey)
+                ?? throw new InvalidOperationException("client_key collided but the stored message could not be read back.");
+            return new PostResult(raced, true);
+        }
 
         using var cursor = conn.CreateCommand();
         cursor.Transaction = tx;
@@ -78,7 +108,39 @@ public sealed class MessageStore(ChopDb db)
         cursor.ExecuteNonQuery();
 
         tx.Commit();
-        return new Message(id, roomId, authorId, body, createdAt);
+        return new PostResult(new Message(id, roomId, authorId, body, createdAt), false);
+    }
+
+    private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, string clientKey)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, room_id, author_id, body, created_at FROM messages
+            WHERE room_id = $room AND author_id = $author AND client_key = $key
+            """;
+        cmd.Parameters.AddWithValue("$room", roomId);
+        cmd.Parameters.AddWithValue("$author", authorId);
+        cmd.Parameters.AddWithValue("$key", clientKey);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read()
+            ? new Message(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), Timestamps.Parse(reader.GetString(4)))
+            : null;
+    }
+
+    /// <summary>How many messages were posted with and without a retry key, per author. The only
+    /// evidence available that the hosts are using the mechanism the retry-safety claim rests on.</summary>
+    public IReadOnlyList<(string AuthorId, long Keyed, long Keyless)> KeyUsage()
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT author_id, SUM(client_key IS NOT NULL), SUM(client_key IS NULL)
+            FROM messages GROUP BY author_id ORDER BY author_id
+            """;
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<(string AuthorId, long Keyed, long Keyless)>();
+        while (reader.Read()) rows.Add((reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+        return rows;
     }
 
     public MessagePage Read(string roomId, long afterId, int limit)
