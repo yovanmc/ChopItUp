@@ -370,6 +370,24 @@ once Task 2 lands; **dispatch them sequentially anyway** (3 then 4) — a linear
 topological order, and the parallel path would require worktree isolation for no real wall-clock win
 on two tasks.
 
+**Amendment (Task 4 dispatch, 2026-09-04) -- the staging fixture is SYNTHETIC, not a real publish.**
+CI is `windows-latest` and runs `dotnet test ChopItUp.slnx -c Debug --no-build`. A fixture that
+shells out to `dotnet publish -c Release` there would add minutes, would need a RID-specific restore
+CI never performs, and would make the suite depend on a 103 MB artifact to test file movement. Every
+property under test here -- data untouched, backup aside and a sibling, abort on a live process, the
+client landing in the target, the exe replaced by rename, restore -- is about **where bytes go**, not
+about the exe being a real .NET binary. So the class fixture builds a synthetic staging directory
+once: a `ChopItUp.Hub.exe` of just over 30 MB with known bytes, `wwwroot\index.html`, and at least one
+file under `wwwroot\assets\`. That is exactly what the script's sanity check demands, and it makes
+the whole class fast and CI-safe.
+
+The one test that needs a *runnable* image inside the target is the process-guard test, and it does
+not need the hub: copy a small system executable into the target and start it in a blocking mode, so
+its image path is inside the target. Stop it by the id the test started, after confirming the path.
+
+Real-artifact coverage is not lost -- it lives where it belongs: Task 3's harness runs against an
+actual Release publish, and Task 5 performs the real deploy.
+
 The deploy script's safety properties must be regression-tested, not just exercised once by hand.
 Drive `Deploy-ChopItUp.ps1` with `-TargetDir` at a scratch directory and **`-StagingDir <pre-staged>
 -SkipPublish`** (Task 2's seam) — publish once in a class fixture, not once per test. Every test in

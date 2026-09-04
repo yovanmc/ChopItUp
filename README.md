@@ -60,6 +60,16 @@ Parameters:
 - `-RestoreFrom <backupDir>` — roll back to a previous install from one of the backup directories
   this script wrote, under the same guards (process check, `data\` exclusion, atomic exe rename).
 
+Restoring is additive, like the deploy: it copies the backup's files back over the target but never
+deletes files the newer install added and the backup does not contain. That is deliberate — the
+alternative is a mirror-style copy that deletes to be tidy, standing next to your only copy of the
+room history — but it means a restore rolls the program back, not the whole directory. A restore
+also backs the current install aside first, so a rollback is itself undoable.
+
+To check a deploy landed, `pwsh tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`.
+It runs the published exe against a scratch copy (health, the UI, an MCP round trip, a restart) and
+then compares the real target's files to staging by hash. It reads nothing inside `data\`.
+
 The script never deletes a backup directory — only reports how many now sit beside the target.
 Prune old ones (`C:\Self Apps\ChopItUp.backup-YYYYMMDD-HHmmss`) by hand once you're confident you
 won't need to roll back to them.
