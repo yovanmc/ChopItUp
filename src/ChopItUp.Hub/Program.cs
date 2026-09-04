@@ -1,1 +1,5 @@
-Console.WriteLine("Chop It Up hub — wired in M1 T5.");
+using ChopItUp.Hub.Hosting;
+
+var options = HubOptions.Parse(args, Environment.GetEnvironmentVariable);
+var app = HubHost.Build(options);
+app.Run();
