@@ -14,26 +14,12 @@ public static class HostCommands
         _ => throw new InvalidOperationException($"{options.Command} is not a non-serving command."),
     };
 
-    /// <summary>True when a hub process currently owns this data dir. Probes the same lock file
-    /// HubLock takes, with the same FileShare.None, and releases it immediately.</summary>
-    private static bool HubIsRunning(string dataDir)
-    {
-        var path = Path.Combine(dataDir, HubLock.FileName);
-        if (!File.Exists(path)) return false;
-        try
-        {
-            using var probe = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-            return false;
-        }
-        catch (IOException) { return true; }
-    }
-
     private static int RotateToken(HubOptions options, TextWriter output, TextWriter error)
     {
         // Rotating under a live hub writes a file nobody reads: the hub resolves tokens against the
         // snapshot it loaded at startup, so the leaked token keeps working. Refusing is the whole
         // difference between rotation and revocation (pass 2, MAJOR-6).
-        if (HubIsRunning(options.DataDir))
+        if (HubLock.IsHeld(options.DataDir))
         {
             error.WriteLine($"A hub is running on '{options.DataDir}'. Stop it first — rotating while it runs writes a new token that the running hub ignores, and the old token keeps working.");
             return 5;

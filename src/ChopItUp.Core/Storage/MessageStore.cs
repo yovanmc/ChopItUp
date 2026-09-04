@@ -65,7 +65,7 @@ public sealed class MessageStore(ChopDb db)
         var createdAt = DateTimeOffset.UtcNow;
         using var conn = db.Open();
 
-        if (clientKey is not null && FindByClientKey(conn, null, roomId, authorId, clientKey) is { } already)
+        if (clientKey is not null && FindByClientKey(conn, roomId, authorId, clientKey) is { } already)
             return new PostResult(already, true);
 
         using var tx = conn.BeginTransaction();
@@ -91,7 +91,7 @@ public sealed class MessageStore(ChopDb db)
         catch (SqliteException e) when (clientKey is not null && e.SqliteExtendedErrorCode == 2067)
         {
             tx.Rollback();
-            var raced = FindByClientKey(conn, null, roomId, authorId, clientKey)
+            var raced = FindByClientKey(conn, roomId, authorId, clientKey)
                 ?? throw new InvalidOperationException("client_key collided but the stored message could not be read back.");
             return new PostResult(raced, true);
         }
@@ -111,10 +111,9 @@ public sealed class MessageStore(ChopDb db)
         return new PostResult(new Message(id, roomId, authorId, body, createdAt), false);
     }
 
-    private static Message? FindByClientKey(SqliteConnection conn, SqliteTransaction? tx, string roomId, string authorId, string clientKey)
+    private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, string clientKey)
     {
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         cmd.CommandText = """
             SELECT id, room_id, author_id, body, created_at FROM messages
             WHERE room_id = $room AND author_id = $author AND client_key = $key

@@ -25,4 +25,19 @@ public sealed class HubLock : IDisposable
     }
 
     public void Dispose() => _stream.Dispose();
+
+    /// <summary>Read-only counterpart to <see cref="Acquire"/>: true when a hub process currently
+    /// holds the lock on this data dir. Probes the same file with the same <see cref="FileShare.None"/>
+    /// and releases it immediately. Must keep matching <see cref="Acquire"/>'s lock shape.</summary>
+    public static bool IsHeld(string dataDir)
+    {
+        var path = Path.Combine(dataDir, FileName);
+        if (!File.Exists(path)) return false;
+        try
+        {
+            using var probe = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            return false;
+        }
+        catch (IOException) { return true; }
+    }
 }

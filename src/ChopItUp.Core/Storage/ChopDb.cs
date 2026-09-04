@@ -83,7 +83,7 @@ public sealed class ChopDb
         using var exists = conn.CreateCommand();
         exists.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='messages'";
         if (Convert.ToInt64(exists.ExecuteScalar()) == 0) return false;
-        return Count(conn, null, "SELECT COUNT(*) FROM messages") > 0;
+        return Count(conn, "SELECT COUNT(*) FROM messages") > 0;
     }
 
     /// <summary>A <c>.partial</c> is by definition an abandoned copy: it exists only between the
@@ -127,7 +127,7 @@ public sealed class ChopDb
         TryDeleteBackup(partial);
         try
         {
-            long expected = Count(source, null, "SELECT COUNT(*) FROM messages");
+            long expected = Count(source, "SELECT COUNT(*) FROM messages");
             using (var destination = BackupDestinationFactory(partial))
             {
                 source.BackupDatabase(destination);
@@ -160,7 +160,7 @@ public sealed class ChopDb
         if (version != fromVersion)
             throw new InvalidOperationException($"Pre-migration backup is stamped v{version}, expected v{fromVersion}.");
 
-        long actual = Count(destination, null, "SELECT COUNT(*) FROM messages");
+        long actual = Count(destination, "SELECT COUNT(*) FROM messages");
         if (actual != expectedMessages)
             throw new InvalidOperationException($"Pre-migration backup holds {actual} messages, expected {expectedMessages}.");
     }
@@ -177,10 +177,9 @@ public sealed class ChopDb
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* best effort */ }
     }
 
-    private static long Count(SqliteConnection conn, SqliteTransaction? tx, string sql)
+    private static long Count(SqliteConnection conn, string sql)
     {
         using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
         cmd.CommandText = sql;
         return Convert.ToInt64(cmd.ExecuteScalar());
     }

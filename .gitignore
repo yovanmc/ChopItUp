@@ -24,6 +24,7 @@ data/
 *.token
 tokens.json
 *.bak
+*.bak.partial
 
 # Secrets — this app must never hold API keys, but belt and braces
 *.secret
