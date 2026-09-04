@@ -26,7 +26,7 @@ dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 `src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run).
 
 ## Deploy
-Release = single-file exe in `C:\Self Apps\ChopItUp\` with `data\` beside it (`chopitup.db`, host tokens). Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
+Release = single-file exe in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside it (a single-file bundle can't serve static files from inside itself). Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
 
 ## Gate
 `ROADMAP.md` is whitelist-v3; gate with `pwsh -NoProfile -File ~\.claude\skills\roadmap\preflight\Check-RoadmapBudget.ps1 -RoadmapPath ROADMAP.md -RequireSchema -RepoRoot .` on every board touch.

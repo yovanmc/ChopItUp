@@ -4,4 +4,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
+
+  <!-- M4 Release shape, repo-wide: DebugType must reach every project, not just the Hub. Scoped to
+       the Hub alone, ChopItUp.Core keeps the SDK's default portable symbols and
+       ChopItUp.Core.pdb lands loose in the publish root, failing the release publish's
+       zero-loose-*.pdb assertion (measured, not predicted). -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
 </Project>
