@@ -1,7 +1,9 @@
 using System.Net;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Mcp;
 using ChopItUp.Hub.Security;
+using ModelContextProtocol.AspNetCore;
 
 namespace ChopItUp.Hub.Hosting;
 
@@ -25,11 +27,15 @@ public static class HubHost
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);
             builder.Services.AddHttpContextAccessor();
+            builder.Services.AddMcpServer()
+                .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
+                .WithTools<RoomTools>();
 
             var app = builder.Build();
             app.Lifetime.ApplicationStopped.Register(hubLock.Dispose);
             app.UseMiddleware<BearerTokenMiddleware>();
             app.MapGet("/health", (ChopDb d) => Results.Json(new { ok = true, schema = d.GetSchemaVersion() }));
+            app.MapMcp("/mcp");
             return app;
         }
         catch
