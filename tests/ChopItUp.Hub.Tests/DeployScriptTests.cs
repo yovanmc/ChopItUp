@@ -369,6 +369,12 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             throw new TimeoutException($"Deploy-ChopItUp.ps1 did not exit within 120s (target '{targetDir}').");
         }
 
+        // The timed WaitForExit above returns as soon as the process exits; it does not wait for the
+        // async OutputDataReceived/ErrorDataReceived handlers to finish delivering buffered data. Only
+        // the parameterless overload guarantees that. Without it, the last line written before exit
+        // (the DEPLOY_RESULT sentinel every parsing test needs) can be dropped under load.
+        proc.WaitForExit();
+
         return new DeployRunResult(proc.ExitCode, stdout.ToString(), stderr.ToString());
     }
 
