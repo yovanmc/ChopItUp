@@ -7,8 +7,7 @@ Local Windows hub where Yovan, Claude (Claude Desktop) and GPT (Codex UI inside 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 3 | Web UI: React + Vite + TS chat over SignalR — rooms, @mentions, paste-a-transcript import, per-room markdown export | ✅ | DONE | — | Merged `a4bc007` (PR #9). 101 tests, 0 warnings; browser-pane gate passed on all 5 criteria; visual judge PASS after 4 fixes. |
-| 4 | Release: single-file exe published to `C:\Self Apps\ChopItUp\` with `data\` beside it | 📝 | READY | [m4-release](docs/superpowers/plans/m4-release.md) | `IncludeNativeLibrariesForSelfExtract` (e_sqlite3.dll; `AppContext.BaseDirectory` stays beside the exe). **Repo stays private — the public flip is the owner's explicit yes.** Grill notes survive this row: they hold R7, which guards 4b. |
+| 4 | Release: single-file exe published to `C:\Self Apps\ChopItUp\` with `data\` beside it | ✅ | DONE | — | Merged `deb52c4` (PR #12), deployed 2026-09-04. 109 tests, 0 warnings; self-check 27/27 PASS against the published artifact **and** the real target. Grill notes survive: they hold R7, which guards 4b. |
 | 4b | Flip the repository public | [ ] | OWNER: needs Yovan's explicit yes; run `confidentiality-review` first | — | Split out of M4 so the release can ship without it. Once said, the grill-notes ledger goes with it. |
 | 5 | Autonomous turns: `wait_for_message` loop guidance, Claude Code as a host, model-to-model exchange without the owner | [ ] | DEFERRED: after M1–M4 ship and get real use | — | — |
 | 6 | Town view: walkable characters per participant (Octopath-style) | [ ] | DEFERRED: long-term vision, owner ruling 2026-09-04 | — | Renderer/art decisions parked in the grill notes (Q17, Q20). |
