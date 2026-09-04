@@ -135,8 +135,8 @@ Required behaviours, in order — this ordering *is* the safety property:
    The size floor is not arbitrary and the assets check is not belt-and-braces. A non-self-contained
    Release build of this project is 162,304 bytes (measured in the tree this session), so a floor in
    the tens of MB separates "the runtime came along" from "a stub did". And `index.html` alone is not
-   the client: `SpaFiles` serves it from `MapFallback` for every unreserved path, so a missing
-   `wwwroot\assets\` produces a 200 with HTML for the very script the page needs — see Task 3's C3.
+   the client. The page loads and the script it needs does not, which is a blank window rather than
+   a visible error -- see Task 3's C3 for the measured shape of that failure.
 4. **Back up the existing install aside**, if there is one (a first deploy has nothing to back up —
    say so and continue). Copy the target's contents — **excluding `data`** — to a **sibling of the
    target**, derived from the parameter:
@@ -203,6 +203,23 @@ Required behaviours, in order — this ordering *is* the safety property:
   the same `data` exclusion and the same `/XF` + rename treatment of the exe. Rollback must be a mode
   of this script, not a README paragraph telling the owner to hand-copy files — that paragraph is the
   moment someone reaches for `/MIR`.
+
+**Amendment (Task 2 build, 2026-09-04) -- the three interface facts Task 4 is written against.**
+
+- **The report line is `DEPLOY_RESULT: <compact JSON>` as the last line of stdout**, with keys
+  `target`, `staging`, `restore`, `backup_made`, `backup_dir`, `exe_size_bytes`, `backup_count`,
+  `unreadable_process_paths`. On failure the last line is `DEPLOY_FAILED: <message>` on stderr with
+  exit 1. Emit it with `Write-Output`, not `Write-Host`: an external process sees either on stdout,
+  but a caller that dot-sources or invokes this from PowerShell gets nothing from `Write-Host`
+  without `6>&1`, which is a trap for a line whose entire purpose is to be parsed.
+- **Restore also backs the current target aside first**, and runs the same sanity check against the
+  backup directory it is restoring from. A restore is a write to the target too; losing the ability
+  to undo *that* would contradict the rest of the script. Task 4's restore test must expect the
+  extra backup, not treat it as a defect.
+- **Restore is additive, like the deploy** -- `/MIR` is forbidden, so a file the newer install added
+  and the backup does not contain survives a restore. That is the correct trade (the alternative
+  deletes files to be tidy, next to the owner's database), but it means restore is a rollback of the
+  program, not a byte-exact reversal of the directory. Say so in the README.
 
 **Crash safety.** Dying between steps 4 and 5 is safe: the target is untouched and an extra backup
 exists. Dying *during* step 5 leaves a torn target, which is why `-RestoreFrom` exists. Copy the exe
@@ -294,13 +311,20 @@ the host token from `<data>\tokens.json` the same way, after the same wait.
   `tools/ChopItUp.Corpus --mcp-check` rather than hand-rolling the transport.
 
   **The UI check must fetch the script, not grep for its tag.** `GET /` returning HTML with a
-  `<script src="/assets/index-<hash>.js">` proves nothing: `SpaFiles` serves `index.html` from
-  `MapFallback` for every path that is not `/api`, `/hub`, `/mcp` or `/health`, so if `wwwroot\assets\`
-  never shipped, that script URL returns **200 with the HTML shell** and a tag-grep passes while the
-  owner gets a blank page. So: parse the `src` out of the shell, `GET` it, and assert the response is
-  `text/javascript` (not `text/html`) and its bytes are not the shell's. This is the same class of
-  defect as the missing-`wwwroot` one, one directory deeper, and it is the reason C1 also counts
-  files under `wwwroot\assets\`.
+  `<script src="/assets/index-<hash>.js">` proves nothing about whether that script exists, and a
+  tag-grep passes on a blank page either way. So: parse the `src` out of the shell, `GET` it, and
+  assert the response is real JavaScript (`text/javascript`, not `text/html`, not a 404) and that its
+  bytes are not the shell's. This is the same class of defect as the missing-`wwwroot` one, one
+  directory deeper, and it is the reason C1 also counts files under `wwwroot\assets\`.
+
+  **Corrected against measurement (Task 3 build, 2026-09-04).** An earlier draft said a missing
+  `wwwroot\assets\` makes that URL return 200 with the shell, via `SpaFiles`' `MapFallback`. It does
+  not: measured, it returns a bare **404 with `Content-Length: 0`**, because the static-web-assets
+  endpoint registered from `ChopItUp.Hub.staticwebassets.endpoints.json` claims the route ahead of
+  the fallback, which only ever sees a never-registered path (`/totally-made-up-path` does get
+  200 + shell). The defect class and the check are unchanged -- asserting real JavaScript with
+  non-shell bytes catches both shapes -- but the mechanism was wrong, and reasoning reused elsewhere
+  must not inherit it.
 - A **restart** check: stop the exe by PID, **`WaitForExit`** (the hub lock is `FileShare.None`, so a
   restart that races the previous process's shutdown fails for the wrong reason), start it again on
   the same scratch dir, assert the message posted in C3 is still there — the release's first
@@ -456,7 +480,7 @@ Pass 2 upheld HIGH. Every finding below is new; none re-reports pass 1.
 | MAJOR | Task 2 step 6 called Task 3's post-deploy stage, but Task 3 is `Blocked by:` Task 2 — a cycle; and Task 5 invoked the self-check with `-PublishDir` only, so C5(b), pass 1's own fix, never ran. The staging path was also unresolvable: the script invented it and never printed it | **Fixed** — step 6 reports, never verifies; the staging path is in its machine-readable output line; Task 5 passes `-PublishDir` **and** `-TargetDir`, with the consequence of omitting the latter spelled out |
 | MAJOR | Task 4's tests need a pre-staged publish, but Task 2 declared only `-TargetDir` and `-RestoreFrom` — no seam. A builder would invent a parameter or pay for six Release publishes | **Fixed** — Task 2 gains `-StagingDir` and `-SkipPublish` as part of its contract; Task 4 now names them |
 | MAJOR | The `.exe.new` + rename was dead code: the robocopy line beside it copies the exe under its real name with nothing excluding it, so a kill mid-copy still leaves a half-written exe under the name the owner double-clicks | **Fixed** — `/XF ChopItUp.Hub.exe` in the bulk copy, then copy-aside and `Move-Item -Force` last; `Deploy_replaces_the_exe_by_rename_not_in_place` pins it |
-| MAJOR | C3's UI check was a grep for the script tag. `SpaFiles` serves `index.html` from `MapFallback` for every unreserved path, so a missing `wwwroot\assets\` returns 200 + HTML for the script URL and every check stays green while the owner gets a blank page | **Fixed** — C3 now fetches the `src` and asserts `text/javascript` and non-shell bytes; C1 and the deploy sanity check both require a non-empty `wwwroot\assets\`; the post-deploy hash comparison is explicitly recursive |
+| MAJOR | C3's UI check was a grep for the script tag, which passes while the owner gets a blank page. (The critic's stated mechanism -- `MapFallback` answering the script URL with 200 + the shell -- was **measured wrong during the Task 3 build**: it is a bare 404, the static-web-assets endpoint having claimed the route first. The finding stands; the explanation was corrected in place) | **Fixed** — C3 now fetches the `src` and asserts `text/javascript` and non-shell bytes; C1 and the deploy sanity check both require a non-empty `wwwroot\assets\`; the post-deploy hash comparison is explicitly recursive |
 | MAJOR | `-RestoreFrom` is the entire recovery story for the torn target the plan itself predicts, and nothing tested or exercised it — first run would be on the owner's real install under pressure | **Fixed** — `Restore_puts_the_backup_back_and_leaves_data_untouched` added to Task 4 |
 | MINOR | The `%TEMP%\.net\ChopItUp.Hub\*` assertion is unobservable and self-contradictory: the same task says that directory is cached and deliberately not deleted, so run 2 finds it stale | **Fixed by deletion** — removed, with the reasoning kept in place so it is not re-added. C1's zero-loose-`*.dll` STOP proves the same property deterministically from the artifact |
 | MINOR | No port/token discovery contract for `--port 0`: `hub.port` holds "the running **or last-running**" port and is never deleted, so the restart check reads the previous run's port | **Fixed** — delete `hub.port` before every launch and poll for recreation, M2's precedent cited by file and line; token read the same way. Confirmed against `HubHost.cs:67-73` that port 0 writes the *bound* port |
