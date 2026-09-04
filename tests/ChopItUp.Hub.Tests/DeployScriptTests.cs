@@ -132,7 +132,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         string target = NewScratchPath("target");
         Directory.CreateDirectory(target);
         string guardExe = Path.Combine(target, "ping.exe");
-        File.Copy(@"C:\Windows\System32\PING.EXE", guardExe);
+        File.Copy(Path.Combine(Environment.SystemDirectory, "PING.EXE"), guardExe);
 
         var guardPsi = new ProcessStartInfo(guardExe)
         {
@@ -146,8 +146,14 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         guardPsi.ArgumentList.Add("127.0.0.1");
 
         using var guard = Process.Start(guardPsi) ?? throw new InvalidOperationException("Failed to start the process-guard fixture executable.");
+        bool guardImageConfirmed = false;
         try
         {
+            string? actualPath = null;
+            try { actualPath = guard.MainModule?.FileName; } catch { /* process may already be gone */ }
+            guardImageConfirmed = string.Equals(guardExe, actualPath, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(guardExe, actualPath, ignoreCase: true);
+
             string[] before = SnapshotRecursive(target);
 
             var result = RunDeploy(target, _fixture.StagingDir);
@@ -161,11 +167,11 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
         finally
         {
-            string? actualPath = null;
-            try { actualPath = guard.MainModule?.FileName; } catch { /* process may already be gone */ }
-            if (!guard.HasExited)
+            // No Assert.* here: an assertion in a finally can throw and replace the try block's real
+            // failure. The image path was already confirmed above, before anything else in the try
+            // could fail — guardImageConfirmed is the sole gate on killing this PID.
+            if (guardImageConfirmed && !guard.HasExited)
             {
-                Assert.Equal(guardExe, actualPath, ignoreCase: true);
                 guard.Kill();
                 guard.WaitForExit(5000);
             }
