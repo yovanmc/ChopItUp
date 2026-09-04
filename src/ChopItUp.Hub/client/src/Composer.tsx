@@ -17,7 +17,12 @@ export default function Composer({ roomName, disabled, onSend }: Props) {
     const element = box.current;
     if (!element) return;
     element.style.height = 'auto';
-    element.style.height = `${Math.min(element.scrollHeight, MAX_HEIGHT_PX)}px`;
+    // scrollHeight measures content + padding, but the box is border-box, so assigning it verbatim
+    // leaves the content two pixels short of what it needs and the textarea grows a permanent native
+    // scrollbar even while empty. Add the borders back.
+    const style = getComputedStyle(element);
+    const borders = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    element.style.height = `${Math.min(element.scrollHeight + borders, MAX_HEIGHT_PX)}px`;
   }, [draft]);
 
   async function send() {

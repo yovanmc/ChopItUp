@@ -81,10 +81,15 @@ input {
   height: 100%;
 }
 
+/* Flex, not grid. The error banner is conditional, so a fixed four-row template handed the 1fr row
+   to whichever child happened to land on it: with no banner on screen that was the composer, which
+   swallowed the free height and left the thread clumped at the top of an apparently empty window.
+   In a column flex the thread claims the slack by rule and the composer stays its own height. */
 .room {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   background: var(--bg);
 }
 
@@ -199,6 +204,7 @@ input {
 
 .room-head {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
@@ -252,6 +258,7 @@ input {
 
 .banner {
   margin: 0;
+  flex: none;
   padding: 8px 24px;
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
@@ -262,8 +269,12 @@ input {
 /* ---------- thread ---------- */
 
 .thread {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .thread-inner {
@@ -282,6 +293,7 @@ input {
 
 .thread-note.standalone {
   display: grid;
+  flex: 1;
   place-content: center;
   height: 100%;
   margin: 0;
@@ -306,16 +318,22 @@ input {
   background: var(--line-soft);
 }
 
+/* 5px of vertical padding, not 1px: rows in a run sit flush against each other so the owner tint
+   still reads as one continuous block, but the wash now clears the text instead of cropping to the
+   glyphs and looking like a selection highlight. */
 .row {
   display: grid;
   grid-template-columns: 36px minmax(0, 1fr);
   gap: 12px;
-  padding: 1px 24px;
+  padding: 5px 24px;
   min-width: 0;
 }
 
+/* The gap between runs stays visibly larger than the 10px the padding leaves between rows inside
+   one run, so grouping still reads as grouping. */
 .row.starts-run {
-  margin-top: 14px;
+  margin-top: 16px;
+  padding-top: 7px;
 }
 
 .row.mine {
@@ -404,6 +422,19 @@ input {
   overflow-wrap: anywhere;
 }
 
+/* A reading measure for prose only. Code blocks and tables keep the full column and scroll inside
+   themselves, so the cap cannot make a wide snippet unreadable. */
+.body > p,
+.body > ul,
+.body > ol,
+.body > blockquote,
+.body > h1,
+.body > h2,
+.body > h3,
+.body > h4 {
+  max-width: 74ch;
+}
+
 .body > *:first-child {
   margin-top: 0;
 }
@@ -453,6 +484,8 @@ input {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .body pre code {
@@ -473,6 +506,8 @@ input {
   border-collapse: collapse;
   display: block;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .body th,
@@ -511,6 +546,7 @@ input {
 
 .composer {
   display: flex;
+  flex: none;
   align-items: flex-end;
   gap: 12px;
   padding: 12px 24px 16px;
@@ -518,17 +554,23 @@ input {
   background: var(--bg);
 }
 
+/* The line box is pinned to a whole number of pixels so an empty single-line box measures the same
+   height the autosize effect gives it; a fractional line height rounded up to a scrollHeight one
+   pixel taller than the box, which is what grew the permanent native scrollbar. */
 .composer textarea {
   flex: 1;
   min-width: 0;
   resize: none;
   padding: 9px 12px;
+  line-height: 22px;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   max-height: 200px;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .composer textarea:focus-visible {
