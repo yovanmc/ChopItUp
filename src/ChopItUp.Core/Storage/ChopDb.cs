@@ -3,7 +3,7 @@ using Microsoft.Data.Sqlite;
 namespace ChopItUp.Core.Storage;
 
 /// <summary>Owns the SQLite connection string and schema lifecycle. Connection-per-query,
-/// pooling off, WAL + foreign_keys + busy_timeout on every open (Reserve's ReserveDb shape).</summary>
+/// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
     public const int LatestSchemaVersion = 1;

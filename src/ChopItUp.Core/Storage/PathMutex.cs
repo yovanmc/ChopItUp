@@ -3,7 +3,7 @@ using System.Text;
 
 namespace ChopItUp.Core.Storage;
 
-/// <summary>Named cross-process mutex keyed on a normalized file path (ReserveDb's migration-mutex
+/// <summary>Named cross-process mutex keyed on a normalized file path (the migration-mutex
 /// rule): SHA256 of the full upper-cased path, hex, first 32 chars, behind a caller-chosen prefix.</summary>
 public static class PathMutex
 {
