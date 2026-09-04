@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChopItUp.Hub.Security;
 
 namespace ChopItUp.Hub.Hosting;
@@ -60,10 +61,47 @@ public static class HostCommands
         }
     }
 
-    /// <summary>Task 5 completes this: writing <c>claude-desktop.json</c>, <c>codex-config.toml</c>
-    /// and <c>README.md</c> into <c>&lt;data&gt;/host-configs/</c>. For Task 4 it is a genuine no-op
-    /// rather than a placeholder that throws: --print-config only reads, so unlike --rotate-token it
-    /// keeps the "works while a hub is running" contract (A7) even before it has a body — no lock
-    /// check, no port bind, exit 0.</summary>
-    private static int PrintConfig(HubOptions options, TextWriter output, TextWriter error) => 0;
+    /// <summary>Writes <c>claude-desktop.json</c>, <c>codex-config.toml</c> and <c>README.md</c> into
+    /// <c>&lt;data&gt;/host-configs/</c>. Unlike --rotate-token this only reads the credentials, so it
+    /// deliberately takes no lock check: it keeps working while a hub owns the directory (A7).</summary>
+    private static int PrintConfig(HubOptions options, TextWriter output, TextWriter error)
+    {
+        var tokenFile = Path.Combine(options.DataDir, TokenStore.FileName);
+        if (!File.Exists(tokenFile))   // same reasoning as Rotate: never mint into a mistyped --data
+        {
+            error.WriteLine($"No {TokenStore.FileName} in '{options.DataDir}'. Start the hub once against this data directory first, or check --data.");
+            return 4;
+        }
+        try
+        {
+            // Read WITHOUT back-filling: TokenStore.Load mints any missing participant and rewrites
+            // the file, so a hand-edited tokens.json would have a credential silently rotated by a
+            // command that is supposed to only read (pass 2, MINOR-12).
+            var tokens = TokenStore.ReadExisting(options.DataDir);
+
+            // Prefer the port the hub actually bound over the one this invocation happened to
+            // resolve: a hub started with --port 9000 and a --print-config run without it would
+            // otherwise emit configs pointing at 8790, exit 0, and be undetectable (pass 2,
+            // MINOR-13).
+            int? recorded = HubPortFile.Read(options.DataDir);
+            int port = recorded ?? options.Port;
+            if (recorded is { } r && r != options.Port)
+                output.WriteLine($"Note: using port {r} from the last hub start, not the {options.Port} this command resolved.");
+
+            var folder = HostConfigs.Write(options.DataDir, port, tokens);
+            output.WriteLine("Wrote host configurations to:");
+            output.WriteLine(folder);
+            output.WriteLine("Each file contains a live token — read them from disk, do not paste them anywhere public.");
+            return 0;
+        }
+        // Broad on purpose: a torn tokens.json (JsonException), a contended mutex (TimeoutException)
+        // or a tokens.json missing a participant (InvalidOperationException, from ReadExisting —
+        // the one case this command must diagnose rather than repair) must each produce one line,
+        // not a stack trace (critique pass 1, F14).
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or TimeoutException or InvalidOperationException)
+        {
+            error.WriteLine($"Could not write host configurations: {e.Message}");
+            return 3;
+        }
+    }
 }

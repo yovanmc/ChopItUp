@@ -20,6 +20,8 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 ```powershell
 dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal   # 0 warnings
 dotnet test ChopItUp.slnx -c Debug --nologo -v minimal
+dotnet run --project src/ChopItUp.Hub -- --data .data --print-config      # host configs into .data\host-configs\
+dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 ```
 `src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3).
 
