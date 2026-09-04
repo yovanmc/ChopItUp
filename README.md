@@ -38,3 +38,28 @@ needs to be installed to run it — plus a `wwwroot\` folder beside it (a single
 serve static files from inside itself, so the web client ships alongside the exe instead) and a
 `data\` folder that the exe creates on first run. That is the whole release folder: exe, `wwwroot\`,
 `data\`.
+
+### Deploying
+
+    pwsh tools\Deploy-ChopItUp.ps1 -TargetDir "C:\Self Apps\ChopItUp"
+
+`tools\Deploy-ChopItUp.ps1` publishes into a staging directory, sanity-checks the result (the exe
+is present and at least 30 MB, `wwwroot\index.html` and a non-empty `wwwroot\assets\` exist),
+copies the previous install aside as a sibling backup directory, then copies the new one in —
+additively, never touching `data\` or `logs\`, never deleting anything (`/MIR` is never used) — and
+replaces the exe last via a copy-aside-and-rename so a deploy killed mid-copy never leaves a
+half-written executable under the name you launch. It refuses to run at all, before touching
+anything, if any running process's image path is inside the target directory.
+
+Parameters:
+
+- `-TargetDir` — where to deploy. Defaults to `C:\Self Apps\ChopItUp`.
+- `-StagingDir` — where to publish. Defaults to a fresh temp directory; the script always prints
+  the path it used.
+- `-SkipPublish` — reuse an existing `-StagingDir` instead of publishing again.
+- `-RestoreFrom <backupDir>` — roll back to a previous install from one of the backup directories
+  this script wrote, under the same guards (process check, `data\` exclusion, atomic exe rename).
+
+The script never deletes a backup directory — only reports how many now sit beside the target.
+Prune old ones (`C:\Self Apps\ChopItUp.backup-YYYYMMDD-HHmmss`) by hand once you're confident you
+won't need to roll back to them.
