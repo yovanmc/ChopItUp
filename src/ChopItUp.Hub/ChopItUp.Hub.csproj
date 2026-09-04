@@ -16,6 +16,27 @@
     <InternalsVisibleTo Include="ChopItUp.Hub.Tests" />
   </ItemGroup>
 
+  <!-- Release shape (M4). Self-contained so C:\Self Apps\ChopItUp keeps working across SDK changes,
+       single-file so the folder holds an exe rather than a pile of DLLs, and
+       IncludeNativeLibrariesForSelfExtract so SQLite's e_sqlite3.dll travels inside the exe.
+
+       IncludeAllContentForSelfExtract is deliberately NOT set: it moves AppContext.BaseDirectory to
+       the temp extraction directory, and both the data folder (HubOptions) and the web root
+       (SpaFiles) are resolved from BaseDirectory — so setting it would silently relocate the
+       owner's database into a folder Windows may clean up. That is the whole trap this milestone
+       exists to not fall into.
+
+       PublishTrimmed is NOT set either: the MCP SDK, SignalR and System.Text.Json all resolve types
+       reflectively, and a trimmed build fails at runtime in ways no build gate catches. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
   <!-- The Web SDK's default content glob claims client\*.json. Those are build inputs for npm, not
        files to ship beside the exe; only what Vite emits into wwwroot is. -->
   <ItemGroup>

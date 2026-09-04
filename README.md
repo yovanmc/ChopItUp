@@ -23,3 +23,18 @@ Claude Code is deliberately not configured: it would have to join as the same `c
 To revoke a token: `dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude` (with the hub stopped). The old token stops working at the next hub start; re-run `--print-config` and re-paste that host's file.
 
 Recovery: if a data directory is ever in a bad state, stop the hub and delete `chopitup.db*`, `tokens.json` and `hub.lock`. Consequence: room history is gone and every host must be given its new token.
+
+## Release
+
+    dotnet publish src\ChopItUp.Hub\ChopItUp.Hub.csproj -c Release -o <dir>
+
+Never add `--no-restore` to that command. `RuntimeIdentifier` is set in the `Release`
+`PropertyGroup`, so the RID-specific assets it needs are not in the `Debug` restore the repo
+normally runs; `--no-restore` turns that into a confusing mid-publish asset error rather than a
+restore.
+
+The output folder holds `ChopItUp.Hub.exe` — self-contained and single-file, so no .NET runtime
+needs to be installed to run it — plus a `wwwroot\` folder beside it (a single-file bundle can't
+serve static files from inside itself, so the web client ships alongside the exe instead) and a
+`data\` folder that the exe creates on first run. That is the whole release folder: exe, `wwwroot\`,
+`data\`.
