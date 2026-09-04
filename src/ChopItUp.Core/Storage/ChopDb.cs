@@ -41,8 +41,10 @@ public sealed class ChopDb
     /// processes call it on the same path: the ladder runs under a per-path named mutex, and every
     /// step commits its DDL, its seed rows AND its <c>user_version</c> stamp in ONE transaction, so an
     /// interrupted start can never leave tables without a stamp. A database that is already stamped at
-    /// a lower version is backed up first — a torn v0 (tables present, no stamp) is repaired in place
-    /// instead, because there is nothing there yet worth saving.</summary>
+    /// a lower version is backed up first. Version 0 with no messages is repaired in place instead —
+    /// there is nothing there yet worth saving — but version 0 that still holds messages is backed up
+    /// like any other, because a <c>.dump</c>-rebuilt or hand-repaired database loses its stamp and
+    /// keeps its data.</summary>
     public void EnsureDatabase()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(DatabasePath))!);
