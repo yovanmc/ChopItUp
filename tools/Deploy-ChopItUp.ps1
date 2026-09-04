@@ -270,7 +270,7 @@ try {
         unreadable_process_paths = $unreadable2
     }
     $json = $result | ConvertTo-Json -Compress
-    Write-Host "DEPLOY_RESULT: $json"
+    Write-Output "DEPLOY_RESULT: $json"
     exit 0
 }
 catch {
