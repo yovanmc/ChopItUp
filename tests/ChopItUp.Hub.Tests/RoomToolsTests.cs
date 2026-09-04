@@ -13,6 +13,7 @@ public sealed class RoomToolsTests : IAsyncLifetime
     {
         await using var client = await _host.ClientFor("claude");
         var tools = await client.ListToolsAsync();
+        Assert.Equal(4, tools.Count);
         Assert.Equal(new[] { "list_rooms", "post_message", "read_messages", "wait_for_message" }, tools.Select(t => t.Name).OrderBy(n => n));
         Assert.All(tools, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
 
@@ -147,5 +148,109 @@ public sealed class RoomToolsTests : IAsyncLifetime
         Assert.Equal("general", general.GetProperty("id").GetString());
         Assert.Equal(1, general.GetProperty("message_count").GetInt32());
         Assert.Equal(0, general.GetProperty("unread_count").GetInt32());
+    }
+
+    [Fact]
+    public async Task A4_retrying_a_post_with_the_same_client_key_stores_one_message()
+    {
+        await using var claude = await _host.ClientFor("claude");
+
+        var first = HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "the only message", ["client_key"] = "retry-1" }));
+        Assert.False(first.TryGetProperty("deduplicated", out _));   // A5's shape survives on the first attempt
+
+        var retry = HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "the only message", ["client_key"] = "retry-1" }));
+        Assert.True(retry.GetProperty("deduplicated").GetBoolean());
+        Assert.Equal(first.GetProperty("id").GetInt64(), retry.GetProperty("id").GetInt64());
+        Assert.Equal("the only message", retry.GetProperty("body").GetString());
+
+        var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
+        Assert.Equal(1, rooms.GetProperty("rooms")[0].GetProperty("message_count").GetInt32());
+    }
+
+    [Fact]
+    public async Task A5_a_post_without_a_client_key_has_no_deduplicated_field()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        var posted = HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "plain post" }));
+        Assert.False(posted.TryGetProperty("deduplicated", out _));
+        Assert.Equal(
+            new[] { "author_id", "body", "created_at", "id", "room_id" },
+            posted.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Client_key_is_advertised_on_the_post_message_schema()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        var post = (await claude.ListToolsAsync()).Single(t => t.Name == "post_message");
+        Assert.True(post.JsonSchema.GetProperty("properties").TryGetProperty("client_key", out _));
+        if (post.JsonSchema.TryGetProperty("required", out var required))
+            Assert.DoesNotContain("client_key", required.EnumerateArray().Select(e => e.GetString()));
+    }
+
+    [Fact]
+    public async Task A9_health_reports_whether_hosts_are_actually_sending_keys()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "keyed", ["client_key"] = "k-1" });
+        await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "keyless one" });
+        await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "keyless two" });
+
+        var health = System.Text.Json.JsonDocument.Parse(await _host.Client.GetStringAsync("/health")).RootElement;
+        var row = health.GetProperty("key_usage").EnumerateArray().Single(r => r.GetProperty("author").GetString() == "claude");
+        Assert.Equal(1, row.GetProperty("keyed").GetInt64());
+        Assert.Equal(2, row.GetProperty("keyless").GetInt64());
+    }
+
+    [Fact]
+    public async Task A_deduplicated_post_does_not_wake_a_waiter()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
+
+        await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "original", ["client_key"] = "dup-1" });
+        await codex.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" });   // codex is now caught up
+
+        var waiting = codex.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["timeout_seconds"] = 3 }).AsTask();
+        await Task.Delay(300);
+        Assert.False(waiting.IsCompleted);
+
+        var duplicate = HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "text that is thrown away", ["client_key"] = "dup-1" }));
+        Assert.True(duplicate.GetProperty("deduplicated").GetBoolean());
+
+        var timedOut = HubTestHost.Json(await waiting.WaitAsync(TimeSpan.FromSeconds(20)));
+        Assert.Equal(0, timedOut.GetProperty("messages").GetArrayLength());
+
+        // ...and the signal still works, so the assertion above cannot pass by the wait being broken.
+        var second = codex.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["timeout_seconds"] = 20 }).AsTask();
+        await Task.Delay(300);
+        Assert.False(second.IsCompleted);
+        await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "genuinely new", ["client_key"] = "fresh-2" });
+        var woke = HubTestHost.Json(await second.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal("genuinely new", woke.GetProperty("messages")[0].GetProperty("body").GetString());
+    }
+
+    [Fact]
+    public async Task Every_read_reply_reports_the_cursor()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        await using var codex = await _host.ClientFor("codex");
+        foreach (var body in new[] { "one", "two", "three" })
+            await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = body });
+
+        var implicitRead = HubTestHost.Json(await codex.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general" }));
+        Assert.Equal(3, implicitRead.GetProperty("messages").GetArrayLength());
+        Assert.Equal(3, implicitRead.GetProperty("next_after_id").GetInt64());
+        Assert.Equal(3, implicitRead.GetProperty("cursor").GetInt64());
+
+        // The explicit form is a peek: it reports the same stored cursor, untouched.
+        var peek = HubTestHost.Json(await codex.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
+        Assert.Equal(3, peek.GetProperty("next_after_id").GetInt64());
+        Assert.Equal(3, peek.GetProperty("cursor").GetInt64());
+
+        // A timeout with nothing to show is exactly when a model needs to know where it stands.
+        var timedOut = HubTestHost.Json(await codex.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["timeout_seconds"] = 1 }));
+        Assert.Equal(0, timedOut.GetProperty("messages").GetArrayLength());
+        Assert.Equal(3, timedOut.GetProperty("cursor").GetInt64());
     }
 }

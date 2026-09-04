@@ -128,6 +128,22 @@ public sealed class MessageStore(ChopDb db)
             : null;
     }
 
+    /// <summary>How many messages were posted with and without a retry key, per author. The only
+    /// evidence available that the hosts are using the mechanism the retry-safety claim rests on.</summary>
+    public IReadOnlyList<(string AuthorId, long Keyed, long Keyless)> KeyUsage()
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT author_id, SUM(client_key IS NOT NULL), SUM(client_key IS NULL)
+            FROM messages GROUP BY author_id ORDER BY author_id
+            """;
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<(string AuthorId, long Keyed, long Keyless)>();
+        while (reader.Read()) rows.Add((reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2)));
+        return rows;
+    }
+
     public MessagePage Read(string roomId, long afterId, int limit)
     {
         limit = Math.Clamp(limit, 1, MaxLimit);

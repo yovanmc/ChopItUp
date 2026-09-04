@@ -27,14 +27,19 @@ public static class HubHost
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);
             builder.Services.AddHttpContextAccessor();
-            builder.Services.AddMcpServer()
+            builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions)
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
                 .WithTools<RoomTools>();
 
             var app = builder.Build();
             app.Lifetime.ApplicationStopped.Register(hubLock.Dispose);
             app.UseMiddleware<BearerTokenMiddleware>();
-            app.MapGet("/health", (ChopDb d) => Results.Json(new { ok = true, schema = d.GetSchemaVersion() }));
+            app.MapGet("/health", (ChopDb d, MessageStore s) => Results.Json(new
+            {
+                ok = true,
+                schema = d.GetSchemaVersion(),
+                key_usage = s.KeyUsage().Select(r => new { author = r.AuthorId, keyed = r.Keyed, keyless = r.Keyless }),
+            }));
             app.MapMcp("/mcp");
             return app;
         }

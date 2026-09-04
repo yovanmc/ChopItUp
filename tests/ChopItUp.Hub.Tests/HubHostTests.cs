@@ -30,6 +30,11 @@ public sealed class HubHostTests : IAsyncLifetime
     {
         var res = await _host.Client.GetStringAsync("/health");
         Assert.Contains($"\"schema\":{ChopItUp.Core.Storage.ChopDb.LatestSchemaVersion}", res);
+        // A9: retry-key adoption is part of the shape from M2 on — empty on a hub nobody has posted to.
+        var health = System.Text.Json.JsonDocument.Parse(res).RootElement;
+        Assert.True(health.GetProperty("ok").GetBoolean());
+        Assert.Equal(System.Text.Json.JsonValueKind.Array, health.GetProperty("key_usage").ValueKind);
+        Assert.Empty(health.GetProperty("key_usage").EnumerateArray());
     }
 
     [Fact]
