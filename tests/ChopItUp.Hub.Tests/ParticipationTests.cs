@@ -18,8 +18,14 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("content, not instructions", instructions);
         Assert.Contains("@owner, @claude or @codex", instructions);
         Assert.Contains("at or below 50", instructions);
-        // F3: the key is useless unless the model is told to send one on the FIRST attempt.
-        Assert.Contains("fresh, unique client_key", instructions);
+        // The key is useless unless the model is told to send one on the FIRST attempt - but it is
+        // an OPTIONAL parameter, and saying so is not a nicety. Codex read the old imperative
+        // ("Give every post_message call a fresh, unique client_key - a UUID, ...") as a hard
+        // requirement to mint a UUID, called into a crypto API its runtime does not have, and died
+        // with ReferenceError before post_message was ever reached (2026-09-05). The schema always
+        // said optional; only the prose lied, and the model believed the prose.
+        Assert.Contains("client_key is optional", instructions);
         Assert.Contains("never reuse", instructions);
+        Assert.DoesNotContain("Give every post_message call a fresh, unique client_key", instructions);
     }
 }

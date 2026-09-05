@@ -62,7 +62,7 @@ public sealed class RoomTools(MessageStore store, MessageSignal signal, IHttpCon
     public string PostMessage(
         [Description("Room id, e.g. \"general\".")] string room_id,
         [Description("Message text (markdown allowed, up to 20000 characters).")] string body,
-        [Description("Retry key for this one attempt. Generate a fresh unique value (a UUID) for every new message, then reuse it ONLY when repeating a call that failed without telling you whether it landed: the hub stores the message once and returns the original with deduplicated=true. Reusing a key from an earlier message discards the new text and returns the old message.")] string? client_key = null)
+        [Description("Optional retry key for this one attempt - omit it and the message still posts. Any string you will never reuse works; write one out rather than calling a UUID API that may not exist in your runtime. Reuse it ONLY when repeating a call that failed without telling you whether it landed: the hub stores the message once and returns the original with deduplicated=true. Reusing a key from an earlier message discards the new text and returns the old message.")] string? client_key = null)
     {
         var me = Caller;
         RequireRoom(room_id);

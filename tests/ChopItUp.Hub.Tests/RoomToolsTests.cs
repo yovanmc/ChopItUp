@@ -183,9 +183,12 @@ public sealed class RoomToolsTests : IAsyncLifetime
     {
         await using var claude = await _host.ClientFor("claude");
         var post = (await claude.ListToolsAsync()).Single(t => t.Name == "post_message");
-        Assert.True(post.JsonSchema.GetProperty("properties").TryGetProperty("client_key", out _));
+        Assert.True(post.JsonSchema.GetProperty("properties").TryGetProperty("client_key", out var key));
         if (post.JsonSchema.TryGetProperty("required", out var required))
             Assert.DoesNotContain("client_key", required.EnumerateArray().Select(e => e.GetString()));
+        // Being absent from "required" is not enough: a host reads the description, not the schema
+        // keyword, so the description has to say it out loud.
+        Assert.Contains("optional", key.GetProperty("description").GetString()!, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
