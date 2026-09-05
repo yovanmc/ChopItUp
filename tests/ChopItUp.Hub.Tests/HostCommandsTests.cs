@@ -154,8 +154,9 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(0, exit);
 
         var folder = ConfigFolder(dir);
-        // Three files, not four: there is deliberately no Claude Code artifact, because it would
-        // have to reuse the 'claude' token and two hosts on one identity race one read cursor.
+        // Three files, not four: no separate Claude Code artifact is generated. Claude Code joins
+        // as 'claude' by pasting the Claude Desktop entry - owner ruling 2026-09-04, who prefers
+        // one Claude identity and accepts that the two hosts share a read cursor.
         Assert.Equal(
             new[] { "README.md", "claude-desktop.json", "codex-config.toml" },
             Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
@@ -164,9 +165,17 @@ public sealed class HostCommandsTests : IDisposable
 
         using var desktop = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "claude-desktop.json")));
         var server = desktop.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
-        Assert.Equal("npx", server.GetProperty("command").GetString());
+        // Windows ships no npx.exe - only npx, npx.cmd and npx.ps1 - and Claude Desktop spawns a
+        // stdio server with a direct process create rather than through a shell, so "command":
+        // "npx" resolves to nothing and the bridge dies before mcp-remote loads. Observed on a
+        // stock Node install 2026-09-04: zero /mcp traffic until the entry was rewritten to this
+        // form, then the bridge came up on the next launch. Windows is the only platform this app
+        // targets, so the shell form is the default, not a documented fallback.
+        Assert.Equal("cmd", server.GetProperty("command").GetString());
         Assert.Equal("Bearer " + tokens["claude"], server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
         var args = server.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
+        Assert.Equal("/c", args[0]);
+        Assert.Equal("npx", args[1]);
         Assert.Contains("--allow-http", args);
         Assert.Contains(url, args);
         Assert.Contains("Authorization:${CHOPITUP_TOKEN}", args);   // header value via env: a space in an arg is mangled on Windows
@@ -178,7 +187,10 @@ public sealed class HostCommandsTests : IDisposable
         // Single braces, not the doubled ones the interpolated raw string is written with.
         Assert.Contains($"http_headers = {{ Authorization = \"Bearer {tokens["codex"]}\" }}", codex);
         Assert.Contains("bearer_token_env_var = \"CHOPITUP_CODEX_TOKEN\"", codex);
-        Assert.Contains("# args = [\"-y\", \"mcp-remote@", codex);   // the commented bridge fallback (grill note R2)
+        // The commented bridge fallback carries the same cmd /c shape as the Claude Desktop entry,
+        // for the same reason: there is no npx.exe to spawn directly on Windows.
+        Assert.Contains("# command = \"cmd\"", codex);
+        Assert.Contains("# args = [\"/c\", \"npx\", \"-y\", \"mcp-remote@", codex);
         Assert.Contains("\"Authorization:${CHOPITUP_TOKEN}\"", codex);
         Assert.DoesNotContain(tokens["claude"], codex);
         Assert.DoesNotContain(tokens["owner"], codex);
@@ -189,7 +201,11 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains(@"%APPDATA%\Claude\claude_desktop_config.json", readme);
         Assert.Contains(@"%USERPROFILE%\.codex\config.toml", readme);
         Assert.Contains("npm i -g mcp-remote@", readme);
-        Assert.Contains("Claude Code is not configured here", readme);
+        // The README must say WHY the command is cmd /c, or the next person "simplifies" it
+        // back to a bare npx and the bridge dies silently again.
+        Assert.Contains("cmd /c", readme);
+        Assert.Contains("npx.exe", readme);
+        Assert.Contains("Claude Code gets no file of its own", readme);
         Assert.Contains("only as private as", readme);
         Assert.Contains("## Restoring a backup", readme);
         // A restore that leaves the WAL behind replays the very writes it was meant to undo.
