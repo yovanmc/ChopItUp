@@ -4,6 +4,7 @@ using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
+using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Hub.Tests;
 
@@ -28,11 +29,56 @@ public sealed class HostCommandsTests : IDisposable
             if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
     }
 
+    /// <summary>What "start the hub once" leaves behind: a v3 database and a full tokens.json.</summary>
+    private static void StartedOnce(string dir)
+    {
+        new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
+        TokenStore.Load(dir, Roster);
+    }
+
+    /// <summary>v1 shape plus exactly what ApplyV2 adds (M8 Task 1's fixture, duplicated here with a
+    /// parameterised path: a Hub test cannot reach Core's private test helper, and the fixture must
+    /// stay raw SQL in both places — LESSONS M2).</summary>
+    private static void WriteRawV2(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
+        conn.Open();
+        using (var wal = conn.CreateCommand())
+        {
+            wal.CommandText = "PRAGMA journal_mode=WAL;";
+            wal.ExecuteNonQuery();
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE participants (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, kind TEXT NOT NULL);
+            CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id),
+                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL,
+                client_key TEXT);
+            CREATE INDEX ix_messages_room_id ON messages(room_id, id);
+            CREATE UNIQUE INDEX ux_messages_client_key ON messages(room_id, author_id, client_key) WHERE client_key IS NOT NULL;
+            CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
+                room_id TEXT NOT NULL REFERENCES rooms(id), last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (participant_id, room_id));
+            INSERT INTO participants (id, display_name, kind) VALUES ('owner','Owner','human'),('claude','Claude','model'),('codex','Codex','model');
+            INSERT INTO rooms (id, name, created_at) VALUES ('general','General','2026-09-01T10:00:00.000+00:00');
+            INSERT INTO messages (id, room_id, author_id, body, created_at, client_key) VALUES
+                (1,'general','owner','first v2 message','2026-09-01T10:01:00.000+00:00',NULL),
+                (2,'general','codex','second v2 message','2026-09-01T10:02:00.000+00:00','k-1');
+            INSERT INTO read_cursors (participant_id, room_id, last_read_id) VALUES ('claude','general',2);
+            PRAGMA user_version = 2;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
     [Fact]
     public void A6_rotate_replaces_one_token_and_leaves_the_others_alone()
     {
         var dir = NewDir();
-        var before = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value);
+        StartedOnce(dir);
+        var before = TokenStore.ReadExisting(dir, Roster);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -53,7 +99,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A6_rotate_with_an_unknown_participant_changes_nothing_and_exits_nonzero()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        StartedOnce(dir);
         var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
 
         var error = new StringWriter();
@@ -150,7 +196,8 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_writes_all_three_files_with_the_live_port_and_tokens()
     {
         var dir = NewDir();
-        var tokens = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        StartedOnce(dir);
+        var tokens = TokenStore.ReadExisting(dir, Roster);
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -158,7 +205,8 @@ public sealed class HostCommandsTests : IDisposable
         var folder = ConfigFolder(dir);
         // Three files, not four: no separate Claude Code artifact is generated. Claude Code joins
         // as 'claude' by pasting the Claude Desktop entry - owner ruling 2026-09-04, who prefers
-        // one Claude identity and accepts that the two hosts share a read cursor.
+        // one Claude identity and accepts that the two hosts share a read cursor. Spawn rows (M8)
+        // add no files either: the hub is their client.
         Assert.Equal(
             new[] { "README.md", "claude-desktop.json", "codex-config.toml" },
             Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
@@ -220,7 +268,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_prefers_the_port_the_hub_actually_bound()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        StartedOnce(dir);
         File.WriteAllText(Path.Combine(dir, "hub.port"), "9000");
 
         var output = new StringWriter();
@@ -243,7 +291,8 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_prints_the_folder_but_never_a_token()
     {
         var dir = NewDir();
-        var tokens = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        StartedOnce(dir);
+        var tokens = TokenStore.ReadExisting(dir, Roster);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -258,7 +307,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_is_rerunnable()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        StartedOnce(dir);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
         var first = Directory.GetFiles(ConfigFolder(dir)).ToDictionary(f => f, File.ReadAllBytes, StringComparer.Ordinal);
@@ -286,7 +335,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_does_not_mint_a_missing_token()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        StartedOnce(dir);
         var path = Path.Combine(dir, TokenStore.FileName);
         var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))!;
         tokens.Remove("codex");
@@ -307,7 +356,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var parent = NewDir();
         var dir = Path.Combine(parent, "data");
-        TokenStore.Load(dir, Roster);
+        StartedOnce(dir);
         var before = Snapshot(parent);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
@@ -318,6 +367,92 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains(Path.Combine(inside, "README.md"), appeared);
         Assert.Contains(Path.Combine(inside, "claude-desktop.json"), appeared);
         Assert.Contains(Path.Combine(inside, "codex-config.toml"), appeared);
+    }
+
+    [Fact]
+    public void M8_A8_print_config_against_a_v2_database_writes_nothing_and_says_start_the_hub()
+    {
+        var dir = NewDir();
+        TokenStore.Load(dir, ["owner", "claude", "codex"]);
+        WriteRawV2(Path.Combine(dir, "chopitup.db"));   // what the previous build left behind
+        var names = Snapshot(dir);
+        var dbBytes = File.ReadAllBytes(Path.Combine(dir, "chopitup.db"));   // names alone cannot see a header rewrite
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains("start the hub once", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(names, Snapshot(dir));
+        Assert.Equal(dbBytes, File.ReadAllBytes(Path.Combine(dir, "chopitup.db")));
+    }
+
+    [Fact]
+    public void M8_A8_print_config_against_a_newer_database_exits_4_without_templating_it()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(dir, "chopitup.db"), Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA user_version = 99;";
+            cmd.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains("newer build", error.ToString());
+        Assert.False(Directory.Exists(ConfigFolder(dir)));
+    }
+
+    [Fact]
+    public void M8_A8_rotate_against_a_missing_database_writes_nothing_and_exits_4()
+    {
+        var dir = NewDir();
+        TokenStore.Load(dir, Roster);
+        var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "opus"), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains("start the hub once", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(before, File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName)));
+    }
+
+    [Fact]
+    public void M8_A3_A5_print_config_uses_the_app_backed_rows_and_lists_the_whole_roster()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+        var tokens = TokenStore.ReadExisting(dir, Roster);
+
+        Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
+
+        var folder = ConfigFolder(dir);
+        var claude = File.ReadAllText(Path.Combine(folder, "claude-desktop.json"));
+        var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
+        var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
+        Assert.Contains(tokens["claude"], claude);
+        Assert.Contains(tokens["codex"], codex);
+        foreach (var p in ChopDb.SeedRoster)
+        {
+            Assert.Contains($"`{p.Id}`", readme);
+            Assert.DoesNotContain(tokens[p.Id], readme);   // the README never carries a token
+        }
+        Assert.Contains("usage credits", readme);
+        Assert.Contains("no file", readme);
+
+        // Rotating a spawn row's token changes only that key.
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "gpt-5.5"), new StringWriter(), new StringWriter());
+        Assert.Equal(0, exit);
+        var after = TokenStore.ReadExisting(dir, Roster);
+        Assert.NotEqual(tokens["gpt-5.5"], after["gpt-5.5"]);
+        foreach (var id in Roster.Where(id => id != "gpt-5.5")) Assert.Equal(tokens[id], after[id]);
     }
 
     [Fact]
