@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using ChopItUp.Core.Storage;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace ChopItUp.Hub.Tests;
@@ -211,5 +212,20 @@ public sealed class ChatApiTests : IAsyncLifetime
     {
         var response = await _host.Client.GetAsync("api/rooms/nope/export");
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task M8_A6_api_participants_returns_the_roster_in_camel_case()
+    {
+        var response = await _host.Client.GetAsync("/api/participants");
+        response.EnsureSuccessStatusCode();
+        var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.EnumerateArray().ToArray();
+        Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), rows.Select(r => r.GetProperty("id").GetString()));
+        var owner = rows.Single(r => r.GetProperty("id").GetString() == "owner");
+        Assert.Equal("human", owner.GetProperty("kind").GetString());
+        Assert.Equal("Owner", owner.GetProperty("displayName").GetString());
+        var sol = rows.Single(r => r.GetProperty("id").GetString() == "gpt-5.6-sol");
+        Assert.Equal("codex", sol.GetProperty("host").GetString());
+        Assert.Equal("gpt-5.6-sol", sol.GetProperty("model").GetString());
     }
 }
