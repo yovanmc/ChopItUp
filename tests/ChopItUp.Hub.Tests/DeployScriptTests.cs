@@ -337,6 +337,9 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         string stagingV2 = CopyStaging();
         byte[] v2ExeBytes = DeployScriptFixture.KnownBytes(_fixture.StagingExeBytes.Length, seed: 999);
         File.WriteAllBytes(Path.Combine(stagingV2, "ChopItUp.Hub.exe"), v2ExeBytes);
+        File.WriteAllBytes(
+            Path.Combine(stagingV2, "wwwroot", "assets", "index-v2-only.js"),
+            DeployScriptFixture.KnownBytes(1024, seed: 888));
         try
         {
             var deployV1 = RunDeploy(target, _fixture.StagingDir);
@@ -352,12 +355,15 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             using var deployV2Result = ParseDeployResult(deployV2.Stdout);
             string backupDir = deployV2Result.RootElement.GetProperty("backup_dir").GetString()!;
             Assert.Equal(v1ExeBytes, File.ReadAllBytes(Path.Combine(backupDir, "ChopItUp.Hub.exe")));
+            Assert.True(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-v2-only.js")));
 
             var restore = RunRestore(target, backupDir);
             Assert.Equal(0, restore.ExitCode);
 
             Assert.Equal(v1ExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
             Assert.Equal(dbBytes, File.ReadAllBytes(Path.Combine(target, "data", "chopitup.db")));
+            Assert.False(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-v2-only.js")));
+            Assert.True(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-synthetic.js")));
         }
         finally
         {
