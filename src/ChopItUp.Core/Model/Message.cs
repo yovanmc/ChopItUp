@@ -16,3 +16,10 @@ public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long
 /// given. It exists so a caller whose previous response was lost can tell that its cursor has run
 /// ahead of what it actually processed.</summary>
 public sealed record MessagePage(IReadOnlyList<Message> Messages, long NextAfterId, bool HasMore, long Cursor = 0);
+
+/// <summary>One roster row. <see cref="Host"/> is which program speaks for this row: <c>human</c>,
+/// <c>claude</c> (Claude Desktop / Claude Code) or <c>codex</c>. <see cref="Model"/> is null for the
+/// human and for the app-backed rows (whatever model the app has selected), and the model name the
+/// host takes on its command line for a spawn row (M5). <see cref="Note"/> is owner-facing text
+/// shown beside the row in the generated README, e.g. the usage-credit warning on <c>fable</c>.</summary>
+public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note);

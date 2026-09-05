@@ -513,7 +513,7 @@ Compile fails (no such overloads). Show it.
 
   Line 50 `builder.Services.AddSingleton<MessageSignal>();` and line 51 `builder.Services.AddSingleton(tokens);` stay exactly where they are, after the block. Task 4 will change the `ServerInstructions` line; leave it for now.
 
-Reconcile `tests/ChopItUp.Hub.Tests/HubHostTests.cs:22`: `TokenStore.Load(_dir)` → `TokenStore.Load(_dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray())` (lines 23–24 were already reconciled in Task 1). That is every `TokenStore.Load(` call site in the solution: `HubHost.cs:46`, `HubTestHost.cs:32`, `HubHostTests.cs:22`, and the ten in `HostCommandsTests.cs`.
+Reconcile `tests/ChopItUp.Hub.Tests/HubHostTests.cs:22`: `TokenStore.Load(_dir)` → `TokenStore.Load(_dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray())` (lines 23–24: `Assert.Equal(3, tokens.Count)` and `Assert.Equal(3, tokens.Tokens.Values.Distinct().Count())` → `ChopDb.SeedRoster.Count` in both — swept HERE, not in Task 1: the Task 1 builder measured that before `TokenStore` reads the roster the count is still 3, so the sweep only holds from this task). That is every `TokenStore.Load(` call site in the solution: `HubHost.cs:46`, `HubTestHost.cs:32`, `HubHostTests.cs:22`, and the ten in `HostCommandsTests.cs`.
 
 `tests/ChopItUp.Hub.Tests/HubTestHost.cs` line 32: `Tokens = TokenStore.Load(dir);` → `Tokens = TokenStore.Load(dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());` with `using ChopItUp.Core.Storage;`. (The hub has already minted every token by the time the constructor runs, so this `Load` mints nothing; passing the seed ids keeps the test host honest if the seed grows.)
 

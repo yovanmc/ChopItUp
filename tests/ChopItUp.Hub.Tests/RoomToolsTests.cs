@@ -1,3 +1,6 @@
+using System.Text.Json;
+using ChopItUp.Core.Storage;
+
 namespace ChopItUp.Hub.Tests;
 
 public sealed class RoomToolsTests : IAsyncLifetime
@@ -255,5 +258,33 @@ public sealed class RoomToolsTests : IAsyncLifetime
         var timedOut = HubTestHost.Json(await codex.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["timeout_seconds"] = 1 }));
         Assert.Equal(0, timedOut.GetProperty("messages").GetArrayLength());
         Assert.Equal(3, timedOut.GetProperty("cursor").GetInt64());
+    }
+
+    [Fact]
+    public async Task M8_A4_list_rooms_returns_the_roster()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
+        var participants = rooms.GetProperty("participants").EnumerateArray().ToArray();
+        Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), participants.Select(p => p.GetProperty("id").GetString()));
+        var fable = participants.Single(p => p.GetProperty("id").GetString() == "fable");
+        Assert.Equal("claude", fable.GetProperty("host").GetString());
+        Assert.Equal("fable", fable.GetProperty("model").GetString());
+        Assert.Equal("model", fable.GetProperty("kind").GetString());
+        Assert.Equal("Fable", fable.GetProperty("display_name").GetString());
+        // A4 says every row carries `model`: for an app-backed row it is present and null, not absent.
+        var claudeRow = participants.Single(p => p.GetProperty("id").GetString() == "claude");
+        Assert.True(claudeRow.TryGetProperty("model", out var model));
+        Assert.Equal(JsonValueKind.Null, model.ValueKind);
+    }
+
+    [Fact]
+    public async Task M8_A2_a_spawn_row_can_authenticate_and_post_today()
+    {
+        // The row is inert until M5 spawns it, but its token is real: a hand-run headless client
+        // holding it must be a first-class participant already.
+        await using var opus = await _host.ClientFor("opus");
+        var posted = HubTestHost.Json(await opus.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hello from opus" }));
+        Assert.Equal("opus", posted.GetProperty("author_id").GetString());
     }
 }

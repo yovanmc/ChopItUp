@@ -16,7 +16,9 @@ public sealed class ChopDbTests : IDisposable
 
         Assert.True(File.Exists(DbPath));
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
-        Assert.Equal(new[] { "claude", "codex", "owner" }, Scalar<string>("SELECT group_concat(id, ',') FROM (SELECT id FROM participants ORDER BY id)").Split(','));
+        Assert.Equal(
+            ChopDb.SeedRoster.Select(p => p.Id).OrderBy(id => id, StringComparer.Ordinal).ToArray(),
+            Scalar<string>("SELECT group_concat(id, ',') FROM (SELECT id FROM participants ORDER BY id)").Split(','));
         Assert.Equal("general", Scalar<string>("SELECT id FROM rooms"));
         Assert.Equal(0L, Scalar<long>("SELECT COUNT(*) FROM messages"));
         Assert.EndsWith("+00:00", Scalar<string>("SELECT created_at FROM rooms"));   // one timestamp writer (Timestamps.Stamp), never strftime
@@ -29,7 +31,7 @@ public sealed class ChopDbTests : IDisposable
         db.EnsureDatabase();
         db.EnsureDatabase();
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
-        Assert.Equal(3L, Scalar<long>("SELECT COUNT(*) FROM participants"));
+        Assert.Equal((long)ChopDb.SeedRoster.Count, Scalar<long>("SELECT COUNT(*) FROM participants"));
     }
 
     [Fact]
@@ -47,7 +49,7 @@ public sealed class ChopDbTests : IDisposable
         }
         db.EnsureDatabase();
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
-        Assert.Equal(3L, Scalar<long>("SELECT COUNT(*) FROM participants"));
+        Assert.Equal((long)ChopDb.SeedRoster.Count, Scalar<long>("SELECT COUNT(*) FROM participants"));
         Assert.Equal(1L, Scalar<long>("SELECT COUNT(*) FROM rooms"));
         Assert.Empty(Directory.GetFiles(_dir, "*.bak"));
     }

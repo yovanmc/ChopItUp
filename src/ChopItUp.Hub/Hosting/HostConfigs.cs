@@ -1,11 +1,12 @@
 using System.Text.Json;
+using ChopItUp.Core.Model;
 
 namespace ChopItUp.Hub.Hosting;
 
-/// <summary>Emits ready-to-paste MCP client configurations carrying this hub's port and each host's
-/// real token. Claude Desktop cannot dial a plain-http loopback remote connector, so it goes through
-/// the mcp-remote stdio bridge; Codex reads the same config.toml from the ChatGPT desktop app, the
-/// CLI and the IDE extension, and accepts an http://127.0.0.1 URL directly.
+/// <summary>Emits ready-to-paste MCP client configurations carrying this hub's port and each
+/// app-backed row's real token. Claude Desktop cannot dial a plain-http loopback remote connector,
+/// so it goes through the mcp-remote stdio bridge; Codex reads the same config.toml from the
+/// ChatGPT desktop app, the CLI and the IDE extension, and accepts an http://127.0.0.1 URL directly.
 ///
 /// Everything lands under the gitignored data directory. These files hold live tokens, so they are
 /// never written anywhere else, and <b>never</b> into <c>%APPDATA%\Claude\claude_desktop_config.json</c>
@@ -15,15 +16,53 @@ public static class HostConfigs
     public const string FolderName = "host-configs";
     public const string McpRemoteVersion = "0.8.3";
 
-    public static string Write(string dataDir, int port, IReadOnlyDictionary<string, string> tokens)
+    public static string Write(string dataDir, int port, IReadOnlyDictionary<string, string> tokens, IReadOnlyList<Participant> roster)
     {
         var folder = Path.Combine(dataDir, FolderName);
         Directory.CreateDirectory(folder);
         var url = $"http://127.0.0.1:{port}/mcp";
-        File.WriteAllText(Path.Combine(folder, "claude-desktop.json"), ClaudeDesktop(url, tokens["claude"]));
-        File.WriteAllText(Path.Combine(folder, "codex-config.toml"), Codex(url, tokens["codex"]));
-        File.WriteAllText(Path.Combine(folder, "README.md"), Readme(url, port));
+        // One file per app-backed row: a model row with no model of its own is a window some
+        // program opens on the room (Claude Desktop / Claude Code, the Codex app). Spawn rows
+        // (model set) get no file; the hub itself is their client (M5). At most one app-backed
+        // row per host, by construction of the seed; a second would overwrite the first here.
+        foreach (var row in roster.Where(p => p.Kind == "model" && p.Model is null))
+        {
+            switch (row.Host)
+            {
+                case "claude": File.WriteAllText(Path.Combine(folder, "claude-desktop.json"), ClaudeDesktop(url, tokens[row.Id])); break;
+                case "codex":  File.WriteAllText(Path.Combine(folder, "codex-config.toml"), Codex(url, tokens[row.Id])); break;
+                default: throw new InvalidOperationException($"Participant '{row.Id}' has host '{row.Host}', which has no config template.");
+            }
+        }
+        File.WriteAllText(Path.Combine(folder, "README.md"), Readme(url, port, roster));
         return folder;
+    }
+
+    /// <summary>Owner-facing roster. Never a token: this file is the one in the folder that is safe
+    /// to read aloud.</summary>
+    private static string RosterTable(IReadOnlyList<Participant> roster)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("## Roster");
+        sb.AppendLine();
+        sb.AppendLine("Participants are rows in `chopitup.db` (table `participants`), read once at hub start. A token");
+        sb.AppendLine("exists for every row in `tokens.json`; only app-backed rows get a config file here. Rows with a");
+        sb.AppendLine("model are spawned by the hub itself once spawning ships, so they have no file to paste.");
+        sb.AppendLine();
+        sb.AppendLine("| Id | Host | Model | File | Note |");
+        sb.AppendLine("|----|------|-------|------|------|");
+        foreach (var p in roster)
+        {
+            var file = p.Kind == "human" ? "none (the web UI)"
+                : p.Model is not null ? "no file (hub-spawned)"
+                : p.Host switch { "claude" => "`claude-desktop.json`", "codex" => "`codex-config.toml`", _ => "no template for this host" };
+            sb.AppendLine($"| `{p.Id}` | {p.Host} | {p.Model ?? "—"} | {file} | {p.Note ?? ""} |");
+        }
+        sb.AppendLine();
+        sb.AppendLine("To rotate any row's token: `ChopItUp.Hub --rotate-token <id>` with the hub stopped, then");
+        sb.AppendLine("`--print-config` again. A row added by hand shows up in the web UI and in list_rooms at once,");
+        sb.AppendLine("but gets its token and its line in the participation prompt at the next hub start.");
+        return sb.ToString();
     }
 
     /// <summary>Claude Desktop cannot reach http://localhost as a remote connector, so it spawns
@@ -87,7 +126,7 @@ public static class HostConfigs
     // one (pass 2, MAJOR-2). Claude Code as a host is M5's job and needs its own participant row,
     // which is a schema change, not a config file.
 
-    private static string Readme(string url, int port) => $"""
+    private static string Readme(string url, int port, IReadOnlyList<Participant> roster) => $"""
         # Host configs for Chop It Up
 
         Generated by `ChopItUp.Hub --print-config`. Every file here contains a live token: this
@@ -100,6 +139,8 @@ public static class HostConfigs
         |------|---------------|
         | `claude-desktop.json` | Merge the `mcpServers` entry into `%APPDATA%\Claude\claude_desktop_config.json`, then fully quit and reopen Claude Desktop. |
         | `codex-config.toml` | Append to `%USERPROFILE%\.codex\config.toml`, then restart Codex. |
+
+        {RosterTable(roster)}
 
         Claude Desktop goes through the `mcp-remote` bridge because its remote connectors are dialled
         from Anthropic's cloud and cannot reach a loopback address; that needs Node on PATH (`npx`).
@@ -123,9 +164,9 @@ public static class HostConfigs
         no expiry. If other accounts or unattended processes can read this machine's files, they can
         read these.
 
-        Tokens: `ChopItUp.Hub --rotate-token claude` mints a new one and invalidates the old at the
-        next hub start. It does not print the token — re-run `--print-config` and re-paste that
-        host's file.
+        Tokens: `ChopItUp.Hub --rotate-token <id>` mints a new one for any roster id and invalidates
+        the old at the next hub start. It does not print the token — re-run `--print-config` and
+        re-paste that host's file.
 
         Port {port} is the configured port; if you start the hub with `--port`, regenerate this
         folder so the URLs match.

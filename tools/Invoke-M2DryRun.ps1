@@ -78,7 +78,8 @@ try {
         '--messages', '10000',
         '--rooms', '3',
         '--leave-in-wal', '500',
-        '--fingerprint-out', $beforeFingerprintPath
+        '--fingerprint-out', $beforeFingerprintPath,
+        '--schema-version', '2'
     )
     $corpusProc = Start-Process -FilePath $corpusExe -ArgumentList $corpusArgs -PassThru -Wait -NoNewWindow `
         -RedirectStandardOutput $corpusOutLog -RedirectStandardError $corpusErrLog
@@ -87,7 +88,19 @@ try {
     }
     if (-not (Test-Path $beforeFingerprintPath)) { throw "Corpus builder did not write a fingerprint to '$beforeFingerprintPath'." }
     $beforeFingerprint = Get-Content $beforeFingerprintPath -Raw
-    Add-Check -Name 'corpus.seeded' -Passed $true -Detail "10000 messages, 3 rooms, 500 left in the WAL, at $dataDir"
+    Add-Check -Name 'corpus.seeded' -Passed $true -Detail "10000 messages, 3 rooms, 500 left in the WAL, schema v2, at $dataDir"
+
+    # --- Step 3: a tokens.json from the previous build, so the hub start is an UPGRADE ------------
+    $preTokens = [ordered]@{}
+    foreach ($id in @('owner', 'claude', 'codex')) {
+        $bytes = New-Object byte[] 32
+        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+        $preTokens[$id] = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+        $knownTokens.Add($preTokens[$id])
+    }
+    $preTokensPath = Join-Path $dataDir 'tokens.json'
+    ($preTokens | ConvertTo-Json) | Set-Content -LiteralPath $preTokensPath -Encoding utf8
+    Add-Check -Name 'tokens.pre-existing-written' -Passed (Test-Path $preTokensPath) -Detail '3 keys, previous-build shape'
 
     # --- Step 4: run the REAL hub, launched directly (never dotnet run) ---------------------------
     $hubOutLog = Join-Path $scratch 'hub.out.log'
@@ -129,8 +142,8 @@ try {
 
     # --- Step 5: assertions ------------------------------------------------------------------------
 
-    # /health reports schema 2.
-    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 2) -Detail "schema=$($health.schema)"
+    # /health reports schema 3.
+    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 3) -Detail "schema=$($health.schema)"
 
     # Exactly one .bak exists, sound, correctly versioned, and its fingerprint (including the 500
     # WAL-only rows) equals the pre-migration fingerprint.
@@ -147,7 +160,7 @@ try {
         $bakInspect = Get-Content $bakInspectPath -Raw | ConvertFrom-Json
 
         Add-Check -Name 'backup.quick-check-ok' -Passed ($bakInspect.quick_check -eq 'ok') -Detail "quick_check=$($bakInspect.quick_check)"
-        Add-Check -Name 'backup.stamped-v1' -Passed ($bakInspect.user_version -eq 1) -Detail "user_version=$($bakInspect.user_version)"
+        Add-Check -Name 'backup.stamped-v2' -Passed ($bakInspect.user_version -eq 2) -Detail "user_version=$($bakInspect.user_version)"
 
         $bakFingerprintJson = ($bakInspect.fingerprint | ConvertTo-Json -Depth 10 -Compress)
         $beforeFingerprintCompact = ($beforeFingerprint | ConvertFrom-Json | ConvertTo-Json -Depth 10 -Compress)
@@ -156,7 +169,7 @@ try {
     }
     else {
         Add-Check -Name 'backup.quick-check-ok' -Passed $false -Detail 'skipped: backup.count-is-one failed'
-        Add-Check -Name 'backup.stamped-v1' -Passed $false -Detail 'skipped: backup.count-is-one failed'
+        Add-Check -Name 'backup.stamped-v2' -Passed $false -Detail 'skipped: backup.count-is-one failed'
         Add-Check -Name 'backup.fingerprint-matches-pre-migration' -Passed $false -Detail 'skipped: backup.count-is-one failed'
     }
 
@@ -227,6 +240,16 @@ try {
     foreach ($f in $expectedFiles) { if (-not (Test-Path (Join-Path $hostConfigsDir $f))) { $filesPresent = $false } }
     Add-Check -Name 'print-config.exit-zero' -Passed ($printProc.ExitCode -eq 0) -Detail "exit=$($printProc.ExitCode)"
     Add-Check -Name 'print-config.three-files-written' -Passed $filesPresent -Detail "dir=$hostConfigsDir"
+
+    $readme = Get-Content -LiteralPath (Join-Path $hostConfigsDir 'README.md') -Raw
+    Add-Check -Name 'readme.roster' -Passed (($readme -match '\| `gpt-6-astra` \|') -and ($readme -match '\| `fable` \|')) -Detail 'README lists the spawn rows'
+    $postTokens = Get-Content -LiteralPath (Join-Path $dataDir 'tokens.json') -Raw | ConvertFrom-Json
+    $tokenKeys = @($postTokens.PSObject.Properties).Count
+    Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 12) -Detail "tokens.json keys=$tokenKeys"
+    $preserved = $true
+    foreach ($id in $preTokens.Keys) { if ($postTokens.$id -cne $preTokens[$id]) { $preserved = $false } }
+    Add-Check -Name 'tokens.preserved' -Passed $preserved -Detail 'owner/claude/codex values unchanged across the upgrade'
+    foreach ($p in $postTokens.PSObject.Properties) { if (-not $knownTokens.Contains($p.Value)) { $knownTokens.Add($p.Value) } }
 
     $expectedUrl = "http://127.0.0.1:$port/mcp"
     $urlMatches = $true

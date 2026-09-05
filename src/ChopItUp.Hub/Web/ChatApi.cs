@@ -15,7 +15,7 @@ public static class ChatApi
     /// <summary>A line that opens a new speaker's turn during transcript import: a short label
     /// followed by a colon, e.g. "Claude:", "CODEX:   ", "random Name:". Deliberately permissive —
     /// this only decides where to SPLIT the paste into messages; it never decides who a message is
-    /// authored by (that is always "owner", per D1).</summary>
+    /// authored by (that is always the roster's human row, per D1).</summary>
     private static readonly Regex SpeakerHeader = new(@"^[A-Za-z][\w .'-]{0,39}:", RegexOptions.Compiled);
 
     public static void MapChatApi(this WebApplication app)
@@ -26,10 +26,14 @@ public static class ChatApi
         api.MapPost("/rooms/{roomId}/messages", PostMessage);
         api.MapPost("/rooms/{roomId}/import", PostImport);
         api.MapGet("/rooms/{roomId}/export", GetExport);
+        api.MapGet("/participants", GetParticipants);
     }
 
     private static IResult GetRooms(MessageStore store) =>
         Results.Json(store.ListRooms().Select(MapRoom));
+
+    private static IResult GetParticipants(ParticipantStore participants) =>
+        Results.Json(participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }));
 
     private static IResult GetMessages(string roomId, MessageStore store, long afterId = 0, int limit = MessageStore.DefaultLimit)
     {
@@ -43,33 +47,35 @@ public static class ChatApi
         });
     }
 
-    /// <summary>B3: authored as "owner" and stored through the same <c>MessageStore.Post</c> the MCP
-    /// tools use, so the cursor and broadcast rules cannot drift. No client_key on this surface — a
-    /// browser POST has no story for "was this delivered", unlike an MCP tool call.</summary>
-    private static IResult PostMessage(string roomId, PostBody body, MessageStore store, MessageSignal signal)
+    /// <summary>B3: authored as the roster's one human row and stored through the same
+    /// <c>MessageStore.Post</c> the MCP tools use, so the cursor and broadcast rules cannot drift. No
+    /// client_key on this surface — a browser POST has no story for "was this delivered", unlike an
+    /// MCP tool call.</summary>
+    private static IResult PostMessage(string roomId, PostBody body, MessageStore store, MessageSignal signal, ParticipantStore participants)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Body)) return Results.BadRequest(new { error = "body is empty." });
-        var message = store.Post(roomId, "owner", body.Body);   // 3-arg overload: no client_key, always inserts
+        var message = store.Post(roomId, participants.HumanId(), body.Body);   // 3-arg overload: no client_key, always inserts
         signal.Publish(roomId, message);
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }
 
-    /// <summary>D1, binding: every imported message is authored "owner"; the original speaker label
-    /// (if any) stays as plain text inside the body. A line matching <see cref="SpeakerHeader"/>
-    /// starts a new message; everything before the first such line, or the whole paste when no line
-    /// matches, becomes one message.</summary>
-    private static IResult PostImport(string roomId, ImportBody body, MessageStore store, MessageSignal signal)
+    /// <summary>D1, binding: every imported message is authored as the roster's one human row; the
+    /// original speaker label (if any) stays as plain text inside the body. A line matching
+    /// <see cref="SpeakerHeader"/> starts a new message; everything before the first such line, or the
+    /// whole paste when no line matches, becomes one message.</summary>
+    private static IResult PostImport(string roomId, ImportBody body, MessageStore store, MessageSignal signal, ParticipantStore participants)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Text)) return Results.BadRequest(new { error = "text is empty." });
         var turns = SplitIntoTurns(body.Text);
         if (turns.Count == 0) return Results.BadRequest(new { error = "nothing to import." });
 
+        var humanId = participants.HumanId();
         var posted = new List<Message>(turns.Count);
         foreach (var turn in turns)
         {
-            var message = store.Post(roomId, "owner", turn);   // D1: always "owner", never the label in the text
+            var message = store.Post(roomId, humanId, turn);   // D1: always the human row, never the label in the text
             signal.Publish(roomId, message);
             posted.Add(message);
         }

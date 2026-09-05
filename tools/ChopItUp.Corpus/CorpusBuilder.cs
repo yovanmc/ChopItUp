@@ -39,9 +39,9 @@ public sealed class CorpusHandle(Fingerprint fingerprint, SqliteConnection write
     }
 }
 
-/// <summary>Fabricates a multi-room, multi-participant ChopItUp database in the OLD (v1) on-disk
-/// shape, entirely from raw SQL — never via <c>ChopDb</c>, so it keeps describing v1 even after
-/// ChopDb stops being able to produce one (same reasoning as
+/// <summary>Fabricates a multi-room, multi-participant ChopItUp database in the OLD (v1, or v2 with
+/// `--schema-version 2`) on-disk shape, entirely from raw SQL — never via <c>ChopDb</c>, so it keeps
+/// describing v1 even after ChopDb stops being able to produce one (same reasoning as
 /// <c>ChopItUp.Core.Tests.Storage.SchemaMigrationTests</c>'s fixture). Bodies are a fixed template
 /// plus an index; nothing here resembles a real conversation. Shared by
 /// <c>tools/Invoke-M2DryRun.ps1</c> (as the compiled CLI, see <c>Program.cs</c>) and
@@ -56,11 +56,12 @@ public static class CorpusBuilder
     /// <paramref name="messages"/> total exist only in the write-ahead log (autocheckpoint is
     /// disabled before they are inserted, and a deterministic <c>wal_checkpoint(TRUNCATE)</c> runs
     /// just before that, so the split is exact, not approximate).</summary>
-    public static CorpusHandle Build(string dataDir, int messages, int rooms, int leaveInWal, int? seed = null)
+    public static CorpusHandle Build(string dataDir, int messages, int rooms, int leaveInWal, int? seed = null, int schemaVersion = 1)
     {
         if (messages < 0) throw new ArgumentOutOfRangeException(nameof(messages));
         if (rooms < 1) throw new ArgumentOutOfRangeException(nameof(rooms));
         if (leaveInWal < 0 || leaveInWal > messages) throw new ArgumentOutOfRangeException(nameof(leaveInWal), "leaveInWal must be between 0 and messages.");
+        if (schemaVersion is not (1 or 2)) throw new ArgumentOutOfRangeException(nameof(schemaVersion), "The corpus builder writes v1 or v2.");
 
         Directory.CreateDirectory(dataDir);
         var dbPath = Path.Combine(dataDir, DatabaseFileName);
@@ -79,7 +80,7 @@ public static class CorpusBuilder
         writer.Open();
 
         Exec(writer, "PRAGMA journal_mode=WAL;");
-        CreateSchemaAndSeeds(writer, roomIds);
+        CreateSchemaAndSeeds(writer, roomIds, schemaVersion);
 
         int checkpointed = messages - leaveInWal;
         var baseTime = new DateTimeOffset(2026, 1, 1, 8, 0, 0, TimeSpan.Zero);
@@ -126,26 +127,31 @@ public static class CorpusBuilder
         return (quickCheck, userVersion, ComputeFingerprint(conn));
     }
 
-    private static void CreateSchemaAndSeeds(SqliteConnection conn, string[] roomIds)
+    private static void CreateSchemaAndSeeds(SqliteConnection conn, string[] roomIds, int schemaVersion)
     {
         var roomValues = string.Join(",\n                ",
             roomIds.Select(r => $"('{r}', '{RoomName(r)}', '{Stamp(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero))}')"));
+
+        var clientKeyColumn = schemaVersion == 2 ? ", client_key TEXT" : "";
+        var clientKeyIndex = schemaVersion == 2
+            ? "CREATE UNIQUE INDEX ux_messages_client_key ON messages(room_id, author_id, client_key) WHERE client_key IS NOT NULL;\n            "
+            : "";
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""
             CREATE TABLE participants (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, kind TEXT NOT NULL);
             CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
             CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id),
-                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL);
+                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL{clientKeyColumn});
             CREATE INDEX ix_messages_room_id ON messages(room_id, id);
-            CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
+            {clientKeyIndex}CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
                 room_id TEXT NOT NULL REFERENCES rooms(id), last_read_id INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (participant_id, room_id));
             INSERT INTO participants (id, display_name, kind) VALUES
                 ('owner','Owner','human'),('claude','Claude','model'),('codex','Codex','model');
             INSERT INTO rooms (id, name, created_at) VALUES
                 {roomValues};
-            PRAGMA user_version = 1;
+            PRAGMA user_version = {schemaVersion};
             """;
         cmd.ExecuteNonQuery();
     }

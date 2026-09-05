@@ -1,3 +1,4 @@
+using ChopItUp.Core.Model;
 using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Storage;
@@ -6,7 +7,27 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 2;
+    public const int LatestSchemaVersion = 3;
+
+    /// <summary>The roster a fresh database starts with, in display order. Ids of spawn rows are the
+    /// model names their host accepts on the command line, so M5 reads <c>Model</c> straight off the
+    /// row (grill D14, F7, F8). Existing ids owner/claude/codex are kept: renaming them would rewrite
+    /// every message's author on the live database for nothing the owner asked for.</summary>
+    public static readonly IReadOnlyList<Participant> SeedRoster =
+    [
+        new("owner",         "Owner",         "human", "human",  null,            null),
+        new("claude",        "Claude",        "model", "claude", null,            "App-backed: Claude Desktop or Claude Code, whatever model the app has selected."),
+        new("codex",         "Codex",         "model", "codex",  null,            "App-backed: the Codex app or CLI, whatever model the app has selected."),
+        new("opus",          "Opus",          "model", "claude", "opus",          null),
+        new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null),
+        new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits."),
+        new("gpt-6-astra",   "GPT-6 Astra",   "model", "codex",  "gpt-6-astra",   null),
+        new("gpt-5.6-sol",   "GPT-5.6 Sol",   "model", "codex",  "gpt-5.6-sol",   null),
+        new("gpt-5.6-terra", "GPT-5.6 Terra", "model", "codex",  "gpt-5.6-terra", null),
+        new("gpt-5.6-luna",  "GPT-5.6 Luna",  "model", "codex",  "gpt-5.6-luna",  null),
+        new("gpt-5.5",       "GPT-5.5",       "model", "codex",  "gpt-5.5",       null),
+        new("gpt-5.4-mini",  "GPT-5.4 Mini",  "model", "codex",  "gpt-5.4-mini",  null),
+    ];
 
     /// <summary>Path of the backup written by the most recent migration on this instance, or null
     /// when nothing needed migrating. Test seam; not part of the hub's runtime contract.</summary>
@@ -72,6 +93,7 @@ public sealed class ChopDb
 
             if (version < 1) ApplyV1(conn);
             if (GetUserVersion(conn) < 2) ApplyV2(conn);
+            if (GetUserVersion(conn) < 3) ApplyV3(conn);
             return 0;
         });
     }
@@ -266,5 +288,80 @@ public sealed class ChopDb
             """;
         cmd.ExecuteNonQuery();
         tx.Commit();
+    }
+
+    /// <summary>v3 makes the roster data (M8): <c>host</c>, <c>model</c> and <c>note</c> on
+    /// participants, the three original rows told which host they are, and the spawn rows seeded.
+    /// Each column is probed before its ALTER (SQLite has no ADD COLUMN IF NOT EXISTS) so a torn v3
+    /// is re-runnable; INSERT OR IGNORE keeps a hand-edited roster; the stamp is the last statement
+    /// of the same transaction (LESSONS, M1).</summary>
+    private static void ApplyV3(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+
+        var ddl = new System.Text.StringBuilder();
+        foreach (var column in new[] { "host", "model", "note" })
+        {
+            using var probe = conn.CreateCommand();
+            probe.Transaction = tx;
+            probe.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = '{column}'";
+            if (Convert.ToInt64(probe.ExecuteScalar()) == 0)
+                ddl.Append($"ALTER TABLE participants ADD COLUMN {column} TEXT;\n");
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = ddl + """
+                UPDATE participants SET host = 'human'  WHERE id = 'owner'  AND host IS NULL;
+                UPDATE participants SET host = 'claude' WHERE id = 'claude' AND host IS NULL;
+                UPDATE participants SET host = 'codex'  WHERE id = 'codex'  AND host IS NULL;
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        SeedParticipants(conn, tx);   // OR IGNORE: existing rows keep their display_name
+        BackfillNotes(conn, tx);      // the three original rows never had a note column to keep
+        using (var stamp = conn.CreateCommand())
+        {
+            stamp.Transaction = tx;
+            stamp.CommandText = "PRAGMA user_version = 3;";
+            stamp.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT OR IGNORE INTO participants (id, display_name, kind, host, model, note) VALUES ($id, $name, $kind, $host, $model, $note)";
+        var id = cmd.Parameters.Add("$id", SqliteType.Text);
+        var name = cmd.Parameters.Add("$name", SqliteType.Text);
+        var kind = cmd.Parameters.Add("$kind", SqliteType.Text);
+        var host = cmd.Parameters.Add("$host", SqliteType.Text);
+        var model = cmd.Parameters.Add("$model", SqliteType.Text);
+        var note = cmd.Parameters.Add("$note", SqliteType.Text);
+        foreach (var p in SeedRoster)
+        {
+            id.Value = p.Id; name.Value = p.DisplayName; kind.Value = p.Kind; host.Value = p.Host;
+            model.Value = (object?)p.Model ?? DBNull.Value; note.Value = (object?)p.Note ?? DBNull.Value;
+            cmd.ExecuteNonQuery();
+        }
+    }
+
+    /// <summary>Rows that pre-date v3 (seeded by V1, skipped by the OR IGNORE above) get the seed's
+    /// note if they have none. Only NULL is filled: a note the owner wrote by hand is never replaced.</summary>
+    private static void BackfillNotes(SqliteConnection conn, SqliteTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE participants SET note = $note WHERE id = $id AND note IS NULL";
+        var id = cmd.Parameters.Add("$id", SqliteType.Text);
+        var note = cmd.Parameters.Add("$note", SqliteType.Text);
+        foreach (var p in SeedRoster.Where(p => p.Note is not null))
+        {
+            id.Value = p.Id; note.Value = p.Note;
+            cmd.ExecuteNonQuery();
+        }
     }
 }

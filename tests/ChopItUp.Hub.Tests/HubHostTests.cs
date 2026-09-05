@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 
@@ -19,9 +20,9 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.True(File.Exists(Path.Combine(_dir, "chopitup.db")));
         Assert.True(File.Exists(Path.Combine(_dir, "tokens.json")));
         Assert.Equal("127.0.0.1", _host.BaseAddress.Host);
-        var tokens = TokenStore.Load(_dir);
-        Assert.Equal(3, tokens.Count);
-        Assert.Equal(3, tokens.Tokens.Values.Distinct().Count());
+        var tokens = TokenStore.Load(_dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());
+        Assert.Equal(ChopDb.SeedRoster.Count, tokens.Count);
+        Assert.Equal(ChopDb.SeedRoster.Count, tokens.Tokens.Values.Distinct().Count());
         Assert.All(tokens.Tokens.Values, t => Assert.True(t.Length >= 32));
     }
 

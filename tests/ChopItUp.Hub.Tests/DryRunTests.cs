@@ -27,7 +27,7 @@ public sealed class DryRunTests : IDisposable
         var db = new ChopDb(Path.Combine(_dir, CorpusBuilder.DatabaseFileName));
         db.EnsureDatabase();
 
-        Assert.Equal(2, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.True(File.Exists(db.LastBackupPath!));
 

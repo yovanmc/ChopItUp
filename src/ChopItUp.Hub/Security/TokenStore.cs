@@ -10,7 +10,6 @@ namespace ChopItUp.Hub.Security;
 public sealed class TokenStore
 {
     public const string FileName = "tokens.json";
-    public static readonly string[] Participants = ["owner", "claude", "codex"];
 
     private readonly Dictionary<string, string> _byToken;
 
@@ -26,8 +25,10 @@ public sealed class TokenStore
     /// <summary>Read-generate-write under a per-path cross-process mutex, with an atomic replace, so
     /// neither a concurrent start nor a crash mid-write can tear or silently re-mint the file the
     /// hosts' configs were pasted from. A loaded TokenStore is a startup singleton: editing
-    /// tokens.json takes effect on the next hub start.</summary>
-    public static TokenStore Load(string dataDir)
+    /// tokens.json takes effect on the next hub start. The ids come from the roster the hub read at
+    /// start (<c>ParticipantStore.List</c>): a roster row with no token gets one minted here, which is
+    /// how a database upgraded to v3 gets its nine new tokens on the next start.</summary>
+    public static TokenStore Load(string dataDir, IReadOnlyList<string> participantIds)
     {
         Directory.CreateDirectory(dataDir);
         var path = Path.Combine(dataDir, FileName);
@@ -38,14 +39,14 @@ public sealed class TokenStore
                 ? JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new()
                 : new();
             bool changed = false;
-            foreach (var p in Participants)
+            foreach (var p in participantIds)
             {
                 if (!tokens.TryGetValue(p, out var t) || string.IsNullOrWhiteSpace(t))
                 {
                     tokens[p] = NewToken();
                     changed = true;
                     if (existed)
-                        Console.Error.WriteLine($"tokens.json had no token for '{p}'; minted a new one. Paste it into that host's config.");
+                        Console.Error.WriteLine($"tokens.json had no token for '{p}'; minted one. If that participant has a host file, run --print-config and re-paste it.");
                 }
             }
             if (changed)
@@ -59,12 +60,12 @@ public sealed class TokenStore
     /// the wrong directory (pass 2, MINOR-12): <see cref="Load"/> back-fills any missing participant
     /// and rewrites the file, which would silently rotate a hand-edited token from a read-only
     /// command.</summary>
-    public static IReadOnlyDictionary<string, string> ReadExisting(string dataDir)
+    public static IReadOnlyDictionary<string, string> ReadExisting(string dataDir, IReadOnlyList<string> participantIds)
     {
         var path = Path.Combine(dataDir, FileName);
         if (!File.Exists(path)) throw new FileNotFoundException($"No {FileName} in '{dataDir}'.", path);
         var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path)) ?? new();
-        var missing = Participants.Where(p => !tokens.TryGetValue(p, out var t) || string.IsNullOrWhiteSpace(t)).ToArray();
+        var missing = participantIds.Where(p => !tokens.TryGetValue(p, out var t) || string.IsNullOrWhiteSpace(t)).ToArray();
         if (missing.Length > 0)
             throw new InvalidOperationException($"{FileName} has no token for: {string.Join(", ", missing)}. Start the hub once to mint them.");
         return tokens;
@@ -103,10 +104,10 @@ public sealed class TokenStore
     /// hub is up revokes nothing — the leaked token keeps full access to every room until someone
     /// remembers to restart. The caller must therefore refuse to rotate while a hub owns the data
     /// dir (see <c>HostCommands.RotateToken</c>): ordering, not vigilance (pass 2, MAJOR-6).</summary>
-    public static string Rotate(string dataDir, string participant)
+    public static string Rotate(string dataDir, IReadOnlyList<string> participantIds, string participant)
     {
-        if (!Participants.Contains(participant, StringComparer.Ordinal))
-            throw new ArgumentException($"Unknown participant '{participant}'. Known: {string.Join(", ", Participants)}.", nameof(participant));
+        if (!participantIds.Contains(participant, StringComparer.Ordinal))
+            throw new ArgumentException($"Unknown participant '{participant}'. Known: {string.Join(", ", participantIds)}.", nameof(participant));
         var path = Path.Combine(dataDir, FileName);
         // Deliberately NOT CreateDirectory: rotating against a mistyped --data would otherwise mint a
         // fresh token set in a directory no hub uses and print a token that authenticates nothing

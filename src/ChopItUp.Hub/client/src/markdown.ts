@@ -1,8 +1,6 @@
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { MENTIONABLE } from './participants';
-
-const MENTION = new RegExp(`@(${MENTIONABLE.join('|')})\\b`, 'gi');
+import { hostOf, mentionPattern } from './participants';
 
 /** Rendering is pure in the body text, so the result is cached: an incoming message must not make
  *  the whole thread re-parse its markdown. Cleared wholesale rather than evicted one at a time —
@@ -28,15 +26,18 @@ export function renderBody(body: string): string {
 }
 
 /** Walks text nodes rather than running a regex over the HTML string, so a mention can never be
- *  matched inside a tag or an attribute. Code spans and blocks are left alone: `@claude` inside a
+ *  matched inside a tag or an attribute. Code spans and blocks are left alone: `@someone` inside a
  *  snippet is code, not an address. */
 function decorateMentions(root: DocumentFragment): void {
+  const pattern = mentionPattern();
+  if (!pattern) return;
+
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const targets: Text[] = [];
   for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
     const text = node as Text;
-    MENTION.lastIndex = 0;
-    if (!MENTION.test(text.data)) continue;
+    pattern.lastIndex = 0;
+    if (!pattern.test(text.data)) continue;
     if (text.parentElement?.closest('code, pre, a')) continue;
     targets.push(text);
   }
@@ -44,14 +45,14 @@ function decorateMentions(root: DocumentFragment): void {
   for (const text of targets) {
     const replacement = document.createDocumentFragment();
     let cursor = 0;
-    MENTION.lastIndex = 0;
-    for (let match = MENTION.exec(text.data); match !== null; match = MENTION.exec(text.data)) {
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(text.data); match !== null; match = pattern.exec(text.data)) {
       if (match.index > cursor) {
         replacement.appendChild(document.createTextNode(text.data.slice(cursor, match.index)));
       }
       const span = document.createElement('span');
       span.className = 'mention';
-      span.dataset['who'] = match[1]!.toLowerCase();
+      span.dataset['host'] = hostOf(match[1]!);
       span.textContent = match[0];
       replacement.appendChild(span);
       cursor = match.index + match[0].length;

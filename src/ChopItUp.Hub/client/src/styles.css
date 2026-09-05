@@ -532,13 +532,13 @@ input {
   font-weight: 600;
 }
 
-.mention[data-who='owner'] {
+.mention[data-host='human'] {
   --m: var(--accent-owner);
 }
-.mention[data-who='claude'] {
+.mention[data-host='claude'] {
   --m: var(--accent-claude);
 }
-.mention[data-who='codex'] {
+.mention[data-host='codex'] {
   --m: var(--accent-codex);
 }
 

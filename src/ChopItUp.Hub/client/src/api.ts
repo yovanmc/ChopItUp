@@ -1,4 +1,4 @@
-import type { Message, Room } from './types';
+import type { Message, Participant, Room } from './types';
 
 /** MessageStore.MaxLimit — the largest page the hub will hand back. */
 const PAGE_SIZE = 200;
@@ -33,6 +33,10 @@ async function failureText(response: Response): Promise<string> {
 
 export async function listRooms(signal?: AbortSignal): Promise<Room[]> {
   return unwrap<Room[]>(await fetch('/api/rooms', { signal }));
+}
+
+export async function listParticipants(signal?: AbortSignal): Promise<Participant[]> {
+  return unwrap<Participant[]>(await fetch('/api/participants', { signal }));
 }
 
 /** Reads forward from `afterId` to the end of the room. The hub only pages forward, so the whole

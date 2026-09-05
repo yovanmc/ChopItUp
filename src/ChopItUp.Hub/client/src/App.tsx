@@ -7,6 +7,7 @@ import ImportDialog from './ImportDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import Thread from './Thread';
+import { setRoster } from './participants';
 import type { Message, Room } from './types';
 
 export default function App() {
@@ -52,11 +53,18 @@ export default function App() {
     setRoomId((current) => current ?? loaded[0]?.id ?? null);
   }, []);
 
+  // The roster loads BEFORE the first room is selected, so no message ever renders without it.
   useEffect(() => {
     const abort = new AbortController();
-    refreshRooms(abort.signal).catch((failure) => {
-      if (!abort.signal.aborted) setError(api.describeError(failure));
-    });
+    api
+      .listParticipants(abort.signal)
+      .then((list) => {
+        setRoster(list);
+        return refreshRooms(abort.signal);
+      })
+      .catch((failure) => {
+        if (!abort.signal.aborted) setError(api.describeError(failure));
+      });
     return () => abort.abort();
   }, [refreshRooms]);
 
