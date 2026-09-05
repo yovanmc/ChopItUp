@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import { renderBody } from './markdown';
-import { accentClass, badgeFor, displayName } from './participants';
+import { accentClass, badgeFor, displayName, isHuman } from './participants';
 import { clockTime, dayLabel, exactTime, isSameDay, minutesBetween } from './time';
 import type { Message } from './types';
 
@@ -67,7 +67,7 @@ interface RowProps {
 /** Memoised on a stable message object plus two booleans, so appending one message renders exactly
  *  one new row: nothing above it changes props. */
 const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak }: RowProps) {
-  const mine = message.authorId.toLowerCase() === 'owner';
+  const mine = isHuman(message.authorId);
   return (
     <>
       {dayBreak && (

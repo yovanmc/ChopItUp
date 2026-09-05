@@ -15,3 +15,13 @@ export interface Room {
   messageCount: number;
   lastMessageId: number;
 }
+
+/** Mirrors `GET /api/participants`. `host` is which program speaks for the row; `model` is null for
+ *  the human and for app-backed rows. */
+export interface Participant {
+  id: string;
+  displayName: string;
+  kind: 'human' | 'model';
+  host: string;
+  model: string | null;
+}
