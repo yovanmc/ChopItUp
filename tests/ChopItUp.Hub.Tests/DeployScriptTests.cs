@@ -146,12 +146,11 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         guardPsi.ArgumentList.Add("127.0.0.1");
 
         using var guard = Process.Start(guardPsi) ?? throw new InvalidOperationException("Failed to start the process-guard fixture executable.");
-        bool guardImageConfirmed = false;
         try
         {
-            string? actualPath = null;
-            try { actualPath = guard.MainModule?.FileName; } catch { /* process may already be gone */ }
-            guardImageConfirmed = string.Equals(guardExe, actualPath, StringComparison.OrdinalIgnoreCase);
+            // Poll: Windows populates the module list asynchronously, so a single read here
+            // returns null on a loaded machine and fails an assertion about the wrong thing.
+            string? actualPath = WaitForMainModulePath(guard, TimeSpan.FromSeconds(10));
             Assert.Equal(guardExe, actualPath, ignoreCase: true);
 
             string[] before = SnapshotRecursive(target);
@@ -168,14 +167,11 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         finally
         {
             // No Assert.* here: an assertion in a finally can throw and replace the try block's real
-            // failure. The image path was already confirmed above, before anything else in the try
-            // could fail — guardImageConfirmed is the sole gate on killing this PID.
-            if (guardImageConfirmed && !guard.HasExited)
-            {
-                guard.Kill();
-                guard.WaitForExit(5000);
-            }
-            CleanupTargetAndBackups(target);
+            // failure. Neither is the kill gated on having identified the process any more — that
+            // gate is what let a failed identification skip the kill, leave ping holding its own
+            // image, and turn the cleanup below into an exception that buried the real failure.
+            // We hold the handle from Process.Start, so the PID cannot have been reused.
+            StopGuardAndCleanup(guard, target);
         }
     }
 
@@ -411,16 +407,129 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
     }
 
+    [Fact]
+    public void Stopping_a_guard_kills_it_and_clears_the_target_without_needing_an_image_match()
+    {
+        // The invariant the old code broke. It gated the kill on Process.MainModule matching the
+        // copied exe, and MainModule returns null for a process whose module list Windows has not
+        // finished populating - reproduced at 5/250 under CPU contention, 0/250 idle. When it
+        // returned null the kill was SKIPPED, ping stayed alive holding its own image, the cleanup
+        // Directory.Delete threw UnauthorizedAccessException from the finally, and that exception
+        // replaced the real assertion failure. Two CI runs failed with a cleanup error and no
+        // diagnosis. Stopping the guard must therefore not depend on identifying it: holding the
+        // handle from Process.Start already guarantees the target, because Windows will not recycle
+        // a PID while a handle to it is open.
+        string target = NewScratchPath("guardstop");
+        Directory.CreateDirectory(target);
+        string guardExe = Path.Combine(target, "ping.exe");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "PING.EXE"), guardExe);
+
+        var psi = new ProcessStartInfo(guardExe) { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var a in new[] { "-n", "60", "-w", "1000", "127.0.0.1" }) psi.ArgumentList.Add(a);
+        var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
+        int guardPid = guard.Id;
+
+        using (guard)
+        {
+            StopGuardAndCleanup(guard, target);
+            Assert.True(guard.HasExited, "the guard process was left running");
+        }
+
+        Assert.False(Directory.Exists(target), "the target directory was left behind");
+        Assert.Null(Process.GetProcesses().FirstOrDefault(x => x.Id == guardPid && !x.HasExited));
+    }
+
+    [Fact]
+    public void The_main_module_path_of_a_just_started_process_is_resolved_by_waiting_for_it()
+    {
+        string target = NewScratchPath("mainmodule");
+        Directory.CreateDirectory(target);
+        string guardExe = Path.Combine(target, "ping.exe");
+        File.Copy(Path.Combine(Environment.SystemDirectory, "PING.EXE"), guardExe);
+
+        var psi = new ProcessStartInfo(guardExe) { UseShellExecute = false, CreateNoWindow = true };
+        foreach (var a in new[] { "-n", "60", "-w", "1000", "127.0.0.1" }) psi.ArgumentList.Add(a);
+        using var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
+        try
+        {
+            Assert.Equal(guardExe, WaitForMainModulePath(guard, TimeSpan.FromSeconds(10)), ignoreCase: true);
+        }
+        finally
+        {
+            StopGuardAndCleanup(guard, target);
+        }
+    }
+
+    /// <summary>Reads the process's main module path, retrying until it is available. Windows
+    /// populates a new process's module list asynchronously, so the first read can return null (or
+    /// throw) for a process that has only just started - more often on a loaded machine, which is
+    /// why this only ever failed on CI.</summary>
+    private static string? WaitForMainModulePath(Process process, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            try
+            {
+                process.Refresh();
+                if (process.MainModule?.FileName is { } path) return path;
+            }
+            catch (InvalidOperationException) { /* not ready, or already gone */ }
+            catch (System.ComponentModel.Win32Exception) { /* module list not yet readable */ }
+
+            if (DateTime.UtcNow >= deadline || process.HasExited) return null;
+            Thread.Sleep(20);
+        }
+    }
+
+    /// <summary>Kills the guard process and clears its directory. Takes no "is this really our
+    /// process" flag on purpose: the caller holds the handle from Process.Start, which pins the PID
+    /// against reuse, so the identity is already guaranteed by construction.</summary>
+    private static void StopGuardAndCleanup(Process guard, string target)
+    {
+        try
+        {
+            if (!guard.HasExited)
+            {
+                guard.Kill();
+                guard.WaitForExit(5000);
+            }
+        }
+        catch (InvalidOperationException) { /* already gone between the check and the kill */ }
+
+        CleanupTargetAndBackups(target);
+    }
+
+    /// <summary>Recursive delete that tolerates a briefly-held handle. Even with the guard process
+    /// stopped first, a freshly written executable can be held for a moment by a scanner, and a
+    /// cleanup that throws in a finally destroys whatever failure the test was actually reporting.</summary>
+    private static void DeleteWithRetry(string dir)
+    {
+        if (!Directory.Exists(dir)) return;
+        foreach (var delayMs in new[] { 0, 25, 50, 100, 250, 500 })
+        {
+            if (delayMs > 0) Thread.Sleep(delayMs);
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                return;
+            }
+            catch (UnauthorizedAccessException) { }
+            catch (IOException) { }
+        }
+        Directory.Delete(dir, recursive: true);   // last attempt: let it throw and name the file
+    }
+
     private static void CleanupTargetAndBackups(string target)
     {
-        if (Directory.Exists(target)) Directory.Delete(target, recursive: true);
+        DeleteWithRetry(target);
         string? parent = Path.GetDirectoryName(target);
         string leaf = Path.GetFileName(target);
         if (parent is not null && Directory.Exists(parent))
         {
             foreach (var backup in Directory.GetDirectories(parent, leaf + ".backup-*"))
             {
-                Directory.Delete(backup, recursive: true);
+                DeleteWithRetry(backup);
             }
         }
     }
