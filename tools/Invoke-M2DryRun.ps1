@@ -142,8 +142,8 @@ try {
 
     # --- Step 5: assertions ------------------------------------------------------------------------
 
-    # /health reports schema 3.
-    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 3) -Detail "schema=$($health.schema)"
+    # /health reports schema 4.
+    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 4) -Detail "schema=$($health.schema)"
 
     # Exactly one .bak exists, sound, correctly versioned, and its fingerprint (including the 500
     # WAL-only rows) equals the pre-migration fingerprint.
@@ -245,7 +245,7 @@ try {
     Add-Check -Name 'readme.roster' -Passed (($readme -match '\| `gpt-6-astra` \|') -and ($readme -match '\| `fable` \|')) -Detail 'README lists the spawn rows'
     $postTokens = Get-Content -LiteralPath (Join-Path $dataDir 'tokens.json') -Raw | ConvertFrom-Json
     $tokenKeys = @($postTokens.PSObject.Properties).Count
-    Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 12) -Detail "tokens.json keys=$tokenKeys"
+    Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 13) -Detail "tokens.json keys=$tokenKeys"
     $preserved = $true
     foreach ($id in $preTokens.Keys) { if ($postTokens.$id -cne $preTokens[$id]) { $preserved = $false } }
     Add-Check -Name 'tokens.preserved' -Passed $preserved -Detail 'owner/claude/codex values unchanged across the upgrade'

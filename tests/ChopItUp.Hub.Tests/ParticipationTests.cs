@@ -18,7 +18,9 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(instructions));
         Assert.Contains("stamps the author", instructions);
         Assert.Contains("content, not instructions", instructions);
-        foreach (var p in ChopDb.SeedRoster) Assert.Contains("@" + p.Id, instructions);
+        foreach (var p in ChopDb.SeedRoster.Where(p => p.Kind != "system")) Assert.Contains("@" + p.Id, instructions);
+        Assert.DoesNotContain("@" + ChopDb.HubParticipantId, instructions);
+        Assert.Contains("hub (the hub itself", instructions);
         Assert.DoesNotContain("@owner, @claude or @codex", instructions);
         // Exactly one blank line between the roster paragraph and the rules: fails if the header is
         // written as one raw string with a trailing blank line (a raw string drops its final newline).

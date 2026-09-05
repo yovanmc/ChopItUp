@@ -7,7 +7,8 @@ let mention: RegExp | null = null;
 
 export function setRoster(list: Participant[]): void {
   roster = new Map(list.map((p) => [p.id.toLowerCase(), p]));
-  mention = list.length === 0 ? null : new RegExp(`@(${list.map((p) => escape(p.id)).join('|')})(?!\\.?[\\w-])`, 'gi');
+  const mentionable = list.filter((p) => p.kind !== 'system');
+  mention = mentionable.length === 0 ? null : new RegExp(`@(${mentionable.map((p) => escape(p.id)).join('|')})(?!\\.?[\\w-])`, 'gi');
 }
 
 /** Ids like `gpt-5.5` carry regex metacharacters; the alternation must match them literally. */
