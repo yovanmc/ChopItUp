@@ -7,7 +7,7 @@ using ModelContextProtocol.Protocol;
 // Three verbs, selected by flag (never a leading subcommand token, so the literal invocation the
 // plan specifies — `--data <dir> --messages 10000 --rooms 3 --leave-in-wal 500 --fingerprint-out
 // <path>` with no leading verb — keeps working as the default/build mode):
-//   (default)     seed a fresh v1 corpus:            --data --messages --rooms --leave-in-wal --fingerprint-out
+//   (default)     seed a fresh v1 corpus:            --data --messages --rooms --leave-in-wal --fingerprint-out --schema-version
 //   --inspect     quick_check + user_version + fingerprint of an EXISTING db: --db --fingerprint-out
 //   --mcp-check   post_message x2 + list_rooms over the real MCP transport:  --url --room --body --client-key --out
 //                 (bearer token via the CHOPITUP_MCP_TOKEN env var, never a CLI arg — same reasoning
@@ -27,8 +27,9 @@ static int RunBuild(Dictionary<string, string> args)
     int rooms = int.Parse(args.GetValueOrDefault("--rooms", "3"), CultureInfo.InvariantCulture);
     int leaveInWal = int.Parse(args.GetValueOrDefault("--leave-in-wal", "500"), CultureInfo.InvariantCulture);
     var fingerprintOut = args.GetValueOrDefault("--fingerprint-out");
+    int schemaVersion = int.Parse(args.GetValueOrDefault("--schema-version", "1"), CultureInfo.InvariantCulture);
 
-    var handle = CorpusBuilder.Build(data, messages, rooms, leaveInWal);
+    var handle = CorpusBuilder.Build(data, messages, rooms, leaveInWal, schemaVersion: schemaVersion);
     if (fingerprintOut is not null)
         File.WriteAllText(fingerprintOut, handle.Fingerprint.ToCanonicalJson());
     Console.WriteLine($"Wrote {messages} messages across {rooms} rooms to '{data}' ({leaveInWal} left un-checkpointed in the write-ahead log).");
