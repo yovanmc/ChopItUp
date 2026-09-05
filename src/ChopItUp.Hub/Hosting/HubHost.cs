@@ -43,10 +43,16 @@ public static class HubHost
 
             var db = new ChopDb(Path.Combine(options.DataDir, "chopitup.db"));
             db.EnsureDatabase();
-            var tokens = TokenStore.Load(options.DataDir);
+            var participants = new ParticipantStore(db);
+            // Startup-static, like the tokens: the roster is read once here, and every consumer
+            // below (tokens, instructions, tools) sees the same list. Editing rows takes effect at
+            // the next hub start.
+            var roster = participants.List();
+            var tokens = TokenStore.Load(options.DataDir, roster.Select(p => p.Id).ToArray());
 
             builder.Services.AddSingleton(db);
             builder.Services.AddSingleton(new MessageStore(db));
+            builder.Services.AddSingleton(participants);
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);
             builder.Services.AddHttpContextAccessor();

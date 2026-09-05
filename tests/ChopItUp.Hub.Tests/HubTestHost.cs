@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 using Microsoft.AspNetCore.Builder;
@@ -29,7 +30,7 @@ public sealed class HubTestHost : IAsyncDisposable
         _deleteOnDispose = deleteOnDispose;
         BaseAddress = baseAddress;
         Client = new HttpClient { BaseAddress = baseAddress };
-        Tokens = TokenStore.Load(dir);
+        Tokens = TokenStore.Load(dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());
     }
 
     public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null)

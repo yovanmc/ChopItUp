@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Security;
 
 namespace ChopItUp.Hub.Hosting;
@@ -14,6 +15,9 @@ public static class HostCommands
         _ => throw new InvalidOperationException($"{options.Command} is not a non-serving command."),
     };
 
+    private static IReadOnlyList<string> RosterIds() =>
+        ChopDb.SeedRoster.Select(p => p.Id).ToArray();   // Task 3 reads the database instead
+
     private static int RotateToken(HubOptions options, TextWriter output, TextWriter error)
     {
         // Rotating under a live hub writes a file nobody reads: the hub resolves tokens against the
@@ -26,7 +30,7 @@ public static class HostCommands
         }
         try
         {
-            _ = TokenStore.Rotate(options.DataDir, options.RotateParticipant!);
+            _ = TokenStore.Rotate(options.DataDir, RosterIds(), options.RotateParticipant!);
             // The token itself is deliberately NOT printed (critique pass 1, F7): every run of this
             // command lands in a terminal buffer, a shell history and often an agent transcript.
             // --print-config writes it to a file in the gitignored data dir instead.
@@ -63,7 +67,7 @@ public static class HostCommands
             // Read WITHOUT back-filling: TokenStore.Load mints any missing participant and rewrites
             // the file, so a hand-edited tokens.json would have a credential silently rotated by a
             // command that is supposed to only read (pass 2, MINOR-12).
-            var tokens = TokenStore.ReadExisting(options.DataDir);
+            var tokens = TokenStore.ReadExisting(options.DataDir, RosterIds());
 
             // Prefer the port the hub actually bound over the one this invocation happened to
             // resolve: a hub started with --port 9000 and a --print-config run without it would

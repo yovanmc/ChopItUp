@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 
@@ -10,6 +11,7 @@ namespace ChopItUp.Hub.Tests;
 /// the no-lock contract --print-config keeps while a hub is running.</summary>
 public sealed class HostCommandsTests : IDisposable
 {
+    private static readonly string[] Roster = ChopDb.SeedRoster.Select(p => p.Id).ToArray();
     private readonly List<string> _dirs = new();
 
     private string NewDir()
@@ -30,14 +32,14 @@ public sealed class HostCommandsTests : IDisposable
     public void A6_rotate_replaces_one_token_and_leaves_the_others_alone()
     {
         var dir = NewDir();
-        var before = TokenStore.Load(dir).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var before = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value);
 
         var output = new StringWriter();
         var error = new StringWriter();
         var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, error);
 
         Assert.Equal(0, exit);
-        var after = TokenStore.Load(dir).Tokens;
+        var after = TokenStore.Load(dir, Roster).Tokens;
         Assert.NotEqual(before["claude"], after["claude"]);
         Assert.Equal(before["owner"], after["owner"]);
         Assert.Equal(before["codex"], after["codex"]);
@@ -51,7 +53,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A6_rotate_with_an_unknown_participant_changes_nothing_and_exits_nonzero()
     {
         var dir = NewDir();
-        TokenStore.Load(dir);
+        TokenStore.Load(dir, Roster);
         var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
 
         var error = new StringWriter();
@@ -60,7 +62,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(2, exit);
         Assert.Equal(before, File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName)));
         var message = error.ToString();
-        foreach (var p in TokenStore.Participants) Assert.Contains(p, message);
+        foreach (var p in Roster) Assert.Contains(p, message);
     }
 
     [Fact]
@@ -104,7 +106,7 @@ public sealed class HostCommandsTests : IDisposable
         var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
 
-        var newToken = TokenStore.Load(dir).Tokens["claude"];
+        var newToken = TokenStore.Load(dir, Roster).Tokens["claude"];
         Assert.NotEqual(old, newToken);
 
         await using var host2 = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
@@ -148,7 +150,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_writes_all_three_files_with_the_live_port_and_tokens()
     {
         var dir = NewDir();
-        var tokens = TokenStore.Load(dir).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        var tokens = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -218,7 +220,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_prefers_the_port_the_hub_actually_bound()
     {
         var dir = NewDir();
-        TokenStore.Load(dir);
+        TokenStore.Load(dir, Roster);
         File.WriteAllText(Path.Combine(dir, "hub.port"), "9000");
 
         var output = new StringWriter();
@@ -241,7 +243,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_prints_the_folder_but_never_a_token()
     {
         var dir = NewDir();
-        var tokens = TokenStore.Load(dir).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        var tokens = TokenStore.Load(dir, Roster).Tokens.ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -256,7 +258,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_is_rerunnable()
     {
         var dir = NewDir();
-        TokenStore.Load(dir);
+        TokenStore.Load(dir, Roster);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
         var first = Directory.GetFiles(ConfigFolder(dir)).ToDictionary(f => f, File.ReadAllBytes, StringComparer.Ordinal);
@@ -284,7 +286,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A7_print_config_does_not_mint_a_missing_token()
     {
         var dir = NewDir();
-        TokenStore.Load(dir);
+        TokenStore.Load(dir, Roster);
         var path = Path.Combine(dir, TokenStore.FileName);
         var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))!;
         tokens.Remove("codex");
@@ -305,7 +307,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var parent = NewDir();
         var dir = Path.Combine(parent, "data");
-        TokenStore.Load(dir);
+        TokenStore.Load(dir, Roster);
         var before = Snapshot(parent);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
