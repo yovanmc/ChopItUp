@@ -45,9 +45,10 @@ serve static files from inside itself, so the web client ships alongside the exe
 
 `tools\Deploy-ChopItUp.ps1` publishes into a staging directory, sanity-checks the result (the exe
 is present and at least 30 MB, `wwwroot\index.html` and a non-empty `wwwroot\assets\` exist),
-copies the previous install aside as a sibling backup directory, then copies the new one in —
-additively, never touching `data\` or `logs\`, never deleting anything (`/MIR` is never used) — and
-replaces the exe last via a copy-aside-and-rename so a deploy killed mid-copy never leaves a
+copies the previous install aside as a sibling backup directory, then copies the new one in — it
+replaces `wwwroot\` wholesale (after the backup, so the old copy still exists there) and copies
+everything else additively, never touching `data\` or `logs\` — and replaces the exe last via a
+copy-aside-and-rename so a deploy killed mid-copy never leaves a
 half-written executable under the name you launch. It refuses to run at all, before touching
 anything, if any running process's image path is inside the target directory.
 
@@ -60,11 +61,10 @@ Parameters:
 - `-RestoreFrom <backupDir>` — roll back to a previous install from one of the backup directories
   this script wrote, under the same guards (process check, `data\` exclusion, atomic exe rename).
 
-Restoring is additive, like the deploy: it copies the backup's files back over the target but never
-deletes files the newer install added and the backup does not contain. That is deliberate — the
-alternative is a mirror-style copy that deletes to be tidy, standing next to your only copy of the
-room history — but it means a restore rolls the program back, not the whole directory. A restore
-also backs the current install aside first, so a rollback is itself undoable.
+Restoring applies the same copy as a deploy: it replaces `wwwroot\` wholesale with the backup's copy
+(so an asset the newer install added and the backup doesn't have is removed) and copies everything
+else back over the target additively, never touching `data\` or `logs\`. A restore also backs the
+current install aside first, so a rollback is itself undoable.
 
 To check a deploy landed, `pwsh tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`.
 It runs the published exe against a scratch copy (health, the UI, an MCP round trip, a restart) and

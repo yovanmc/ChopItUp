@@ -278,12 +278,68 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     }
 
     [Fact]
+    public void Deploy_replaces_wwwroot_wholesale_and_leaves_data_untouched()
+    {
+        string target = NewScratchPath("target");
+        string stagingV2 = CopyStaging();
+        File.Move(
+            Path.Combine(stagingV2, "wwwroot", "assets", "index-synthetic.js"),
+            Path.Combine(stagingV2, "wwwroot", "assets", "index-v2.js"));
+        try
+        {
+            var deployV1 = RunDeploy(target, _fixture.StagingDir);
+            Assert.Equal(0, deployV1.ExitCode);
+
+            string staleAssetPath = Path.Combine(target, "wwwroot", "assets", "index-stale.js");
+            string staleTextPath = Path.Combine(target, "wwwroot", "stale.txt");
+            File.WriteAllBytes(staleAssetPath, DeployScriptFixture.KnownBytes(512, seed: 321));
+            File.WriteAllText(staleTextPath, "stale");
+
+            Directory.CreateDirectory(Path.Combine(target, "data"));
+            byte[] dbBytes = DeployScriptFixture.KnownBytes(2048, seed: 654);
+            File.WriteAllBytes(Path.Combine(target, "data", "chopitup.db"), dbBytes);
+
+            var deployV2 = RunDeploy(target, stagingV2);
+            Assert.Equal(0, deployV2.ExitCode);
+            using var deployV2Result = ParseDeployResult(deployV2.Stdout);
+            string backupDir = deployV2Result.RootElement.GetProperty("backup_dir").GetString()!;
+
+            Assert.False(File.Exists(staleAssetPath));
+            Assert.False(File.Exists(staleTextPath));
+            Assert.False(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-synthetic.js")));
+
+            Assert.Equal(
+                File.ReadAllBytes(Path.Combine(stagingV2, "wwwroot", "assets", "index-v2.js")),
+                File.ReadAllBytes(Path.Combine(target, "wwwroot", "assets", "index-v2.js")));
+            Assert.Equal(
+                File.ReadAllBytes(Path.Combine(stagingV2, "wwwroot", "index.html")),
+                File.ReadAllBytes(Path.Combine(target, "wwwroot", "index.html")));
+
+            string[] stagingWwwrootFiles = RelativeFileList(Path.Combine(stagingV2, "wwwroot"));
+            string[] targetWwwrootFiles = RelativeFileList(Path.Combine(target, "wwwroot"));
+            Assert.Equal(stagingWwwrootFiles, targetWwwrootFiles);
+
+            Assert.Equal(dbBytes, File.ReadAllBytes(Path.Combine(target, "data", "chopitup.db")));
+
+            Assert.True(File.Exists(Path.Combine(backupDir, "wwwroot", "assets", "index-stale.js")));
+        }
+        finally
+        {
+            CleanupTargetAndBackups(target);
+            if (Directory.Exists(stagingV2)) Directory.Delete(stagingV2, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Restore_puts_the_backup_back_and_leaves_data_untouched()
     {
         string target = NewScratchPath("target");
         string stagingV2 = CopyStaging();
         byte[] v2ExeBytes = DeployScriptFixture.KnownBytes(_fixture.StagingExeBytes.Length, seed: 999);
         File.WriteAllBytes(Path.Combine(stagingV2, "ChopItUp.Hub.exe"), v2ExeBytes);
+        File.WriteAllBytes(
+            Path.Combine(stagingV2, "wwwroot", "assets", "index-v2-only.js"),
+            DeployScriptFixture.KnownBytes(1024, seed: 888));
         try
         {
             var deployV1 = RunDeploy(target, _fixture.StagingDir);
@@ -299,12 +355,15 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             using var deployV2Result = ParseDeployResult(deployV2.Stdout);
             string backupDir = deployV2Result.RootElement.GetProperty("backup_dir").GetString()!;
             Assert.Equal(v1ExeBytes, File.ReadAllBytes(Path.Combine(backupDir, "ChopItUp.Hub.exe")));
+            Assert.True(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-v2-only.js")));
 
             var restore = RunRestore(target, backupDir);
             Assert.Equal(0, restore.ExitCode);
 
             Assert.Equal(v1ExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
             Assert.Equal(dbBytes, File.ReadAllBytes(Path.Combine(target, "data", "chopitup.db")));
+            Assert.False(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-v2-only.js")));
+            Assert.True(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-synthetic.js")));
         }
         finally
         {
@@ -546,6 +605,16 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     private static string[] SnapshotTopLevel(string dir)
         => Directory.Exists(dir)
             ? Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToArray()
+            : Array.Empty<string>();
+
+    /// <summary>File paths relative to <paramref name="dir"/>, so a staging directory and a target
+    /// directory with different absolute paths can be compared for an identical file list.</summary>
+    private static string[] RelativeFileList(string dir)
+        => Directory.Exists(dir)
+            ? Directory.GetFiles(dir, "*", SearchOption.AllDirectories)
+                .Select(f => Path.GetRelativePath(dir, f))
+                .OrderBy(x => x, StringComparer.Ordinal)
+                .ToArray()
             : Array.Empty<string>();
 
     private sealed record DeployRunResult(int ExitCode, string Stdout, string Stderr);

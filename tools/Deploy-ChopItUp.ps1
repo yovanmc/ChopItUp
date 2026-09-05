@@ -18,9 +18,13 @@
       4. Copy the existing install aside (excluding `data` and `logs`) to a directory that is a
          SIBLING of -TargetDir, derived from -TargetDir itself -- never a hardcoded path, so driving
          this script at a scratch directory in tests never touches the owner's real install.
-      5. Re-run the process check, then copy into the target additively (/E, excluding data/logs and
-         the exe itself), and replace the exe last via copy-aside-and-rename so a kill mid-deploy
-         never leaves a half-written executable under the name the owner double-clicks.
+      5. Re-run the process check, then delete the target's existing `wwwroot\` wholesale (the backup
+         made in step 4 already holds a copy of it) and copy the new build in additively elsewhere
+         (/E, excluding data/logs and the exe itself), replacing the exe last via copy-aside-and-rename
+         so a kill mid-deploy never leaves a half-written executable under the name the owner
+         double-clicks. Deleting `wwwroot\` wholesale (rather than copying over it) is what stops a
+         renamed or removed hashed asset from a previous build accumulating forever; `data\` and
+         `logs\` are untouched because they are siblings of `wwwroot\`, not children of it.
       6. Print a machine-readable "DEPLOY_RESULT: { ... }" JSON line as the last line of output:
          target, staging, whether/where a backup was written, the deployed exe's size, the current
          backup count, and how many running processes' image paths could not be read (a blind spot
@@ -196,6 +200,33 @@ function Invoke-BackupAside {
     return $backupDir
 }
 
+function Remove-TargetWwwroot {
+    <# Deletes <target>\wwwroot wholesale, immediately before the fresh build is copied in, so a
+       hashed asset that the new build renamed or dropped does not linger forever under the old
+       name -- the additive robocopy in Invoke-GuardedCopyIn only ever adds or overwrites, it never
+       removes. Safe to run unconditionally at this point in the pipeline: Invoke-BackupAside has
+       already copied the pre-existing wwwroot\ (among everything else except data\/logs\) aside, so
+       whatever this deletes still exists in the backup directory. Guarded by construction -- the
+       path removed is always Join-Path $NormalizedTargetDir 'wwwroot', and this throws rather than
+       delete anything if that computed path is not a 'wwwroot' leaf under $NormalizedTargetDir --
+       so this can never reach data\, logs\, or anything outside the target no matter what
+       $NormalizedTargetDir turns out to be. #>
+    param([Parameter(Mandatory)][string]$NormalizedTargetDir)
+
+    $wwwrootPath = (Join-Path $NormalizedTargetDir 'wwwroot').TrimEnd('\')
+    if ((Split-Path -Leaf $wwwrootPath) -ne 'wwwroot') {
+        throw "Internal error: computed wwwroot path '$wwwrootPath' does not end in 'wwwroot'; refusing to delete it."
+    }
+    $prefix = ($NormalizedTargetDir.TrimEnd('\') + '\').ToLowerInvariant()
+    if (-not $wwwrootPath.ToLowerInvariant().StartsWith($prefix)) {
+        throw "Internal error: computed wwwroot path '$wwwrootPath' is not under target '$NormalizedTargetDir'; refusing to delete it."
+    }
+    if (Test-Path -LiteralPath $wwwrootPath -PathType Container) {
+        Write-Host "Removing existing '$wwwrootPath' (already backed up) before the new build's wwwroot is copied in..."
+        Remove-Item -LiteralPath $wwwrootPath -Recurse -Force
+    }
+}
+
 function Invoke-GuardedCopyIn {
     <# Additive copy of $Source into $NormalizedTargetDir, excluding data\, logs\ and the exe (which
        is copied aside and renamed into place last so a kill mid-copy never leaves a half-written
@@ -247,6 +278,7 @@ try {
     # --- Step 5: re-run the process guard immediately before writing, then copy in additively -------
     $unreadable2 = Assert-ProcessGuardClear -NormalizedTargetDir $targetDir -WhenLabel 'immediately before copy'
     if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
+    Remove-TargetWwwroot -NormalizedTargetDir $targetDir
     Invoke-GuardedCopyIn -Source $source -NormalizedTargetDir $targetDir
 
     # --- Step 6: machine-readable report, as the last line of output --------------------------------
