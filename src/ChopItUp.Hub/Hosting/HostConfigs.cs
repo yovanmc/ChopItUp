@@ -28,16 +28,22 @@ public static class HostConfigs
 
     /// <summary>Claude Desktop cannot reach http://localhost as a remote connector, so it spawns
     /// mcp-remote as a local stdio server that proxies to the hub. The header value lives in env
-    /// rather than inline: an arg containing a space is mangled on Windows (mcp-remote README).</summary>
+    /// rather than inline: an arg containing a space is mangled on Windows (mcp-remote README).
+    /// The command is <c>cmd /c npx</c>, not <c>npx</c>: Windows ships no <c>npx.exe</c> (only
+    /// <c>npx</c>, <c>npx.cmd</c> and <c>npx.ps1</c>) and the host spawns a stdio server with a
+    /// direct process create rather than through a shell, so a bare <c>npx</c> resolves to nothing
+    /// and the bridge dies before mcp-remote loads - silently, with no /mcp traffic to show for
+    /// it. Windows is this app's only target, so the shell form is the default.</summary>
     private static string ClaudeDesktop(string url, string token) => JsonSerializer.Serialize(new
     {
         mcpServers = new Dictionary<string, object>
         {
             ["chopitup"] = new
             {
-                command = "npx",
+                command = "cmd",
                 args = new[]
                 {
+                    "/c", "npx",
                     "-y", $"mcp-remote@{McpRemoteVersion}", url,
                     "--allow-http", "--transport", "http-only",
                     "--header", "Authorization:${CHOPITUP_TOKEN}",
@@ -67,8 +73,9 @@ public static class HostConfigs
         # Fallback (grill note R2) if Codex refuses a plain-http URL: run the same mcp-remote bridge
         # Claude Desktop uses, as a stdio server, and delete the url/http_headers block above.
         # [mcp_servers.chopitup]
-        # command = "npx"
-        # args = ["-y", "mcp-remote@{{McpRemoteVersion}}", "{{url}}", "--allow-http", "--transport", "http-only", "--header", "Authorization:${CHOPITUP_TOKEN}"]
+        # command = "cmd"
+        # args = ["/c", "npx", "-y", "mcp-remote@{{McpRemoteVersion}}", "{{url}}", "--allow-http", "--transport", "http-only", "--header", "Authorization:${CHOPITUP_TOKEN}"]
+        # cmd /c, not a bare npx: Windows has no npx.exe. See README.md in this folder.
         # [mcp_servers.chopitup.env]
         # CHOPITUP_TOKEN = "Bearer {{token}}"
 
@@ -96,15 +103,21 @@ public static class HostConfigs
 
         Claude Desktop goes through the `mcp-remote` bridge because its remote connectors are dialled
         from Anthropic's cloud and cannot reach a loopback address; that needs Node on PATH (`npx`).
-        If Claude Desktop logs a spawn failure for `npx`, use the Windows-shell form instead:
-        `"command": "cmd"` with `"/c"`, `"npx"` in front of the existing arguments. `npx` also
-        resolves against the npm registry on every launch, so if you would rather this app not
-        depend on the network to start: `npm i -g mcp-remote@{McpRemoteVersion}` once, then change
-        `"command"` to `"mcp-remote"` and drop the `-y` and version arguments.
+        The entry runs `cmd /c npx`, not `npx`, and that is load-bearing: Windows ships no
+        `npx.exe` - only `npx`, `npx.cmd` and `npx.ps1` - and the host spawns a stdio server with a
+        direct process create rather than through a shell, so a bare `"command": "npx"` finds
+        nothing to execute and the bridge dies before mcp-remote loads. It fails silently: the
+        server simply never appears and the hub logs no `/mcp` traffic at all. `npx` also resolves
+        against the npm registry on every launch, so if you would rather this app not depend on the
+        network to start: `npm i -g mcp-remote@{McpRemoteVersion}` once, then replace `"npx", "-y",
+        "mcp-remote@{McpRemoteVersion}"` with just `"mcp-remote"`. Keep the `cmd /c` in front - the
+        global install is a `.cmd` shim with the same missing `.exe`.
 
-        Claude Code is not configured here. It would have to join as the same `claude` participant
-        Claude Desktop uses, and two hosts on one identity share one read cursor. It gets its own
-        participant when the autonomous-turns milestone lands.
+        Claude Code gets no file of its own: it joins as `claude` by pasting the Claude Desktop
+        entry above, which is the owner's preference (ruling 2026-09-04) - one Claude identity
+        across both hosts. The cost is a shared read cursor, so whichever host calls `read_messages`
+        without an `after_id` first consumes the other's unread. Pass an explicit `after_id` to read
+        without moving it.
 
         This folder is only as private as the directory it sits in — two live bearer tokens with
         no expiry. If other accounts or unattended processes can read this machine's files, they can
