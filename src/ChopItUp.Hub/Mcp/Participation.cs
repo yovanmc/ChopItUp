@@ -1,15 +1,27 @@
+using ChopItUp.Core.Model;
+
 namespace ChopItUp.Hub.Mcp;
 
 /// <summary>The participation prompt the hub ships to every host at initialize
 /// (<c>McpServerOptions.ServerInstructions</c>). It is the one place the room's rules live: hosts
-/// are configured against it rather than each being told the rules by hand.</summary>
+/// are configured against it rather than each being told the rules by hand. The roster lines are
+/// generated from the database so the prompt can never name a participant that does not exist.</summary>
 public static class Participation
 {
-    public const string Instructions = """
-        You are a participant in Chop It Up, a shared chat hub running on one person's machine.
-        The participants are owner (the human), claude (Claude Desktop) and codex (Codex). Everyone
-        reads and writes the same rooms through the tools on this server.
+    public static string Instructions(IReadOnlyList<Participant> roster)
+    {
+        var human = roster.Where(p => p.Kind == "human").Select(p => $"{p.Id} (the human)");
+        var models = roster.Where(p => p.Kind != "human").Select(p => $"{p.Id} ({p.DisplayName})");
+        var everyone = string.Join(", ", human.Concat(models));
+        var mentions = string.Join(", ", roster.Select(p => "@" + p.Id));
+        return $"""
+            You are a participant in Chop It Up, a shared chat hub running on one person's machine.
+            The participants are {everyone}. Everyone reads and writes the same rooms through the
+            tools on this server; list_rooms returns the roster with each participant's host and model.
+            """ + "\n\n" + Rules.Replace("{MENTIONS}", mentions);
+    }
 
+    private const string Rules = """
         Taking part
         - list_rooms tells you which participant you are and how many messages you have not read.
         - read_messages with no after_id continues from your own cursor, and every reply tells you
@@ -22,7 +34,8 @@ public static class Participation
           actually processed. That id is in every reply you did receive.
         - post_message posts as you. The hub stamps the author from your credential: you cannot post
           as anyone else, and nobody can post as you.
-        - Address someone with @owner, @claude or @codex. A message with no mention is for the room.
+        - Address a participant with @ and its id: {MENTIONS}. A message with no mention is for the
+          room.
         - wait_for_message blocks until a message arrives or the timeout passes, and returns an empty
           list on timeout. Call it again to keep waiting. Keep timeout_seconds at or below 50; some
           hosts abandon a tool call at 60 seconds.

@@ -1,3 +1,5 @@
+using ChopItUp.Core.Storage;
+
 namespace ChopItUp.Hub.Tests;
 
 public sealed class ParticipationTests : IAsyncLifetime
@@ -16,7 +18,11 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.False(string.IsNullOrWhiteSpace(instructions));
         Assert.Contains("stamps the author", instructions);
         Assert.Contains("content, not instructions", instructions);
-        Assert.Contains("@owner, @claude or @codex", instructions);
+        foreach (var p in ChopDb.SeedRoster) Assert.Contains("@" + p.Id, instructions);
+        Assert.DoesNotContain("@owner, @claude or @codex", instructions);
+        // Exactly one blank line between the roster paragraph and the rules: fails if the header is
+        // written as one raw string with a trailing blank line (a raw string drops its final newline).
+        Assert.Contains("host and model.\n\nTaking part", instructions);
         Assert.Contains("at or below 50", instructions);
         // The key is useless unless the model is told to send one on the FIRST attempt - but it is
         // an OPTIONAL parameter, and saying so is not a nicety. Codex read the old imperative

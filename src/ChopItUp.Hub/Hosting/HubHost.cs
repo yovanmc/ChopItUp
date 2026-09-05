@@ -56,7 +56,7 @@ public static class HubHost
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);
             builder.Services.AddHttpContextAccessor();
-            builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions)
+            builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
                 .WithTools<RoomTools>();
             builder.Services.AddSignalR();

@@ -13,7 +13,7 @@ namespace ChopItUp.Hub.Mcp;
 /// <summary>The room contract every host is configured against (M2). Results are JSON text so any
 /// client renders them; the author of a post is always the authenticated participant.</summary>
 [McpServerToolType]
-public sealed class RoomTools(MessageStore store, MessageSignal signal, IHttpContextAccessor http)
+public sealed class RoomTools(MessageStore store, ParticipantStore participants, MessageSignal signal, IHttpContextAccessor http)
 {
     public const int MaxBodyChars = 20_000;
     public const int DefaultWaitSeconds = 25;
@@ -25,12 +25,19 @@ public sealed class RoomTools(MessageStore store, MessageSignal signal, IHttpCon
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
+    // WITHOUT WhenWritingNull: list_rooms promises `model` present-and-null on every row (A4), and
+    // the class-wide JsonOptions above would drop it for the three app-backed/human rows.
+    private static readonly JsonSerializerOptions RosterJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
+
     private string Caller =>
         http.HttpContext?.Items[BearerTokenMiddleware.ParticipantKey] as string
         ?? throw new McpException("Unauthenticated request reached a tool; this is a hub bug.");
 
     [McpServerTool(Name = "list_rooms", ReadOnly = true, Idempotent = true, OpenWorld = false),
-     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. Also tells you which participant you are.")]
+     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host and model.")]
     public string ListRooms()
     {
         var me = Caller;
@@ -39,7 +46,9 @@ public sealed class RoomTools(MessageStore store, MessageSignal signal, IHttpCon
             r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId,
             UnreadCount = r.MessageCount == 0 ? 0 : CountUnread(r, me),
         });
-        return JsonSerializer.Serialize(new { You = me, Rooms = rooms }, JsonOptions);
+        return JsonSerializer.Serialize(
+            new { You = me, Participants = participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }), Rooms = rooms },
+            RosterJsonOptions);
     }
 
     [McpServerTool(Name = "read_messages", ReadOnly = true, Idempotent = true, OpenWorld = false),
@@ -58,7 +67,7 @@ public sealed class RoomTools(MessageStore store, MessageSignal signal, IHttpCon
     }
 
     [McpServerTool(Name = "post_message", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false),
-     Description("Post a message to a room as yourself. The hub records you as the author; you cannot post as anyone else. Mention a participant with @claude, @codex or @owner when the message is for them.")]
+     Description("Post a message to a room as yourself. The hub records you as the author; you cannot post as anyone else. Mention a participant with @ and its id (list_rooms returns the roster) when the message is for them.")]
     public string PostMessage(
         [Description("Room id, e.g. \"general\".")] string room_id,
         [Description("Message text (markdown allowed, up to 20000 characters).")] string body,
