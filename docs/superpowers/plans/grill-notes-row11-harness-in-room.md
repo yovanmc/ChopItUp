@@ -17,6 +17,7 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 | # | Area | Decision |
 |---|------|----------|
 | D1 | Conductor | A conductor participant, re-spawned per phase (option B). The owner's `/roadmap` post names a roster row as conductor; the hub re-spawns it whenever the exchange it opened concludes; it reads `ROADMAP.md`, the plan and a run-state file in the room tree, then posts the next mention. D2 (M5 ledger) is amended: the active run's conductor may root an exchange. Hub enforces a per-run spawn cap and wall-clock cap in code; the stop button ends the run. Any roster row can conduct. Rejected: owner conducts (walk-away covers one phase), hub conducts mechanically (judgment in the loop becomes hub code). |
+| D2 | Run lifecycle | A run starts on an owner `/roadmap <args> @<conductor>` post in a directory room. It ends on the conductor's phase-end ping, the stop button, a `/stop` post, or a hub cap. An owner message mid-run STEERS: the in-flight spawn finishes, then the conductor is woken with that message as its trigger before it advances. D5's "owner message closes the exchange" no longer applies inside a run. |
 
 ## Facts (verified this session unless labelled)
 
@@ -41,3 +42,4 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 
 ### Round 1
 - Q1 Who conducts: A owner / B conductor participant re-spawned per phase / C hub mechanical. Recommended C, then B after the goal refinement. Owner: **B**. ANSWERED → D1.
+- Q2 Owner message mid-run: A ends run / B steers / C mention decides. Recommended B. Owner: **B**. ANSWERED → D2.
