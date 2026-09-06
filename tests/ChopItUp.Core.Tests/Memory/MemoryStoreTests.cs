@@ -143,6 +143,18 @@ public sealed class MemoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void A5_Append_with_a_dedup_key_matches_a_CRLF_provenance_line()
+    {
+        var store = Store;
+        store.Append("user", "Likes tests", "Yes.", "approved 2026-09-06T00:00:00Z proposal 1 by opus in room general", "proposal 1 by opus");
+        var path = Path.Combine(store.TopicsDir, "user.md");
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\n", "\r\n"));   // a CRLF editor saved the file
+        store.Append("user", "Likes tests", "Yes.", "approved 2026-09-06T00:00:01Z proposal 1 by opus in room general", "proposal 1 by opus");
+        var text = File.ReadAllText(path);
+        Assert.Equal(1, text.Split("## Likes tests").Length - 1);
+    }
+
+    [Fact]
     public void A5_a_body_that_quotes_the_dedup_key_does_not_suppress_a_later_approval()
     {
         var store = Store;

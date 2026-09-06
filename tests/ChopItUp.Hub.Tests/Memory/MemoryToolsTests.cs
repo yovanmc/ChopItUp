@@ -44,7 +44,8 @@ public sealed class MemoryToolsTests : IAsyncLifetime
         await using var client = await _host.ClientFor("claude");
         var r = HubTestHost.Json(await Call(client, "recall", new()));
         Assert.StartsWith("# Memory", r.GetProperty("core").GetString());
-        Assert.False(r.TryGetProperty("truncated", out _));
+        Assert.True(r.TryGetProperty("truncated", out var truncated));
+        Assert.False(truncated.GetBoolean());
         var topics = r.GetProperty("topics").EnumerateArray().ToList();
         Assert.Equal("user", Assert.Single(topics).GetProperty("slug").GetString());
         Assert.True(topics[0].GetProperty("bytes").GetInt64() > 0);
@@ -61,24 +62,12 @@ public sealed class MemoryToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A3_recall_with_a_topic_returns_that_file_case_and_space_insensitively()
-    {
-        Memory.Append("user", "Likes tests", "Yes.", "p");
-        await using var client = await _host.ClientFor("opus");
-        var r = HubTestHost.Json(await Call(client, "recall", new() { ["topic"] = " USER " }));
-        Assert.Equal("user", r.GetProperty("topic").GetString());
-        Assert.Contains("## Likes tests", r.GetProperty("text").GetString());
-        var core = HubTestHost.Json(await Call(client, "recall", new() { ["topic"] = "core" }));
-        Assert.StartsWith("# Memory", core.GetProperty("text").GetString());
-    }
-
-    [Fact]
     public async Task A3_recall_refuses_an_unknown_topic_naming_the_real_ones_and_anything_that_is_not_a_slug()
     {
         Memory.Append("user", "T", "B", "p");
         await using var client = await _host.ClientFor("claude");
         Assert.Contains("No topic 'nope'. Topics: user.", ErrorText(await Call(client, "recall", new() { ["topic"] = "nope" })));
-        foreach (var bad in new[] { "../user", "a/b", "a b", new string('a', 65) })
+        foreach (var bad in new[] { "../user", "a/b", "a b", "A", new string('a', 65) })
             Assert.Contains("must be a slug", ErrorText(await Call(client, "recall", new() { ["topic"] = bad })));
         Assert.False(File.Exists(Path.Combine(Memory.Root, "user.md")));   // the traversal attempt reached nothing
     }
@@ -89,7 +78,7 @@ public sealed class MemoryToolsTests : IAsyncLifetime
         await using var client = await _host.ClientFor("opus");
         var r = HubTestHost.Json(await Call(client, "propose_memory", new()
         {
-            ["room_id"] = "general", ["topic"] = "User", ["title"] = " Likes tests ", ["body"] = "Wants RED before GREEN.",
+            ["room_id"] = "general", ["topic"] = "user", ["title"] = " Likes tests ", ["body"] = "Wants RED before GREEN.",
         }));
         Assert.Equal((1L, "opus", "user", "Likes tests", "pending"),
             (r.GetProperty("id").GetInt64(), r.GetProperty("author_id").GetString(), r.GetProperty("topic").GetString(), r.GetProperty("title").GetString(), r.GetProperty("status").GetString()));
@@ -139,6 +128,7 @@ public sealed class MemoryToolsTests : IAsyncLifetime
         await using var client = await _host.ClientFor("gpt-6-astra");
         Assert.Contains("Unknown room", ErrorText(await Call(client, "propose_memory", new() { ["room_id"] = "nope", ["topic"] = "user", ["title"] = "T", ["body"] = "B" })));
         Assert.Contains("slug", ErrorText(await Call(client, "propose_memory", new() { ["room_id"] = "general", ["topic"] = "../x", ["title"] = "T", ["body"] = "B" })));
+        Assert.Contains("slug", ErrorText(await Call(client, "propose_memory", new() { ["room_id"] = "general", ["topic"] = "User", ["title"] = "T", ["body"] = "B" })));
         Assert.Contains("title", ErrorText(await Call(client, "propose_memory", new() { ["room_id"] = "general", ["topic"] = "user", ["title"] = "two\nlines", ["body"] = "B" })));
         Assert.Contains("4000", ErrorText(await Call(client, "propose_memory", new() { ["room_id"] = "general", ["topic"] = "user", ["title"] = "T", ["body"] = new string('b', 4_001) })));
         Assert.Empty(Proposals.List(null, null));

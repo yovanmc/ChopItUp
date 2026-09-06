@@ -114,7 +114,7 @@ public sealed class MemoryStore
             {
                 if (!File.Exists(path)) { WriteAtomic(path, "# " + topic + "\n" + entry); break; }
                 var existing = File.ReadAllText(path, Utf8);
-                if (dedupKey is not null && Regex.IsMatch(existing, "(?m)^<!-- [^\n]*" + Regex.Escape(dedupKey) + "[^\n]* -->$")) break;
+                if (dedupKey is not null && Regex.IsMatch(existing, "(?m)^<!-- [^\r\n]*" + Regex.Escape(dedupKey) + "[^\r\n]* -->\r?$")) break;
                 File.AppendAllText(path, (existing.Length == 0 || existing[^1] == '\n' ? "" : "\n") + entry, Utf8);
                 break;
             }

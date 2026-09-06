@@ -41,16 +41,16 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
             return JsonSerializer.Serialize(new
             {
                 Core = core.Text,
-                Truncated = core.Truncated ? true : (bool?)null,
+                Truncated = core.Truncated,
                 Topics = memory.ListTopics().Select(t => new { t.Slug, t.Bytes }),
             }, JsonOptions);
         }
-        var slug = topic.Trim().ToLowerInvariant();
+        var slug = topic.Trim();
         if (!MemoryStore.TopicSlug.IsMatch(slug))
             throw new McpException("topic must be a slug: lowercase letters, digits and hyphens.");
         var text = memory.ReadTopic(slug)
             ?? throw new McpException($"No topic '{slug}'. Topics: {Names()}.");
-        return JsonSerializer.Serialize(new { Topic = slug, text.Text, Truncated = text.Truncated ? true : (bool?)null, Chars = text.FullChars }, JsonOptions);
+        return JsonSerializer.Serialize(new { Topic = slug, text.Text, Truncated = text.Truncated, Chars = text.FullChars }, JsonOptions);
     }
 
     [McpServerTool(Name = "propose_memory", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false),
@@ -63,7 +63,7 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
     {
         var me = Caller;
         if (!store.RoomExists(room_id)) throw new McpException($"Unknown room '{room_id}'. Call list_rooms.");
-        var slug = (topic ?? "").Trim().ToLowerInvariant();
+        var slug = (topic ?? "").Trim();
         MemoryProposal proposal;
         try { proposal = proposals.Create(room_id, me, slug, title, body, null); }
         catch (ArgumentException e) { throw new McpException(e.Message); }
