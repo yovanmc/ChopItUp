@@ -108,6 +108,7 @@ public static class HubHost
             app.MapHub<RoomHub>("/hub/rooms");
             app.MapChatApi();
             app.MapExchangeApi();
+            app.MapMemoryApi();
             return app;
         }
         catch
