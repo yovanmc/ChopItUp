@@ -8,20 +8,101 @@ public sealed class MessageStore(ChopDb db)
     public const int DefaultLimit = 50;
     public const int MaxLimit = 200;
 
-    public IReadOnlyList<Room> ListRooms()
+    // One shape for every room read: the aggregate columns, then the two M9 columns, then activity and
+    // unread. {0} is the WHERE; $p (the asker, or NULL) is bound by every caller.
+    private const string RoomSelect = """
+        SELECT r.id, r.name, r.created_at, COALESCE(MAX(m.id), 0), COUNT(m.id), r.directory, r.archived_at,
+               COALESCE(MAX(m.created_at), r.created_at),
+               CASE WHEN $p IS NULL THEN 0 ELSE (
+                   SELECT COUNT(*) FROM messages u
+                   WHERE u.room_id = r.id
+                     AND u.id > COALESCE((SELECT c.last_read_id FROM read_cursors c WHERE c.participant_id = $p AND c.room_id = r.id), 0)) END
+        FROM rooms r LEFT JOIN messages m ON m.room_id = r.id
+        WHERE {0}
+        GROUP BY r.id
+        ORDER BY COALESCE(MAX(m.created_at), r.created_at) DESC, r.id
+        """;
+
+    /// <summary>Rooms newest activity first (the newest message's time, or the room's creation when it
+    /// has none — every stamp is UTC round-trip text, so the text order is the time order), archived
+    /// rooms excluded unless asked for (M9 decision 14). <paramref name="unreadFor"/> fills
+    /// <see cref="Room.Unread"/> from that participant's cursor; null leaves it 0.</summary>
+    public IReadOnlyList<Room> ListRooms(bool includeArchived = false, string? unreadFor = null)
     {
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT r.id, r.name, r.created_at, COALESCE(MAX(m.id), 0), COUNT(m.id)
-            FROM rooms r LEFT JOIN messages m ON m.room_id = r.id
-            GROUP BY r.id ORDER BY r.created_at, r.id
-            """;
+        cmd.CommandText = string.Format(RoomSelect, "($all = 1 OR r.archived_at IS NULL)");
+        cmd.Parameters.AddWithValue("$p", (object?)unreadFor ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$all", includeArchived ? 1 : 0);
         using var reader = cmd.ExecuteReader();
         var rooms = new List<Room>();
-        while (reader.Read())
-            rooms.Add(new Room(reader.GetString(0), reader.GetString(1), Timestamps.Parse(reader.GetString(2)), reader.GetInt64(3), reader.GetInt32(4)));
+        while (reader.Read()) rooms.Add(ReadRoom(reader));
         return rooms;
+    }
+
+    /// <summary>One room by id, archived or not; null when unknown.</summary>
+    public Room? GetRoom(string roomId, string? unreadFor = null)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = string.Format(RoomSelect, "r.id = $id");
+        cmd.Parameters.AddWithValue("$id", roomId);
+        cmd.Parameters.AddWithValue("$p", (object?)unreadFor ?? DBNull.Value);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadRoom(reader) : null;
+    }
+
+    private static Room ReadRoom(SqliteDataReader r) => new(
+        r.GetString(0), r.GetString(1), Timestamps.Parse(r.GetString(2)), r.GetInt64(3), r.GetInt32(4),
+        r.IsDBNull(5) ? null : r.GetString(5),
+        r.IsDBNull(6) ? null : Timestamps.Parse(r.GetString(6)),
+        Timestamps.Parse(r.GetString(7)),
+        r.GetInt64(8));
+
+    /// <summary>Inserts a room. The id is the caller's (<see cref="RoomIds"/>); the primary key is the
+    /// arbiter for a duplicate, surfaced as <see cref="ArgumentException"/>. <paramref name="directory"/>
+    /// is stored as given: the hub validates and normalises it before it gets here.</summary>
+    public Room CreateRoom(string id, string name, string? directory)
+    {
+        if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("Room id is empty.", nameof(id));
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Room name is empty.", nameof(name));
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "INSERT INTO rooms (id, name, created_at, directory) VALUES ($id, $name, $at, $dir)";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.Parameters.AddWithValue("$name", name.Trim());
+        cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(DateTimeOffset.UtcNow));
+        cmd.Parameters.AddWithValue("$dir", (object?)directory ?? DBNull.Value);
+        try { cmd.ExecuteNonQuery(); }
+        catch (SqliteException e) when (e.SqliteExtendedErrorCode == 1555)   // SQLITE_CONSTRAINT_PRIMARYKEY
+        {
+            throw new ArgumentException($"Room '{id}' already exists.", nameof(id), e);
+        }
+        return GetRoom(id)!;
+    }
+
+    /// <summary>Archive (a stamp) or unarchive (null). False for an unknown room. Never touches disk.</summary>
+    public bool SetArchived(string roomId, DateTimeOffset? at)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE rooms SET archived_at = $at WHERE id = $id";
+        cmd.Parameters.AddWithValue("$at", at is null ? DBNull.Value : (object)Timestamps.Stamp(at.Value));
+        cmd.Parameters.AddWithValue("$id", roomId);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    /// <summary>Binds a directory to a room that has none (M9 decision 1). False when the room is
+    /// unknown or already bound — the WHERE is the arbiter, so two racing binds cannot both win.</summary>
+    public bool BindDirectory(string roomId, string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory)) throw new ArgumentException("Directory is empty.", nameof(directory));
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE rooms SET directory = $dir WHERE id = $id AND directory IS NULL";
+        cmd.Parameters.AddWithValue("$dir", directory);
+        cmd.Parameters.AddWithValue("$id", roomId);
+        return cmd.ExecuteNonQuery() == 1;
     }
 
     public bool RoomExists(string roomId)

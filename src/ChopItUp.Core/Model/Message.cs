@@ -7,7 +7,13 @@ public sealed record Message(long Id, string RoomId, string AuthorId, string Bod
 /// original.</summary>
 public sealed record PostResult(Message Message, bool Deduplicated);
 
-public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long LastMessageId, int MessageCount);
+/// <summary>A room (M9: a conversation with a directory). <see cref="Directory"/> is the normalised
+/// path of its git working tree, or null for a room made before M9 that the owner has not bound;
+/// <see cref="ArchivedAt"/> hides the room without touching disk; <see cref="LastActivityAt"/> is the
+/// newest message's time, or the room's creation when it has none — the chat-list order;
+/// <see cref="Unread"/> counts messages past the cursor of whoever asked (0 when nobody did).</summary>
+public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long LastMessageId, int MessageCount,
+    string? Directory = null, DateTimeOffset? ArchivedAt = null, DateTimeOffset? LastActivityAt = null, long Unread = 0);
 
 /// <summary>A page of messages in ascending id order. <see cref="NextAfterId"/> is the value to pass
 /// as <c>afterId</c> to continue; it equals the request's afterId when the page is empty.
