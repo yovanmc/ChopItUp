@@ -25,3 +25,20 @@ export interface Participant {
   host: string;
   model: string | null;
 }
+
+/** Mirrors `GET /api/rooms/{id}/exchange` and the `POST .../exchange/stop` response
+ *  (Spawning/SpawnerService.cs `ExchangeSnapshot`). `seq` orders a snapshot fetched over HTTP against
+ *  whatever `ExchangeChanged` delivers over the socket — never render one with a lower `seq` than
+ *  what is already shown for the same room. */
+export interface ExchangeSnapshot {
+  roomId: string;
+  status: 'idle' | 'open' | 'concluded' | 'superseded' | 'stopped';
+  rootMessageId: number | null;
+  budget: number;
+  turnsUsed: number;
+  turnsCommitted: number;
+  remaining: number;
+  inFlight: string[];
+  pending: string[];
+  seq: number;
+}
