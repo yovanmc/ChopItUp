@@ -4,9 +4,11 @@ using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Mcp;
 using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Realtime;
+using ChopItUp.Hub.Rooms;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Web;
@@ -19,7 +21,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -74,6 +76,9 @@ public static class HubHost
             builder.Services.AddSingleton(memory);
             builder.Services.AddSingleton(new MemoryProposalStore(db));
             builder.Services.AddSingleton((memoryGit ?? (root => new MemoryGit(root)))(memory.Root));
+            builder.Services.AddSingleton(new RoomTrails(roomGit ?? (dir => new GitTrail(dir))));
+            builder.Services.AddSingleton(sp => new RoomDirectories(
+                sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir), options.RoomsRootPath));
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
                 .WithTools<RoomTools>().WithTools<MemoryTools>();
@@ -107,6 +112,7 @@ public static class HubHost
             app.MapMcp("/mcp");
             app.MapHub<RoomHub>("/hub/rooms");
             app.MapChatApi();
+            app.MapRoomsApi();
             app.MapExchangeApi();
             app.MapMemoryApi();
             return app;

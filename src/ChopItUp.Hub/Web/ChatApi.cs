@@ -29,8 +29,8 @@ public static class ChatApi
         api.MapGet("/participants", GetParticipants);
     }
 
-    private static IResult GetRooms(MessageStore store) =>
-        Results.Json(store.ListRooms().Select(MapRoom));
+    private static IResult GetRooms(MessageStore store, ParticipantStore participants, bool archived = false) =>
+        Results.Json(store.ListRooms(includeArchived: archived, unreadFor: participants.HumanId()).Select(MapRoom));
 
     private static IResult GetParticipants(ParticipantStore participants) =>
         Results.Json(participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }));
@@ -139,7 +139,7 @@ public static class ChatApi
     }
 
     private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt };
-    private static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId };
+    internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread };
 
     internal sealed record PostBody(string? Body);
     internal sealed record ImportBody(string? Text);

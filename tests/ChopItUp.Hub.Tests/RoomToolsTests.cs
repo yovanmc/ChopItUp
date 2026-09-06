@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ChopItUp.Core.Storage;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
@@ -286,5 +287,19 @@ public sealed class RoomToolsTests : IAsyncLifetime
         await using var opus = await _host.ClientFor("opus");
         var posted = HubTestHost.Json(await opus.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hello from opus" }));
         Assert.Equal("opus", posted.GetProperty("author_id").GetString());
+    }
+
+    [Fact]
+    public async Task M9_A3_list_rooms_carries_the_directory_and_omits_archived_rooms()
+    {
+        var store = _host.Services.GetRequiredService<ChopItUp.Core.Storage.MessageStore>();
+        store.CreateRoom("lab", "Lab", @"C:\Rooms\lab");      // the store does not validate; the API does
+        store.CreateRoom("old", "Old", null);
+        store.SetArchived("old", DateTimeOffset.UtcNow);
+        await using var client = await _host.ClientFor("claude");
+        var rooms = HubTestHost.Json(await client.CallToolAsync("list_rooms", new Dictionary<string, object?>())).GetProperty("rooms").EnumerateArray().ToList();
+        Assert.Equal(["lab", "general"], rooms.Select(r => r.GetProperty("id").GetString()!).ToArray());
+        Assert.Equal(@"C:\Rooms\lab", rooms[0].GetProperty("directory").GetString());
+        Assert.Equal(JsonValueKind.Null, rooms[1].GetProperty("directory").ValueKind);
     }
 }
