@@ -86,6 +86,25 @@ public sealed class HubHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public void M9_A2_rooms_root_comes_from_the_flag_then_the_environment_then_the_profile()
+    {
+        var fromArgs = HubOptions.Parse(["--rooms-root", @"C:\Rooms\flag"], _ => null);
+        Assert.Equal(@"C:\Rooms\flag", fromArgs.RoomsRootPath);
+
+        var fromEnv = HubOptions.Parse([], name => name == "CHOPITUP_ROOMS" ? @"C:\Rooms\env" : null);
+        Assert.Equal(@"C:\Rooms\env", fromEnv.RoomsRootPath);
+
+        var both = HubOptions.Parse(["--rooms-root", @"C:\Rooms\flag"], name => name == "CHOPITUP_ROOMS" ? @"C:\Rooms\env" : null);
+        Assert.Equal(@"C:\Rooms\flag", both.RoomsRootPath);
+
+        var defaults = HubOptions.Parse([], _ => null);
+        Assert.Null(defaults.RoomsRoot);
+        Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "ChopItUp", "rooms"), defaults.RoomsRootPath);
+
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rooms-root"], _ => null));
+    }
+
+    [Fact]
     public void A_relative_data_dir_is_made_absolute_so_spawns_get_rooted_paths()
     {
         var options = HubOptions.Parse(["--data", ".data"], _ => null);
