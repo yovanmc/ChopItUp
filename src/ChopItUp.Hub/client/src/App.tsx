@@ -5,11 +5,13 @@ import { createConnection, type Liveness } from './realtime';
 import Composer from './Composer';
 import ExchangeBar from './ExchangeBar';
 import ImportDialog from './ImportDialog';
+import MemoryImportDialog from './MemoryImportDialog';
+import MemoryPanel from './MemoryPanel';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import Thread from './Thread';
-import { setRoster } from './participants';
-import type { ExchangeSnapshot, Message, Room } from './types';
+import { isSystem, setRoster } from './participants';
+import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room } from './types';
 
 /** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
  *  `null` accepts anything, a `seq` bump for the room already shown always wins, and a snapshot for a
@@ -30,10 +32,20 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [exchange, setExchange] = useState<ExchangeSnapshot | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [proposals, setProposals] = useState<MemoryProposal[]>([]);
+  const [deciding, setDeciding] = useState<number | null>(null);
+  const [memoryImportOpen, setMemoryImportOpen] = useState(false);
 
   const hub = useRef<HubConnection | null>(null);
   const currentRoom = useRef<string | null>(null);
   const lastId = useRef(0);
+
+  /** Pending proposals of the open room. Guarded on the ref so a fetch that outlives a room switch
+   *  cannot paint the previous room's cards into the new one. */
+  const loadProposals = useCallback(async (room: string, signal?: AbortSignal) => {
+    const list = await api.listProposals(room, signal);
+    if (currentRoom.current === room) setProposals(list);
+  }, []);
 
   /** Every path into the thread goes through here. Dedup is by id because the owner's own post
    *  arrives twice — once as the POST's response, once as the broadcast — and a reconnect's catch-up
@@ -99,6 +111,11 @@ export default function App() {
 
     connection.on('MessagePosted', (message: Message) => {
       if (message.roomId === currentRoom.current) merge([message]);
+      // Every memory state change is announced by a hub note that starts with "Memory " (a proposal,
+      // an import, an approval, a rejection); that note IS the refresh signal — no second event.
+      if (message.roomId === currentRoom.current && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
+        loadProposals(message.roomId).catch(() => undefined);
+      }
       setRooms((previous) =>
         previous.map((room) =>
           room.id === message.roomId
@@ -125,6 +142,7 @@ export default function App() {
           Promise.all([
             api.readMessages(room, lastId.current).then(merge),
             api.getExchange(room).then((snapshot) => setExchange((previous) => applyExchange(previous, snapshot))),
+            loadProposals(room),
           ]),
         )
         .catch((failure) => setError(api.describeError(failure)));
@@ -143,7 +161,7 @@ export default function App() {
       hub.current = null;
       void connection.stop();
     };
-  }, [merge]);
+  }, [merge, loadProposals]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
   // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
@@ -152,6 +170,7 @@ export default function App() {
   useEffect(() => {
     currentRoom.current = roomId;
     setExchange(null);
+    setProposals([]);
     if (!roomId) return;
     const connection = hub.current;
     const abort = new AbortController();
@@ -161,15 +180,20 @@ export default function App() {
         : Promise.resolve();
     void joined.then(() => {
       if (abort.signal.aborted) return undefined;
-      return api
-        .getExchange(roomId, abort.signal)
-        .then((snapshot) => {
-          if (abort.signal.aborted) return;
-          setExchange((previous) => applyExchange(previous, snapshot));
-        })
-        .catch((failure) => {
+      return Promise.all([
+        api
+          .getExchange(roomId, abort.signal)
+          .then((snapshot) => {
+            if (abort.signal.aborted) return;
+            setExchange((previous) => applyExchange(previous, snapshot));
+          })
+          .catch((failure) => {
+            if (!abort.signal.aborted) setError(api.describeError(failure));
+          }),
+        loadProposals(roomId, abort.signal).catch((failure) => {
           if (!abort.signal.aborted) setError(api.describeError(failure));
-        });
+        }),
+      ]);
     });
     return () => {
       abort.abort();
@@ -177,7 +201,7 @@ export default function App() {
         void connection.invoke('LeaveRoom', roomId).catch(() => undefined);
       }
     };
-  }, [roomId]);
+  }, [roomId, loadProposals]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -230,6 +254,33 @@ export default function App() {
     }
   }, [roomId]);
 
+  // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
+  // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
+  const decide = useCallback(
+    async (id: number, decision: 'approve' | 'reject') => {
+      if (!roomId) return;
+      setDeciding(id);
+      try {
+        await api.decideProposal(id, decision);
+        setProposals((previous) => previous.filter((p) => p.id !== id));
+        setError(null);
+      } catch (failure) {
+        setError(api.describeError(failure));
+        loadProposals(roomId).catch(() => undefined);
+      } finally {
+        setDeciding(null);
+      }
+    },
+    [roomId, loadProposals],
+  );
+
+  const onMemoryImported = useCallback(
+    (_result: MemoryImportResult) => {
+      if (roomId) loadProposals(roomId).catch(() => undefined);
+    },
+    [roomId, loadProposals],
+  );
+
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
   return (
@@ -238,13 +289,24 @@ export default function App() {
       <main className="room">
         {activeRoom ? (
           <>
-            <RoomHeader room={activeRoom} loadedCount={messages.length} onImport={() => setImportOpen(true)} />
+            <RoomHeader
+              room={activeRoom}
+              loadedCount={messages.length}
+              onImport={() => setImportOpen(true)}
+              onImportMemory={() => setMemoryImportOpen(true)}
+            />
             {error && (
               <p className="banner" role="alert">
                 {error}
               </p>
             )}
             <Thread messages={messages} loading={loading} />
+            <MemoryPanel
+              proposals={proposals}
+              busyId={deciding}
+              locked={(exchange?.inFlight.length ?? 0) > 0}
+              onDecide={decide}
+            />
             <ExchangeBar exchange={exchange} stopping={stopping} onStop={stop} />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
           </>
@@ -258,6 +320,14 @@ export default function App() {
           roomName={activeRoom.name}
           onClose={() => setImportOpen(false)}
           onImported={merge}
+        />
+      )}
+      {memoryImportOpen && activeRoom && (
+        <MemoryImportDialog
+          roomId={activeRoom.id}
+          roomName={activeRoom.name}
+          onClose={() => setMemoryImportOpen(false)}
+          onImported={onMemoryImported}
         />
       )}
     </div>

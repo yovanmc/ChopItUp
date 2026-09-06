@@ -1,4 +1,12 @@
-import type { ExchangeSnapshot, Message, Participant, Room } from './types';
+import type {
+  ExchangeSnapshot,
+  MemoryImportResult,
+  MemoryProposal,
+  MemorySource,
+  Message,
+  Participant,
+  Room,
+} from './types';
 
 /** MessageStore.MaxLimit — the largest page the hub will hand back. */
 const PAGE_SIZE = 200;
@@ -94,5 +102,45 @@ export async function getExchange(roomId: string, signal?: AbortSignal): Promise
 export async function stopExchange(roomId: string, signal?: AbortSignal): Promise<ExchangeSnapshot> {
   return unwrap<ExchangeSnapshot>(
     await fetch(`/api/rooms/${encodeURIComponent(roomId)}/exchange/stop`, { method: 'POST', signal }),
+  );
+}
+
+export async function listProposals(roomId: string, signal?: AbortSignal): Promise<MemoryProposal[]> {
+  return unwrap<MemoryProposal[]>(
+    await fetch(`/api/memory/proposals?room=${encodeURIComponent(roomId)}&status=undecided`, { signal }),
+  );
+}
+
+/** 404 and 409 come back through `unwrap` as a thrown `Error` with the envelope's text, like every
+ *  other endpoint here. */
+export async function decideProposal(
+  id: number,
+  decision: 'approve' | 'reject',
+  signal?: AbortSignal,
+): Promise<MemoryProposal> {
+  return unwrap<MemoryProposal>(await fetch(`/api/memory/proposals/${id}/${decision}`, { method: 'POST', signal }));
+}
+
+/** Undo for a mis-targeted import: drops every PENDING proposal that import created. */
+export async function discardImport(source: MemorySource, path: string, signal?: AbortSignal): Promise<number> {
+  const result = await unwrap<{ discarded: number }>(
+    await fetch(`/api/memory/proposals?source=${source}&path=${encodeURIComponent(path)}`, { method: 'DELETE', signal }),
+  );
+  return result.discarded;
+}
+
+export async function importMemory(
+  source: MemorySource,
+  path: string,
+  roomId: string,
+  signal?: AbortSignal,
+): Promise<MemoryImportResult> {
+  return unwrap<MemoryImportResult>(
+    await fetch('/api/memory/import', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source, path, roomId }),
+      signal,
+    }),
   );
 }

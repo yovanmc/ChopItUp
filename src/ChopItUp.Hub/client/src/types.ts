@@ -42,3 +42,28 @@ export interface ExchangeSnapshot {
   pending: string[];
   seq: number;
 }
+
+/** Mirrors `GET /api/memory/proposals` and the approve/reject responses (Web/MemoryApi.cs). */
+export interface MemoryProposal {
+  id: number;
+  roomId: string;
+  authorId: string;
+  topic: string;
+  title: string;
+  body: string;
+  status: 'pending' | 'approved' | 'rejected';
+  source: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+  writtenTo: string | null;
+  commitHash: string | null;
+}
+
+export type MemorySource = 'claude' | 'codex';
+
+/** Mirrors `POST /api/memory/import`. */
+export interface MemoryImportResult {
+  imported: number;
+  skipped: number;
+  proposals: MemoryProposal[];
+}

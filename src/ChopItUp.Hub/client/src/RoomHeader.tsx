@@ -6,11 +6,12 @@ interface Props {
   room: Room;
   loadedCount: number;
   onImport: () => void;
+  onImportMemory: () => void;
 }
 
 /** Import and export live here, quiet, rather than competing with the conversation. Export is a
  *  plain same-origin download link — the hub already returns text/markdown. */
-function RoomHeader({ room, loadedCount, onImport }: Props) {
+function RoomHeader({ room, loadedCount, onImport, onImportMemory }: Props) {
   return (
     <header className="room-head">
       <div className="room-title">
@@ -20,6 +21,9 @@ function RoomHeader({ room, loadedCount, onImport }: Props) {
       <div className="room-actions">
         <button type="button" className="quiet" onClick={onImport}>
           Import transcript
+        </button>
+        <button type="button" className="quiet" onClick={onImportMemory}>
+          Import memory
         </button>
         <a className="quiet" href={exportUrl(room.id)} download={`${room.id}.md`}>
           Export markdown
