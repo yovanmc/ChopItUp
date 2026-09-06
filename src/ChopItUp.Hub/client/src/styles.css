@@ -415,6 +415,25 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- hub notes ---------- */
+
+/* A hub note ("Exchange concluded: …") is the app narrating the room, not a voice in it, so it drops
+   the avatar and the accent that say "someone is speaking here". The gutter column stays empty rather
+   than collapsing: that keeps the note's text on the same vertical line as every participant's body,
+   which is the inset that makes it read as an aside instead of a stray paragraph. */
+.row.system .body {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.system-label {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
 /* ---------- message body (markdown) ---------- */
 
 .body {
@@ -540,6 +559,133 @@ input {
 }
 .mention[data-host='codex'] {
   --m: var(--accent-codex);
+}
+
+/* ---------- exchange bar ---------- */
+
+/* A status line, not a panel: one flex row between the thread and the composer, the same 24px gutter
+   every other region uses. Each state sets `--accent` the way the `p-*` row classes do, so the wash,
+   the chips and the marker all take their colour from one declaration and the light palette needs no
+   rules of its own. Open borrows the codex green the live pill uses; a finished exchange goes owner
+   blue; stopped and superseded stay grey, because neither is an outcome worth colouring for. */
+.exchange {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 24px;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+  font-size: 12px;
+}
+
+.exchange-open {
+  --accent: var(--accent-codex);
+}
+.exchange-concluded {
+  --accent: var(--accent-owner);
+}
+.exchange-stopped,
+.exchange-superseded {
+  --accent: var(--dim);
+}
+
+.exchange-lead {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.exchange-tail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.exchange-marker {
+  color: var(--accent);
+  font-weight: 560;
+}
+
+.exchange-turns {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.exchange-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.exchange-chip.working {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+}
+
+/* Queued spawns are waiting on the one ahead of them: same shape, no fill and no pulse, so the eye
+   lands on whoever is actually talking. */
+.exchange-chip.queued {
+  color: var(--faint);
+  background: transparent;
+  border: 1px dashed var(--line);
+}
+
+.exchange-chip .dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: exchange-pulse 1200ms ease-in-out infinite;
+}
+
+@keyframes exchange-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(0.7);
+  }
+}
+
+/* The dot is the only motion in the app; anyone who has asked for less gets the static dot, which
+   still reads as "working" beside the turns line. */
+@media (prefers-reduced-motion: reduce) {
+  .exchange-chip .dot {
+    animation: none;
+  }
+}
+
+/* Stop cuts someone else's turn short, so it reads as destructive even though it is recoverable —
+   the owner's next message opens a fresh exchange. While the POST is in flight it greys out in place
+   rather than disappearing, so the strip does not reflow under the cursor. */
+.quiet.danger {
+  color: var(--danger);
+}
+
+.quiet.danger:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.quiet:disabled,
+.quiet.danger:disabled {
+  color: var(--faint);
+  background: transparent;
+  cursor: default;
 }
 
 /* ---------- composer ---------- */
@@ -752,6 +898,7 @@ input {
   .row,
   .room-head,
   .composer,
+  .exchange,
   .thread-note,
   .banner {
     padding-left: 14px;

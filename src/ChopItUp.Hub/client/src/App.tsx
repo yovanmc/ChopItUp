@@ -3,12 +3,22 @@ import { HubConnectionState, type HubConnection } from '@microsoft/signalr';
 import * as api from './api';
 import { createConnection, type Liveness } from './realtime';
 import Composer from './Composer';
+import ExchangeBar from './ExchangeBar';
 import ImportDialog from './ImportDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import Thread from './Thread';
 import { setRoster } from './participants';
-import type { Message, Room } from './types';
+import type { ExchangeSnapshot, Message, Room } from './types';
+
+/** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
+ *  `null` accepts anything, a `seq` bump for the room already shown always wins, and a snapshot for a
+ *  different room displaces whatever was left over from before — the room-switch effect resets to
+ *  `null` first, so this only matters as a safety net if that reset and this update ever race. */
+function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnapshot): ExchangeSnapshot | null {
+  if (current === null || incoming.roomId !== current.roomId || incoming.seq > current.seq) return incoming;
+  return current;
+}
 
 export default function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -18,6 +28,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [exchange, setExchange] = useState<ExchangeSnapshot | null>(null);
+  const [stopping, setStopping] = useState(false);
 
   const hub = useRef<HubConnection | null>(null);
   const currentRoom = useRef<string | null>(null);
@@ -95,17 +107,26 @@ export default function App() {
         ),
       );
     });
+    connection.on('ExchangeChanged', (snapshot: ExchangeSnapshot) => {
+      if (snapshot.roomId !== currentRoom.current) return;
+      setExchange((previous) => applyExchange(previous, snapshot));
+    });
     connection.onreconnecting(() => setLiveness('connecting'));
     connection.onclose(() => setLiveness('offline'));
     connection.onreconnected(() => {
       setLiveness('live');
       const room = currentRoom.current;
       if (!room) return;
-      // Rejoin first, then read the gap the socket missed while it was down.
+      // Rejoin first, then read the gap the socket missed while it was down — including any
+      // exchange stop/conclude that landed while we were offline and so never reached us as an event.
       void connection
         .invoke('JoinRoom', room)
-        .then(() => api.readMessages(room, lastId.current))
-        .then(merge)
+        .then(() =>
+          Promise.all([
+            api.readMessages(room, lastId.current).then(merge),
+            api.getExchange(room).then((snapshot) => setExchange((previous) => applyExchange(previous, snapshot))),
+          ]),
+        )
         .catch((failure) => setError(api.describeError(failure)));
     });
 
@@ -125,15 +146,33 @@ export default function App() {
   }, [merge]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
-  // dropping into the gap between the read and the subscription.
+  // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
+  // and re-fetched only after the join settles, so a stale bar from the last room never lingers and
+  // an in-flight fetch for the room we just left can't land after we've moved on.
   useEffect(() => {
     currentRoom.current = roomId;
+    setExchange(null);
     if (!roomId) return;
     const connection = hub.current;
-    if (connection && connection.state === HubConnectionState.Connected) {
-      void connection.invoke('JoinRoom', roomId).catch(() => setLiveness('offline'));
-    }
+    const abort = new AbortController();
+    const joined =
+      connection && connection.state === HubConnectionState.Connected
+        ? connection.invoke('JoinRoom', roomId).catch(() => setLiveness('offline'))
+        : Promise.resolve();
+    void joined.then(() => {
+      if (abort.signal.aborted) return undefined;
+      return api
+        .getExchange(roomId, abort.signal)
+        .then((snapshot) => {
+          if (abort.signal.aborted) return;
+          setExchange((previous) => applyExchange(previous, snapshot));
+        })
+        .catch((failure) => {
+          if (!abort.signal.aborted) setError(api.describeError(failure));
+        });
+    });
     return () => {
+      abort.abort();
       if (connection && connection.state === HubConnectionState.Connected) {
         void connection.invoke('LeaveRoom', roomId).catch(() => undefined);
       }
@@ -175,6 +214,22 @@ export default function App() {
     [roomId, merge],
   );
 
+  // D17: Stop is "step in and end it" — the owner's next message opens a fresh exchange, this call
+  // only ends the current one. The banner is the existing error surface; nothing new for failures.
+  const stop = useCallback(async () => {
+    if (!roomId) return;
+    setStopping(true);
+    try {
+      const snapshot = await api.stopExchange(roomId);
+      setExchange((previous) => applyExchange(previous, snapshot));
+      setError(null);
+    } catch (failure) {
+      setError(api.describeError(failure));
+    } finally {
+      setStopping(false);
+    }
+  }, [roomId]);
+
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
   return (
@@ -190,6 +245,7 @@ export default function App() {
               </p>
             )}
             <Thread messages={messages} loading={loading} />
+            <ExchangeBar exchange={exchange} stopping={stopping} onStop={stop} />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
           </>
         ) : (

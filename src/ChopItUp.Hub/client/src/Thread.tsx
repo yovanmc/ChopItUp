@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import { renderBody } from './markdown';
-import { accentClass, badgeFor, displayName, isHuman } from './participants';
+import { accentClass, badgeFor, displayName, isHuman, isSystem } from './participants';
 import { clockTime, dayLabel, exactTime, isSameDay, minutesBetween } from './time';
 import type { Message } from './types';
 
@@ -67,6 +67,7 @@ interface RowProps {
 /** Memoised on a stable message object plus two booleans, so appending one message renders exactly
  *  one new row: nothing above it changes props. */
 const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak }: RowProps) {
+  const system = isSystem(message.authorId);
   const mine = isHuman(message.authorId);
   return (
     <>
@@ -75,32 +76,51 @@ const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak }: Ro
           <span>{dayLabel(message.createdAt)}</span>
         </div>
       )}
-      <article
-        className={`row ${accentClass(message.authorId)}${startsRun ? ' starts-run' : ''}${mine ? ' mine' : ''}`}
-      >
-        <div className="row-gutter">
-          {startsRun ? (
-            <span className="avatar" aria-hidden="true">
-              {badgeFor(message.authorId)}
-            </span>
-          ) : (
-            <time className="hover-time" dateTime={message.createdAt} title={exactTime(message.createdAt)}>
-              {clockTime(message.createdAt)}
-            </time>
-          )}
-        </div>
-        <div className="row-main">
-          {startsRun && (
+      {system ? (
+        /* A hub note is the app talking about the room, so it gets no avatar and no accent — but it
+           keeps the row grid, which lines its text up with every other row's body at both widths, and
+           it keeps `starts-run`, so the spacing around it still reads as grouping. It always shows its
+           label: these arrive one at a time, and a run of two would still want naming. */
+        <article className={`row system${startsRun ? ' starts-run' : ''}`}>
+          <div className="row-gutter" />
+          <div className="row-main">
             <div className="row-meta">
-              <span className="author">{displayName(message.authorId)}</span>
+              <span className="system-label">{displayName(message.authorId)}</span>
               <time className="stamp" dateTime={message.createdAt} title={exactTime(message.createdAt)}>
                 {clockTime(message.createdAt)}
               </time>
             </div>
-          )}
-          <MessageBody body={message.body} />
-        </div>
-      </article>
+            <MessageBody body={message.body} />
+          </div>
+        </article>
+      ) : (
+        <article
+          className={`row ${accentClass(message.authorId)}${startsRun ? ' starts-run' : ''}${mine ? ' mine' : ''}`}
+        >
+          <div className="row-gutter">
+            {startsRun ? (
+              <span className="avatar" aria-hidden="true">
+                {badgeFor(message.authorId)}
+              </span>
+            ) : (
+              <time className="hover-time" dateTime={message.createdAt} title={exactTime(message.createdAt)}>
+                {clockTime(message.createdAt)}
+              </time>
+            )}
+          </div>
+          <div className="row-main">
+            {startsRun && (
+              <div className="row-meta">
+                <span className="author">{displayName(message.authorId)}</span>
+                <time className="stamp" dateTime={message.createdAt} title={exactTime(message.createdAt)}>
+                  {clockTime(message.createdAt)}
+                </time>
+              </div>
+            )}
+            <MessageBody body={message.body} />
+          </div>
+        </article>
+      )}
     </>
   );
 });

@@ -1,4 +1,4 @@
-import type { Message, Participant, Room } from './types';
+import type { ExchangeSnapshot, Message, Participant, Room } from './types';
 
 /** MessageStore.MaxLimit — the largest page the hub will hand back. */
 const PAGE_SIZE = 200;
@@ -83,4 +83,16 @@ export async function importTranscript(roomId: string, text: string, signal?: Ab
 
 export function exportUrl(roomId: string): string {
   return `/api/rooms/${encodeURIComponent(roomId)}/export`;
+}
+
+export async function getExchange(roomId: string, signal?: AbortSignal): Promise<ExchangeSnapshot> {
+  return unwrap<ExchangeSnapshot>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/exchange`, { signal }));
+}
+
+/** 409 on nothing-to-stop and 404 on an unknown room both come back through `unwrap` as a thrown
+ *  `Error` carrying the envelope's `error` text, same as every other endpoint here. */
+export async function stopExchange(roomId: string, signal?: AbortSignal): Promise<ExchangeSnapshot> {
+  return unwrap<ExchangeSnapshot>(
+    await fetch(`/api/rooms/${encodeURIComponent(roomId)}/exchange/stop`, { method: 'POST', signal }),
+  );
 }

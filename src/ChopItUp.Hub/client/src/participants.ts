@@ -60,3 +60,11 @@ export function accentClass(authorId: string): string {
 export function isHuman(authorId: string): boolean {
   return roster.get(authorId.toLowerCase())?.kind === 'human';
 }
+
+/** `hub` and anything else the roster calls `system` is the app narrating the room — an exchange
+ *  concluding, a spawn timing out — not a participant in it, and Thread renders those rows without an
+ *  avatar or an accent. An id the roster has never heard of is deliberately NOT system: an unknown id
+ *  should render as an ordinary row under its own name rather than lose its author to a Hub label. */
+export function isSystem(authorId: string): boolean {
+  return roster.get(authorId.toLowerCase())?.kind === 'system';
+}
