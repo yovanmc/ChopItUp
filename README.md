@@ -73,3 +73,34 @@ then compares the real target's files to staging by hash. It reads nothing insid
 The script never deletes a backup directory — only reports how many now sit beside the target.
 Prune old ones (`C:\Self Apps\ChopItUp.backup-YYYYMMDD-HHmmss`) by hand once you're confident you
 won't need to roll back to them.
+
+## Spawning (M5)
+
+A spawn starts when an owner message carries `@id` for a roster row that has a model set. A spawned
+model can hand the turn on the same way, mentioning another spawnable id while turns remain.
+
+Caps, all hard-coded: 4 turns per exchange, a 2 second debounce on repeated mentions, at least 10
+seconds between two spawns of the same participant across rooms, a 5 minute wall clock per spawn,
+and never two spawns of one participant in flight in the same room at once.
+
+The hub posts its own notes as `hub` (kind `system`, badge `HU`): a spawn that times out, one that
+exits without posting, a turn skipped for lack of budget, and the exchange's conclusion all land in
+the room, because the room is the only durable trail this milestone keeps.
+
+Exchange state lives in memory only. A hub restart mid-exchange drops the budget and any pending or
+in-flight spawns, the owner's next message starts fresh, and a spawn that outlives the restart still
+posts harmlessly when it finishes.
+
+There's no stop button yet (that's row 16). Until then, stop an open exchange with:
+
+    Invoke-RestMethod -Method Post http://127.0.0.1:8790/api/rooms/general/exchange/stop
+
+A `claude` spawn runs `claude.exe -p` with the prompt on stdin and its token in a per-spawn
+`mcp.json`, never `--bare`, which switches auth to an API key. A `codex` spawn runs `codex.cmd exec`
+(a PATH shim, not an `.exe`) with the prompt on stdin and its token in `CHOPITUP_TOKEN`.
+
+Rollback: the previous exe refuses a v4 database. To roll M5 back, restore the `.v3.` backup per the
+host-configs README, then run the previous exe.
+
+Checks: `pwsh tools\Invoke-M5SpawnCheck.ps1` drives one real exchange against a scratch hub with both
+CLIs. `pwsh tools\Probe-SpawnCli.ps1` re-measures the two command lines on their own.
