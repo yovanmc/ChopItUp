@@ -104,4 +104,21 @@ public sealed class SpawnPromptTests
         Assert.Contains("(its first 6000 characters; call the chopitup tool recall with no topic for the whole core):\ncore…\n", p);
         Assert.Contains("There are no memory topics yet.", p);
     }
+
+    [Fact]
+    public void M9_A7_a_directory_room_prompt_names_the_directory_the_fence_and_the_git_rule_and_a_plain_room_keeps_the_no_files_sentence()
+    {
+        var plain = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")), SpawnLimits.Default);
+        Assert.Contains("You have no files and no tools besides this hub", plain);
+        Assert.DoesNotContain("Files: this room's directory", plain);
+
+        var withDir = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Directory = @"C:\Rooms\lab" }, SpawnLimits.Default);
+        Assert.Contains(@"Files: this room's directory is C:\Rooms\lab, a git repository and your working directory.", withDir);
+        Assert.Contains("do not read, list, create or change anything outside this directory", withDir);
+        Assert.Contains("Do not run git commands that write", withDir);
+        Assert.Contains("git log, git status and git diff are fine.", withDir);
+        Assert.Contains(SpawnPrompt.DirectoryRules(@"C:\Rooms\lab"), withDir);
+        Assert.DoesNotContain("You have no files", withDir);
+        Assert.Contains("post_message exactly once", withDir);
+    }
 }

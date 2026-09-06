@@ -5,8 +5,11 @@ using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Hosting;
+using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Realtime;
+using ChopItUp.Hub.Rooms;
 using ChopItUp.Hub.Security;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -32,9 +35,13 @@ public sealed class SpawnerService : BackgroundService
 {
     private abstract record Event;
     private sealed record PostedEvent(Message Message) : Event;
-    private sealed record FinishedEvent(SpawnHandle Handle, ProcessResult Result) : Event;
+    private sealed record FinishedEvent(SpawnHandle Handle, ProcessResult Result, TrailReport? Trail) : Event;
     private sealed record StopEvent(string RoomId, TaskCompletionSource<ExchangeSnapshot?> Reply) : Event;
     private sealed record TickEvent : Event;
+
+    /// <summary>What the trail did around one spawn in a directory room (M9 decision 6); null when the
+    /// room has no directory.</summary>
+    private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved);
 
     private sealed class SpawnHandle
     {
@@ -45,6 +52,7 @@ public sealed class SpawnerService : BackgroundService
         public required string WorkDir { get; init; }
         public required string Token { get; init; }
         public required CancellationTokenSource Cancel { get; init; }
+        public string? Directory { get; init; }
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
     }
@@ -64,6 +72,8 @@ public sealed class SpawnerService : BackgroundService
     private readonly IHubContext<RoomHub> _hub;
     private readonly CliLocator _locate;
     private readonly MemoryStore _memory;
+    private readonly RoomTrails _trails;
+    private readonly Participant _owner;
     private readonly ExchangePolicy _policy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
@@ -75,10 +85,11 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory)
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
+        _trails = trails; _owner = roster.First(p => p.Id == participants.HumanId());
         _policy = new ExchangePolicy(roster, limits);
     }
 
@@ -135,6 +146,15 @@ public sealed class SpawnerService : BackgroundService
     {
         try
         {
+            // Decision 6's crash window: the hub may have died between the CLI exiting and the
+            // after-spawn commit. A log line for the owner to look at, never a commit and never a note
+            // — the next spawn's pre-commit sweeps it in as the owner, as documented.
+            foreach (var room in _store.ListRooms(includeArchived: true))
+            {
+                if (room.Directory is null) continue;
+                if (await _trails.For(room.Directory).IsDirtyAsync(stoppingToken))
+                    Console.Error.WriteLine($"room {room.Id}: {room.Directory} has uncommitted changes at startup (a spawn may have ended without its commit); the next spawn commits them as the owner");
+            }
             while (await _events.Reader.WaitToReadAsync(stoppingToken))
             {
                 while (_events.Reader.TryRead(out var ev)) Guarded(() => Handle(ev), ev.GetType().Name);
@@ -159,7 +179,7 @@ public sealed class SpawnerService : BackgroundService
         switch (ev)
         {
             case PostedEvent p: OnMessage(p.Message); break;
-            case FinishedEvent f: OnFinished(f.Handle, f.Result); break;
+            case FinishedEvent f: OnFinished(f.Handle, f.Result, f.Trail); break;
             case StopEvent s:
                 ExchangeSnapshot? reply = null;
                 try { reply = OnStop(s.RoomId); }
@@ -194,7 +214,8 @@ public sealed class SpawnerService : BackgroundService
         {
             if (x.Status != ExchangeStatus.Open) continue;
             var inRoom = InFlightIn(x.RoomId);
-            var due = _policy.Due(x, now, _lastStart, inRoom);
+            var exclusive = _store.GetRoom(x.RoomId)?.Directory is not null;
+            var due = _policy.Due(x, now, _lastStart, inRoom, exclusive);
             foreach (var request in due) Launch(x, request, now);
             if (due.Count > 0) Publish(x.RoomId);
         }
@@ -215,10 +236,12 @@ public sealed class SpawnerService : BackgroundService
             var token = _tokens.Tokens[participant.Id];
             Directory.CreateDirectory(workDir);
             var core = _memory.ReadCore();
+            var room = _store.GetRoom(request.RoomId);
+            var directory = room?.Directory;
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
-                participant, request.RoomId, RoomName(request.RoomId), _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
+                participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
-                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList()), _limits);
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -227,11 +250,20 @@ public sealed class SpawnerService : BackgroundService
                 {
                     var mcpPath = Path.Combine(workDir, "mcp.json");
                     File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token));
-                    spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label);
+                    if (directory is null)
+                        spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label);
+                    else
+                    {
+                        var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room (decision 8)
+                        File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson());
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label);
+                    }
                     break;
                 }
                 case "codex":
-                    spec = SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label);
+                    spec = directory is null
+                        ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label)
+                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label);
                     break;
                 default:
                     throw new InvalidOperationException($"Participant '{participant.Id}' has host '{participant.Host}', which the spawner does not know how to start.");
@@ -239,17 +271,43 @@ public sealed class SpawnerService : BackgroundService
             var handle = new SpawnHandle
             {
                 Request = request, Exchange = x, Participant = participant, SpawnId = spawnId, WorkDir = workDir, Token = token,
-                Cancel = new CancellationTokenSource(),
+                Cancel = new CancellationTokenSource(), Directory = directory,
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
             Interlocked.Increment(ref _live);
+            var turn = request.TurnNumber; var budget = x.Budget; var roomId = request.RoomId; var host = participant.Host;
             handle.Run = Task.Run(async () =>
             {
-                ProcessResult result;
-                try { result = await _runner.RunAsync(spec, _limits.Timeout, handle.Cancel.Token); }
-                catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
-                _events.Writer.TryWrite(new FinishedEvent(handle, result));
+                var result = new ProcessResult(null, false, false, "", "not started", TimeSpan.Zero);
+                TrailReport? trail = null;
+                try
+                {
+                    GitTrail? git = null;
+                    CommitOutcome? owner = null;
+                    string? headBefore = null;
+                    if (directory is not null)
+                    {
+                        // Before: the owner's edits since the last spawn become their own commit (decision 6).
+                        git = _trails.For(directory);
+                        if (await git.IsDirtyAsync(CancellationToken.None))
+                            owner = await git.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
+                        headBefore = await git.HeadAsync(CancellationToken.None);
+                    }
+                    try { result = await _runner.RunAsync(spec, _limits.Timeout, handle.Cancel.Token); }
+                    catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
+                    if (git is not null)
+                    {
+                        // After: always a commit, empty or not, timed out or not — the trail says the spawn happened.
+                        var commands = (host == "codex" ? SpawnOutput.CodexShellCommands(result.StandardOutput) : SpawnOutput.ClaudeShellCommands(result.StandardOutput))
+                            .Select(c => c with { Command = Scrub(StripAnsi(c.Command), token) }).ToList();
+                        var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
+                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), RoomCommits.IdentityOf(participant), allowEmpty: true, CancellationToken.None);
+                        trail = new TrailReport(owner, agent, commands.Count, headMoved);
+                    }
+                }
+                catch (Exception e) { Console.Error.WriteLine($"spawn {spawnId}: trail error {e.GetType().Name}: {e.Message}"); }
+                finally { _events.Writer.TryWrite(new FinishedEvent(handle, result, trail)); }   // always: OnFinished is the only place _live is decremented
             });
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -261,7 +319,7 @@ public sealed class SpawnerService : BackgroundService
         }
     }
 
-    private void OnFinished(SpawnHandle h, ProcessResult r)
+    private void OnFinished(SpawnHandle h, ProcessResult r, TrailReport? trail)
     {
         var id = h.Participant.Id;
         var room = h.Request.RoomId;
@@ -296,6 +354,7 @@ public sealed class SpawnerService : BackgroundService
         }
 
         TryDeleteDir(h.WorkDir);
+        if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
         h.Cancel.Dispose();
         var note = ExchangePolicy.Finished(h.Exchange, id);
         if (note is not null) PostNote(room, note);
@@ -326,7 +385,8 @@ public sealed class SpawnerService : BackgroundService
         DateTimeOffset? next = null;
         foreach (var x in _rooms.Values)
         {
-            var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId));
+            var exclusive = _store.GetRoom(x.RoomId)?.Directory is not null;
+            var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }
         _wake?.Cancel();
@@ -376,8 +436,6 @@ public sealed class SpawnerService : BackgroundService
     }
 
     private static ExchangeSnapshot Idle(string roomId) => new(roomId, "idle", null, 0, 0, 0, 0, [], []);
-
-    private string RoomName(string roomId) => _store.ListRooms().FirstOrDefault(r => r.Id == roomId)?.Name ?? roomId;
 
     private ResolvedCli Cli(string name)
     {

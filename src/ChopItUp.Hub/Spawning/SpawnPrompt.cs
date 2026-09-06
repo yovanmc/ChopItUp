@@ -19,7 +19,8 @@ public sealed record SpawnPromptInput(
     IReadOnlyList<Participant> Roster,
     string MemoryCore = "",
     bool MemoryTruncated = false,
-    IReadOnlyList<string>? MemoryTopics = null);
+    IReadOnlyList<string>? MemoryTopics = null,
+    string? Directory = null);
 
 /// <summary>D9: the spawn is stateless, so the prompt IS its world — who it is, why it was
 /// spawned, how to reply, the budget, the standing rules, and the room's transcript tail. Rendered
@@ -45,8 +46,17 @@ public static class SpawnPrompt
         sb.Append('\n');
         sb.Append("How to reply: call the chopitup tool post_message exactly once, with room_id \"").Append(input.RoomId).Append("\", client_key \"").Append(input.ClientKey)
           .Append("\", and your whole reply as body. Text you print instead of posting is not seen by the room. Keep it short enough to read in a chat pane. ")
-          .Append("Mention a participant with @ and its id to hand it the turn; each mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ")
-          .Append("You are stateless: this transcript is all you know of the room. You have no files and no tools besides this hub; your memory is the section below.\n");
+          .Append("Mention a participant with @ and its id to hand it the turn; each mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ");
+        if (input.Directory is null)
+            sb.Append("You are stateless: this transcript is all you know of the room. You have no files and no tools besides this hub; your memory is the section below.\n");
+        else
+        {
+            sb.Append("You are stateless: this transcript is all you know of the room; your memory is the section below.\n\n");
+            sb.Append("Files: this room's directory is ").Append(input.Directory).Append(", a git repository and your working directory. ")
+              .Append("You can read, edit, create, search and run shell commands there, with network access. ")
+              .Append(DirectoryRules(input.Directory)).Append(' ')
+              .Append("Files you create or change are the deliverable; still post your reply to the room as described above.\n");
+        }
         sb.Append('\n');
         sb.Append("Memory, shared by every participant and approved entry by entry by the owner");
         if (input.MemoryTruncated)

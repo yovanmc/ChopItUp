@@ -178,6 +178,26 @@ public sealed class ExchangePolicyTests
     }
 
     [Fact]
+    public void M9_A10_an_exclusive_room_launches_one_pending_spawn_per_pass_and_nothing_while_one_is_in_flight()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(10, "owner", "@opus @gpt-6-astra go"), T0);
+        var later = T0 + Limits.Debounce;
+        Assert.Equal(2, p.Due(x!, later, NoStarts, Nobody).Count);                          // a NULL-directory room: both
+        var one = p.Due(x!, later, NoStarts, Nobody, exclusive: true);
+        Assert.Equal(["opus"], one.Select(r => r.ParticipantId).ToArray());
+        Assert.Equal(1, one[0].TurnNumber);
+        Assert.Empty(p.Due(x!, later, NoStarts, new HashSet<string> { "opus" }, exclusive: true));
+        Assert.Null(p.NextWake(x!, later, NoStarts, new HashSet<string> { "opus" }, exclusive: true));
+        Assert.NotNull(p.NextWake(x!, T0, NoStarts, Nobody, exclusive: true));
+        ExchangePolicy.Started(x!, one[0]);
+        ExchangePolicy.Finished(x!, "opus");
+        var next = p.Due(x!, later, NoStarts, Nobody, exclusive: true);
+        Assert.Equal(["gpt-6-astra"], next.Select(r => r.ParticipantId).ToArray());
+        Assert.Equal(2, next[0].TurnNumber);
+    }
+
+    [Fact]
     public void Five_mentions_in_one_owner_message_commit_four_and_note_the_fifth()
     {
         var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@opus @sonnet @fable @gpt-6-astra @gpt-5.5"), T0);

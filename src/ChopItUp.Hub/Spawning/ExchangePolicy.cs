@@ -83,10 +83,14 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>Which pending spawns may launch now. <paramref name="inFlightInRoom"/> is the room's
-    /// whole in-flight set, across exchanges — a superseded exchange's spawn still counts.</summary>
-    public IReadOnlyList<SpawnRequest> Due(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom)
+    /// whole in-flight set, across exchanges — a superseded exchange's spawn still counts.
+    /// <paramref name="exclusive"/> (a directory room, M9 decision 5): at most one spawn in the room
+    /// at a time — nothing is due while anything is in flight, and only the first pending spawn
+    /// launches per pass; the completion wakes the loop for the next.</summary>
+    public IReadOnlyList<SpawnRequest> Due(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false)
     {
         if (x.Status != ExchangeStatus.Open) return [];
+        if (exclusive && inFlightInRoom.Count > 0) return [];
         var due = new List<SpawnRequest>();
         foreach (var (id, pending) in x.Pending)
         {
@@ -94,15 +98,17 @@ public sealed class ExchangePolicy
             if (now - pending.LastTriggerAt < _limits.Debounce) continue;
             if (lastStartByParticipant.TryGetValue(id, out var last) && now - last < _limits.MinSpacing) continue;
             due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, x.Budget - x.TurnsCommitted));
+            if (exclusive) break;
         }
         return due;
     }
 
     /// <summary>The earliest instant something pending could become due, or null when nothing is
     /// pending or everything pending waits on a completion (which wakes the loop by itself).</summary>
-    public DateTimeOffset? NextWake(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom)
+    public DateTimeOffset? NextWake(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false)
     {
         if (x.Status != ExchangeStatus.Open) return null;
+        if (exclusive && inFlightInRoom.Count > 0) return null;   // the completion wakes the loop
         DateTimeOffset? wake = null;
         foreach (var (id, pending) in x.Pending)
         {
