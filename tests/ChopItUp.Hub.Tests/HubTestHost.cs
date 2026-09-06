@@ -71,6 +71,6 @@ public sealed class HubTestHost : IAsyncDisposable
         await _app.StopAsync();
         await _app.DisposeAsync();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        if (_deleteOnDispose && Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+        if (_deleteOnDispose) TestDirs.DeleteTree(_dir);
     }
 }
