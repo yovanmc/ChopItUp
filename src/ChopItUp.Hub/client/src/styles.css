@@ -267,15 +267,20 @@ input {
   border-bottom: 1px solid var(--line);
 }
 
+/* The header is one flex row: title block, then actions. The path in the sub-line is long enough to
+   overflow the row at narrow widths, so the title block clips rather than pushing into the buttons,
+   the name is the part that never yields, and the sub-line is what truncates. */
 .room-title {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .room-title h1 {
   margin: 0;
+  flex: none;
   font-size: 15px;
   font-weight: 620;
   white-space: nowrap;
@@ -284,15 +289,28 @@ input {
 }
 
 .room-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
+}
+
+/* The message count and the separator hold their size; only the path gives way. */
+.room-count-text,
+.room-sep {
+  flex: none;
 }
 
 /* A long room path truncates at the FRONT (`direction: rtl`), so the tail — the folder name that
    tells two projects apart — stays readable; the title attribute carries the whole path. */
 .room-path {
   display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 28rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -882,6 +900,12 @@ input {
   padding: 0 4px;
 }
 
+/* A chip followed by punctuation reads as a stray space — `…\rooms\lab , newest first`. Pulling the
+   sentence back over the chip's right padding sets the comma tight against the last character. */
+.dialog-note .chip-tight {
+  margin-right: -4px;
+}
+
 .trail-list {
   margin: 0;
   padding: 0 0 0 1.4rem;
@@ -900,10 +924,11 @@ input {
   margin-right: 6px;
 }
 
+/* --dim, not --faint: at 11px this line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */
 .trail-meta {
   display: block;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--dim);
 }
 
 .paste {

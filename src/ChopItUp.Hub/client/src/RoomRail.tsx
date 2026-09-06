@@ -20,7 +20,8 @@ const LIVENESS_LABEL: Record<Liveness, string> = {
 
 /** M9: the rail is a chat list. Rooms arrive newest activity first (the hub orders them; App re-sorts
  *  after a live bump), an unread badge replaces the count on rooms with unread messages that are not
- *  open, a folder mark says the room has a directory, and archived rooms show only behind the toggle. */
+ *  open, an empty room shows no count at all, a folder mark says the room has a directory, and
+ *  archived rooms show only behind the toggle. */
 function RoomRail({ rooms, activeRoomId, liveness, showArchived, onSelect, onNewRoom, onToggleArchived }: Props) {
   return (
     <nav className="rail" aria-label="Rooms">
@@ -56,9 +57,11 @@ function RoomRail({ rooms, activeRoomId, liveness, showArchived, onSelect, onNew
                     {room.unread > 99 ? '99+' : room.unread}
                   </span>
                 ) : (
-                  <span className="room-count" title={`${room.messageCount} messages`}>
-                    {room.messageCount}
-                  </span>
+                  room.messageCount > 0 && (
+                    <span className="room-count" title={`${room.messageCount} messages`}>
+                      {room.messageCount}
+                    </span>
+                  )
                 )}
               </button>
             </li>

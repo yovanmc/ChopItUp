@@ -65,8 +65,8 @@ export default function TrailDialog({ room, onClose }: Props) {
         <p className="dialog-note">
           {trail?.directory ? (
             <>
-              Commits in <code>{trail.directory}</code>, newest first. The hub commits your edits before each spawn and
-              the model's turn after it; nothing is ever pushed.
+              Commits in <code className="chip-tight">{trail.directory}</code>, newest first. The hub commits your edits
+              before each spawn and the model's turn after it; nothing is ever pushed.
             </>
           ) : (
             'This room has no directory, so it has no trail.'

@@ -28,8 +28,8 @@ function RoomHeader({ room, loadedCount, busy, onImport, onImportMemory, onBind,
           {archived && <span className="room-archived"> archived</span>}
         </h1>
         <span className="room-sub">
-          {loadedCount === 1 ? '1 message' : `${loadedCount} messages`}
-          {' · '}
+          <span className="room-count-text">{loadedCount === 1 ? '1 message' : `${loadedCount} messages`}</span>
+          <span className="room-sep">·</span>
           {room.directory !== null ? (
             <code className="room-path" title={room.directory}>
               {room.directory}
