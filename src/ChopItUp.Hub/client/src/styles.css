@@ -415,6 +415,25 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- hub notes ---------- */
+
+/* A hub note ("Exchange concluded: …") is the app narrating the room, not a voice in it, so it drops
+   the avatar and the accent that say "someone is speaking here". The gutter column stays empty rather
+   than collapsing: that keeps the note's text on the same vertical line as every participant's body,
+   which is the inset that makes it read as an aside instead of a stray paragraph. */
+.row.system .body {
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.system-label {
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
 /* ---------- message body (markdown) ---------- */
 
 .body {
