@@ -79,6 +79,90 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    private void WriteRawV3()
+    {
+        // v2 shape plus exactly what ApplyV3 adds. Raw SQL on purpose (LESSONS M2): this must keep
+        // describing v3 after ChopDb can no longer produce one.
+        Directory.CreateDirectory(_dir);
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
+        conn.Open();
+        using (var wal = conn.CreateCommand())
+        {
+            wal.CommandText = "PRAGMA journal_mode=WAL;";
+            wal.ExecuteNonQuery();
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE participants (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, kind TEXT NOT NULL, host TEXT, model TEXT, note TEXT);
+            CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id),
+                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL,
+                client_key TEXT);
+            CREATE INDEX ix_messages_room_id ON messages(room_id, id);
+            CREATE UNIQUE INDEX ux_messages_client_key ON messages(room_id, author_id, client_key) WHERE client_key IS NOT NULL;
+            CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
+                room_id TEXT NOT NULL REFERENCES rooms(id), last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (participant_id, room_id));
+            INSERT INTO participants (id, display_name, kind, host, model, note) VALUES
+                ('owner','Owner','human','human',NULL,NULL),
+                ('claude','Claude','model','claude',NULL,'App-backed: Claude Desktop or Claude Code, whatever model the app has selected.'),
+                ('codex','Codex','model','codex',NULL,'App-backed: the Codex app or CLI, whatever model the app has selected.'),
+                ('opus','Opus','model','claude','opus',NULL),
+                ('sonnet','Sonnet','model','claude','sonnet',NULL),
+                ('fable','Fable','model','claude','fable','May bill to usage credits instead of the plan''s included limits.'),
+                ('gpt-6-astra','GPT-6 Astra','model','codex','gpt-6-astra',NULL),
+                ('gpt-5.6-sol','GPT-5.6 Sol','model','codex','gpt-5.6-sol',NULL),
+                ('gpt-5.6-terra','GPT-5.6 Terra','model','codex','gpt-5.6-terra',NULL),
+                ('gpt-5.6-luna','GPT-5.6 Luna','model','codex','gpt-5.6-luna',NULL),
+                ('gpt-5.5','GPT-5.5','model','codex','gpt-5.5',NULL),
+                ('gpt-5.4-mini','GPT-5.4 Mini','model','codex','gpt-5.4-mini',NULL);
+            INSERT INTO rooms (id, name, created_at) VALUES ('general','General','2026-09-01T10:00:00.000+00:00');
+            INSERT INTO messages (id, room_id, author_id, body, created_at, client_key) VALUES
+                (1,'general','owner','@opus first v3 message','2026-09-01T10:01:00.000+00:00',NULL),
+                (2,'general','opus','second v3 message','2026-09-01T10:02:00.000+00:00','k-1');
+            INSERT INTO read_cursors (participant_id, room_id, last_read_id) VALUES ('opus','general',2);
+            PRAGMA user_version = 3;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public void M5_A8_v3_database_is_backed_up_then_migrated_to_v4_with_the_hub_row_seeded()
+    {
+        WriteRawV3();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(4, db.GetSchemaVersion());
+        Assert.NotNull(db.LastBackupPath);
+        Assert.Contains(".v3.", Path.GetFileName(db.LastBackupPath!));
+
+        var roster = new ParticipantStore(db).List();
+        Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), roster.Select(p => p.Id));   // hub is last, by rowid
+        var hub = roster.Single(p => p.Id == ChopDb.HubParticipantId);
+        Assert.Equal(("system", "hub", (string?)null), (hub.Kind, hub.Host, hub.Model));
+        Assert.Equal("owner", new ParticipantStore(db).HumanId());                      // still exactly one human
+        var fable = roster.Single(p => p.Id == "fable");
+        Assert.Contains("usage credits", fable.Note);                                   // v3 rows untouched
+
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM messages";
+        Assert.Equal(2L, (long)cmd.ExecuteScalar()!);
+        cmd.CommandText = "SELECT body FROM messages WHERE id = 1";
+        Assert.Equal("@opus first v3 message", (string)cmd.ExecuteScalar()!);
+        cmd.CommandText = "SELECT client_key FROM messages WHERE id = 2";
+        Assert.Equal("k-1", (string)cmd.ExecuteScalar()!);
+        cmd.CommandText = "SELECT last_read_id FROM read_cursors WHERE participant_id = 'opus' AND room_id = 'general'";
+        Assert.Equal(2L, (long)cmd.ExecuteScalar()!);
+
+        db.EnsureDatabase();
+        Assert.Null(db.LastBackupPath);
+        Assert.Equal(4, db.GetSchemaVersion());
+    }
+
     [Fact]
     public void M8_A1_v2_database_is_backed_up_then_migrated_to_v3_with_the_roster_seeded()
     {
@@ -87,7 +171,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(3, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.Contains(".v2.", Path.GetFileName(db.LastBackupPath!));
 
@@ -116,7 +200,7 @@ public sealed class SchemaMigrationTests : IDisposable
         // Idempotent: a second EnsureDatabase migrates nothing and backs up nothing.
         db.EnsureDatabase();
         Assert.Null(db.LastBackupPath);
-        Assert.Equal(3, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
     }
 
     [Fact]
@@ -134,7 +218,7 @@ public sealed class SchemaMigrationTests : IDisposable
 
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
-        Assert.Equal(3, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal("claude", new ParticipantStore(db).List().Single(p => p.Id == "claude").Host);
     }
 

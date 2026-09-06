@@ -7,7 +7,12 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 3;
+    public const int LatestSchemaVersion = 4;
+
+    /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
+    /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
+    /// model, never spawned, never in a mention list.</summary>
+    public const string HubParticipantId = "hub";
 
     /// <summary>The roster a fresh database starts with, in display order. Ids of spawn rows are the
     /// model names their host accepts on the command line, so M5 reads <c>Model</c> straight off the
@@ -27,6 +32,7 @@ public sealed class ChopDb
         new("gpt-5.6-luna",  "GPT-5.6 Luna",  "model", "codex",  "gpt-5.6-luna",  null),
         new("gpt-5.5",       "GPT-5.5",       "model", "codex",  "gpt-5.5",       null),
         new("gpt-5.4-mini",  "GPT-5.4 Mini",  "model", "codex",  "gpt-5.4-mini",  null),
+        new(HubParticipantId, "Hub",           "system", "hub",    null,            "The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned."),
     ];
 
     /// <summary>Path of the backup written by the most recent migration on this instance, or null
@@ -94,6 +100,7 @@ public sealed class ChopDb
             if (version < 1) ApplyV1(conn);
             if (GetUserVersion(conn) < 2) ApplyV2(conn);
             if (GetUserVersion(conn) < 3) ApplyV3(conn);
+            if (GetUserVersion(conn) < 4) ApplyV4(conn);
             return 0;
         });
     }
@@ -325,6 +332,23 @@ public sealed class ChopDb
         {
             stamp.Transaction = tx;
             stamp.CommandText = "PRAGMA user_version = 3;";
+            stamp.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>v4 seeds the hub's own row (M5, decision 2). Nothing else changes shape. The seed
+    /// is the same OR IGNORE pass V3 runs, so a fresh database (which reaches V3 with the row already
+    /// in <see cref="SeedRoster"/>) and a migrated v3 one end identical; the stamp is the last
+    /// statement of the same transaction (LESSONS, M1).</summary>
+    private static void ApplyV4(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        SeedParticipants(conn, tx);
+        using (var stamp = conn.CreateCommand())
+        {
+            stamp.Transaction = tx;
+            stamp.CommandText = "PRAGMA user_version = 4;";
             stamp.ExecuteNonQuery();
         }
         tx.Commit();

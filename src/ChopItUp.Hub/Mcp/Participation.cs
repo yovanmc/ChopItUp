@@ -11,9 +11,10 @@ public static class Participation
     public static string Instructions(IReadOnlyList<Participant> roster)
     {
         var human = roster.Where(p => p.Kind == "human").Select(p => $"{p.Id} (the human)");
-        var models = roster.Where(p => p.Kind != "human").Select(p => $"{p.Id} ({p.DisplayName})");
-        var everyone = string.Join(", ", human.Concat(models));
-        var mentions = string.Join(", ", roster.Select(p => "@" + p.Id));
+        var models = roster.Where(p => p.Kind == "model").Select(p => $"{p.Id} ({p.DisplayName})");
+        var system = roster.Where(p => p.Kind == "system").Select(p => $"{p.Id} (the hub itself; it posts exchange notes and cannot be addressed)");
+        var everyone = string.Join(", ", human.Concat(models).Concat(system));
+        var mentions = string.Join(", ", roster.Where(p => p.Kind != "system").Select(p => "@" + p.Id));
         return $"""
             You are a participant in Chop It Up, a shared chat hub running on one person's machine.
             The participants are {everyone}. Everyone reads and writes the same rooms through the

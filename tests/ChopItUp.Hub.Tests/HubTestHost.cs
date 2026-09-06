@@ -2,6 +2,8 @@ using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Spawning;
+using ChopItUp.Hub.Tests.Spawning;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -33,13 +35,15 @@ public sealed class HubTestHost : IAsyncDisposable
         Tokens = TokenStore.Load(dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null)
     {
-        var app = HubHost.Build(new HubOptions(dir, Port: 0, WebRoot: webRoot));
+        var app = HubHost.Build(new HubOptions(dir, Port: 0, WebRoot: webRoot), processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate);
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose);
     }
+
+    public IServiceProvider Services => _app.Services;
 
     public string TokenFor(string participant) => Tokens.Tokens[participant];
 

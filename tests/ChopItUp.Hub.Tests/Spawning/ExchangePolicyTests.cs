@@ -1,0 +1,189 @@
+using ChopItUp.Core.Model;
+using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Spawning;
+
+namespace ChopItUp.Hub.Tests.Spawning;
+
+public sealed class ExchangePolicyTests
+{
+    private static readonly SpawnLimits Limits = new(Budget: 4, Debounce: TimeSpan.FromSeconds(2), MinSpacing: TimeSpan.FromSeconds(10), Timeout: TimeSpan.FromMinutes(5), TranscriptMessages: 60, TranscriptChars: 24_000);
+    private static readonly DateTimeOffset T0 = new(2026, 9, 5, 20, 0, 0, TimeSpan.Zero);
+    private static Message Msg(long id, string author, string body) => new(id, "general", author, body, T0);
+    private static ExchangePolicy Policy() => new(ChopDb.SeedRoster, Limits);
+    private static readonly IReadOnlyDictionary<string, DateTimeOffset> NoStarts = new Dictionary<string, DateTimeOffset>();
+    private static readonly HashSet<string> Nobody = new();
+
+    [Fact]
+    public void An_owner_mention_opens_an_exchange_and_ignores_owner_app_backed_hub_and_self()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@opus @claude @codex @owner @hub @gpt-6-astra go"), T0);
+        Assert.NotNull(x);
+        Assert.Equal(ExchangeStatus.Open, x!.Status);
+        Assert.Equal(10, x.RootMessageId);
+        Assert.Equal(4, x.Budget);
+        Assert.Equal(["opus", "gpt-6-astra"], x.Pending.Keys);
+        Assert.Equal(2, x.TurnsCommitted);
+        Assert.Equal(0, x.TurnsStarted);
+        Assert.Empty(notes);
+
+        var (y, _) = Policy().OnMessage(null, Msg(11, "owner", "@claude @codex only windows"), T0);
+        Assert.Null(y);
+    }
+
+    [Fact]
+    public void A_model_message_never_opens_an_exchange()
+    {
+        var p = Policy();
+        var (x, notes) = p.OnMessage(null, Msg(10, "codex", "@opus what do you think?"), T0);
+        Assert.Null(x);
+        Assert.Empty(notes);
+        var (c, _) = p.OnMessage(null, Msg(11, "opus", "@sonnet"), T0);
+        Assert.Null(c);
+    }
+
+    [Fact]
+    public void A_model_mention_inside_an_open_exchange_is_a_turn_until_the_budget_is_used_up()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        var (x2, n2) = p.OnMessage(x, Msg(2, "opus", "@sonnet @opus your view?"), T0);   // self-mention ignored
+        Assert.Same(x, x2);
+        Assert.Equal(["opus", "sonnet"], x!.Pending.Keys);
+        Assert.Equal(2, x.TurnsCommitted);
+        Assert.Empty(n2);
+        var (_, n3) = p.OnMessage(x, Msg(3, "sonnet", "@gpt-6-astra @gpt-5.5 @fable"), T0);
+        Assert.Equal(4, x.TurnsCommitted);
+        Assert.Equal(["opus", "sonnet", "gpt-6-astra", "gpt-5.5"], x.Pending.Keys);
+        var note = Assert.Single(n3);
+        Assert.Contains("not spawning @fable", note);
+        Assert.Contains("#1", note);
+    }
+
+    [Fact]
+    public void A_repeat_mention_of_a_pending_participant_adds_a_trigger_but_no_turn()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+        ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus"));
+        p.OnMessage(x, Msg(2, "opus", "@sonnet also consider this"), T0.AddSeconds(3));
+        Assert.Equal(2, x!.TurnsCommitted);
+        Assert.Equal([1L, 2L], x.Pending["sonnet"].TriggerIds);
+        Assert.Equal(T0.AddSeconds(3), x.Pending["sonnet"].LastTriggerAt);
+        Assert.Equal(1, x.RootMessageId);
+    }
+
+    [Fact]
+    public void A_second_owner_message_re_roots_rather_than_appending_a_trigger()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        var (y, _) = p.OnMessage(x, Msg(2, "owner", "@opus also this"), T0.AddMilliseconds(500));
+        Assert.Equal(ExchangeStatus.Superseded, x!.Status);
+        Assert.Equal(2, y!.RootMessageId);
+        Assert.Equal([2L], y.Pending["opus"].TriggerIds);
+    }
+
+    [Fact]
+    public void Due_honours_debounce_min_spacing_and_one_in_flight_per_room()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+
+        Assert.Empty(p.Due(x!, T0.AddSeconds(1), NoStarts, Nobody));                                  // debounce
+        var due = p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody);
+        Assert.Equal(["opus", "sonnet"], due.Select(d => d.ParticipantId));
+        Assert.Equal([1, 2], due.Select(d => d.TurnNumber));
+        Assert.All(due, d => Assert.Equal(2, d.RemainingAfter));
+        Assert.All(due, d => Assert.Equal([1L], d.TriggerIds));
+
+        var recent = new Dictionary<string, DateTimeOffset> { ["opus"] = T0.AddSeconds(-5) };          // started 5 s ago elsewhere
+        Assert.Equal(["sonnet"], p.Due(x!, T0.AddSeconds(2), recent, Nobody).Select(d => d.ParticipantId));
+        Assert.Equal(["opus", "sonnet"], p.Due(x!, T0.AddSeconds(6), recent, Nobody).Select(d => d.ParticipantId));
+
+        Assert.Equal(["sonnet"], p.Due(x!, T0.AddSeconds(2), NoStarts, new HashSet<string> { "opus" }).Select(d => d.ParticipantId));
+    }
+
+    [Fact]
+    public void NextWake_is_the_earliest_moment_anything_pending_could_launch()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+        Assert.Equal(T0.AddSeconds(2), p.NextWake(x!, T0, NoStarts, Nobody));
+        var recent = new Dictionary<string, DateTimeOffset> { ["opus"] = T0.AddSeconds(-1), ["sonnet"] = T0.AddSeconds(-3) };
+        Assert.Equal(T0.AddSeconds(7), p.NextWake(x!, T0, recent, Nobody));                            // sonnet: 10 s after its last start
+        Assert.Null(p.NextWake(x!, T0, NoStarts, new HashSet<string> { "opus", "sonnet" }));            // both in flight: woken by completion
+        ExchangePolicy.Stop(x!);
+        Assert.Null(p.NextWake(x!, T0, NoStarts, Nobody));
+    }
+
+    [Fact]
+    public void Started_then_Finished_walks_pending_to_in_flight_to_concluded()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        var req = Assert.Single(p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody));
+        ExchangePolicy.Started(x!, req);
+        Assert.Empty(x!.Pending);
+        Assert.Equal(["opus"], x.InFlight);
+        Assert.Equal(1, x.TurnsStarted);
+
+        p.OnMessage(x, Msg(2, "opus", "done, no one else needed"), T0.AddSeconds(30));
+        Assert.Equal(ExchangeStatus.Open, x.Status);                                                   // process still running
+        var note = ExchangePolicy.Finished(x, "opus");
+        Assert.Equal(ExchangeStatus.Concluded, x.Status);
+        Assert.Equal("Exchange concluded: 1 of 4 turns used.", note);
+        Assert.Null(ExchangePolicy.Finished(x, "opus"));                                                // idempotent, no second note
+    }
+
+    [Fact]
+    public void An_owner_message_mid_exchange_supersedes_it_and_roots_a_new_one()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+        var opus = p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus");
+        ExchangePolicy.Started(x!, opus);
+
+        var (y, _) = p.OnMessage(x, Msg(5, "owner", "@gpt-6-astra instead"), T0.AddSeconds(3));
+        Assert.Equal(ExchangeStatus.Superseded, x!.Status);
+        Assert.Empty(x.Pending);                                                                       // sonnet dropped
+        Assert.Equal(["opus"], x.InFlight);                                                            // still finishing
+        Assert.NotSame(x, y);
+        Assert.Equal(5, y!.RootMessageId);
+        Assert.Equal(["gpt-6-astra"], y.Pending.Keys);
+
+        p.OnMessage(x, Msg(6, "opus", "@sonnet late mention"), T0.AddSeconds(4));                       // its exchange is closed: ignored
+        Assert.Empty(x.Pending);
+        p.OnMessage(y, Msg(6, "opus", "@sonnet late mention"), T0.AddSeconds(4), acceptMentions: false);  // what the service passes for a stale spawn
+        Assert.Equal(["gpt-6-astra"], y.Pending.Keys);
+        Assert.Equal(1, y.TurnsCommitted);
+        Assert.Null(ExchangePolicy.Finished(x, "opus"));                                                // no conclusion note for a superseded exchange
+        Assert.Equal(ExchangeStatus.Superseded, x.Status);
+
+        var (z, _) = p.OnMessage(y, Msg(7, "owner", "thanks, that is all"), T0.AddSeconds(5));
+        Assert.Equal(ExchangeStatus.Superseded, y.Status);
+        Assert.Same(y, z);                                                                             // no mention: nothing new opens
+    }
+
+    [Fact]
+    public void Stop_clears_pending_and_says_how_many_turns_ran()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+        ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody)[0]);
+        var note = ExchangePolicy.Stop(x!);
+        Assert.Equal(ExchangeStatus.Stopped, x!.Status);
+        Assert.Empty(x.Pending);
+        Assert.Equal("Exchange stopped by the owner: 1 of 4 turns used.", note);
+        Assert.Null(ExchangePolicy.Finished(x, "opus"));
+    }
+
+    [Fact]
+    public void Five_mentions_in_one_owner_message_commit_four_and_note_the_fifth()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@opus @sonnet @fable @gpt-6-astra @gpt-5.5"), T0);
+        Assert.Equal(4, x!.TurnsCommitted);
+        Assert.Equal(["opus", "sonnet", "fable", "gpt-6-astra"], x.Pending.Keys);
+        Assert.Contains("not spawning @gpt-5.5", Assert.Single(notes));
+        Assert.All(Policy().Due(x, T0.AddSeconds(2), NoStarts, Nobody), d => Assert.Equal(0, d.RemainingAfter));
+    }
+}

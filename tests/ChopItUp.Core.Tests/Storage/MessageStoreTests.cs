@@ -66,6 +66,16 @@ public sealed class MessageStoreTests : IDisposable
     }
 
     [Fact]
+    public void ReadLast_returns_the_newest_n_in_ascending_order()
+    {
+        for (int i = 1; i <= 7; i++) _store.Post("general", "owner", $"m{i}");
+        var last = _store.ReadLast("general", 3);
+        Assert.Equal(["m5", "m6", "m7"], last.Select(m => m.Body));
+        Assert.Equal(7, _store.ReadLast("general", 50).Count);
+        Assert.Empty(_store.ReadLast("no-such-room", 3));
+    }
+
+    [Fact]
     public void Cursor_defaults_to_zero_and_only_moves_forward()
     {
         Assert.Equal(0L, _store.GetCursor("claude", "general"));

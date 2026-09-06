@@ -54,6 +54,7 @@ public static class HostConfigs
         foreach (var p in roster)
         {
             var file = p.Kind == "human" ? "none (the web UI)"
+                : p.Kind == "system" ? "none (the hub itself)"
                 : p.Model is not null ? "no file (hub-spawned)"
                 : p.Host switch { "claude" => "`claude-desktop.json`", "codex" => "`codex-config.toml`", _ => "no template for this host" };
             sb.AppendLine($"| `{p.Id}` | {p.Host} | {p.Model ?? "—"} | {file} | {p.Note ?? ""} |");

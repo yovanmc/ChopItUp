@@ -143,6 +143,28 @@ public sealed class MessageStore(ChopDb db)
         return rows;
     }
 
+    /// <summary>The newest <paramref name="count"/> messages of a room, ascending — the transcript
+    /// tail a spawn prompt renders (M5). Ids are not assumed contiguous.</summary>
+    public IReadOnlyList<Message> ReadLast(string roomId, int count)
+    {
+        count = Math.Clamp(count, 1, MaxLimit);
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, room_id, author_id, body, created_at FROM (
+                SELECT id, room_id, author_id, body, created_at FROM messages
+                WHERE room_id = $room ORDER BY id DESC LIMIT $limit)
+            ORDER BY id
+            """;
+        cmd.Parameters.AddWithValue("$room", roomId);
+        cmd.Parameters.AddWithValue("$limit", count);
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<Message>(count);
+        while (reader.Read())
+            rows.Add(new Message(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), Timestamps.Parse(reader.GetString(4))));
+        return rows;
+    }
+
     public MessagePage Read(string roomId, long afterId, int limit)
     {
         limit = Math.Clamp(limit, 1, MaxLimit);

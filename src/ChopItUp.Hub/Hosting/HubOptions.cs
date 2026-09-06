@@ -45,7 +45,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
         return new HubOptions(
-            string.IsNullOrWhiteSpace(data) ? Path.Combine(AppContext.BaseDirectory, "data") : data,
+            Path.GetFullPath(string.IsNullOrWhiteSpace(data) ? Path.Combine(AppContext.BaseDirectory, "data") : data),
             int.TryParse(port, out var p) ? p : DefaultPort,
             command,
             rotate);

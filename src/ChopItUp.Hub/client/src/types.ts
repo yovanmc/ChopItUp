@@ -21,7 +21,7 @@ export interface Room {
 export interface Participant {
   id: string;
   displayName: string;
-  kind: 'human' | 'model';
+  kind: 'human' | 'model' | 'system';
   host: string;
   model: string | null;
 }
