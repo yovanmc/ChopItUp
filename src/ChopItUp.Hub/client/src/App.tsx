@@ -52,6 +52,39 @@ export default function App() {
   const lastId = useRef(0);
   const showArchivedRef = useRef(false);
   const readTimer = useRef<number | null>(null);
+  /** Every room id the rail knows about, and the groups we have already joined on this connection.
+   *  The rail's unread badge, message count and activity order have to move for rooms the owner is
+   *  NOT looking at, and the hub broadcasts per room group — so we subscribe to all of them, not
+   *  just the open one. Refs, because the socket callbacks below outlive any one render. */
+  const roomIds = useRef<string[]>([]);
+  const joinedGroups = useRef<Set<string>>(new Set());
+
+  /** Joins the groups we are not in yet and resolves once they are joined; already-joined ids cost
+   *  nothing, so callers may pass the whole room list on every change. A failed join is forgotten
+   *  again so the next call retries it. No-op until the socket is up: the `start`/`onreconnected`
+   *  paths join whatever is known by then. */
+  const joinGroups = useCallback((ids: readonly string[]): Promise<unknown> => {
+    const connection = hub.current;
+    if (!connection || connection.state !== HubConnectionState.Connected) return Promise.resolve();
+    const fresh = ids.filter((id) => !joinedGroups.current.has(id));
+    if (fresh.length === 0) return Promise.resolve();
+    for (const id of fresh) joinedGroups.current.add(id);
+    return Promise.all(
+      fresh.map((id) =>
+        connection.invoke('JoinRoom', id).catch((failure) => {
+          joinedGroups.current.delete(id);
+          throw failure;
+        }),
+      ),
+    );
+  }, []);
+
+  /** Every room we know about, plus the open one when the list has not caught up with it yet. */
+  const groupIds = useCallback((): readonly string[] => {
+    const room = currentRoom.current;
+    const ids = roomIds.current;
+    return room !== null && !ids.includes(room) ? [room, ...ids] : ids;
+  }, []);
 
   /** Pending proposals of the open room. Guarded on the ref so a fetch that outlives a room switch
    *  cannot paint the previous room's cards into the new one. */
@@ -83,6 +116,16 @@ export default function App() {
   useEffect(() => {
     lastId.current = messages.length > 0 ? messages[messages.length - 1]!.id : 0;
   }, [messages]);
+
+  // Subscribe to every room the rail lists — including one just created — so its counters and badge
+  // move live. This runs on every `rooms` change (a message bumps a count), which `joinGroups`
+  // makes a no-op once the group is joined.
+  useEffect(() => {
+    roomIds.current = rooms.map((room) => room.id);
+    void joinGroups(groupIds()).catch(() => {
+      /* the socket is down; `onreconnected` rejoins everything */
+    });
+  }, [rooms, joinGroups, groupIds]);
 
   const refreshRooms = useCallback(async (signal?: AbortSignal) => {
     const loaded = await api.listRooms(showArchivedRef.current, signal);
@@ -122,8 +165,8 @@ export default function App() {
     return () => abort.abort();
   }, [refreshRooms]);
 
-  // The rail's counts for rooms we are not watching go stale by design — only the open room has a
-  // live subscription. Coming back to the window is the cheapest honest moment to re-read them.
+  // Every listed room is subscribed, so the rail's counts track live. Coming back to the window is
+  // still the cheapest honest moment to re-read them — it repairs anything a dropped socket missed.
   useEffect(() => {
     function onFocus() {
       refreshRooms().catch(() => {
@@ -134,7 +177,7 @@ export default function App() {
     return () => window.removeEventListener('focus', onFocus);
   }, [refreshRooms]);
 
-  // One connection for the life of the app; rooms are joined and left on it.
+  // One connection for the life of the app; every known room's group is joined on it.
   useEffect(() => {
     const connection = createConnection();
     hub.current = connection;
@@ -173,12 +216,17 @@ export default function App() {
     connection.onclose(() => setLiveness('offline'));
     connection.onreconnected(() => {
       setLiveness('live');
+      // A reconnect is a new connection id, so every group membership went with the old one.
+      joinedGroups.current.clear();
+      const rejoined = joinGroups(groupIds());
       const room = currentRoom.current;
-      if (!room) return;
+      if (!room) {
+        void rejoined.catch((failure) => setError(api.describeError(failure)));
+        return;
+      }
       // Rejoin first, then read the gap the socket missed while it was down — including any
       // exchange stop/conclude that landed while we were offline and so never reached us as an event.
-      void connection
-        .invoke('JoinRoom', room)
+      void rejoined
         .then(() =>
           Promise.all([
             api.readMessages(room, lastId.current).then(merge),
@@ -193,16 +241,17 @@ export default function App() {
       .start()
       .then(() => {
         setLiveness('live');
-        const room = currentRoom.current;
-        return room ? connection.invoke('JoinRoom', room) : undefined;
+        // Whatever the rail knows by now; rooms that load later are joined by the `rooms` effect.
+        return joinGroups(groupIds());
       })
       .catch(() => setLiveness('offline'));
 
     return () => {
       hub.current = null;
+      joinedGroups.current.clear();
       void connection.stop();
     };
-  }, [merge, loadProposals, scheduleRead]);
+  }, [merge, loadProposals, scheduleRead, joinGroups, groupIds]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
   // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
@@ -213,12 +262,10 @@ export default function App() {
     setExchange(null);
     setProposals([]);
     if (!roomId) return;
-    const connection = hub.current;
     const abort = new AbortController();
-    const joined =
-      connection && connection.state === HubConnectionState.Connected
-        ? connection.invoke('JoinRoom', roomId).catch(() => setLiveness('offline'))
-        : Promise.resolve();
+    // Usually already joined (the `rooms` effect subscribes to everything); this covers the room
+    // that is opened before its list arrives.
+    const joined = joinGroups([roomId]).catch(() => setLiveness('offline'));
     void joined.then(() => {
       if (abort.signal.aborted) return undefined;
       return Promise.all([
@@ -242,11 +289,10 @@ export default function App() {
         window.clearTimeout(readTimer.current);
         readTimer.current = null;
       }
-      if (connection && connection.state === HubConnectionState.Connected) {
-        void connection.invoke('LeaveRoom', roomId).catch(() => undefined);
-      }
+      // No LeaveRoom: switching away must not unsubscribe us, or the room we left stops reporting
+      // its unread badge, count and activity order until the next full refresh.
     };
-  }, [roomId, loadProposals]);
+  }, [roomId, loadProposals, joinGroups]);
 
   useEffect(() => {
     if (!roomId) return;
