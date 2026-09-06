@@ -6,6 +6,7 @@ import type {
   Message,
   Participant,
   Room,
+  Trail,
 } from './types';
 
 /** MessageStore.MaxLimit — the largest page the hub will hand back. */
@@ -39,8 +40,51 @@ async function failureText(response: Response): Promise<string> {
   return `${response.status} ${response.statusText}`.trim();
 }
 
-export async function listRooms(signal?: AbortSignal): Promise<Room[]> {
-  return unwrap<Room[]>(await fetch('/api/rooms', { signal }));
+export async function listRooms(includeArchived = false, signal?: AbortSignal): Promise<Room[]> {
+  return unwrap<Room[]>(await fetch(includeArchived ? '/api/rooms?archived=true' : '/api/rooms', { signal }));
+}
+
+/** M9 room lifecycle. Every refusal (a refused path, a spawn in flight, a room already bound) comes
+ *  back through `unwrap` as a thrown `Error` carrying the hub's own sentence — the dialogs show it
+ *  verbatim rather than inventing their own wording. */
+export async function createRoom(name: string, directory: string, signal?: AbortSignal): Promise<Room> {
+  return unwrap<Room>(
+    await fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name, directory }),
+      signal,
+    }),
+  );
+}
+
+export async function archiveRoom(roomId: string, signal?: AbortSignal): Promise<Room> {
+  return unwrap<Room>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/archive`, { method: 'POST', signal }));
+}
+
+export async function unarchiveRoom(roomId: string, signal?: AbortSignal): Promise<Room> {
+  return unwrap<Room>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/unarchive`, { method: 'POST', signal }));
+}
+
+export async function bindDirectory(roomId: string, directory: string, signal?: AbortSignal): Promise<Room> {
+  return unwrap<Room>(
+    await fetch(`/api/rooms/${encodeURIComponent(roomId)}/directory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ directory }),
+      signal,
+    }),
+  );
+}
+
+/** Moves the owner's read cursor to the room's last message. Fire and forget: a failure here costs an
+ *  unread badge, never a message. */
+export async function markRead(roomId: string, signal?: AbortSignal): Promise<void> {
+  await unwrap<unknown>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/read`, { method: 'POST', signal }));
+}
+
+export async function getTrail(roomId: string, signal?: AbortSignal): Promise<Trail> {
+  return unwrap<Trail>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/trail`, { signal }));
 }
 
 export async function listParticipants(signal?: AbortSignal): Promise<Participant[]> {

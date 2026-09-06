@@ -1,6 +1,7 @@
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Git;
 
 namespace ChopItUp.Hub.Memory;
 
@@ -12,6 +13,8 @@ public static class HubNotes
 {
     public const string ProposalPrefix = "Memory proposal #";
     public const string ImportPrefix = "Memory import from ";
+    public const string TrailPrefix = "Committed ";
+    public const string TrailFailedPrefix = "Not committed for ";
 
     public static Message Post(MessageStore store, MessageSignal signal, string roomId, string text)
     {
@@ -38,4 +41,16 @@ public static class HubNotes
         + (p.CommitHash is null ? " (not committed: git unavailable or failed; see the hub log)." : $" (commit {p.CommitHash}).");
 
     public static string Rejected(MemoryProposal p) => $"{ProposalPrefix}{p.Id} rejected.";
+
+    /// <summary>The room's record of what the trail did around one spawn (M9 decision 6). One line;
+    /// the commit itself is the detail.</summary>
+    public static string Trail(string participantId, CommitOutcome? owner, CommitOutcome agent, int commands, bool headMoved)
+    {
+        if (agent.Hash is null || !agent.Created)
+            return $"{TrailFailedPrefix}{participantId}: {agent.Reason ?? "git made no commit"}.";
+        var text = $"{TrailPrefix}{agent.Hash} as {participantId}: {agent.FilesChanged} file(s) changed, {commands} shell command(s).";
+        if (owner is { Created: true }) text += $" Your edits were committed first as {owner.Hash}.";
+        if (headMoved) text += $" HEAD moved during the spawn: {participantId} committed on its own.";
+        return text;
+    }
 }

@@ -37,13 +37,13 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         ?? throw new McpException("Unauthenticated request reached a tool; this is a hub bug.");
 
     [McpServerTool(Name = "list_rooms", ReadOnly = true, Idempotent = true, OpenWorld = false),
-     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host and model.")]
+     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. A room with a directory gives a spawned participant file and shell access inside it; archived rooms are not listed. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host and model.")]
     public string ListRooms()
     {
         var me = Caller;
         var rooms = store.ListRooms().Select(r => new
         {
-            r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId,
+            r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory,
             UnreadCount = r.MessageCount == 0 ? 0 : CountUnread(r, me),
         });
         return JsonSerializer.Serialize(

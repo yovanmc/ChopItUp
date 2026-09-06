@@ -144,10 +144,14 @@ input {
   color: var(--danger);
 }
 
+/* Takes the slack in the rail's column so `.rail-foot` sits at the bottom and a long room list
+   scrolls inside itself rather than pushing the footer off screen (M9). */
 .room-list {
   list-style: none;
   margin: 0;
   padding: 8px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -200,6 +204,57 @@ input {
   padding: 1px 7px;
 }
 
+.room-unread {
+  flex: none;
+  min-width: 18px;
+  text-align: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--panel);
+  background: var(--accent-owner);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.room-dir {
+  flex: none;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+.room-item.archived .room-name {
+  color: var(--faint);
+  font-style: italic;
+}
+
+.room-archived {
+  flex: none;
+  font-size: 10px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rail-foot {
+  margin-top: auto;
+  padding: 8px 12px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--raised);
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.rail-foot label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
 /* ---------- room header ---------- */
 
 .room-head {
@@ -212,15 +267,20 @@ input {
   border-bottom: 1px solid var(--line);
 }
 
+/* The header is one flex row: title block, then actions. The path in the sub-line is long enough to
+   overflow the row at narrow widths, so the title block clips rather than pushing into the buttons,
+   the name is the part that never yields, and the sub-line is what truncates. */
 .room-title {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .room-title h1 {
   margin: 0;
+  flex: none;
   font-size: 15px;
   font-weight: 620;
   white-space: nowrap;
@@ -229,9 +289,37 @@ input {
 }
 
 .room-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
+}
+
+/* The message count and the separator hold their size; only the path gives way. */
+.room-count-text,
+.room-sep {
+  flex: none;
+}
+
+/* A long room path truncates at the FRONT (`direction: rtl`), so the tail — the folder name that
+   tells two projects apart — stays readable; the title attribute carries the whole path. */
+.room-path {
+  display: inline-block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 28rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  vertical-align: bottom;
+  font-size: 11px;
+  color: var(--dim);
 }
 
 .room-actions {
@@ -810,6 +898,37 @@ input {
   background: var(--raised);
   border-radius: 4px;
   padding: 0 4px;
+}
+
+/* A chip followed by punctuation reads as a stray space — `…\rooms\lab , newest first`. Pulling the
+   sentence back over the chip's right padding sets the comma tight against the last character. */
+.dialog-note .chip-tight {
+  margin-right: -4px;
+}
+
+.trail-list {
+  margin: 0;
+  padding: 0 0 0 1.4rem;
+  max-height: 50vh;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.trail-list li {
+  margin: 0 0 8px;
+}
+
+.trail-list code {
+  font-size: 11px;
+  color: var(--dim);
+  margin-right: 6px;
+}
+
+/* --dim, not --faint: at 11px this line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */
+.trail-meta {
+  display: block;
+  font-size: 11px;
+  color: var(--dim);
 }
 
 .paste {

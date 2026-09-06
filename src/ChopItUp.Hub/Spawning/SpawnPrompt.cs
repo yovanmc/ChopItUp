@@ -19,7 +19,8 @@ public sealed record SpawnPromptInput(
     IReadOnlyList<Participant> Roster,
     string MemoryCore = "",
     bool MemoryTruncated = false,
-    IReadOnlyList<string>? MemoryTopics = null);
+    IReadOnlyList<string>? MemoryTopics = null,
+    string? Directory = null);
 
 /// <summary>D9: the spawn is stateless, so the prompt IS its world — who it is, why it was
 /// spawned, how to reply, the budget, the standing rules, and the room's transcript tail. Rendered
@@ -45,8 +46,17 @@ public static class SpawnPrompt
         sb.Append('\n');
         sb.Append("How to reply: call the chopitup tool post_message exactly once, with room_id \"").Append(input.RoomId).Append("\", client_key \"").Append(input.ClientKey)
           .Append("\", and your whole reply as body. Text you print instead of posting is not seen by the room. Keep it short enough to read in a chat pane. ")
-          .Append("Mention a participant with @ and its id to hand it the turn; each mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ")
-          .Append("You are stateless: this transcript is all you know of the room. You have no files and no tools besides this hub; your memory is the section below.\n");
+          .Append("Mention a participant with @ and its id to hand it the turn; each mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ");
+        if (input.Directory is null)
+            sb.Append("You are stateless: this transcript is all you know of the room. You have no files and no tools besides this hub; your memory is the section below.\n");
+        else
+        {
+            sb.Append("You are stateless: this transcript is all you know of the room; your memory is the section below.\n\n");
+            sb.Append("Files: this room's directory is ").Append(input.Directory).Append(", a git repository and your working directory. ")
+              .Append("You can read, edit, create, search and run shell commands there, with network access. ")
+              .Append(DirectoryRules(input.Directory)).Append(' ')
+              .Append("Files you create or change are the deliverable; still post your reply to the room as described above.\n");
+        }
         sb.Append('\n');
         sb.Append("Memory, shared by every participant and approved entry by entry by the owner");
         if (input.MemoryTruncated)
@@ -71,6 +81,15 @@ public static class SpawnPrompt
         }
         return sb.ToString();
     }
+
+    /// <summary>The fence for a spawn in a directory room (M9 decision 8, F10): sent to Claude as an
+    /// appended system prompt — a channel the room transcript on stdin cannot write into — and repeated
+    /// in the stdin prompt's Files section for both CLIs. A rule, not a wall: the plan says which parts
+    /// are also enforced (git verbs, credential folders) and which are not (reads, the loopback API).</summary>
+    public static string DirectoryRules(string directory) =>
+        $"Stay inside your working directory, {directory}: do not read, list, create or change anything outside this directory, and do not touch its .git folder. "
+        + "Do not run git commands that write (commit, add, checkout, reset, stash, push and the like); the hub commits your work under your name when you finish and records every shell command you run in the room's commit trail. git log, git status and git diff are fine. "
+        + "Do not call the hub's HTTP API or read its data folder; the chopitup MCP tools you were given are your only channel to the hub.";
 
     /// <summary>Drops the oldest messages until the bodies fit the character budget; the newest
     /// message is always kept even when it alone exceeds it (the trigger must be visible).</summary>

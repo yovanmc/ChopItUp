@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Security;
@@ -25,8 +26,9 @@ public sealed class HubTestHost : IAsyncDisposable
     public Uri BaseAddress { get; }
     public HttpClient Client { get; }
     public TokenStore Tokens { get; }
+    public string RoomsRoot { get; }
 
-    private HubTestHost(WebApplication app, string dir, Uri baseAddress, bool deleteOnDispose)
+    private HubTestHost(WebApplication app, string dir, Uri baseAddress, bool deleteOnDispose, string roomsRoot)
     {
         _app = app;
         _dir = dir;
@@ -34,14 +36,16 @@ public sealed class HubTestHost : IAsyncDisposable
         BaseAddress = baseAddress;
         Client = new HttpClient { BaseAddress = baseAddress };
         Tokens = TokenStore.Load(dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());
+        RoomsRoot = roomsRoot;
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null)
     {
-        var app = HubHost.Build(new HubOptions(dir, Port: 0, WebRoot: webRoot), processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit);
+        var options = new HubOptions(dir, Port: 0, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms");
+        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit);
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-        return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose);
+        return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose, options.RoomsRootPath);
     }
 
     public IServiceProvider Services => _app.Services;
@@ -72,6 +76,10 @@ public sealed class HubTestHost : IAsyncDisposable
         await _app.StopAsync();
         await _app.DisposeAsync();
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        if (_deleteOnDispose) TestDirs.DeleteTree(_dir);
+        if (_deleteOnDispose)
+        {
+            TestDirs.DeleteTree(_dir);
+            TestDirs.DeleteTree(RoomsRoot);
+        }
     }
 }

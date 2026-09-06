@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 5;
+    public const int LatestSchemaVersion = 6;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -102,6 +102,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 3) ApplyV3(conn);
             if (GetUserVersion(conn) < 4) ApplyV4(conn);
             if (GetUserVersion(conn) < 5) ApplyV5(conn);
+            if (GetUserVersion(conn) < 6) ApplyV6(conn);
             return 0;
         });
     }
@@ -381,6 +382,28 @@ public sealed class ChopDb
             CREATE INDEX IF NOT EXISTS ix_memory_proposals_status ON memory_proposals(status, room_id, id);
             PRAGMA user_version = 5;
             """;
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>v6 (M9): a room can carry a directory (its git working tree) and an archive stamp. Two
+    /// nullable columns, each probed before its ALTER so a torn v6 — columns present, stamp still 5 —
+    /// re-runs safely (the v3 shape), stamped last in the same transaction (LESSONS M1).</summary>
+    private static void ApplyV6(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        var ddl = new System.Text.StringBuilder();
+        foreach (var column in new[] { "directory", "archived_at" })
+        {
+            using var probe = conn.CreateCommand();
+            probe.Transaction = tx;
+            probe.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name = '{column}'";
+            if (Convert.ToInt64(probe.ExecuteScalar()) == 0)
+                ddl.Append($"ALTER TABLE rooms ADD COLUMN {column} TEXT;\n");
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = ddl + "PRAGMA user_version = 6;";
         cmd.ExecuteNonQuery();
         tx.Commit();
     }
