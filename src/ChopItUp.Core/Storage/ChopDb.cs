@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 4;
+    public const int LatestSchemaVersion = 5;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -101,6 +101,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 2) ApplyV2(conn);
             if (GetUserVersion(conn) < 3) ApplyV3(conn);
             if (GetUserVersion(conn) < 4) ApplyV4(conn);
+            if (GetUserVersion(conn) < 5) ApplyV5(conn);
             return 0;
         });
     }
@@ -351,6 +352,36 @@ public sealed class ChopDb
             stamp.CommandText = "PRAGMA user_version = 4;";
             stamp.ExecuteNonQuery();
         }
+        tx.Commit();
+    }
+
+    /// <summary>v5 adds the memory proposals table (M10, plan decision 6). IF NOT EXISTS so a torn v5
+    /// re-runs; the stamp is the last statement of the same transaction (LESSONS, M1). Nothing
+    /// existing changes shape.</summary>
+    private static void ApplyV5(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS memory_proposals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id     TEXT NOT NULL REFERENCES rooms(id),
+                author_id   TEXT NOT NULL REFERENCES participants(id),
+                topic       TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                source      TEXT,
+                created_at  TEXT NOT NULL,
+                decided_at  TEXT,
+                written_to  TEXT,
+                commit_hash TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_memory_proposals_status ON memory_proposals(status, room_id, id);
+            PRAGMA user_version = 5;
+            """;
+        cmd.ExecuteNonQuery();
         tx.Commit();
     }
 

@@ -59,7 +59,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema-4' -Passed ($health.schema -eq 4) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema-5' -Passed ($health.schema -eq 5) -Detail "schema=$($health.schema)"
 
     # Polls never throw ($ErrorActionPreference is Stop): a transient hub error is logged and the
     # check that reads the result fails by name, so the run always ends with a Results line.
