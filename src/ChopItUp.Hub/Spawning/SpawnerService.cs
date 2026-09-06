@@ -61,6 +61,7 @@ public sealed class SpawnerService : BackgroundService
     private readonly SpawnLimits _limits;
     private readonly IServer _server;
     private readonly IHubContext<RoomHub> _hub;
+    private readonly CliLocator _locate;
     private readonly ExchangePolicy _policy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
@@ -71,10 +72,11 @@ public sealed class SpawnerService : BackgroundService
     private CancellationTokenSource? _wake;
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
-        IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub)
+        IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
+        CliLocator cliLocator)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
-        _options = options; _limits = limits; _server = server; _hub = hub;
+        _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator;
         _policy = new ExchangePolicy(roster, limits);
     }
 
@@ -365,7 +367,7 @@ public sealed class SpawnerService : BackgroundService
 
     private ResolvedCli Cli(string name)
     {
-        if (!_clis.TryGetValue(name, out var cli)) _clis[name] = cli = CliResolver.Resolve(name);
+        if (!_clis.TryGetValue(name, out var cli)) _clis[name] = cli = _locate(name);
         return cli;
     }
 

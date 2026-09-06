@@ -310,6 +310,27 @@ public sealed partial class SpawnerServiceTests
         Assert.Null(await Spawner.StopAsync("general"));                                  // nothing left: 409 at the API
         Assert.DoesNotContain(await Messages(), m => m.Body.StartsWith("Exchange concluded"));
     }
+
+    /// <summary>The CI runner has neither CLI on PATH; every other test in this file relies on
+    /// HubTestHost's default locator never touching PATH. This test proves the seam directly: a hub
+    /// booted with an explicit, recording locator never calls CliResolver.Resolve, and the spawn still
+    /// reaches the fake runner.</summary>
+    [Fact]
+    public async Task Spawn_tests_never_consult_PATH_for_the_cli()
+    {
+        var recorded = new List<string>();
+        CliLocator locator = name => { lock (recorded) recorded.Add(name); return new ResolvedCli($"fake-{name}.exe", [], $"fake-{name}.exe"); };
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_spawner_locator_" + Guid.NewGuid().ToString("N"));
+        var runner = new FakeProcessRunner();
+        await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast, cliLocator: locator);
+
+        var r = await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus what do you think?" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
+
+        var spec = await runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(spec));
+        lock (recorded) Assert.Contains("claude", recorded);
+    }
 }
 
 /// <summary>The two timing rules that need room to be deterministic: a 2-second debounce (two HTTP

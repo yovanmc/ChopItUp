@@ -7,6 +7,12 @@ namespace ChopItUp.Hub.Spawning;
 /// the project twice). <see cref="ResolvedPath"/> is what was found, for logs.</summary>
 public sealed record ResolvedCli(string FileName, IReadOnlyList<string> LeadingArguments, string ResolvedPath);
 
+/// <summary>How <see cref="SpawnerService"/> finds a CLI by participant host name. The production
+/// registration is <see cref="CliResolver.Resolve(string, string?)"/> (PATH lookup); tests register a
+/// locator that never touches PATH, so a hub test never depends on claude/codex being installed on
+/// the machine running it (a real defect on CI runners, which have neither on PATH).</summary>
+public delegate ResolvedCli CliLocator(string name);
+
 public static class CliResolver
 {
     private static readonly string[] ShimExtensions = [".cmd", ".bat"];

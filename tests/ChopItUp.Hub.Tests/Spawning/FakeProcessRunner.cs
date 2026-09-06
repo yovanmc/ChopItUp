@@ -69,3 +69,11 @@ public sealed class RefusingProcessRunner : IProcessRunner
     public Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation) =>
         throw new InvalidOperationException($"This test did not opt into spawning, but the hub tried to launch '{spec.Label}'. Pass a FakeProcessRunner to HubTestHost.StartAsync.");
 }
+
+/// <summary>The default locator for every hub a test boots: never PATH. A CI runner has neither
+/// claude nor codex installed, and no test should care — the fake filename is enough for a
+/// FakeProcessRunner to record and assert on.</summary>
+public static class FakeCli
+{
+    public static ResolvedCli Locate(string name) => new($"fake-{name}.exe", [], $"fake-{name}.exe");
+}

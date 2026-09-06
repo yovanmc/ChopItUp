@@ -17,7 +17,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -61,6 +61,7 @@ public static class HubHost
             builder.Services.AddSingleton(options);
             builder.Services.AddSingleton(limits ?? SpawnLimits.Default);
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
+            builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             builder.Services.AddHttpContextAccessor();
