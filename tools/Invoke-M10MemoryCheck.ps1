@@ -104,8 +104,9 @@ try {
     # Memory notes quote model-written text; only the hub's own failure notes are judged here.
     Add-Check -Name 'exchange.no-failure-notes' -Passed (-not ($hubNotes | Where-Object { -not $_.body.StartsWith('Memory ') -and $_.body -match 'did not reply|without posting|could not be started|exited with code' })) -Detail (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')
 
-    $pending = @(Invoke-RestMethod -Uri "$base/api/memory/proposals?room=general&status=pending" -TimeoutSec 10)
-    $mine = @($pending | Where-Object authorId -eq 'sonnet')
+    # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before filtering (measured 2026-09-06).
+    $pending = @(Invoke-RestMethod -Uri "$base/api/memory/proposals?room=general&status=pending" -TimeoutSec 10 | ForEach-Object { $_ })
+    $mine = @($pending | Where-Object { $_.authorId -eq 'sonnet' })
     Add-Check -Name 'proposal.pending-from-sonnet' -Passed ($mine.Count -ge 1) -Detail ("ids=" + (($mine | ForEach-Object id) -join ','))
     Add-Check -Name 'proposal.special-message' -Passed ([bool]($hubNotes | Where-Object body -like 'Memory proposal #* by sonnet*')) -Detail 'hub note announces the proposal'
 
