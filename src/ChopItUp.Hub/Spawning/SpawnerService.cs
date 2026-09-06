@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
+using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -62,6 +63,7 @@ public sealed class SpawnerService : BackgroundService
     private readonly IServer _server;
     private readonly IHubContext<RoomHub> _hub;
     private readonly CliLocator _locate;
+    private readonly MemoryStore _memory;
     private readonly ExchangePolicy _policy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
@@ -73,14 +75,22 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator)
+        CliLocator cliLocator, MemoryStore memory)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
-        _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator;
+        _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
         _policy = new ExchangePolicy(roster, limits);
     }
 
     public ExchangeSnapshot Snapshot(string roomId) => _snapshots.TryGetValue(roomId, out var s) ? s : Idle(roomId);
+
+    private int _live;
+
+    /// <summary>True while any spawn process of any room may be alive. Counted at the launch and the
+    /// finish themselves, not read off <c>_snapshots</c> (which <c>Publish</c> writes after the launch —
+    /// critique pass 2, P2-4). A spawn process exists only inside this window, so a memory decision
+    /// refused while it is true can never have come from one (M10, plan decision 13).</summary>
+    public bool AnySpawnInFlight => Volatile.Read(ref _live) > 0;
 
     /// <summary>Stops the room's open exchange: kills its in-flight spawns, drops its pending ones,
     /// posts the note. Returns the new snapshot, or null when the room had no open exchange.</summary>
@@ -204,9 +214,11 @@ public sealed class SpawnerService : BackgroundService
         {
             var token = _tokens.Tokens[participant.Id];
             Directory.CreateDirectory(workDir);
+            var core = _memory.ReadCore();
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, RoomName(request.RoomId), _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
-                request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster), _limits);
+                request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList()), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -231,6 +243,7 @@ public sealed class SpawnerService : BackgroundService
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
+            Interlocked.Increment(ref _live);
             handle.Run = Task.Run(async () =>
             {
                 ProcessResult result;
@@ -253,6 +266,7 @@ public sealed class SpawnerService : BackgroundService
         var id = h.Participant.Id;
         var room = h.Request.RoomId;
         _inFlight.Remove((room, id));
+        Interlocked.Decrement(ref _live);
         Console.Error.WriteLine($"spawn {h.SpawnId}: {id} ended exit={(r.ExitCode?.ToString() ?? "killed")} timedOut={r.TimedOut} cancelled={r.Cancelled} posted={h.Posted} in {r.Elapsed.TotalSeconds:0}s");
 
         if (r.TimedOut)

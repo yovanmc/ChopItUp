@@ -104,3 +104,27 @@ host-configs README, then run the previous exe.
 
 Checks: `pwsh tools\Invoke-M5SpawnCheck.ps1` drives one real exchange against a scratch hub with both
 CLIs. `pwsh tools\Probe-SpawnCli.ps1` re-measures the two command lines on their own.
+
+## Memory (M10)
+
+One memory for every model, on disk under `data\memory\`: `MEMORY.md` is the core and goes into
+every spawn's prompt (its first 6,000 characters); `topics\<slug>.md` hold the rest and are fetched
+with the `recall(topic)` tool, which is also how Claude Desktop or the Codex app read memory at all.
+Edit the files by hand whenever you like.
+
+Models never write memory. A spawn (or any host) calls `propose_memory(room_id, topic, title, body)`;
+the hub stores a pending proposal, announces it in the room as `Memory proposal #N …`, and the memory
+panel above the composer shows Approve and Reject. Approve appends the entry to the topic file
+(`core` appends to `MEMORY.md`) and commits it in the git repository the hub keeps inside
+`data\memory\` (created on the first approval; one commit per approval, identity `ChopItUp hub`).
+Reject drops it. Both post a hub note.
+
+"Import memory" in the room header seeds the store from a vendor's own memory: point it at Claude
+Code's memory folder (one file per memory) or Codex's `~\.codex\memories\` (split on headings). Every
+file or section becomes a pending proposal authored as `claude` or `codex`; re-importing adds nothing.
+
+Rollback: the previous exe refuses a v5 database. Restore the `.v4.` backup per the host-configs
+README, then run the previous exe; `data\memory\` is plain markdown and needs no rollback.
+
+Checks: `pwsh tools\Invoke-M10MemoryCheck.ps1` drives one real Sonnet spawn against a scratch hub,
+proves it read the core, and approves its proposal end to end.

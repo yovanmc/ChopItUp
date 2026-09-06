@@ -15,7 +15,7 @@ public sealed class SpawnCommandsTests
         Assert.Equal(@"C:\tools\claude.exe", spec.FileName);
         Assert.Equal(
             ["-p", "--tools", "", "--strict-mcp-config", "--mcp-config", @"C:\data\spawns\s1\mcp.json",
-             "--allowedTools", "mcp__chopitup__post_message", "--no-session-persistence", "--model", "opus",
+             "--allowedTools", "mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory", "--no-session-persistence", "--model", "opus",
              "--output-format", "json", "--disable-slash-commands", "--setting-sources", ""],
             spec.Arguments);
         Assert.Empty(spec.Environment);

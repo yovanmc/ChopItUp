@@ -35,5 +35,7 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("client_key is optional", instructions);
         Assert.Contains("never reuse", instructions);
         Assert.DoesNotContain("Give every post_message call a fresh, unique client_key", instructions);
+        Assert.Contains("propose_memory(room_id, topic, title, body)", instructions);
+        Assert.Contains("nothing is remembered until approved", instructions);
     }
 }

@@ -69,7 +69,7 @@ try {
     $mcpJson = '{"mcpServers":{"chopitup":{"type":"http","url":"' + $mcpUrl + '","headers":{"Authorization":"Bearer ' + $claudeTok + '"}}}}'
     Set-Content -LiteralPath (Join-Path $claudeDir 'mcp.json') -Value $mcpJson -NoNewline -Encoding utf8
     $claudeArgs = @('-p', '--tools', '', '--strict-mcp-config', '--mcp-config', (Join-Path $claudeDir 'mcp.json'),
-        '--allowedTools', 'mcp__chopitup__post_message', '--no-session-persistence', '--model', 'sonnet',
+        '--allowedTools', 'mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory', '--no-session-persistence', '--model', 'sonnet',
         '--output-format', 'json', '--disable-slash-commands', '--setting-sources', '')
     $r1 = Invoke-Child -FileName $claudeCmd.Source -argv $claudeArgs -Env @{} -WorkDir $claudeDir `
         -Stdin "You are participant 'sonnet' in room 'general'. Call post_message once with room_id 'general', body exactly 'probe ok from claude' and client_key 'probe-claude-$stamp'. Then reply with the word done."
