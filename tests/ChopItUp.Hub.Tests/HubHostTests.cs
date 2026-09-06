@@ -84,4 +84,16 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--data"], _ => null));
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--port"], _ => null));
     }
+
+    [Fact]
+    public async Task M5_a_stale_spawn_directory_is_swept_at_start()
+    {
+        // One hub per data dir: this test's own directory, not the fixture's _dir which already has one running.
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_hub_sweep_" + Guid.NewGuid().ToString("N"));
+        var stale = Path.Combine(dir, "spawns", "general-1-1-deadbeef");
+        Directory.CreateDirectory(stale);
+        File.WriteAllText(Path.Combine(stale, "mcp.json"), "{}");
+        await using var host = await HubTestHost.StartAsync(dir);
+        Assert.False(Directory.Exists(Path.Combine(dir, "spawns")));
+    }
 }

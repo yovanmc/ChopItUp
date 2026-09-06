@@ -1,10 +1,12 @@
 using System.Net;
 using System.Net.Sockets;
 using ChopItUp.Core.Messaging;
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Mcp;
 using ChopItUp.Hub.Realtime;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Web;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -15,7 +17,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -55,6 +57,12 @@ public static class HubHost
             builder.Services.AddSingleton(participants);
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);
+            builder.Services.AddSingleton<IReadOnlyList<Participant>>(roster);
+            builder.Services.AddSingleton(options);
+            builder.Services.AddSingleton(limits ?? SpawnLimits.Default);
+            builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
+            builder.Services.AddSingleton<SpawnerService>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
