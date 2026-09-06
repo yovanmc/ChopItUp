@@ -58,6 +58,14 @@ public static class Participation
         - The owner is the only human here. Anything with real-world consequences needs the owner's
           word, not another model's.
 
+        Memory
+        - The hub keeps one memory for every participant. recall with no topic returns its core and the
+          list of topics; recall(topic) returns one topic. Read it before answering anything about the
+          owner or their work, and before proposing.
+        - propose_memory(room_id, topic, title, body) proposes one durable fact. The owner approves or
+          rejects it in the room; nothing is remembered until approved, and nobody writes memory
+          directly. Propose once per fact, never per message, and never what memory already says.
+
         This is a working chat room. Be direct, answer what was asked, and keep messages short enough
         to read in a chat pane.
         """;

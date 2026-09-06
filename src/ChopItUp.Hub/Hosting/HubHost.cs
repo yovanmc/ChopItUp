@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Sockets;
+using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Mcp;
+using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Realtime;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
@@ -17,7 +19,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -51,6 +53,10 @@ public static class HubHost
             // the next hub start.
             var roster = participants.List();
             var tokens = TokenStore.Load(options.DataDir, roster.Select(p => p.Id).ToArray());
+            // M10: the memory store lives beside the database; the seed core is written once, the git
+            // trail is created lazily by the first approval (plan decisions 1, 5).
+            var memory = new MemoryStore(Path.Combine(options.DataDir, "memory"));
+            memory.EnsureLayout();
 
             builder.Services.AddSingleton(db);
             builder.Services.AddSingleton(new MessageStore(db));
@@ -65,9 +71,12 @@ public static class HubHost
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             builder.Services.AddHttpContextAccessor();
+            builder.Services.AddSingleton(memory);
+            builder.Services.AddSingleton(new MemoryProposalStore(db));
+            builder.Services.AddSingleton((memoryGit ?? (root => new MemoryGit(root)))(memory.Root));
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
-                .WithTools<RoomTools>();
+                .WithTools<RoomTools>().WithTools<MemoryTools>();
             builder.Services.AddSignalR();
 
             var app = builder.Build();
