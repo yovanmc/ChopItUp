@@ -128,3 +128,46 @@ README, then run the previous exe; `data\memory\` is plain markdown and needs no
 
 Checks: `pwsh tools\Invoke-M10MemoryCheck.ps1` drives one real Sonnet spawn against a scratch hub,
 proves it read the core, and approves its proposal end to end.
+
+## Rooms (M9)
+
+Every room is one conversation with its own directory: a git repository the hub owns. A room made
+after M9 gets one at creation (a blank directory field means `<rooms root>\<room id>`; the rooms
+root is `--rooms-root` / `CHOPITUP_ROOMS` / `%USERPROFILE%\ChopItUp\rooms`). A room from before M9
+has no directory until the owner binds one, once — after that it cannot be re-bound.
+
+Refused directories: drive roots, the user profile folder itself, anything under `C:\Self Apps`, the
+hub's own data and install folders, the credential folders (`.claude .codex .ssh .gnupg .aws .azure
+.kube .docker`), Windows and Program Files folders, network and device paths (`\\server\share`,
+`\\?\...`), a folder inside another git repository that is not its root, and a folder that overlaps
+another room's directory. A junction or symbolic link is resolved and both the link and its target
+must pass.
+
+Inside a directory room a spawned participant can read, create, edit, search and run shell commands
+with network access, cwd set to the room; git is read-only for it by rule. Only one spawn runs at a
+time in a directory room, so two models never edit the tree at once.
+
+The trail: before a spawn, if the tree is dirty, the hub commits the owner's edits as the owner; when
+the spawn ends the hub always commits the tree as that participant (`Name <id@chopitup.local>`,
+committer `ChopItUp hub <hub@chopitup.local>`), with the shell commands it ran listed in the commit
+body. A hub note `Committed <hash> as <id>: …` (or `Not committed for <id>: …`) lands in the room, and
+the Trail button in the header lists the last 20 commits. Nothing is ever pushed.
+
+Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own sandbox
+(workspace-write, network on); Claude Code runs as the owner's own Windows user, confined only by a
+deny list and the prompt, because Claude Code 2.1.220 has no read fence this hub can switch on — a
+read outside the room is a rule the model is told to follow, not a wall it cannot cross. Row 13 on the
+board is the OS-level route (a restricted Windows account) that would close this gap for both hosts.
+
+The crash window: if the hub itself dies between the model's CLI exiting and the after-spawn commit,
+the model's edits are left uncommitted, and the *next* pre-spawn commit sweeps them in authored as the
+owner. The hub logs a warning at startup for every directory room that is already dirty, so the owner
+can look before the next spawn runs.
+
+Archive hides a room from the rail and from `list_rooms`; nothing on disk changes, and unarchive
+restores it. The seeded `general` room can never be archived.
+
+Checks: `pwsh tools\Invoke-M9RoomCheck.ps1` starts a scratch hub against a scratch rooms root, spends
+one real Sonnet call (`-IncludeCodex` adds one Codex call), and proves room creation and refusal,
+the owner-then-model commit order, the shell log in the commit body, the trail endpoint, unread and
+mark-read, and archive/unarchive — leaving its log and the room folder behind under `%TEMP%`.

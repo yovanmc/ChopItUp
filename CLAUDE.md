@@ -29,6 +29,7 @@ dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 Release = single-file exe in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside it (a single-file bundle can't serve static files from inside itself). Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
 Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both orchestrator-run, both spend.
 Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryCheck.ps1`.
+Room check (real Sonnet, scratch hub + scratch room dir, spends): `pwsh tools\Invoke-M9RoomCheck.ps1`.
 
 ## Gate
 `ROADMAP.md` is whitelist-v3; gate with `pwsh -NoProfile -File ~\.claude\skills\roadmap\preflight\Check-RoadmapBudget.ps1 -RoadmapPath ROADMAP.md -RequireSchema -RepoRoot .` on every board touch.
