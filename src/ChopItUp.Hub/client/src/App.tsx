@@ -7,10 +7,12 @@ import ExchangeBar from './ExchangeBar';
 import ImportDialog from './ImportDialog';
 import MemoryImportDialog from './MemoryImportDialog';
 import MemoryPanel from './MemoryPanel';
+import NewRoomDialog from './NewRoomDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import Thread from './Thread';
-import { isSystem, setRoster } from './participants';
+import TrailDialog from './TrailDialog';
+import { isHuman, isSystem, setRoster } from './participants';
 import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room } from './types';
 
 /** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
@@ -20,6 +22,11 @@ import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Roo
 function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnapshot): ExchangeSnapshot | null {
   if (current === null || incoming.roomId !== current.roomId || incoming.seq > current.seq) return incoming;
   return current;
+}
+
+/** The chat-list order. Every stamp is UTC round-trip text, so string order is time order. */
+function byActivity(rooms: Room[]): Room[] {
+  return [...rooms].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0));
 }
 
 export default function App() {
@@ -35,10 +42,16 @@ export default function App() {
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
   const [memoryImportOpen, setMemoryImportOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
+  const [trailOpen, setTrailOpen] = useState(false);
+  const [roomBusy, setRoomBusy] = useState(false);
 
   const hub = useRef<HubConnection | null>(null);
   const currentRoom = useRef<string | null>(null);
   const lastId = useRef(0);
+  const showArchivedRef = useRef(false);
+  const readTimer = useRef<number | null>(null);
 
   /** Pending proposals of the open room. Guarded on the ref so a fetch that outlives a room switch
    *  cannot paint the previous room's cards into the new one. */
@@ -72,9 +85,26 @@ export default function App() {
   }, [messages]);
 
   const refreshRooms = useCallback(async (signal?: AbortSignal) => {
-    const loaded = await api.listRooms(signal);
+    const loaded = await api.listRooms(showArchivedRef.current, signal);
     setRooms(loaded);
-    setRoomId((current) => current ?? loaded[0]?.id ?? null);
+    // Keep the open room if it is still listed; otherwise (archived and hidden, or gone) the first one.
+    setRoomId((current) => (current !== null && loaded.some((room) => room.id === current) ? current : (loaded[0]?.id ?? null)));
+  }, []);
+
+  const toggleArchived = useCallback(() => {
+    showArchivedRef.current = !showArchivedRef.current;
+    setShowArchived(showArchivedRef.current);
+    refreshRooms().catch((failure) => setError(api.describeError(failure)));
+  }, [refreshRooms]);
+
+  /** M9: the owner's read cursor moves while the room is open. Debounced, so a burst of messages is
+   *  one call; dropped if the room changed before it fired. */
+  const scheduleRead = useCallback((room: string) => {
+    if (readTimer.current !== null) window.clearTimeout(readTimer.current);
+    readTimer.current = window.setTimeout(() => {
+      readTimer.current = null;
+      if (currentRoom.current === room) api.markRead(room).catch(() => undefined);
+    }, 750);
   }, []);
 
   // The roster loads BEFORE the first room is selected, so no message ever renders without it.
@@ -110,17 +140,28 @@ export default function App() {
     hub.current = connection;
 
     connection.on('MessagePosted', (message: Message) => {
-      if (message.roomId === currentRoom.current) merge([message]);
+      const open = message.roomId === currentRoom.current;
+      if (open) merge([message]);
       // Every memory state change is announced by a hub note that starts with "Memory " (a proposal,
       // an import, an approval, a rejection); that note IS the refresh signal — no second event.
-      if (message.roomId === currentRoom.current && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
+      if (open && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
         loadProposals(message.roomId).catch(() => undefined);
       }
+      if (open && !isHuman(message.authorId)) scheduleRead(message.roomId);
+      // The owner's own posts advance the owner's cursor on the hub, so they never count as unread.
       setRooms((previous) =>
-        previous.map((room) =>
-          room.id === message.roomId
-            ? { ...room, messageCount: room.messageCount + 1, lastMessageId: message.id }
-            : room,
+        byActivity(
+          previous.map((room) =>
+            room.id === message.roomId
+              ? {
+                  ...room,
+                  messageCount: room.messageCount + 1,
+                  lastMessageId: message.id,
+                  lastActivityAt: message.createdAt,
+                  unread: open || isHuman(message.authorId) ? room.unread : room.unread + 1,
+                }
+              : room,
+          ),
         ),
       );
     });
@@ -161,7 +202,7 @@ export default function App() {
       hub.current = null;
       void connection.stop();
     };
-  }, [merge, loadProposals]);
+  }, [merge, loadProposals, scheduleRead]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
   // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
@@ -197,6 +238,10 @@ export default function App() {
     });
     return () => {
       abort.abort();
+      if (readTimer.current !== null) {
+        window.clearTimeout(readTimer.current);
+        readTimer.current = null;
+      }
       if (connection && connection.state === HubConnectionState.Connected) {
         void connection.invoke('LeaveRoom', roomId).catch(() => undefined);
       }
@@ -214,6 +259,7 @@ export default function App() {
         if (abort.signal.aborted) return;
         setError(null);
         merge(loaded);
+        if (loaded.length > 0) api.markRead(roomId).catch(() => undefined); // opening a room reads it
       })
       .catch((failure) => {
         if (!abort.signal.aborted) setError(api.describeError(failure));
@@ -281,19 +327,66 @@ export default function App() {
     [roomId, loadProposals],
   );
 
+  const selectRoom = useCallback((id: string) => {
+    setRoomId(id);
+    setRooms((previous) => previous.map((room) => (room.id === id ? { ...room, unread: 0 } : room)));
+  }, []);
+
+  const onRoomCreated = useCallback((room: Room) => {
+    setRoomDialog(null);
+    setRooms((previous) => byActivity([room, ...previous.filter((r) => r.id !== room.id)]));
+    setRoomId(room.id);
+  }, []);
+
+  const onRoomBound = useCallback((room: Room) => {
+    setRoomDialog(null);
+    setRooms((previous) => previous.map((r) => (r.id === room.id ? room : r)));
+  }, []);
+
+  // Archive hides, never blocks (plan decision 14): the hub keeps the room and its folder; the list
+  // is re-read so the selection moves to the first visible room when the open one leaves the list.
+  const toggleArchive = useCallback(async () => {
+    if (!roomId) return;
+    const room = rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    setRoomBusy(true);
+    try {
+      if (room.archivedAt !== null) await api.unarchiveRoom(roomId);
+      else await api.archiveRoom(roomId);
+      setError(null);
+      await refreshRooms();
+    } catch (failure) {
+      setError(api.describeError(failure));
+    } finally {
+      setRoomBusy(false);
+    }
+  }, [roomId, rooms, refreshRooms]);
+
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
   return (
     <div className="app">
-      <RoomRail rooms={rooms} activeRoomId={roomId} liveness={liveness} onSelect={setRoomId} />
+      <RoomRail
+        rooms={rooms}
+        activeRoomId={roomId}
+        liveness={liveness}
+        showArchived={showArchived}
+        onSelect={selectRoom}
+        onNewRoom={() => setRoomDialog({ mode: 'create' })}
+        onToggleArchived={toggleArchived}
+      />
       <main className="room">
         {activeRoom ? (
           <>
             <RoomHeader
               room={activeRoom}
               loadedCount={messages.length}
+              busy={roomBusy}
               onImport={() => setImportOpen(true)}
               onImportMemory={() => setMemoryImportOpen(true)}
+              onBind={() => setRoomDialog({ mode: 'bind', room: activeRoom })}
+              onArchive={() => void toggleArchive()}
+              onTrail={() => setTrailOpen(true)}
             />
             {error && (
               <p className="banner" role="alert">
@@ -330,6 +423,15 @@ export default function App() {
           onImported={onMemoryImported}
         />
       )}
+      {roomDialog && (
+        <NewRoomDialog
+          mode={roomDialog.mode}
+          room={roomDialog.mode === 'bind' ? roomDialog.room : undefined}
+          onClose={() => setRoomDialog(null)}
+          onDone={roomDialog.mode === 'create' ? onRoomCreated : onRoomBound}
+        />
+      )}
+      {trailOpen && activeRoom && <TrailDialog room={activeRoom} onClose={() => setTrailOpen(false)} />}
     </div>
   );
 }

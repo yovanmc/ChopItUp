@@ -14,6 +14,29 @@ export interface Room {
   createdAt: string;
   messageCount: number;
   lastMessageId: number;
+  /** Absolute path of the room's git tree, or null for a room made before M9 and not yet bound. */
+  directory: string | null;
+  archivedAt: string | null;
+  /** The newest message's time, or createdAt when there is none — the chat-list order. */
+  lastActivityAt: string;
+  /** Messages past the owner's read cursor. */
+  unread: number;
+}
+
+/** One line of `git log` in a room's directory (Web/RoomsApi.cs `GetTrail`). */
+export interface TrailCommit {
+  hash: string;
+  author: string;
+  at: string;
+  subject: string;
+}
+
+/** Mirrors `GET /api/rooms/{id}/trail`. A room with no directory answers `directory: null` and an
+ *  empty list; a git call that failed answers an empty list and the failure in `error`. */
+export interface Trail {
+  directory: string | null;
+  commits: TrailCommit[];
+  error: string | null;
 }
 
 /** Mirrors `GET /api/participants`. `host` is which program speaks for the row; `model` is null for
