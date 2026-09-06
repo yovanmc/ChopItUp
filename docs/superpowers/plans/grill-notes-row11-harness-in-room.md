@@ -8,6 +8,10 @@ Paired delete: this file is deleted in the commit that flips the LAST row cut fr
 
 The roadmap-driven build process that runs in the Claude Code harness runs inside a Chop It Up room, so the experience is consistent across models. Consensus among the participants first, then ONE designated agent writes.
 
+Refined 2026-09-06 (owner, mid-interview, before Q1 was answered): the new harness runs on its own; when needed the owner interacts with it from a mobile device THROUGH a session of another harness (a Claude Code or Codex session that holds the hub MCP tools). Any prior ruling (D2, D5, D7, D9 included) may be overridden to serve this. Constraints: cost no higher than the Claude Code harness for the same milestone; memory management at least as good.
+
+Consequences noted at the time: (1) a session posting through the `claude`/`codex` credential is `author.Kind` model, so under F8 it cannot open an exchange: the mobile-through-a-harness path needs either an owner-kind credential for that session or an amended D2 (new frontier item). (2) Harness spend is ~93% builder context re-billing (`cost-model.md`), which a room reproduces one-for-one; the orchestrator share (~32% for Fable-main) is where a per-phase re-spawned conductor spends less than a persistent one, because it is the /clear-between-phases lever applied by construction.
+
 ## Decisions
 
 | # | Area | Decision |
