@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
@@ -269,10 +270,10 @@ public sealed class SpawnerService : BackgroundService
                 : SpawnCommands.ClaudeFinalText(r.StandardOutput);
             var exit = r.ExitCode?.ToString() ?? "none";
             if (final is not null)
-                PostNote(room, $"@{id} replied without posting to the room (exit code {exit}). Its reply:\n\n{Truncate(Scrub(final, h.Token), NoteReplyChars)}");
+                PostNote(room, $"@{id} replied without posting to the room (exit code {exit}). Its reply:\n\n{Truncate(Scrub(StripAnsi(final), h.Token), NoteReplyChars)}");
             else
             {
-                var stderr = Scrub(r.StandardError.Trim(), h.Token);
+                var stderr = Scrub(StripAnsi(r.StandardError.Trim()), h.Token);
                 PostNote(room, $"@{id} exited with code {exit} without replying."
                     + (stderr.Length > 0 ? $" Last output:\n\n{Tail(stderr, NoteStderrChars)}" : ""));
             }
@@ -379,6 +380,12 @@ public sealed class SpawnerService : BackgroundService
 
     private static string Scrub(string text, string token) =>
         string.IsNullOrEmpty(token) ? text : text.Replace(token, "<token>", StringComparison.Ordinal);
+
+    // CLI subprocesses write ANSI colour codes to stderr/stdout; a CSI sequence (ESC '[' ... final byte)
+    // or a bare ESC followed by one character (OSC/other) both get dropped before a note reaches the room.
+    private static readonly Regex AnsiEscape = new(@"\x1B(?:\[[0-?]*[ -/]*[@-~]|.)", RegexOptions.Compiled);
+
+    private static string StripAnsi(string text) => AnsiEscape.Replace(text, "");
 
     private static string Describe(TimeSpan t) =>
         t.TotalMinutes >= 1 ? $"{t.TotalMinutes:0} minute(s)" : $"{t.TotalSeconds:0} second(s)";

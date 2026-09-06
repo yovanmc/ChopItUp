@@ -188,6 +188,17 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A4_b_ansi_escape_codes_in_stderr_are_stripped_before_posting()
+    {
+        var esc = ((char)0x1b).ToString();
+        _runner.Handler = (_, _, _) => Task.FromResult(new ProcessResult(1, false, false, "", esc + "[31mError: boom" + esc + "[0m", TimeSpan.Zero));
+        await PostAsOwner("@sonnet crash");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("exited with code 1"));
+        Assert.Contains("Error: boom", note.Body);
+        Assert.DoesNotContain(esc, note.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task A6_an_owner_message_mid_exchange_lets_the_running_spawn_finish_ignores_its_mentions_and_re_roots()
     {
         var releaseOpus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
