@@ -97,6 +97,7 @@ public static class HubHost
             app.MapMcp("/mcp");
             app.MapHub<RoomHub>("/hub/rooms");
             app.MapChatApi();
+            app.MapExchangeApi();
             return app;
         }
         catch
