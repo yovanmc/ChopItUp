@@ -194,7 +194,7 @@ public sealed class SpawnerService : BackgroundService
     {
         var participant = _roster.First(p => p.Id == request.ParticipantId);
         var spawnId = $"{request.RoomId}-{request.RootMessageId}-{request.TurnNumber}-{Guid.NewGuid().ToString("N")[..8]}";
-        var workDir = Path.Combine(_options.DataDir, "spawns", spawnId);
+        var workDir = Path.GetFullPath(Path.Combine(_options.DataDir, "spawns", spawnId));
         ExchangePolicy.Started(x, request);
         _lastStart[participant.Id] = now;
         try

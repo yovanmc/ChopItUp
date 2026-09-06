@@ -95,6 +95,9 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         Assert.Equal(_host.TokenFor("opus"), ClaudeTokenIn(opus));
         Assert.DoesNotContain(opus.Arguments, a => a.Contains(_host.TokenFor("opus")));
         Assert.StartsWith(Path.Combine(_dir, "spawns"), opus.WorkingDirectory);
+        Assert.True(Path.IsPathRooted(opus.WorkingDirectory), $"expected a rooted work dir, got '{opus.WorkingDirectory}'");
+        var mcpConfigArg = opus.Arguments[opus.Arguments.ToList().IndexOf("--mcp-config") + 1];
+        Assert.True(Path.IsPathRooted(mcpConfigArg), $"expected a rooted --mcp-config path, got '{mcpConfigArg}'");
         Assert.Contains("what do you think of the plan?", opus.StandardInput);
         Assert.Contains("Turn 1 of 4; 3 turn(s) remain after yours.", opus.StandardInput);
         Assert.Contains("#1 owner", opus.StandardInput);

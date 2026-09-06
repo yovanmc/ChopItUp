@@ -86,6 +86,14 @@ public sealed class HubHostTests : IAsyncLifetime
     }
 
     [Fact]
+    public void A_relative_data_dir_is_made_absolute_so_spawns_get_rooted_paths()
+    {
+        var options = HubOptions.Parse(["--data", ".data"], _ => null);
+        Assert.True(Path.IsPathRooted(options.DataDir), $"expected a rooted path, got '{options.DataDir}'");
+        Assert.EndsWith(".data", options.DataDir);
+    }
+
+    [Fact]
     public async Task M5_a_stale_spawn_directory_is_swept_at_start()
     {
         // One hub per data dir: this test's own directory, not the fixture's _dir which already has one running.
