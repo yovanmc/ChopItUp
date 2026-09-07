@@ -6,6 +6,8 @@ using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Skills;
+using ChopItUp.Hub.Spawning;
+using ChopItUp.Hub.Tests.Spawning;
 using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Hub.Tests;
@@ -195,7 +197,7 @@ public sealed class HostCommandsTests : IDisposable
             .ToArray();
 
     [Fact]
-    public void A7_print_config_writes_all_three_files_with_the_live_port_and_tokens()
+    public void A7_print_config_writes_all_four_files_with_the_live_port_and_tokens()
     {
         var dir = NewDir();
         StartedOnce(dir);
@@ -205,12 +207,13 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(0, exit);
 
         var folder = ConfigFolder(dir);
-        // Three files, not four: no separate Claude Code artifact is generated. Claude Code joins
-        // as 'claude' by pasting the Claude Desktop entry - owner ruling 2026-09-04, who prefers
-        // one Claude identity and accepts that the two hosts share a read cursor. Spawn rows (M8)
-        // add no files either: the hub is their client.
+        // Four files: no separate Claude DESKTOP artifact for Claude Code — it still joins as
+        // 'claude' by pasting the Claude Desktop entry (owner ruling 2026-09-04, one Claude identity,
+        // a shared read cursor accepted). But row 11 adds a fourth: 'owner-remote' is a second,
+        // distinct human-kind row, and it gets its own config (task 6b). Spawn rows (M8) still add
+        // no files: the hub is their client.
         Assert.Equal(
-            new[] { "README.md", "claude-desktop.json", "codex-config.toml" },
+            new[] { "README.md", "claude-code-owner-remote.json", "claude-desktop.json", "codex-config.toml" },
             Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
 
         const string url = "http://127.0.0.1:9123/mcp";
@@ -247,6 +250,19 @@ public sealed class HostCommandsTests : IDisposable
         Assert.DoesNotContain(tokens["claude"], codex);
         Assert.DoesNotContain(tokens["owner"], codex);
 
+        // claude-code-owner-remote.json (task 6b): the direct type:"http" + Authorization: Bearer
+        // shape every hub-spawned Claude has used since M5 — NOT the mcp-remote bridge above, which
+        // is Claude Desktop's workaround for a problem Claude Code does not have.
+        using var proxyDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json")));
+        var proxyServer = proxyDoc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
+        Assert.Equal("http", proxyServer.GetProperty("type").GetString());
+        Assert.Equal(url, proxyServer.GetProperty("url").GetString());
+        Assert.Equal("Bearer " + tokens["owner-remote"], proxyServer.GetProperty("headers").GetProperty("Authorization").GetString());
+        var proxyText = File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json"));
+        foreach (var (id, token) in tokens)
+            if (id != "owner-remote") Assert.DoesNotContain(token, proxyText);
+        Assert.EndsWith(Environment.NewLine, proxyText);   // indented + trailing newline, like its neighbours (m-12)
+
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
         Assert.Contains(url, readme);
         Assert.Contains("Port 9123", readme);
@@ -257,7 +273,19 @@ public sealed class HostCommandsTests : IDisposable
         // back to a bare npx and the bridge dies silently again.
         Assert.Contains("cmd /c", readme);
         Assert.Contains("npx.exe", readme);
-        Assert.Contains("Claude Code gets no file of its own", readme);
+        // "Claude Code gets no file of its own" became false at 6b (m-12) — the README must now say
+        // what is true: Claude Code still joins as 'claude' when the owner wants that, and
+        // owner-remote is a separate credential.
+        Assert.Contains("Claude Code still joins as `claude`", readme);
+        Assert.DoesNotContain("gets no file of its own", readme);
+        Assert.Contains("claude-code-owner-remote.json", readme);
+        Assert.Contains("## The remote hand", readme);
+        Assert.Contains("--rotate-token owner-remote", readme);
+        // Ticket 06: the readme must state which alternative connection form is untested (the
+        // mcp-remote bridge, for this identity).
+        Assert.Contains("untested", readme);
+        Assert.Contains("## Roster classes", readme);
+        Assert.Contains("| Classes |", readme);
         Assert.Contains("only as private as", readme);
         Assert.Contains("## Restoring a backup", readme);
         // A restore that leaves the WAL behind replays the very writes it was meant to undo.
@@ -369,6 +397,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains(Path.Combine(inside, "README.md"), appeared);
         Assert.Contains(Path.Combine(inside, "claude-desktop.json"), appeared);
         Assert.Contains(Path.Combine(inside, "codex-config.toml"), appeared);
+        Assert.Contains(Path.Combine(inside, "claude-code-owner-remote.json"), appeared);
     }
 
     [Fact]
@@ -557,5 +586,60 @@ public sealed class HostCommandsTests : IDisposable
 
         Assert.Equal(0, exit);
         Assert.True(File.Exists(Path.Combine(dir, "skills", "demo", "SKILL.md")));
+    }
+
+    // --- Row 11 task 6: the owner-remote host config and acceptance 6's unit half -----------
+
+    [Fact]
+    public void A7_print_config_writes_the_owner_remote_config_with_only_its_own_token()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+        var tokens = TokenStore.ReadExisting(dir, Roster);
+
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
+        Assert.Equal(0, exit);
+
+        var path = Path.Combine(ConfigFolder(dir), "claude-code-owner-remote.json");
+        Assert.True(File.Exists(path));
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
+        Assert.Equal("http", server.GetProperty("type").GetString());
+        Assert.Equal("http://127.0.0.1:9123/mcp", server.GetProperty("url").GetString());
+        Assert.Equal("Bearer " + tokens["owner-remote"], server.GetProperty("headers").GetProperty("Authorization").GetString());
+
+        var text = File.ReadAllText(path);
+        foreach (var (id, token) in tokens)
+            if (id != "owner-remote") Assert.DoesNotContain(token, text);
+
+        var readme = File.ReadAllText(Path.Combine(ConfigFolder(dir), "README.md"));
+        Assert.Contains("claude-code-owner-remote.json", readme);
+        Assert.Contains("| Classes |", readme);
+    }
+
+    /// <summary>Unit half of acceptance 6 (critique pass 2, m-10); the live half is M11 check 7.
+    /// A post authenticated as <c>owner-remote</c> through the real MCP surface is stamped
+    /// <c>owner-remote</c> and opens an exchange exactly as an <c>owner</c> post does.</summary>
+    private static readonly SpawnLimits Fast = new(Budget: 4, Debounce: TimeSpan.FromMilliseconds(150), MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
+
+    [Fact]
+    public async Task A6_a_post_authenticated_as_owner_remote_is_stamped_owner_remote_and_opens_an_exchange()
+    {
+        var dir = NewDir();
+        var runner = new FakeProcessRunner { Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct) };
+        await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
+        await using var proxy = await host.ClientFor("owner-remote");
+
+        var posted = HubTestHost.Json(await proxy.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "@sonnet hello from the phone" }));
+        Assert.Equal("owner-remote", posted.GetProperty("author_id").GetString());
+
+        var spec = await runner.NextSpecAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+
+        using var doc = JsonDocument.Parse(await host.Client.GetStringAsync("api/rooms/general/exchange"));
+        Assert.Equal("open", doc.RootElement.GetProperty("status").GetString());
+
+        await host.Client.PostAsync("api/rooms/general/exchange/stop", null);   // clean up the hanging spawn before dispose
     }
 }

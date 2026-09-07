@@ -228,6 +228,19 @@ public sealed class SkillStoreTests : IDisposable
         Assert.True(Directory.Exists(_store.Root));
     }
 
+    /// <summary>Path.GetFullPath keeps a trailing separator when the caller passes one; a store
+    /// constructed that way must still resolve skills, not answer NotFound on every read.</summary>
+    [Fact]
+    public void A_store_constructed_with_a_trailing_separator_still_resolves_its_skills()
+    {
+        WriteSkill("demo", ValidSkillBody);
+        var trailing = new SkillStore(_store.Root + Path.DirectorySeparatorChar, _hashes);
+
+        var result = trailing.Read("demo");
+
+        Assert.IsType<SkillRead.Ok>(result);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);

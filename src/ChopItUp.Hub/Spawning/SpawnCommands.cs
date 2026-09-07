@@ -28,6 +28,10 @@ public static class SpawnCommands
             new Dictionary<string, string>(),
             workDir, prompt, label);
 
+    // WriteIndented + a trailing newline (critique pass 2, m-12): this JSON also lands in
+    // host-configs\claude-code-owner-remote.json, which the owner hand-merges like every other file
+    // in that folder, and those are all indented with a trailing newline. The per-spawn mcp.json
+    // this also produces (SpawnerService) is read by the Claude CLI, which does not care either way.
     public static string ClaudeMcpConfigJson(string mcpUrl, string token) =>
         JsonSerializer.Serialize(new
         {
@@ -35,7 +39,7 @@ public static class SpawnCommands
             {
                 [McpServerName] = new { type = "http", url = mcpUrl, headers = new { Authorization = "Bearer " + token } },
             },
-        });
+        }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
 
     /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
     /// tool (LESSONS, M5 approvals); `--ignore-user-config` keeps the owner's config.toml out while

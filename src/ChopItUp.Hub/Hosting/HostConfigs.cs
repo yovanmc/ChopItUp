@@ -1,5 +1,7 @@
 using System.Text.Json;
 using ChopItUp.Core.Model;
+using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Hosting;
 
@@ -34,6 +36,17 @@ public static class HostConfigs
                 default: throw new InvalidOperationException($"Participant '{row.Id}' has host '{row.Host}', which has no config template.");
             }
         }
+        // The owner's remote hand (grill ledger D3) is the one human row that needs a client config:
+        // it is a credential a Claude Code session on this machine is configured with. Claude CODE
+        // dials loopback directly - that is SpawnCommands.ClaudeMcpConfigJson, the shape every
+        // hub-spawned Claude has used since M5 and that the M5/M9/M10 live checks exercise. The
+        // mcp-remote bridge above is Claude DESKTOP's workaround, needed only because Desktop's
+        // remote connectors are dialled from Anthropic's cloud - using it here would add an npx
+        // registry fetch to every session start for nothing.
+        var proxy = roster.FirstOrDefault(p => p.Id == ChopDb.OwnerRemoteParticipantId);
+        if (proxy is not null && tokens.TryGetValue(proxy.Id, out var proxyToken))
+            File.WriteAllText(Path.Combine(folder, "claude-code-owner-remote.json"),
+                SpawnCommands.ClaudeMcpConfigJson(url, proxyToken));
         File.WriteAllText(Path.Combine(folder, "README.md"), Readme(url, port, roster));
         return folder;
     }
@@ -49,15 +62,17 @@ public static class HostConfigs
         sb.AppendLine("exists for every row in `tokens.json`; only app-backed rows get a config file here. Rows with a");
         sb.AppendLine("model are spawned by the hub itself once spawning ships, so they have no file to paste.");
         sb.AppendLine();
-        sb.AppendLine("| Id | Host | Model | File | Note |");
-        sb.AppendLine("|----|------|-------|------|------|");
+        sb.AppendLine("| Id | Host | Model | Classes | File | Note |");
+        sb.AppendLine("|----|------|-------|---------|------|------|");
         foreach (var p in roster)
         {
-            var file = p.Kind == "human" ? "none (the web UI)"
+            var file = p.Id == ChopDb.OwnerRemoteParticipantId ? "`claude-code-owner-remote.json`"
+                : p.Kind == "human" ? "none (the web UI)"
                 : p.Kind == "system" ? "none (the hub itself)"
                 : p.Model is not null ? "no file (hub-spawned)"
                 : p.Host switch { "claude" => "`claude-desktop.json`", "codex" => "`codex-config.toml`", _ => "no template for this host" };
-            sb.AppendLine($"| `{p.Id}` | {p.Host} | {p.Model ?? "—"} | {file} | {p.Note ?? ""} |");
+            var classes = ParticipantClasses.Parse(p.Classes) is { Count: > 0 } set ? string.Join(", ", set) : "—";
+            sb.AppendLine($"| `{p.Id}` | {p.Host} | {p.Model ?? "—"} | {classes} | {file} | {p.Note ?? ""} |");
         }
         sb.AppendLine();
         sb.AppendLine("To rotate any row's token: `ChopItUp.Hub --rotate-token <id>` with the hub stopped, then");
@@ -140,6 +155,7 @@ public static class HostConfigs
         |------|---------------|
         | `claude-desktop.json` | Merge the `mcpServers` entry into `%APPDATA%\Claude\claude_desktop_config.json`, then fully quit and reopen Claude Desktop. |
         | `codex-config.toml` | Append to `%USERPROFILE%\.codex\config.toml`, then restart Codex. |
+        | `claude-code-owner-remote.json` | Merge the `mcpServers` entry into the MCP settings of the Claude Code session you drive the hub from — a `.mcp.json` in that session's directory, or the user-level MCP settings. Restart the session. |
 
         {RosterTable(roster)}
 
@@ -155,11 +171,50 @@ public static class HostConfigs
         "mcp-remote@{McpRemoteVersion}"` with just `"mcp-remote"`. Keep the `cmd /c` in front - the
         global install is a `.cmd` shim with the same missing `.exe`.
 
-        Claude Code gets no file of its own: it joins as `claude` by pasting the Claude Desktop
-        entry above, which is the owner's preference (ruling 2026-09-04) - one Claude identity
-        across both hosts. The cost is a shared read cursor, so whichever host calls `read_messages`
-        without an `after_id` first consumes the other's unread. Pass an explicit `after_id` to read
-        without moving it.
+        Claude Code still joins as `claude` when the owner wants one Claude identity across both
+        hosts (the 2026-09-04 ruling, unchanged): paste the `claude-desktop.json` entry above into
+        that session's MCP settings instead of Claude Desktop's config file. The cost is a shared
+        read cursor, so whichever host calls `read_messages` without an `after_id` first consumes
+        the other's unread. Pass an explicit `after_id` to read without moving it. `owner-remote`
+        below is a different thing entirely: a separate, human-kind credential for driving the hub
+        from a session on another machine, not for participating in it the way `claude` does.
+
+        ## The remote hand
+
+        `owner-remote` is a second row of kind `human`. Posts made with its token start and steer
+        exchanges exactly as `owner`'s do; the hub stamps the author, so the transcript and the
+        commit trail show which hand typed. It exists so the owner can drive the hub from a session
+        on another device. Revoking it is `--rotate-token owner-remote` with the hub stopped, then a
+        restart: the old token dies and nothing re-mints it into any session you have not re-pasted.
+
+        The entry dials the hub directly over `http://127.0.0.1` with an `Authorization` header,
+        which is the same connection every hub-spawned Claude has used since M5. It does **not** go
+        through the `mcp-remote` bridge — that exists only because Claude Desktop's remote connectors
+        are dialled from Anthropic's cloud and cannot reach loopback, which is not Claude Code's
+        problem. That bridge is an alternative connection form for this identity too, in principle,
+        but it is untested here: only the direct connection above has ever been exercised against
+        `owner-remote`.
+
+        It is a second identity, not a second person: it reads with its own cursor, so messages you
+        post from the phone still count as unread in the web UI until you open the room, and
+        messages you read there are still unread for the phone. That is the same trade the `claude`
+        row makes across Desktop and Code, inverted.
+
+        What "shows which hand typed" does and does not cover: the message's stored author is
+        `owner-remote`, and the room shows it under its own name and badge. The **git trail** still
+        records file commits as `Owner` — those are edits made on this machine before a spawn ran,
+        not something the phone did, so attributing them to the remote row would be a worse lie than
+        the one it fixes.
+
+        ## Roster classes
+
+        `classes` is a set drawn from `plumbing`, `visible` and `judge`, stored comma-separated. A
+        row can hold more than one — `opus` ships as `visible,judge`, because it is both the model
+        you want on anything you will look at and one of the two you want judging. The hub reads the
+        set and validates it but does not yet act on it; that is the runs milestone. Set one by hand
+        with the hub stopped: `UPDATE participants SET classes='visible,judge' WHERE id='gpt-6-astra';`
+        - it takes effect at the next start, and anything outside the vocabulary is dropped with a
+        warning in the hub's log at startup.
 
         This folder is only as private as the directory it sits in — two live bearer tokens with
         no expiry. If other accounts or unattended processes can read this machine's files, they can

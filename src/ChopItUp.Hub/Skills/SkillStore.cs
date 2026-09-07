@@ -96,7 +96,12 @@ public sealed class SkillStore(string root, SkillHashes hashes)
     /// itself fail (M-8), and lets the oversized-file test assert the file was never opened.</summary>
     internal Func<string, byte[]> ReadAllBytes { get; set; } = File.ReadAllBytes;
 
-    public string Root { get; } = Path.GetFullPath(root);
+    // TrimEndingDirectorySeparator: Path.GetFullPath preserves a trailing separator when the caller
+    // passed one, and ReadCore's containment check compares against `Root + DirectorySeparatorChar`
+    // - with an untrimmed Root that becomes a doubled separator a normalised child path never starts
+    // with, so every skill would read NotFound. Fail-closed today (no caller passes a trailing
+    // separator), but cheap to close outright while this class is being constructed here.
+    public string Root { get; } = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
 
     public void EnsureLayout() => Directory.CreateDirectory(Root);
 

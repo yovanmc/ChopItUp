@@ -121,6 +121,7 @@ public static class HubHost
             app.MapRoomsApi();
             app.MapExchangeApi();
             app.MapMemoryApi();
+            app.MapSkillsApi();
             return app;
         }
         catch
