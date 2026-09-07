@@ -287,8 +287,10 @@ public sealed class RunStore(ChopDb db)
 
     /// <summary>Strips one layer of surrounding backticks/quotes, backslashes to forward slashes,
     /// drops a leading <c>./</c>, trims, and lowercases (the ordinal-ignore-case compare) — used on
-    /// both write and read so the two can never disagree.</summary>
-    private static string Normalize(string path)
+    /// both write and read so the two can never disagree. Public (row 19, task 8): D8's "recorded or
+    /// in the room tree" critique rule checks a THIRD spelling of the same path against the room's
+    /// directory, and it must normalize identically or the two checks could disagree on one path.</summary>
+    public static string Normalize(string path)
     {
         var p = path.Trim();
         if (p.Length >= 2)

@@ -182,6 +182,65 @@ public sealed class ExchangePolicy
             notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. A new owner message starts a fresh exchange.");
     }
 
+    /// <summary>Row 19, task 8: every id a conductor's post @-mentions that is spawnable - UNLIKE the
+    /// mention set <see cref="OnMessage"/> builds for itself, a self-mention is deliberately kept
+    /// rather than dropped, because <see cref="RefuseConductorPost"/>'s own rule ("mentions the
+    /// conductor itself") needs to see it in order to refuse it - silently filtering it out here would
+    /// make that rule unreachable.</summary>
+    public IReadOnlyList<string> MentionedSpawnable(Message message) =>
+        _mentions.Find(message.Body).Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
+
+    /// <summary>Row 19, task 8 (D8/AC6): the class rules a conductor's post inside its run must pass,
+    /// pure and side-effect free - null means valid, otherwise names which rule failed, in AC6's own
+    /// order. <paramref name="mentioned"/> is <see cref="MentionedSpawnable"/>'s output (self kept).
+    /// <paramref name="artifactAuthor"/> resolves a normalized path to who last touched it (task 1's
+    /// RunStore), or null if never recorded; <paramref name="artifactExists"/> answers whether the
+    /// path is present in the room's directory tree - either one satisfies "recorded or in the room
+    /// tree" (P4). Never touches a database or a filesystem itself: those two functions are the
+    /// service's impure edges, kept out of this pure class (D-b).</summary>
+    public string? RefuseConductorPost(Message message, RunContext run, IReadOnlyList<string> mentioned,
+        Func<string, string?> artifactAuthor, Func<string, bool> artifactExists)
+    {
+        if (!PhaseTag.TryParse(message.Body, out var tag))
+            return "the first line must be a valid phase tag: 'phase: <kind>' or 'phase: <kind>/<name>'";
+        if (mentioned.Contains(run.ConductorId))
+            return "a conductor post cannot mention itself";
+        if (tag!.Kind == "ping") return null;   // no mention required; every rule below is skipped
+
+        if (mentioned.Count == 0)
+            return $"phase {tag} needs a mention of who does the work";
+
+        if (tag.Kind == "build" && !mentioned.Any(id => _roster.TryGetValue(id, out var p)
+                && (ParticipantClasses.Has(p, ParticipantClasses.Plumbing) || ParticipantClasses.Has(p, ParticipantClasses.Visible))))
+            return "phase build needs a mention of a plumbing- or visible-class row";
+
+        if (tag.Kind == "critique")
+        {
+            var artifact = PhaseTag.Artifact(message.Body);
+            if (artifact is null) return "a critique needs an artifact: line";
+            var author = artifactAuthor(artifact);
+            if (author is null && !artifactExists(artifact))
+                return $"artifact '{artifact}' is neither recorded nor in the room tree";
+            if (!mentioned.Any(id => _roster.TryGetValue(id, out var p) && ParticipantClasses.Has(p, ParticipantClasses.Judge) && id != author))
+                return "a critique needs a judge mentioned other than the artifact's recorded author";
+        }
+
+        return null;
+    }
+
+    /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
+    /// same acceptance path as a fresh owner-started exchange (<see cref="Accept"/> seeds the
+    /// mentioned rows as pending against the ordinary turn budget), but rooted at the conductor's own
+    /// post rather than an owner's, and carrying no <see cref="Exchange.Skill"/>: workers see the run
+    /// state (task 7) and the conductor's own words, not the raw skill fence.</summary>
+    public (Exchange Next, IReadOnlyList<string> Notes) OpenForWorkers(string roomId, long rootMessageId, IReadOnlyList<string> mentioned, DateTimeOffset now)
+    {
+        var notes = new List<string>();
+        var x = new Exchange { RoomId = roomId, RootMessageId = rootMessageId, Budget = _limits.Budget };
+        Accept(x, mentioned, rootMessageId, now, notes);
+        return (x, notes);
+    }
+
     /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
     /// <see cref="OnMessage"/>'s human-only rule is untouched (P2). The conductor is the sole pending
     /// entry, budgeted for exactly the one turn it is being asked for; every id in

@@ -89,6 +89,12 @@ public sealed class SpawnerService : BackgroundService
     // an OpenConductor decision consumes it, so the two tasks never have to touch this line twice.
     private readonly Dictionary<string, List<long>> _steers = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
+    // Row 19, task 8 (pass 2's F-2): the two per-phase counters RunState reports, kept here because
+    // they are cheap in-memory state with no durable meaning (Architecture, plan). Keyed by run id
+    // only, not (run, phase) - EnterPhase resets BOTH to 0 on every accepted post, not only on a tag
+    // change (F-22), so a stale count from an earlier phase can never leak into a later one.
+    private readonly Dictionary<long, int> _refusalsThisPhase = new();
+    private readonly Dictionary<long, int> _silencesThisPhase = new();
     private readonly Dictionary<string, DateTimeOffset> _lastStart = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCli> _clis = new(StringComparer.Ordinal);
@@ -227,6 +233,17 @@ public sealed class SpawnerService : BackgroundService
         var activeRun = _runs.Active(m.RoomId);
         var run = activeRun is not null ? new RunContext(activeRun.Id, activeRun.ConductorId, activeRun.Phase) : null;
 
+        // Row 19, task 8 (AC4/AC6): the conductor's own post, while its exchange is still this room's
+        // CURRENT one (acceptMentions - a later post from the same spawn, after it has already
+        // rooted, is prose and falls through to the ordinary branches below, never refused - pass 1's
+        // M1). Bypasses ExchangePolicy.OnMessage's ordinary model branch entirely: that method knows
+        // nothing about phases or classes, and P7 keeps every run DECISION inside RunPolicy.
+        if (activeRun is not null && acceptMentions && m.AuthorId == activeRun.ConductorId)
+        {
+            HandleConductorPost(activeRun, m, now);
+            return;
+        }
+
         // Row 19, task 4 (pass 2's F-9), steps 1-2 of the ordered human branch: these two refusals
         // need RunStore.Latest, which ExchangePolicy (pure) never reads - decided here, before the
         // policy is consulted at all, so a run-start invocation can never land on top of an active OR
@@ -285,15 +302,17 @@ public sealed class SpawnerService : BackgroundService
     }
 
     /// <summary>Everything <see cref="RunPolicy"/> needs to know about <paramref name="run"/> right
-    /// now, assembled from the store and the loop's own in-memory state (row 19, tasks 5/6).
-    /// <see cref="RunState.RefusalsThisPhase"/> and <see cref="RunState.SilencesThisPhase"/> are
-    /// always 0 here: nothing wired up through task 6 raises <c>ConductorPosted</c> or
-    /// <c>SpawnSilent</c>, the only events that read them (task 8/13's job).</summary>
+    /// now, assembled from the store and the loop's own in-memory state (row 19, tasks 5/6/8).
+    /// <see cref="RunState.RefusalsThisPhase"/> is written by <see cref="HandleConductorPost"/> (task
+    /// 8); <see cref="RunState.SilencesThisPhase"/> stays 0 here until task 10 raises
+    /// <c>SpawnSilent</c> and writes it - both counters share the same reset rule (EnterPhase clears
+    /// them together, F-22), which is why they live in sibling dictionaries rather than one each
+    /// wired up independently.</summary>
     private RunState AssembleRunState(Run run) => new(
         run.Id, run.RoomId, run.ConductorId, run.Status, run.CapSpent,
         run.Phase, _runs.PhaseEntries(run.Id),
         run.SpawnsUsed, run.Exchanges, RunStore.ActiveElapsed(run, _clock.GetUtcNow()),
-        RefusalsThisPhase: 0, SilencesThisPhase: 0,
+        RefusalsThisPhase: _refusalsThisPhase.GetValueOrDefault(run.Id), SilencesThisPhase: _silencesThisPhase.GetValueOrDefault(run.Id),
         ExchangeOpen: _rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open,
         AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
         RootMessageId: run.RootMessageId);
@@ -319,10 +338,12 @@ public sealed class SpawnerService : BackgroundService
         if (decision is RunDecision.OpenConductor) pending.Clear();
     }
 
-    /// <summary>What <see cref="RunPolicy"/> decided, carried out. Only <see cref="RunDecision.Nothing"/>
-    /// and <see cref="RunDecision.OpenConductor"/> are reachable through tasks 4-6; the rest
-    /// (OpenWorkers, Refuse(AndAsk), Park, End) are later tasks' wiring, so this fails loudly rather
-    /// than silently if one is reached before its task lands.</summary>
+    /// <summary>What <see cref="RunPolicy"/> decided, carried out. <see cref="RunDecision.Nothing"/>,
+    /// <see cref="RunDecision.OpenConductor"/> (tasks 4-6), <see cref="RunDecision.OpenWorkers"/>,
+    /// <see cref="RunDecision.RefuseAndAsk"/> and <see cref="RunDecision.Park"/> (task 8, the last one
+    /// only the minimal slice the deferred pins need - task 9 owns Park's full semantics) are wired;
+    /// <see cref="RunDecision.Refuse"/> and <see cref="RunDecision.End"/> are later tasks' (9/13), so
+    /// this fails loudly rather than silently if one is reached before its task lands.</summary>
     private void CarryOut(Run run, RunDecision decision)
     {
         switch (decision)
@@ -332,9 +353,102 @@ public sealed class SpawnerService : BackgroundService
             case RunDecision.OpenConductor oc:
                 OpenConductorExchange(run, oc.RootMessageId, oc.TriggerIds);
                 break;
+            case RunDecision.OpenWorkers ow:
+                OpenWorkersExchange(run, ow);
+                break;
+            case RunDecision.RefuseAndAsk ra:
+                // "Ask it once more" needs nothing further here: the conductor's OWN exchange is
+                // still open with it in flight (a refusal never touches _rooms), so when its spawn
+                // eventually exits, task 5's ExchangeConcluded handling re-spawns it with this note as
+                // the trigger (table row 8) - the natural loop already does the asking.
+                PostNote(run.RoomId, ra.Note);
+                break;
+            case RunDecision.Park park:
+                ParkRun(run, park.Reason, park.CapSpent);
+                break;
             default:
                 throw new NotSupportedException($"RunDecision {decision.GetType().Name} is not wired yet (row19-runs, a later task).");
         }
+    }
+
+    /// <summary>Row 19, task 8 (AC4/AC6): the conductor's own post, raised while its exchange is still
+    /// the room's current one (acceptMentions - the same distinction <see cref="OnMessage"/> already
+    /// draws at its top - is exactly "the first phase-tagged post of a conductor spawn"; a LATER post
+    /// from the same spawn, after it has already rooted, is prose and falls through to the ordinary
+    /// model branch, never refused - pass 1's M1). Checked against D8's class rules
+    /// (<see cref="ExchangePolicy.RefuseConductorPost"/>, pure) and raised to <see cref="RunPolicy"/>
+    /// as <see cref="RunEvent.ConductorPosted"/>; the decision is carried out. The refusal counter is
+    /// written HERE (pass 2's F-2): the policy only reads it.</summary>
+    private void HandleConductorPost(Run run, Message m, DateTimeOffset now)
+    {
+        var mentioned = _policy.MentionedSpawnable(m);
+        var runContext = new RunContext(run.Id, run.ConductorId, run.Phase);
+        var refusal = _policy.RefuseConductorPost(m, runContext, mentioned,
+            path => _runs.ArtifactAuthor(run.Id, path), path => ArtifactInRoomTree(run, path));
+        PhaseTag.TryParse(m.Body, out var tag);
+        var ev = new RunEvent.ConductorPosted(m.Id, tag, mentioned, refusal);
+
+        var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
+        var decision = _runPolicy.Decide(AssembleRunState(run), ev, pending);
+
+        if (refusal is not null)
+            _refusalsThisPhase[run.Id] = _refusalsThisPhase.GetValueOrDefault(run.Id) + 1;
+        else
+        {
+            // Accepted (including ping): count a phase entry and reset BOTH counters (pass 2's F-22 -
+            // the silence path re-enters the SAME tag, so a change-only reset would leave it latched).
+            _runs.EnterPhase(run.Id, tag!.ToString(), now);
+            _refusalsThisPhase[run.Id] = 0;
+            _silencesThisPhase[run.Id] = 0;
+        }
+
+        CarryOut(run, decision);
+    }
+
+    /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
+    /// rooted at that post (<see cref="RunDecision.OpenWorkers.RootMessageId"/>), never at the
+    /// conductor's own re-spawn root.</summary>
+    private void OpenWorkersExchange(Run run, RunDecision.OpenWorkers ow)
+    {
+        var (exchange, notes) = _policy.OpenForWorkers(run.RoomId, ow.RootMessageId, ow.Mentioned, _clock.GetUtcNow());
+        _rooms[run.RoomId] = exchange;
+        _runs.CountExchange(run.Id);
+        foreach (var note in notes) PostNote(run.RoomId, note);
+        Publish(run.RoomId);
+    }
+
+    /// <summary>Row 19: writes the parked row, stops the room's open exchange and cancels its
+    /// in-flight spawns (pass 1's M3 - a park that touches neither would let an in-flight conductor's
+    /// later post resolve <c>run == null</c> and take the plain model branch, launching more spawns
+    /// from a parked run), posts the note naming the reason and @owner, and publishes. This is the
+    /// minimal slice of task 9's 9a the deferred pins need now (row19-runs dispatch, task 8): the
+    /// second-bad-post-in-one-phase park (AC6) must actually stop the run, not merely flip a database
+    /// column nothing else notices. Task 9 owns the rest (the stall/wall-clock wakes, the 30-minute
+    /// in-run timeout).</summary>
+    private void ParkRun(Run run, string reason, bool capSpent)
+    {
+        var now = _clock.GetUtcNow();
+        _runs.Park(run.Id, reason, capSpent, now);
+        if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
+            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+        foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
+            handle.Cancel.Cancel();
+        PostNote(run.RoomId, $"Run #{run.Id} parked: {reason}. @{_owner.Id}");
+        Publish(run.RoomId);
+    }
+
+    /// <summary>Row 19, task 8 (D8's critique rule): whether <paramref name="path"/> is present in the
+    /// room's own directory tree - satisfies "recorded or in the room tree" for an artifact nothing
+    /// has recorded yet. Normalizes with the SAME <see cref="RunStore.Normalize"/> the authorship
+    /// lookup uses, so the two checks can never disagree on one path (P4). A room with no directory,
+    /// an absolute path, or one that walks above the room root, is never "in the tree".</summary>
+    private bool ArtifactInRoomTree(Run run, string path)
+    {
+        var directory = _store.GetRoom(run.RoomId)?.Directory;
+        if (directory is null) return false;
+        var normalized = RunStore.Normalize(path);
+        if (Path.IsPathRooted(normalized) || normalized.Split('/').Contains("..")) return false;
+        return File.Exists(Path.GetFullPath(Path.Combine(directory, normalized)));
     }
 
     /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
