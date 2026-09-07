@@ -5,6 +5,19 @@ import type { Participant } from './types';
 let roster = new Map<string, Participant>();
 let mention: RegExp | null = null;
 
+/** Client-side twins of `ChopDb.OwnerParticipantId` and `ChopDb.OwnerRemoteParticipantId`. Two rows of
+ *  kind `human` since schema v7: the owner at the desk, and the owner's hand on another device (grill
+ *  ledger D3). They are the same person — same accent, same `mine` styling in the thread — but the
+ *  transcript is supposed to show which hand typed, so name and badge must differ. */
+export const OWNER_ID = 'owner';
+export const OWNER_REMOTE_ID = 'owner-remote';
+
+/** One place, so nothing below spells the id by hand. Case-folded like every other lookup here: the
+ *  roster map is keyed lowercase and an author id arrives however the hub stamped it. */
+export function isOwnerRemote(authorId: string): boolean {
+  return authorId.toLowerCase() === OWNER_REMOTE_ID;
+}
+
 export function setRoster(list: Participant[]): void {
   roster = new Map(list.map((p) => [p.id.toLowerCase(), p]));
   const mentionable = list.filter((p) => p.kind !== 'system');
@@ -31,9 +44,13 @@ export function hostOf(authorId: string): string {
   return p.kind === 'human' ? 'human' : p.host === 'claude' || p.host === 'codex' ? p.host : 'other';
 }
 
+/** "You" is the owner's own row and nothing else. The remote hand keeps the roster's own label
+ *  ("Owner (remote)"), because a post made from the phone rendered as "You" is exactly the thing D3
+ *  says the room must not do. */
 export function displayName(authorId: string): string {
   const p = roster.get(authorId.toLowerCase());
   if (!p) return authorId;
+  if (isOwnerRemote(authorId)) return p.displayName;
   return p.kind === 'human' ? 'You' : p.displayName;
 }
 
@@ -44,6 +61,9 @@ const HOST_BADGE: Record<string, string> = { human: 'OW', claude: 'CL', codex: '
 export function badgeFor(authorId: string): string {
   const p = roster.get(authorId.toLowerCase());
   if (!p) return authorId.slice(0, 2).toUpperCase();
+  // Both human rows share host `human` and a null model, so the host badge alone would stamp OW on
+  // the remote hand too. One letter apart on purpose: same person, different keyboard.
+  if (isOwnerRemote(authorId)) return 'OR';
   if (p.model === null) return HOST_BADGE[p.host] ?? p.displayName.slice(0, 2).toUpperCase();
   const words = p.displayName.split(/\s+/).filter(Boolean);
   const initials = words.length >= 2 ? words[0]![0]! + words[1]![0]! : p.displayName.slice(0, 2);
@@ -51,7 +71,9 @@ export function badgeFor(authorId: string): string {
 }
 
 /** Drives `--accent` in styles.css. Colour is per host family: an `opus` row shares the Claude
- *  accent, a `gpt-*` row the Codex accent; name and badge tell rows of one family apart. */
+ *  accent, a `gpt-*` row the Codex accent; name and badge tell rows of one family apart. Both human
+ *  rows keep `p-owner` deliberately — the owner's colour is the owner's colour whichever device they
+ *  are on, and the badge and the name are what say which. */
 export function accentClass(authorId: string): string {
   const host = hostOf(authorId);
   return host === 'human' ? 'p-owner' : `p-${host}`;
