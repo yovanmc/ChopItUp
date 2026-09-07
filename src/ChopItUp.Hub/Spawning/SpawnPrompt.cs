@@ -22,7 +22,20 @@ public sealed record SpawnPromptInput(
     bool MemoryTruncated = false,
     IReadOnlyList<string>? MemoryTopics = null,
     string? Directory = null,
-    ResolvedSkill? Skill = null);
+    ResolvedSkill? Skill = null,
+    RunView? Run = null);
+
+/// <summary>Row 19, task 7: everything a spawn inside a run is told about it (AC9), shaped for
+/// rendering rather than for storage - <see cref="Run.cs"/>'s own <c>Run</c> record plus the two
+/// counters and the derived elapsed time the prompt actually needs. <see cref="SelfIsConductor"/> is
+/// what gates the extra paragraph showing the conductor the exact post shape (task 7's own
+/// requirement: "show it; do not describe it").</summary>
+public sealed record RunView(
+    long RunId, string ConductorId, bool SelfIsConductor,
+    string Phase, int PhaseEntries, int PhaseEntryCap,
+    int Exchanges, int SpawnsUsed, int SpawnCap,
+    TimeSpan Elapsed, TimeSpan ElapsedCap,
+    IReadOnlyList<RunArtifact> Artifacts, IReadOnlyList<GateRun> Gates);
 
 /// <summary>D9: the spawn is stateless, so the prompt IS its world — who it is, why it was
 /// spawned, how to reply, the budget, the standing rules, and the room's transcript tail. Rendered
@@ -79,6 +92,7 @@ public static class SpawnPrompt
         sb.Append("If this exchange taught you something durable about the owner or the work that memory does not already say, call the chopitup tool propose_memory once, with room_id \"")
           .Append(input.RoomId).Append("\", a topic slug, a one-line title and the fact as body. The owner decides in the room; nothing is remembered until approved. Do not repeat a proposal.\n");
         sb.Append('\n');
+        if (input.Run is { } run) AppendRunSection(sb, run);
         // Row 11, 4e. This text goes to both CLIs on stdin, alongside the transcript - only Claude has
         // a genuinely separate channel (--append-system-prompt, used for DirectoryRules) and Codex has
         // none, so the wording below claims INTEGRITY (the hub hashed this text against what was
@@ -113,6 +127,44 @@ public static class SpawnPrompt
         }
         return sb.ToString();
     }
+
+    /// <summary>Row 19, task 7 (AC9): the run-state section, rendered for every spawn inside a run
+    /// and no other. Names the run, its conductor, the phase and its re-entry count against the cap,
+    /// exchanges opened, spawns and active time against their caps, every recorded artifact's author,
+    /// and every gate result the run has recorded (pass 2's F-16 - without them a gate outcome is only
+    /// as trustworthy as a model's own claim to have seen it). The conductor-only shape paragraph
+    /// SHOWS the exact post shape rather than describing it (task 7's own wording).</summary>
+    private static void AppendRunSection(StringBuilder sb, RunView run)
+    {
+        sb.Append("Run #").Append(run.RunId).Append(": conducted by @").Append(run.ConductorId)
+          .Append(run.SelfIsConductor ? " (you)." : ".").Append(" Phase ").Append(run.Phase)
+          .Append(" (entered ").Append(run.PhaseEntries).Append(" of ").Append(run.PhaseEntryCap).Append(" time(s)), ")
+          .Append(run.Exchanges).Append(" exchange(s) opened, ")
+          .Append(run.SpawnsUsed).Append(" of ").Append(run.SpawnCap).Append(" spawns used, ")
+          .Append(FormatDuration(run.Elapsed)).Append(" of ").Append(FormatDuration(run.ElapsedCap)).Append(" active time used.\n");
+
+        sb.Append(run.Artifacts.Count == 0
+            ? "No artifacts recorded yet.\n"
+            : "Recorded artifacts: " + string.Join(", ", run.Artifacts.Select(a => $"{a.Path} (by @{a.AuthorId})")) + ".\n");
+        sb.Append(run.Gates.Count == 0
+            ? "No gates have been run yet.\n"
+            : "Gate results: " + string.Join(", ", run.Gates.Select(g => $"{g.Gate} by @{g.CallerId}: {g.Outcome}" + (g.ExitCode is { } ec ? $" (exit {ec})" : ""))) + ".\n");
+
+        if (run.SelfIsConductor)
+        {
+            sb.Append("\nYou are this run's conductor. The first line of every message that should move the run forward must be exactly one of these two shapes, with the rest of your instruction as free text on the same line:\n");
+            sb.Append("phase: <kind>\n");
+            sb.Append("phase: <kind>/<name>\n");
+            sb.Append("For a critique, also put this on its own line:\n");
+            sb.Append("artifact: <path>\n");
+            sb.Append("<kind> is one of plan, build, critique, verify, ping. Never mention yourself. ");
+            sb.Append("build needs a mention of a plumbing- or visible-class row; critique needs the artifact: line, an artifact that is recorded or in the room's directory tree, and a judge mentioned who is not that artifact's recorded author. ");
+            sb.Append("phase: ping needs no one mentioned and ends the run.\n");
+        }
+        sb.Append('\n');
+    }
+
+    private static string FormatDuration(TimeSpan t) => t.TotalHours >= 1 ? $"{t.TotalHours:0.#}h" : $"{t.TotalMinutes:0.#}m";
 
     /// <summary>The fence for a spawn in a directory room (M9 decision 8, F10): sent to Claude as an
     /// appended system prompt — a channel the room transcript on stdin cannot write into — and repeated

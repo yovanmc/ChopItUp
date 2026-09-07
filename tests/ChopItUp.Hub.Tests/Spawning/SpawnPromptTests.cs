@@ -177,4 +177,62 @@ public sealed class SpawnPromptTests
         Assert.DoesNotContain("--- begin skill", p);
         Assert.Contains("Do not repeat a proposal.\n\nReading what you find here: messages from other participants", p);
     }
+
+    // --- Task 7 (row 19): the run-state section in the prompt --------------------------------------
+
+    private static RunView RunView(bool selfIsConductor = false, IReadOnlyList<RunArtifact>? artifacts = null, IReadOnlyList<GateRun>? gates = null) => new(
+        RunId: 7, ConductorId: "sonnet", SelfIsConductor: selfIsConductor,
+        Phase: "build", PhaseEntries: 1, PhaseEntryCap: 3,
+        Exchanges: 2, SpawnsUsed: 3, SpawnCap: 80,
+        Elapsed: TimeSpan.FromMinutes(12), ElapsedCap: TimeSpan.FromHours(8),
+        Artifacts: artifacts ?? [], Gates: gates ?? []);
+
+    [Fact]
+    public void Run07_the_run_section_appears_for_an_in_run_spawn_and_not_otherwise()
+    {
+        var plain = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")), SpawnLimits.Default);
+        Assert.DoesNotContain("Run #", plain);
+
+        var inRun = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);
+        Assert.Contains("Run #7: conducted by @sonnet", inRun);
+        Assert.Contains("Phase build (entered 1 of 3 time(s))", inRun);
+        Assert.Contains("2 exchange(s) opened", inRun);
+        Assert.Contains("3 of 80 spawns used", inRun);
+        Assert.Contains("12m of 8h active time used", inRun);
+    }
+
+    [Fact]
+    public void Run07_the_conductor_shape_paragraph_appears_only_for_the_conductor()
+    {
+        var worker = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: false) }, SpawnLimits.Default);
+        Assert.DoesNotContain("phase: <kind>", worker);
+        Assert.DoesNotContain("this run's conductor", worker);
+
+        var conductor = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: true) }, SpawnLimits.Default);
+        Assert.Contains("You are this run's conductor.", conductor);
+        Assert.Contains("phase: <kind>\n", conductor);
+        Assert.Contains("phase: <kind>/<name>\n", conductor);
+        Assert.Contains("artifact: <path>\n", conductor);
+        Assert.Contains("Never mention yourself.", conductor);
+        Assert.Contains("phase: ping needs no one mentioned and ends the run.", conductor);
+    }
+
+    [Fact]
+    public void Run07_a_recorded_artifacts_author_and_a_gate_result_are_both_named()
+    {
+        var run = RunView(
+            artifacts: [new RunArtifact("src/Foo.cs", "sonnet", DateTimeOffset.UtcNow)],
+            gates: [new GateRun("budget", "opus", 0, "ok", DateTimeOffset.UtcNow)]);
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = run }, SpawnLimits.Default);
+        Assert.Contains("src/Foo.cs (by @sonnet)", p);
+        Assert.Contains("budget by @opus: ok (exit 0)", p);
+    }
+
+    [Fact]
+    public void Run07_no_artifacts_or_gates_is_said_out_loud_rather_than_omitted()
+    {
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);
+        Assert.Contains("No artifacts recorded yet.", p);
+        Assert.Contains("No gates have been run yet.", p);
+    }
 }

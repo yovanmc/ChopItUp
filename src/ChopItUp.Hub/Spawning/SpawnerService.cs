@@ -298,6 +298,16 @@ public sealed class SpawnerService : BackgroundService
         AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
         RootMessageId: run.RootMessageId);
 
+    /// <summary>Row 19, task 7 (AC9): what the prompt shows about the run a spawn is launched inside.
+    /// Read fresh at every launch, never cached, so a re-spawned conductor sees the counters as they
+    /// stand right now rather than as they stood when the run started.</summary>
+    private RunView BuildRunView(Run run, string participantId, DateTimeOffset now) => new(
+        run.Id, run.ConductorId, participantId == run.ConductorId,
+        run.Phase, _runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase), _runLimits.PhaseEntries,
+        run.Exchanges, run.SpawnsUsed, _runLimits.Spawns,
+        RunStore.ActiveElapsed(run, now), _runLimits.WallClock,
+        _runs.Artifacts(run.Id), _runs.GateRuns(run.Id));
+
     /// <summary>Assembles the state, asks <see cref="RunPolicy"/>, carries the decision out - never
     /// decided here (P7) - and drains this room's pending steers when the decision consumed them
     /// (row 19, tasks 5/6).</summary>
@@ -420,10 +430,11 @@ public sealed class SpawnerService : BackgroundService
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
+            var runView = _runs.Active(request.RoomId) is { } activeRunForPrompt ? BuildRunView(activeRunForPrompt, participant.Id, _clock.GetUtcNow()) : null;
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
-                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill), _limits);
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill, Run: runView), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
