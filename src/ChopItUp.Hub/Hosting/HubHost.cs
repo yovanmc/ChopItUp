@@ -77,6 +77,10 @@ public static class HubHost
             // interface, so a run's whole timeline can be driven by a fake clock in tests without
             // waiting on a wall clock (D9's 8-hour cap).
             builder.Services.AddSingleton(clock ?? TimeProvider.System);
+            // Row 19: the runs table and its satellites (schema v8), and D9's hard-coded caps -
+            // exactly as unreachable from inside a room as SpawnLimits.Default above.
+            builder.Services.AddSingleton(new RunStore(db));
+            builder.Services.AddSingleton(RunLimits.Default);
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             builder.Services.AddSingleton<SpawnerService>();

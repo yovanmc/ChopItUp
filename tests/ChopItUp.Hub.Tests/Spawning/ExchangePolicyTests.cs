@@ -302,6 +302,76 @@ public sealed class ExchangePolicyTests
         Assert.Contains(notes, n => n.Contains("not spawning @sonnet"));
     }
 
+    // --- Task 4 (row 19): starting a run, and every refusal at the start ---------------------------
+
+    private static readonly ResolvedSkill RunSkill = new("build-thing", "Build Thing", "Build the thing.", false, IsRun: true);
+
+    [Fact]
+    public void A_human_post_inside_an_active_run_leaves_the_open_exchange_untouched()
+    {
+        var p = Policy();
+        var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
+        Assert.Equal(ExchangeStatus.Open, open!.Status);
+
+        var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
+        var (next, notes) = p.OnMessage(open, Msg(2, "owner", "@sonnet actually you"), T0.AddSeconds(1), run: run);
+
+        Assert.Same(open, next);
+        Assert.Equal(ExchangeStatus.Open, open.Status);          // NOT superseded - step 3 returns first
+        Assert.DoesNotContain("sonnet", open.Pending.Keys);      // sonnet never accepted
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void A_run_start_invocation_needs_a_directory()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: false);
+        Assert.Null(x);
+        Assert.Equal("/build-thing starts a run, which needs a room bound to a directory; this room has none.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void A_run_start_invocation_with_zero_or_many_conductors_refuses_naming_the_count()
+    {
+        var zero = Policy().OnMessage(null, Msg(1, "owner", "/build-thing begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.Null(zero.Next);
+        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; none was.", Assert.Single(zero.Notes));
+
+        var many = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus @sonnet begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.Null(many.Next);
+        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; 2 were: @opus, @sonnet.", Assert.Single(many.Notes));
+    }
+
+    [Fact]
+    public void A_valid_run_start_invocation_opens_a_conductor_only_exchange_carrying_the_skill()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.NotNull(x);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        Assert.Same(RunSkill, x.Skill);
+        Assert.Contains(notes, n => n.StartsWith("Skill /build-thing is in force"));
+    }
+
+    [Fact]
+    public void The_supersede_gate_is_a_second_line_of_defence_behind_the_run_is_not_null_return()
+    {
+        // Load-bearing distinction (pass 2's F-23): step 3's early return is what actually protects
+        // an active run's exchange; the `run is null` guard on the supersede below it can never by
+        // itself be exercised through OnMessage, because step 3 always returns first when run is not
+        // null. This test pins step 3 as the one doing the work (see the test above); the classic
+        // outside-a-run supersede path (An_owner_message_mid_exchange_supersedes...) is the regression
+        // that matters and stays covered by the pre-existing suite.
+        var p = Policy();
+        var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
+        var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
+        p.OnMessage(open, Msg(2, "owner", "never mind"), T0.AddSeconds(1), run: run);
+        Assert.Equal(ExchangeStatus.Open, open!.Status);
+    }
+
     /// <summary>Pins the complete set of refusal arms (M-7): if a future arm is added to
     /// <see cref="SkillResolution"/> without this list being updated too, this test is the thing that
     /// catches it, since a plain switch statement does not fail to compile on a missing case.</summary>

@@ -79,6 +79,8 @@ public sealed class SpawnerService : BackgroundService
     private readonly ExchangePolicy _policy;
     private readonly SkillStore _skills;
     private readonly TimeProvider _clock;
+    private readonly RunStore _runs;
+    private readonly RunLimits _runLimits;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
@@ -89,7 +91,8 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills, TimeProvider clock)
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills, TimeProvider clock,
+        RunStore runs, RunLimits runLimits)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
@@ -97,6 +100,8 @@ public sealed class SpawnerService : BackgroundService
         _policy = new ExchangePolicy(roster, limits);
         _skills = skills;
         _clock = clock;
+        _runs = runs;
+        _runLimits = runLimits;
     }
 
     public ExchangeSnapshot Snapshot(string roomId) => _snapshots.TryGetValue(roomId, out var s) ? s : Idle(roomId);
@@ -210,10 +215,55 @@ public sealed class SpawnerService : BackgroundService
         // Row 19's clock seam (task 2b): OnMessage is the run-start site (task 4's _runs.Start reads
         // this same instant), so it goes through the injected clock; LaunchDue/ArmWake stay on the
         // real wall clock until a run path needs them too.
-        var (next, notes) = _policy.OnMessage(current, m, _clock.GetUtcNow(), acceptMentions, ResolveSkill(m));
+        var now = _clock.GetUtcNow();
+        var skill = ResolveSkill(m);
+        var startsRun = skill is SkillResolution.Found found && found.Skill.IsRun;
+        var activeRun = _runs.Active(m.RoomId);
+        var run = activeRun is not null ? new RunContext(activeRun.Id, activeRun.ConductorId, activeRun.Phase) : null;
+
+        // Row 19, task 4 (pass 2's F-9), steps 1-2 of the ordered human branch: these two refusals
+        // need RunStore.Latest, which ExchangePolicy (pure) never reads - decided here, before the
+        // policy is consulted at all, so a run-start invocation can never land on top of an active OR
+        // a parked run (ux_runs_one_active_per_room only guards 'active'; a second Start against a
+        // parked room would otherwise succeed and leave two run rows for one room). Step 1 (`/stop`)
+        // is task 13's; nothing here special-cases it yet.
+        if (startsRun)
+        {
+            if (activeRun is not null)
+            {
+                PostNote(m.RoomId, $"A run is already active in this room (#{activeRun.Id}); /stop it first.");
+                return;
+            }
+            var latest = _runs.Latest(m.RoomId);
+            if (latest is { Status: RunStatus.Parked })
+            {
+                PostNote(m.RoomId, $"A run is parked in this room (#{latest.Id}); resume it with a message or /stop it before starting another.");
+                return;
+            }
+        }
+
+        var hasDirectory = _store.GetRoom(m.RoomId)?.Directory is not null;
+        var (next, notes) = _policy.OnMessage(current, m, now, acceptMentions, skill, run, startsRun, hasDirectory);
         if (next is null) _rooms.Remove(m.RoomId); else _rooms[m.RoomId] = next;
         foreach (var note in notes) PostNote(m.RoomId, note);
         if (next is not null || current is not null) Publish(m.RoomId);
+
+        if (startsRun && next is not null && !ReferenceEquals(next, current))
+        {
+            // The policy just built the conductor's first exchange (steps 4-7 all passed: a
+            // directory, a resolved skill, exactly one mention). Persist the run itself.
+            var conductorId = next.Pending.Keys.Single();
+            var skillFound = (SkillResolution.Found)skill!;
+            var runRow = _runs.Start(m.RoomId, conductorId, skillFound.Skill.Name, skillFound.Arguments, m.Id, now);
+            _runs.CountExchange(runRow.Id);
+            PostNote(m.RoomId, $"Run #{runRow.Id} started: @{conductorId} conducts; caps {_runLimits.Spawns} spawns, "
+                + $"{_runLimits.WallClock.TotalHours:0}h active time, phase re-entry {_runLimits.PhaseEntries}.");
+            return;
+        }
+
+        // Row 19, task 6 (AC5): a human post inside an active run that did not start a new one is a
+        // steer, recorded by a later task. ExchangePolicy already left `current` untouched above
+        // (its own step 3) - nothing further happens here yet.
     }
 
     /// <summary>What the message's first line asks for, if anything. Only a human's post is ever
