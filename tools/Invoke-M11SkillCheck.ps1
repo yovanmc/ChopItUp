@@ -172,9 +172,15 @@ try {
     # D-g/m-11: structural markers ONLY - never a phrase lifted from the imported SKILL.md. The three
     # markers below (a numbered "Q<n>" label, a literal '?', and an arrow-or-the-word-"recommend") are
     # this plan's own wording (Task 8a check 5), not text copied out of the third-party file.
-    $arrow = [char]0x27A1
+    # 2026-09-07, row 11's first live run: Codex used U+27A1 and passed, but Opus used a different
+    # arrow glyph and never wrote the word "recommend", even though its reply was textbook grilling
+    # (**Q1**..**Q4**, one question per round) - demanding one prescribed codepoint was the same
+    # over-tight-assertion failure the plan's critique already logged as M2. Accept any arrow-like
+    # character: the general Arrows block (U+2190-U+21FF: <- -> <-> => etc) and the Dingbat arrows
+    # block (U+2794-U+27BF, which includes U+27A1) at minimum.
+    $arrowPattern = "[$([char]0x2190)-$([char]0x21FF)$([char]0x2794)-$([char]0x27BF)]"
     function Test-RoundShape([string]$Body) {
-        ($Body -match 'Q\d+') -and $Body.Contains('?') -and ($Body.Contains($arrow) -or ($Body -match '(?i)\brecommend'))
+        ($Body -match 'Q\d+') -and $Body.Contains('?') -and ($Body -match $arrowPattern -or ($Body -match '(?i)\brecommend'))
     }
     $state = Wait-Exchange -RoomId 'general' -Until 'concluded,stopped' -Seconds $TimeoutSeconds
     $messages = Get-Messages -RoomId 'general' -AfterId $invokePosted.id
@@ -290,9 +296,27 @@ try {
         -RedirectStandardOutput $reimportOut -RedirectStandardError $reimportErr
     Add-Check -Name 'tamper.reimport-exit-zero' -Passed ($reimport.ExitCode -eq 0) -Detail "exit=$($reimport.ExitCode)"
     $afterReimportPosted = Invoke-Api POST '/api/rooms/general/messages' @{ body = "/$skillName @sonnet $ask" }
-    $afterReimportState = Wait-Exchange -RoomId 'general' -Until 'concluded,stopped' -Seconds $TimeoutSeconds
-    $sonnetAfterReimport = @(Get-Messages -RoomId 'general' -AfterId $afterReimportPosted.id | Where-Object authorId -eq 'sonnet')
-    Add-Check -Name 'tamper.works-again-after-reimport' -Passed ($sonnetAfterReimport.Count -ge 1) -Detail "status=$($afterReimportState.status) replies=$($sonnetAfterReimport.Count)"
+    # 2026-09-07, row 11's first live run: this leg used to assert a live sonnet reply, but the
+    # exchange was stopped at 1 of 4 turns before sonnet replied - an outcome the hub's own transcript
+    # shows was unrelated to whether the re-import worked. The deterministic proof that re-import
+    # worked is the hub's in-force note (ExchangePolicy.cs), which fires synchronously the moment a
+    # /skillName invocation resolves to a Found (non-tampered, non-unknown) skill - well before any
+    # model spawns or replies. That note text is ChopItUp's own (not the skill file's), so matching a
+    # stable substring of it is fine under D-g, same as the refusal-note checks above.
+    $inForceNote = $null
+    $reimportTamperNote = $null
+    foreach ($i in 1..15) {
+        $afterReimportHubMsgs = @(Get-Messages -RoomId 'general' -AfterId $afterReimportPosted.id | Where-Object authorId -eq 'hub')
+        $inForceNote = $afterReimportHubMsgs | Where-Object { $_.body -match 'is in force for this exchange' } | Select-Object -First 1
+        $reimportTamperNote = $afterReimportHubMsgs | Where-Object { $_.body -like '*does not match what was imported*' } | Select-Object -First 1
+        if ($inForceNote -or $reimportTamperNote) { break }
+        Start-Sleep -Seconds 1
+    }
+    Add-Check -Name 'tamper.works-again-after-reimport' -Passed ($null -ne $inForceNote) -Detail ($inForceNote.body ?? 'not seen')
+    Add-Check -Name 'tamper.no-refusal-after-reimport' -Passed ($null -eq $reimportTamperNote) -Detail ($reimportTamperNote.body ?? 'none seen (expected)')
+    $afterReimportHubNotes = @(Get-Messages -RoomId 'general' -AfterId $afterReimportPosted.id | Where-Object authorId -eq 'hub')
+    Add-Check -Name 'tamper.no-failure-notes-after-reimport' -Passed (-not ($afterReimportHubNotes | Where-Object { $_.body -match 'did not reply|without posting|could not be started|exited with code' })) `
+        -Detail (($afterReimportHubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')
 
     # --- Check 11: deny-rule probe (D-i measure (a)) - REPORTS, does not gate ----------------------
     $probeRoom = Invoke-Api POST '/api/rooms' @{ name = 'Deny probe' }
@@ -304,8 +328,12 @@ try {
     Wait-Exchange -RoomId $probeRoom.id -Until 'concluded,stopped' -Seconds $TimeoutSeconds | Out-Null
     Start-Sleep -Seconds 3
     $probeWriteHappened = (Test-Path -LiteralPath $probeTargetWindows) -and ((Get-Content -LiteralPath $probeTargetWindows -Raw) -like "*$probeMarker*")
-    Add-Check -ReportOnly -Name 'deny-rule.data-dir-write-refused' -Passed (-not $probeWriteHappened) `
-        -Detail "FAIL here means the absolute-path deny form does not bind on this CLI version (row 13's finding, not a row-11 blocker - the hash pin is the real control); target=$probeTargetWindows"
+    $probeRefused = -not $probeWriteHappened
+    # Report-only per M-3 of the plan's critique: this line must never gate the exit code, but a
+    # reader must be able to tell the outcome from stdout/the log alone, without going to check the
+    # filesystem themselves (row 11's first live run required exactly that to interpret this line).
+    Add-Check -ReportOnly -Name 'deny-rule.data-dir-write-refused' -Passed $probeRefused `
+        -Detail "refused=$probeRefused target=$probeTargetWindows; FAIL here means the absolute-path deny form does not bind on this CLI version (row 13's finding, not a row-11 blocker - the hash pin is the real control)"
 }
 finally {
     try { Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -TimeoutSec 10 | Out-Null } catch { }
