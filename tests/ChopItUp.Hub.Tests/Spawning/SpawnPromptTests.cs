@@ -121,4 +121,26 @@ public sealed class SpawnPromptTests
         Assert.DoesNotContain("You have no files", withDir);
         Assert.Contains("post_message exactly once", withDir);
     }
+
+    /// <summary>Task 2, 2b: with two human rows in the roster (the default seed roster, since
+    /// owner-remote), the prompt names both ids and no longer claims there is only one human.</summary>
+    [Fact]
+    public void Two_human_roster_names_both_ids_and_drops_the_only_human_sentence()
+    {
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")), SpawnLimits.Default);
+        Assert.Contains("`owner`", p);
+        Assert.Contains("`owner-remote`", p);
+        Assert.DoesNotContain("is the only human here", p);
+    }
+
+    /// <summary>Task 2, 2b: the single-human wording is not dead code — a hand-trimmed roster (only
+    /// `owner`, no `owner-remote`) still gets it verbatim, as it read before this row existed.</summary>
+    [Fact]
+    public void Single_human_roster_still_reads_as_it_did_before()
+    {
+        var singleHumanRoster = Roster.Where(p => p.Id != "owner-remote").ToList();
+        var input = Input(1, 3, Msg(1, "owner", "@opus hi")) with { Roster = singleHumanRoster };
+        var p = SpawnPrompt.Render(input, SpawnLimits.Default);
+        Assert.Contains("The owner (`owner`) is the only human here", p);
+    }
 }

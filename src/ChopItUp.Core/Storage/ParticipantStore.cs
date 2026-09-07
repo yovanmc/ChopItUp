@@ -45,14 +45,4 @@ public sealed class ParticipantStore(ChopDb db)
     /// policy keys on kind, not on this list; this is for prose and diagnostics.</summary>
     public IReadOnlyList<string> HumanIds() =>
         List().Where(p => p.Kind == "human").Select(p => p.Id).ToList();
-
-    /// <summary>Deviation from plan 1d, reported: the plan says "delete HumanId()", but its nine
-    /// production call sites (plan claim 4: <c>SpawnerService</c>, <c>ChatApi</c>, <c>RoomsApi</c>)
-    /// live in Hub files outside task 1's scope, and task 2 (blocked by task 1) is what renames them
-    /// to <see cref="OwnerId"/>. Deleting the method here would fail the Hub build before task 2 ever
-    /// runs. Kept as a thin delegate instead of the old throw-on-two-humans body — that behaviour
-    /// cannot survive owner-remote's arrival regardless of which method name callers use — so the
-    /// existing call sites keep resolving to the owner correctly until task 2 removes this and
-    /// renames them directly.</summary>
-    public string HumanId() => OwnerId();
 }

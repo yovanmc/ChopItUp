@@ -37,7 +37,7 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         ?? throw new McpException("Unauthenticated request reached a tool; this is a hub bug.");
 
     [McpServerTool(Name = "list_rooms", ReadOnly = true, Idempotent = true, OpenWorld = false),
-     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. A room with a directory gives a spawned participant file and shell access inside it; archived rooms are not listed. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host and model.")]
+     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. A room with a directory gives a spawned participant file and shell access inside it; archived rooms are not listed. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host, model and classes - a set of roles (plumbing, visible, judge) that row holds; a row with none has an empty set.")]
     public string ListRooms()
     {
         var me = Caller;
@@ -47,7 +47,7 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
             UnreadCount = r.MessageCount == 0 ? 0 : CountUnread(r, me),
         });
         return JsonSerializer.Serialize(
-            new { You = me, Participants = participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }), Rooms = rooms },
+            new { You = me, Participants = participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model, Classes = ParticipantClasses.Parse(p.Classes) }), Rooms = rooms },
             RosterJsonOptions);
     }
 

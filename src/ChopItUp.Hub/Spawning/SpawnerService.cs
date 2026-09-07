@@ -89,7 +89,7 @@ public sealed class SpawnerService : BackgroundService
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
-        _trails = trails; _owner = roster.First(p => p.Id == participants.HumanId());
+        _trails = trails; _owner = roster.First(p => p.Id == participants.OwnerId());
         _policy = new ExchangePolicy(roster, limits);
     }
 

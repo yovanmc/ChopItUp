@@ -38,4 +38,16 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("propose_memory(room_id, topic, title, body)", instructions);
         Assert.Contains("nothing is remembered until approved", instructions);
     }
+
+    /// <summary>Task 2, 2c: the Rules constant's "only human here" line becomes a {HUMANS} placeholder
+    /// naming every human id and saying the hub stamps which one typed.</summary>
+    [Fact]
+    public async Task Instructions_name_every_human_id_and_say_the_hub_stamps_which()
+    {
+        await using var client = await _host.ClientFor("claude");
+        var instructions = client.ServerInstructions;
+        Assert.DoesNotContain("The owner is the only human here.", instructions);
+        Assert.Contains("owner-remote", instructions);
+        Assert.Contains("the hub stamps which", instructions);
+    }
 }

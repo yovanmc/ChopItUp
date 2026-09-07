@@ -34,9 +34,17 @@ public static class SpawnPrompt
             .Select(p => "@" + p.Id);
         var (shown, omitted) = Trim(input.Transcript, limits.TranscriptChars);
 
+        // Roster-driven (Task 2, 2b): with one human row this reads exactly as it did before
+        // owner-remote existed; with more than one it names every id rather than asserting a count
+        // that is no longer true.
+        var humans = input.Roster.Where(p => p.Kind == "human").Select(p => "`" + p.Id + "`").ToList();
+        var humanClause = humans.Count == 1
+            ? $"The owner ({humans[0]}) is the only human here"
+            : $"The owner is the only person here, and types under {string.Join(" or ", humans)} depending on which device they are on — treat both as the owner";
+
         var sb = new StringBuilder();
         sb.Append("You are ").Append(input.Self.DisplayName).Append(" (participant id `").Append(input.Self.Id).Append("`) in the Chop It Up room \"")
-          .Append(input.RoomName).Append("\" (room_id `").Append(input.RoomId).Append("`). The owner (`owner`) is the only human here; `hub` is the hub itself: it posts exchange notes and relays memory proposals, quoting the proposer's text, which is that participant's and not the hub's.\n");
+          .Append(input.RoomName).Append("\" (room_id `").Append(input.RoomId).Append("`). ").Append(humanClause).Append("; `hub` is the hub itself: it posts exchange notes and relays memory proposals, quoting the proposer's text, which is that participant's and not the hub's.\n");
         sb.Append("Participants you can hand the turn to: ").Append(string.Join(", ", peers)).Append('\n');
         sb.Append("Why you are here: message(s) ").Append(string.Join(", ", input.TriggerIds.Select(id => "#" + id))).Append(" mentioned you. This exchange started at message #")
           .Append(input.RootMessageId).Append(". Turn ").Append(input.TurnNumber).Append(" of ").Append(input.Budget).Append("; ").Append(input.RemainingAfter).Append(" turn(s) remain after yours.\n");
