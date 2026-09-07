@@ -18,13 +18,16 @@ public static class SpawnCommands
     /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable (LESSONS,
     /// M5 tool-surface); `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP
     /// servers and settings out of the spawn; `--no-session-persistence` is D9; `--bare` is NEVER
-    /// used — it switches auth to API key only, and this app holds no key.</summary>
-    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label) =>
+    /// used — it switches auth to API key only, and this app holds no key. <paramref name="effort"/>
+    /// is row 19's AC7/D10: null outside a run and for an ordinary in-run row (nothing appended); a
+    /// conductor or a `judge`-class row gets exactly `--effort high` — never `xhigh` or `max`.</summary>
+    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--tools", "", "--strict-mcp-config", "--mcp-config", mcpConfigPath,
              "--allowedTools", ClaudeToolAllowed, "--no-session-persistence", "--model", model,
-             "--output-format", "json", "--disable-slash-commands", "--setting-sources", ""],
+             "--output-format", "json", "--disable-slash-commands", "--setting-sources", "",
+             .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             new Dictionary<string, string>(),
             workDir, prompt, label);
 
@@ -44,8 +47,10 @@ public static class SpawnCommands
     /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
     /// tool (LESSONS, M5 approvals); `--ignore-user-config` keeps the owner's config.toml out while
     /// auth still comes from CODEX_HOME (verified); `-c` values are literal strings when they are
-    /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.</summary>
-    public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label) =>
+    /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.
+    /// <paramref name="effort"/> is row 19's AC7/D10, as `-c model_reasoning_effort=<value>` — null
+    /// appends nothing.</summary>
+    public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "exec", "--ephemeral", "--ignore-user-config",
@@ -53,6 +58,7 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.bearer_token_env_var={TokenEnvVar}",
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec=60",
+             .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
              "--approve-for-me", "-C", workDir, "--skip-git-repo-check", "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },
@@ -91,6 +97,13 @@ public static class SpawnCommands
         "rebase", "reflog", "remote", "repack", "replace", "reset", "restore", "revert", "rm", "stash",
         "submodule", "switch", "symbolic-ref", "tag", "update-index", "update-ref", "worktree", "write-tree",
     ];
+
+    /// <summary>Row 19, task 12e: the second Claude allowlist — the ordinary six-builtin-plus-three-MCP
+    /// list, plus `run_gate`, for an in-run Claude spawn's directory room only. The built-in TOOL set
+    /// (`--tools`, <see cref="ClaudeBuiltins"/>) is untouched (LESSONS, M5 claude-code-headless-tool-surface):
+    /// MCP tools stay directly callable regardless of the built-in list, so widening only the allowlist
+    /// is enough, and an out-of-run or non-conductor spawn never sees this constant at all.</summary>
+    public const string ClaudeRunToolsAllowed = ClaudeDirectoryToolsAllowed + ",mcp__" + McpServerName + "__run_gate";
 
     /// <summary>The deny list of the per-spawn settings file: measured on 2.1.220 to block `git commit`,
     /// `git -c … commit` and `git.exe commit` while `echo`, `git log` and in-room writes ran, and to block
@@ -138,35 +151,59 @@ public static class SpawnCommands
     public static string ClaudeSettingsJson(string? dataDir = null) =>
         JsonSerializer.Serialize(new { permissions = new { deny = ClaudeDenyRules(dataDir) } });
 
+    /// <summary>Row 19, orchestrator addition to task 12f: the environment variable the installed
+    /// Claude CLI's own <c>--mcp-config</c> schema documents as its per-server tool-call timeout
+    /// ("Per-server tool-call timeout in milliseconds... Hard wall-clock limit per call; progress
+    /// notifications do not extend it. Values below 1000ms are ignored"). Task 12f measured that this
+    /// is read from the environment, not that raising it actually extends a live call that would
+    /// otherwise time out — the CLI's default value could not be extracted either. Inferred from the
+    /// binary's own embedded schema text this session, not from a round-trip that timed out and was
+    /// then rescued by this variable; treat it as unverified until such a round-trip is observed.</summary>
+    public const string ClaudeMcpToolTimeoutEnvVar = "MCP_TOOL_TIMEOUT";
+
     /// <summary>A spawn in a directory room (M9 decision 9): cwd is the room's tree; `dontAsk` plus the
     /// allow list runs the six built-ins and the three MCP tools without a prompt and auto-denies
     /// everything else (protected-path writes included — under `bypassPermissions` they would be
     /// auto-approved); the deny list rides in <paramref name="settingsPath"/>, which sits in the scratch
     /// folder beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
     /// what carries the Bash calls the trail records; <paramref name="systemRules"/> (`SpawnPrompt.DirectoryRules`)
-    /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.</summary>
-    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label) =>
+    /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.
+    /// <paramref name="mcpToolTimeoutMs"/> (orchestrator addition to task 12f) sets
+    /// <see cref="ClaudeMcpToolTimeoutEnvVar"/> in the child's environment when given — an in-run
+    /// Claude spawn only, at <c>RunLimits.SpawnTimeout</c> in milliseconds, so the CLI's own hard MCP
+    /// tool-call wall clock cannot kill a long <c>run_gate</c> call well before the hub's own 30-minute
+    /// per-spawn timeout does. Null (the default, every non-run caller) sets nothing, exactly the
+    /// pre-existing empty environment.</summary>
+    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--permission-mode", "dontAsk", "--tools", ClaudeBuiltins, "--strict-mcp-config", "--mcp-config", mcpConfigPath,
-             "--allowedTools", ClaudeDirectoryToolsAllowed, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence", "--model", model,
-             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", ""],
-            new Dictionary<string, string>(),
+             "--allowedTools", allowedTools, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence", "--model", model,
+             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", "",
+             .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
+            mcpToolTimeoutMs is null
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string> { [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString() },
             roomDir, prompt, label);
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is
     /// not skipped), `--json` carries the command_execution items the trail records, and network is on
     /// inside workspace-write (D10). Measured 2026-09-06 (claim 24): every flag accepted; note the
-    /// sandbox did NOT stop a `git commit` — the prompt rule and the trail are the mechanism (decision 7).</summary>
-    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label) =>
+    /// sandbox did NOT stop a `git commit` — the prompt rule and the trail are the mechanism (decision 7).
+    /// <paramref name="toolTimeoutSeconds"/> is row 19's task 12f (pass 1's M7): the hard-coded 60 s
+    /// this used to always carry kills an MCP tool call — <c>run_gate</c> included — well before a
+    /// 30-minute gate can finish; an in-run Codex spawn passes <c>RunLimits.SpawnTimeout</c> in
+    /// seconds here instead. Every other caller keeps the 60 s default.</summary>
+    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label, string? effort = null, int toolTimeoutSeconds = 60) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "exec", "--ephemeral", "--ignore-user-config", "--json",
              "-c", $"mcp_servers.{McpServerName}.url={mcpUrl}",
              "-c", $"mcp_servers.{McpServerName}.bearer_token_env_var={TokenEnvVar}",
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
-             "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec=60",
+             "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec={toolTimeoutSeconds}",
              "-c", "sandbox_workspace_write.network_access=true",
+             .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
              "--approve-for-me", "-C", roomDir, "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },

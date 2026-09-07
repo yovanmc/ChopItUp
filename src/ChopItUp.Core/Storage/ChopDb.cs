@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 7;
+    public const int LatestSchemaVersion = 8;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -116,6 +116,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 5) ApplyV5(conn);
             if (GetUserVersion(conn) < 6) ApplyV6(conn);
             if (GetUserVersion(conn) < 7) ApplyV7(conn);
+            if (GetUserVersion(conn) < 8) ApplyV8(conn);
             return 0;
         });
     }
@@ -462,6 +463,88 @@ public sealed class ChopDb
         {
             stamp.Transaction = tx;
             stamp.CommandText = "PRAGMA user_version = 7;";
+            stamp.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>v8 (row 19): runs. A run is the only hub state that outlives an exchange, so unlike
+    /// Exchange it is a table. ux_runs_one_active_per_room is the invariant the row rests on — two active
+    /// runs in one room would give a conductor two loops to be re-spawned by. parked_seconds excludes
+    /// time a parked run was not running from the D9 wall clock, without which an overnight restart-park
+    /// re-parks the moment it is resumed (AC15). run_phases counts re-entries per full phase tag;
+    /// run_artifacts records authorship read out of the spawn's own git diff; run_gate_runs is the
+    /// hub-written record the live check reads, and its run_id is NULLABLE because the refusals AC10
+    /// requires it to record include "there is no run here". skill_files is task 12's whole-tree
+    /// manifest (P5): one row per file under a skill's installed directory, recorded at import
+    /// alongside the SKILL.md hash the `skills` table already carried since v7 — never beside the
+    /// skill itself (D-i), for the same reason the SKILL.md hash lives here and not there. Folded into
+    /// v8 rather than a new version because nothing has deployed v8 yet (task 16 is the first deploy of
+    /// this row); once that happens this table's shape is as frozen as every other v8 table. Stamp
+    /// last (LESSONS, M1).</summary>
+    private static void ApplyV8(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using (var ddl = conn.CreateCommand())
+        {
+            ddl.Transaction = tx;
+            ddl.CommandText = """
+                CREATE TABLE IF NOT EXISTS runs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    room_id         TEXT NOT NULL REFERENCES rooms(id),
+                    conductor_id    TEXT NOT NULL REFERENCES participants(id),
+                    skill_name      TEXT NOT NULL,
+                    arguments       TEXT NOT NULL DEFAULT '',
+                    status          TEXT NOT NULL,
+                    reason          TEXT,
+                    cap_spent       INTEGER NOT NULL DEFAULT 0,
+                    phase           TEXT NOT NULL DEFAULT '(start)',
+                    root_message_id INTEGER NOT NULL,
+                    started_at      TEXT NOT NULL,
+                    parked_at       TEXT,
+                    parked_seconds  INTEGER NOT NULL DEFAULT 0,
+                    ended_at        TEXT,
+                    spawns_used     INTEGER NOT NULL DEFAULT 0,
+                    exchanges       INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS ux_runs_one_active_per_room ON runs(room_id) WHERE status = 'active';
+                CREATE INDEX IF NOT EXISTS ix_runs_room ON runs(room_id, id);
+                CREATE TABLE IF NOT EXISTS run_phases (
+                    run_id  INTEGER NOT NULL REFERENCES runs(id),
+                    phase   TEXT NOT NULL,
+                    entries INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (run_id, phase)
+                );
+                CREATE TABLE IF NOT EXISTS run_artifacts (
+                    run_id    INTEGER NOT NULL REFERENCES runs(id),
+                    path      TEXT NOT NULL,
+                    author_id TEXT NOT NULL REFERENCES participants(id),
+                    at        TEXT NOT NULL,
+                    PRIMARY KEY (run_id, path)
+                );
+                CREATE TABLE IF NOT EXISTS run_gate_runs (
+                    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id    INTEGER REFERENCES runs(id),
+                    room_id   TEXT NOT NULL,
+                    gate      TEXT NOT NULL,
+                    caller_id TEXT NOT NULL,
+                    exit_code INTEGER,
+                    outcome   TEXT NOT NULL,
+                    at        TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS skill_files (
+                    skill_name TEXT NOT NULL REFERENCES skills(name),
+                    path       TEXT NOT NULL,
+                    sha256     TEXT NOT NULL,
+                    PRIMARY KEY (skill_name, path)
+                );
+                """;
+            ddl.ExecuteNonQuery();
+        }
+        using (var stamp = conn.CreateCommand())
+        {
+            stamp.Transaction = tx;
+            stamp.CommandText = "PRAGMA user_version = 8;";
             stamp.ExecuteNonQuery();
         }
         tx.Commit();

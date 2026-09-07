@@ -121,6 +121,58 @@ public sealed class SpawnCommandsTests
         Assert.DoesNotContain("\n", rules);
     }
 
+    // Row 19, task 11 (AC7/D10): a conductor or a judge-class row is launched with an explicit
+    // reasoning-effort flag; an ordinary in-run row and anything outside a run get no effort token at
+    // all, never an explicit default. "high" here stands in for whatever Launch decided (SpawnerService
+    // computes the value; these are argument-list assertions on the builders alone) - never xhigh/max.
+    [Theory]
+    [InlineData("high")]   // in-run conductor, or in-run judge
+    [InlineData(null)]     // in-run plumbing (an ordinary row), or out-of-run
+    public void Claude_command_line_carries_the_effort_flag_only_when_one_is_given(string? effort)
+    {
+        var spec = SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1", "PROMPT", "opus/s1", effort);
+        if (effort is null) Assert.DoesNotContain("--effort", spec.Arguments);
+        else Assert.Equal(["--effort", effort], spec.Arguments.TakeLast(2));
+    }
+
+    [Theory]
+    [InlineData("high")]
+    [InlineData(null)]
+    public void ClaudeInDirectory_command_line_carries_the_effort_flag_only_when_one_is_given(string? effort)
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort);
+        if (effort is null) Assert.DoesNotContain("--effort", spec.Arguments);
+        else Assert.Equal(["--effort", effort], spec.Arguments.TakeLast(2));
+    }
+
+    [Theory]
+    [InlineData("high")]
+    [InlineData(null)]
+    public void Codex_command_line_carries_the_effort_config_only_when_one_is_given(string? effort)
+    {
+        var spec = SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\data\spawns\s2", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort);
+        AssertEffortConfig(spec, effort);
+    }
+
+    [Theory]
+    [InlineData("high")]
+    [InlineData(null)]
+    public void CodexInDirectory_command_line_carries_the_effort_config_only_when_one_is_given(string? effort)
+    {
+        var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort);
+        AssertEffortConfig(spec, effort);
+    }
+
+    // Adjacency, not mere presence: "-c" immediately followed by the exact value, joined with a
+    // separator no legitimate argument contains, so a false match across two unrelated tokens is
+    // impossible.
+    private static void AssertEffortConfig(ProcessSpec spec, string? effort)
+    {
+        var joined = string.Join('\u0001', spec.Arguments);
+        if (effort is null) Assert.DoesNotContain("model_reasoning_effort", joined);
+        else Assert.Contains($"-c\u0001model_reasoning_effort={effort}", joined);
+    }
+
     [Fact]
     public void M9_A6_codex_directory_command_line_runs_in_the_room_with_json_and_network_and_without_the_repo_check_skip()
     {
@@ -140,5 +192,59 @@ public sealed class SpawnCommandsTests
         Assert.Equal("tok456", spec.Environment["CHOPITUP_TOKEN"]);
         Assert.DoesNotContain(spec.Arguments, a => a.Contains("tok456"));
         Assert.DoesNotContain("--skip-git-repo-check", spec.Arguments);
+    }
+
+    // --- Row 19, task 12e: run_gate on a second Claude allowlist --------------------------------
+
+    [Fact]
+    public void ClaudeInDirectory_defaults_to_the_ordinary_directory_allowlist_without_run_gate()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
+        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed, allowed);
+        Assert.DoesNotContain("run_gate", allowed);
+    }
+
+    [Fact]
+    public void ClaudeInDirectory_can_be_given_the_run_tools_allowlist_which_adds_run_gate_to_the_ordinary_six()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, allowedTools: SpawnCommands.ClaudeRunToolsAllowed);
+        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
+        // The built-in --tools list (never the allowlist) is what actually enables Bash etc; unaffected.
+        Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
+    }
+
+    // --- Row 19, task 12f: the Codex in-directory MCP tool-call timeout, raised for a run ----------
+
+    [Fact]
+    public void CodexInDirectory_defaults_the_tool_timeout_to_sixty_seconds()
+    {
+        var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2");
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
+    }
+
+    [Fact]
+    public void CodexInDirectory_can_be_given_a_longer_tool_timeout_for_a_run_gate_that_may_run_thirty_minutes()
+    {
+        var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort: null, toolTimeoutSeconds: 1800);
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1800", spec.Arguments);
+        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
+    }
+
+    // --- Row 19, orchestrator addition to task 12f: the Claude CLI's OWN MCP tool-call timeout -----
+
+    [Fact]
+    public void ClaudeInDirectory_sets_no_MCP_TOOL_TIMEOUT_by_default()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
+        Assert.Empty(spec.Environment);
+    }
+
+    [Fact]
+    public void ClaudeInDirectory_can_be_given_the_run_spawn_timeout_as_MCP_TOOL_TIMEOUT_in_milliseconds()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, mcpToolTimeoutMs: 1_800_000);
+        Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
     }
 }

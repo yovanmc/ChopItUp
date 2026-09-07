@@ -164,6 +164,49 @@ public sealed class GitTrailTests : IDisposable
         Assert.StartsWith("git init exited 128: boom", git.Reason);
     }
 
+    // --- Task 5c (row 19): artifact authorship, from the spawn's whole diff -----------------------
+
+    [Fact]
+    public async Task Run05_ChangedFilesAsync_lists_every_path_across_a_range_where_head_moved_mid_spawn()
+    {
+        var git = new GitTrail(_dir);
+        File.WriteAllText(Path.Combine(_dir, "a.txt"), "a");
+        var first = await git.CommitAllAsync("first", Owner, allowEmpty: false);
+        var headBefore = first.Hash;
+
+        // Simulates a spawn that commits its own work (Codex) BEFORE the hub's own after-commit -
+        // the scenario P4 exists for: authorship must come from the WHOLE range, not the last commit.
+        File.WriteAllText(Path.Combine(_dir, "b.txt"), "b");
+        await git.CommitAllAsync("agent's own commit", Opus, allowEmpty: false);
+        File.WriteAllText(Path.Combine(_dir, "c.txt"), "c");
+        var agent = await git.CommitAllAsync("hub's after-commit", Opus, allowEmpty: true);
+
+        var changed = await git.ChangedFilesAsync($"{headBefore}..{agent.Hash}");
+        Assert.Equal(["b.txt", "c.txt"], changed.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Run05_ChangedFilesInAsync_lists_one_commits_paths_for_the_no_before_hash_fallback()
+    {
+        var git = new GitTrail(_dir);
+        File.WriteAllText(Path.Combine(_dir, "x.txt"), "x");
+        File.WriteAllText(Path.Combine(_dir, "y.txt"), "y");
+        var first = await git.CommitAllAsync("first ever commit", Opus, allowEmpty: false);
+
+        var changed = await git.ChangedFilesInAsync(first.Hash!);
+        Assert.Equal(["x.txt", "y.txt"], changed.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task Run05_ChangedFilesAsync_is_empty_with_a_reason_when_the_range_is_bad()
+    {
+        var git = new GitTrail(_dir);
+        await git.InitAsync();
+        var changed = await git.ChangedFilesAsync("nonexistent..alsonone");
+        Assert.Empty(changed);
+        Assert.NotNull(git.Reason);
+    }
+
     [Fact]
     public void M9_A9_room_trails_hand_out_one_trail_per_normalised_directory()
     {

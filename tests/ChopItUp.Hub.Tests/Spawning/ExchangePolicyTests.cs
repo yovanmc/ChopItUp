@@ -302,6 +302,227 @@ public sealed class ExchangePolicyTests
         Assert.Contains(notes, n => n.Contains("not spawning @sonnet"));
     }
 
+    // --- Task 4 (row 19): starting a run, and every refusal at the start ---------------------------
+
+    private static readonly ResolvedSkill RunSkill = new("build-thing", "Build Thing", "Build the thing.", false, IsRun: true);
+
+    [Fact]
+    public void A_human_post_inside_an_active_run_leaves_the_open_exchange_untouched()
+    {
+        var p = Policy();
+        var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
+        Assert.Equal(ExchangeStatus.Open, open!.Status);
+
+        var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
+        var (next, notes) = p.OnMessage(open, Msg(2, "owner", "@sonnet actually you"), T0.AddSeconds(1), run: run);
+
+        Assert.Same(open, next);
+        Assert.Equal(ExchangeStatus.Open, open.Status);          // NOT superseded - step 3 returns first
+        Assert.DoesNotContain("sonnet", open.Pending.Keys);      // sonnet never accepted
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void A_run_start_invocation_needs_a_directory()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: false);
+        Assert.Null(x);
+        Assert.Equal("/build-thing starts a run, which needs a room bound to a directory; this room has none.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void A_run_start_invocation_with_zero_or_many_conductors_refuses_naming_the_count()
+    {
+        var zero = Policy().OnMessage(null, Msg(1, "owner", "/build-thing begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.Null(zero.Next);
+        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; none was.", Assert.Single(zero.Notes));
+
+        var many = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus @sonnet begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.Null(many.Next);
+        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; 2 were: @opus, @sonnet.", Assert.Single(many.Notes));
+    }
+
+    [Fact]
+    public void A_valid_run_start_invocation_opens_a_conductor_only_exchange_carrying_the_skill()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus begin"), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
+        Assert.NotNull(x);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        Assert.Same(RunSkill, x.Skill);
+        Assert.Contains(notes, n => n.StartsWith("Skill /build-thing is in force"));
+    }
+
+    [Fact]
+    public void The_supersede_gate_is_a_second_line_of_defence_behind_the_run_is_not_null_return()
+    {
+        // Load-bearing distinction (pass 2's F-23): step 3's early return is what actually protects
+        // an active run's exchange; the `run is null` guard on the supersede below it can never by
+        // itself be exercised through OnMessage, because step 3 always returns first when run is not
+        // null. This test pins step 3 as the one doing the work (see the test above); the classic
+        // outside-a-run supersede path (An_owner_message_mid_exchange_supersedes...) is the regression
+        // that matters and stays covered by the pre-existing suite.
+        var p = Policy();
+        var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
+        var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
+        p.OnMessage(open, Msg(2, "owner", "never mind"), T0.AddSeconds(1), run: run);
+        Assert.Equal(ExchangeStatus.Open, open!.Status);
+    }
+
+    // --- Task 5a (row 19): the hub re-spawning its run's conductor ----------------------------------
+
+    [Fact]
+    public void OpenForConductor_builds_a_one_turn_exchange_carrying_the_skill_and_every_trigger()
+    {
+        var x = ExchangePolicy.OpenForConductor("general", "opus", rootMessageId: 5, triggerIds: [3, 4], T0, RunSkill);
+        Assert.Equal("general", x.RoomId);
+        Assert.Equal(5, x.RootMessageId);
+        Assert.Equal(1, x.Budget);
+        Assert.Equal(1, x.TurnsCommitted);
+        Assert.Equal(["opus"], x.Pending.Keys);
+        Assert.Equal([3L, 4L], x.Pending["opus"].TriggerIds);
+        Assert.Equal(T0, x.Pending["opus"].LastTriggerAt);
+        Assert.Same(RunSkill, x.Skill);
+        Assert.Equal(ExchangeStatus.Open, x.Status);
+    }
+
+    // --- Task 8 (row 19): the phase tag, the D8 class rules, and the refusal counter ---------------
+
+    private static string? Refuse(ExchangePolicy p, string body, string conductor = "sonnet",
+        Func<string, string?>? artifactAuthor = null, Func<string, bool>? artifactExists = null)
+    {
+        var msg = Msg(1, conductor, body);
+        var run = new RunContext(RunId: 9, ConductorId: conductor, CurrentPhase: "(start)");
+        return p.RefuseConductorPost(msg, run, p.MentionedSpawnable(msg), artifactAuthor ?? (_ => null), artifactExists ?? (_ => false));
+    }
+
+    [Fact]
+    public void A_conductor_post_with_no_valid_phase_tag_is_refused()
+    {
+        var refusal = Refuse(Policy(), "just talking, no tag");
+        Assert.NotNull(refusal);
+        Assert.Contains("phase tag", refusal);
+    }
+
+    [Fact]
+    public void A_conductor_post_mentioning_itself_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: build @sonnet go");   // sonnet is both author and conductor here
+        Assert.NotNull(refusal);
+        Assert.Contains("itself", refusal);
+    }
+
+    [Fact]
+    public void Ping_needs_no_mention_and_skips_every_other_rule()
+    {
+        Assert.Null(Refuse(Policy(), "phase: ping all done"));
+    }
+
+    [Fact]
+    public void A_non_ping_phase_with_no_mention_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: plan thinking out loud");
+        Assert.NotNull(refusal);
+        Assert.Contains("mention", refusal);
+    }
+
+    [Fact]
+    public void Build_without_a_plumbing_or_visible_row_mentioned_is_refused()
+    {
+        // fable is judge-only; gpt-6-astra carries no classes at all.
+        var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
+        Assert.NotNull(refusal);
+        Assert.Contains("plumbing", refusal);
+    }
+
+    [Fact]
+    public void Build_mentioning_a_plumbing_row_is_accepted()
+    {
+        Assert.Null(Refuse(Policy(), "phase: build @sonnet go", conductor: "fable"));   // sonnet: plumbing
+    }
+
+    [Fact]
+    public void Build_mentioning_a_visible_row_is_accepted()
+    {
+        Assert.Null(Refuse(Policy(), "phase: build @opus go", conductor: "fable"));     // opus: visible,judge
+    }
+
+    [Fact]
+    public void Critique_without_an_artifact_line_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: critique @opus have a look", conductor: "fable");
+        Assert.NotNull(refusal);
+        Assert.Contains("artifact:", refusal);
+    }
+
+    [Fact]
+    public void Critique_naming_an_artifact_neither_recorded_nor_in_the_room_tree_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: critique @opus have a look\nartifact: src/Foo.cs", conductor: "fable");
+        Assert.NotNull(refusal);
+        Assert.Contains("neither recorded", refusal);
+    }
+
+    [Fact]
+    public void Critique_with_no_judge_mentioned_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", conductor: "fable",
+            artifactAuthor: _ => "sonnet");
+        Assert.NotNull(refusal);
+        Assert.Contains("judge", refusal);
+    }
+
+    [Fact]
+    public void Critique_mentioning_only_the_artifacts_own_recorded_author_as_judge_is_refused()
+    {
+        var refusal = Refuse(Policy(), "phase: critique @opus have a look\nartifact: src/Foo.cs", conductor: "fable",
+            artifactAuthor: _ => "opus");   // opus (judge) IS the recorded author
+        Assert.NotNull(refusal);
+        Assert.Contains("other than", refusal);
+    }
+
+    [Fact]
+    public void A_valid_critique_naming_a_recorded_artifact_and_a_different_judge_is_accepted()
+    {
+        Assert.Null(Refuse(Policy(), "phase: critique @opus review this\nartifact: src/Foo.cs", conductor: "fable",
+            artifactAuthor: _ => "sonnet"));
+    }
+
+    [Fact]
+    public void An_artifact_present_in_the_room_tree_but_never_recorded_still_passes()
+    {
+        Assert.Null(Refuse(Policy(), "phase: critique @opus review this\nartifact: src/Foo.cs", conductor: "fable",
+            artifactAuthor: _ => null, artifactExists: _ => true));
+    }
+
+    [Fact]
+    public void Three_spellings_of_one_recorded_artifact_path_resolve_to_the_same_author()
+    {
+        var recorded = new Dictionary<string, string> { [RunStore.Normalize("src/Foo.cs")] = "sonnet" };
+        string? Lookup(string p) => recorded.GetValueOrDefault(RunStore.Normalize(p));
+
+        foreach (var spelling in new[] { "src/Foo.cs", "`src/Foo.cs`", "./src/Foo.cs", @"SRC\Foo.cs" })
+        {
+            var refusal = Refuse(Policy(), $"phase: critique @opus review this\nartifact: {spelling}", conductor: "fable", artifactAuthor: Lookup);
+            Assert.Null(refusal);   // opus (judge) != sonnet (recorded author), whatever spelling named it
+        }
+    }
+
+    [Fact]
+    public void OpenForWorkers_seeds_the_mentioned_rows_as_pending_rooted_at_the_conductors_post_and_carries_no_skill()
+    {
+        var (x, notes) = Policy().OpenForWorkers("general", rootMessageId: 12, mentioned: ["sonnet", "opus"], T0);
+        Assert.Equal("general", x.RoomId);
+        Assert.Equal(12, x.RootMessageId);
+        Assert.Equal(Limits.Budget, x.Budget);
+        Assert.Equal(["sonnet", "opus"], x.Pending.Keys);
+        Assert.Null(x.Skill);
+        Assert.Empty(notes);
+    }
+
     /// <summary>Pins the complete set of refusal arms (M-7): if a future arm is added to
     /// <see cref="SkillResolution"/> without this list being updated too, this test is the thing that
     /// catches it, since a plain switch statement does not fail to compile on a missing case.</summary>

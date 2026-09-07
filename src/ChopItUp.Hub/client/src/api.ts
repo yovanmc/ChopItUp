@@ -6,6 +6,7 @@ import type {
   Message,
   Participant,
   Room,
+  RunSnapshot,
   Skill,
   Trail,
 } from './types';
@@ -155,6 +156,15 @@ export async function stopExchange(roomId: string, signal?: AbortSignal): Promis
   return unwrap<ExchangeSnapshot>(
     await fetch(`/api/rooms/${encodeURIComponent(roomId)}/exchange/stop`, { method: 'POST', signal }),
   );
+}
+
+/** The room's active-or-most-recent run, or `null` for a room that has never had one — the hub says
+ *  that with 204, which has no body to parse, so this is the one endpoint here that cannot go through
+ *  `unwrap`. A 404 (unknown room) still throws like everywhere else. */
+export async function getRun(roomId: string, signal?: AbortSignal): Promise<RunSnapshot | null> {
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/run`, { signal });
+  if (response.status === 204) return null;
+  return unwrap<RunSnapshot>(response);
 }
 
 export async function listProposals(roomId: string, signal?: AbortSignal): Promise<MemoryProposal[]> {

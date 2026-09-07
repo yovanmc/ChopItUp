@@ -1,4 +1,4 @@
-/** Mirrors the hub's `/api` JSON (camelCase, see Web/ChatApi.cs). `authorId` is stamped by the hub,
+﻿/** Mirrors the hub's `/api` JSON (camelCase, see Web/ChatApi.cs). `authorId` is stamped by the hub,
  *  never typed by the writer — including for imported transcripts, which are always `owner` (D1). */
 export interface Message {
   id: number;
@@ -50,12 +50,14 @@ export interface Participant {
 }
 
 /** Mirrors `GET /api/skills` (Web/SkillsApi.cs). `chars` is the size of the text the hub renders
- *  into every spawn of an exchange the skill roots. Four fields, matching `SkillSummary` exactly. */
+ *  into every spawn of an exchange the skill roots. `isRun` (row 19) says whether invoking this
+ *  skill starts a run. Matches `SkillSummary` exactly. */
 export interface Skill {
   name: string;
   title: string;
   description: string;
   chars: number;
+  isRun: boolean;
 }
 
 /** Mirrors `GET /api/rooms/{id}/exchange` and the `POST .../exchange/stop` response
@@ -73,6 +75,57 @@ export interface ExchangeSnapshot {
   inFlight: string[];
   pending: string[];
   seq: number;
+}
+
+/** Who last wrote a path inside a run, read out of the spawn's own git diff (Web/RunsApi.cs). */
+export interface RunArtifact {
+  path: string;
+  authorId: string;
+  at: string;
+}
+
+/** One recorded `run_gate` call. `exitCode` is null when the gate was refused rather than run. */
+export interface RunGate {
+  gate: string;
+  callerId: string;
+  exitCode: number | null;
+  outcome: string;
+  at: string;
+}
+
+/** Mirrors `GET /api/rooms/{id}/run` (Web/RunsApi.cs `RunSnapshot`). A room that has never had a run
+ *  answers 204 and `api.getRun` turns that into `null`, so "no run here" is one value, not a throw.
+ *
+ *  `status` is the whole of `RunStatus` (Core/Model/Run.cs) and nothing else: RunBar's label map is
+ *  keyed on this union, so a status added to the hub without a label here is a compile error.
+ *
+ *  `phaseEntries` counts entries into `phase` only — the cap it is read against is per tag.
+ *  `elapsedMinutes` is time the run spent ACTIVE (parked time excluded, frozen while parked, stopped
+ *  at `endedAt` once it ends), which is the number the wall-clock cap is spent against. */
+export interface RunSnapshot {
+  id: number;
+  roomId: string;
+  conductorId: string;
+  skillName: string;
+  status: 'active' | 'parked' | 'ended';
+  reason: string | null;
+  capSpent: boolean;
+  phase: string;
+  phaseEntries: number;
+  phaseEntryCap: number;
+  exchanges: number;
+  spawnsUsed: number;
+  spawnCap: number;
+  startedAt: string;
+  endedAt: string | null;
+  elapsedMinutes: number;
+  wallClockCapMinutes: number;
+  artifacts: RunArtifact[];
+  gateRuns: RunGate[];
+  /** Every phase tag the run has entered, with its own entry count. The strip does not draw it — it
+   *  is here because the field is on the wire and a type that omits half the payload invites the next
+   *  reader to re-derive it. The M19 live check is what reads it. */
+  phaseHistory: Record<string, number>;
 }
 
 /** Mirrors `GET /api/memory/proposals` and the approve/reject responses (Web/MemoryApi.cs). */

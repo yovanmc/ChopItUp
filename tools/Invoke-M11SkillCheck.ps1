@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     M11 live check: imports a skill into a scratch hub, proves the store's refusal and integrity
     rules, invokes the skill against one Claude row and one Codex row and checks both replies carry
@@ -98,7 +98,7 @@ function Get-Sha256([string]$Path) {
 $installedSkillMd = Join-Path $DataDir "skills\$skillName\SKILL.md"
 $import1Out = Join-Path $DataDir 'import1.out.log'
 $import1Err = Join-Path $DataDir 'import1.err.log'
-$import1 = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--import-skill', $SkillSource) -PassThru -Wait -NoNewWindow `
+$import1 = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $import1Out -RedirectStandardError $import1Err
 Add-Check -Name 'skill.import.exit-zero' -Passed ($import1.ExitCode -eq 0) -Detail "exit=$($import1.ExitCode)"
 Add-Check -Name 'skill.import.file-installed' -Passed (Test-Path -LiteralPath $installedSkillMd -PathType Leaf) -Detail $installedSkillMd
@@ -106,7 +106,7 @@ Add-Check -Name 'skill.import.file-installed' -Passed (Test-Path -LiteralPath $i
 $hashAfterFirstImport = if (Test-Path -LiteralPath $installedSkillMd) { Get-Sha256 $installedSkillMd } else { '' }
 $import2Out = Join-Path $DataDir 'import2.out.log'
 $import2Err = Join-Path $DataDir 'import2.err.log'
-$import2 = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--import-skill', $SkillSource) -PassThru -Wait -NoNewWindow `
+$import2 = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $import2Out -RedirectStandardError $import2Err
 Add-Check -Name 'skill.import.second-refused' -Passed ($import2.ExitCode -eq 2) -Detail "exit=$($import2.ExitCode)"
 $hashAfterSecondAttempt = if (Test-Path -LiteralPath $installedSkillMd) { Get-Sha256 $installedSkillMd } else { '' }
@@ -136,7 +136,7 @@ function Get-Messages([string]$RoomId, [long]$AfterId = 0, [int]$Limit = 500) {
 }
 
 try {
-    $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--port', "$Port", '--rooms-root', $RoomsRoot) -WindowStyle Hidden -PassThru `
+    $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--port', "$Port", '--rooms-root', "`"$RoomsRoot`"") -WindowStyle Hidden -PassThru `
         -RedirectStandardError (Join-Path $DataDir 'hub.stderr.log') -RedirectStandardOutput (Join-Path $DataDir 'hub.stdout.log')
     $health = $null
     foreach ($i in 1..40) {
@@ -144,7 +144,7 @@ try {
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     # Check 9: /health reports the new schema version.
-    Add-Check -Name 'health.schema-is-7' -Passed ($health.schema -eq 7) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-7' -Passed ($health.schema -eq 8) -Detail "schema=$($health.schema)"
 
     # --- Check 3: GET /api/skills lists the imported skill with a non-empty description ------------
     # M10 lesson: a top-level JSON array comes back as one nested Object[]; enumerate before filtering.
@@ -263,7 +263,7 @@ try {
     # --- Check 8: --print-config wrote the owner-remote host config with its token -----------------
     $printOut = Join-Path $DataDir 'print-config.out.log'
     $printErr = Join-Path $DataDir 'print-config.err.log'
-    $printProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--print-config') -PassThru -Wait -NoNewWindow `
+    $printProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--print-config') -PassThru -Wait -NoNewWindow `
         -RedirectStandardOutput $printOut -RedirectStandardError $printErr
     Add-Check -Name 'print-config.exit-zero' -Passed ($printProc.ExitCode -eq 0) -Detail "exit=$($printProc.ExitCode)"
     $remoteConfigPath = Join-Path $DataDir 'host-configs\claude-code-owner-remote.json'
@@ -292,7 +292,7 @@ try {
 
     $reimportOut = Join-Path $DataDir 'reimport.out.log'
     $reimportErr = Join-Path $DataDir 'reimport.err.log'
-    $reimport = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--import-skill', $SkillSource, '--force') -PassThru -Wait -NoNewWindow `
+    $reimport = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"", '--force') -PassThru -Wait -NoNewWindow `
         -RedirectStandardOutput $reimportOut -RedirectStandardError $reimportErr
     Add-Check -Name 'tamper.reimport-exit-zero' -Passed ($reimport.ExitCode -eq 0) -Detail "exit=$($reimport.ExitCode)"
     $afterReimportPosted = Invoke-Api POST '/api/rooms/general/messages' @{ body = "/$skillName @sonnet $ask" }

@@ -22,6 +22,13 @@ public abstract record SkillResolution
     public static readonly SkillResolution Nothing = new None();
 }
 
+/// <summary>What <see cref="ExchangePolicy.OnMessage"/> needs to know about the room's ACTIVE run, if
+/// any (row 19, task 4). Null when no run is active here - a parked or ended run gates nothing at
+/// this level; those refusals need <c>RunStore.Latest</c>, which this pure class never reads, so
+/// <c>SpawnerService</c> decides them (impure) before the policy is consulted at all (pass 2's
+/// F-9).</summary>
+public sealed record RunContext(long RunId, string ConductorId, string CurrentPhase);
+
 /// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange,
 /// and an owner message always closes the one that was open. D8: a mention is the only trigger,
 /// never one's own message, never a row that is not spawnable. D5: four turns, whoever holds the
@@ -45,8 +52,14 @@ public sealed class ExchangePolicy
     public static bool IsSpawnable(Participant p) => p.Kind == "model" && p.Model is not null;
 
     /// <summary>The room's exchange after this message, and the notes to post. The returned object is
-    /// <paramref name="current"/> itself unless an owner message opened a new one.</summary>
-    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true, SkillResolution? skill = null)
+    /// <paramref name="current"/> itself unless an owner message opened a new one.
+    /// <paramref name="run"/>, <paramref name="startsRun"/>, <paramref name="hasDirectory"/> and
+    /// <paramref name="artifactAuthor"/> are row 19 (task 4): every existing call site compiles
+    /// unchanged because all four default. <paramref name="artifactAuthor"/> is unused before task 8
+    /// (the model branch's phase-tag rules) - accepted here now so that branch's signature never has
+    /// to change again.</summary>
+    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true, SkillResolution? skill = null,
+        RunContext? run = null, bool startsRun = false, bool hasDirectory = false, Func<string, string?>? artifactAuthor = null)
     {
         var notes = new List<string>();
         if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (current, notes);
@@ -61,14 +74,35 @@ public sealed class ExchangePolicy
 
         if (author.Kind == "human")
         {
-            if (current is { Status: ExchangeStatus.Open })
+            // Row 19, task 4 (pass 2's F-9), step 3 of the ordered human branch: a post inside an
+            // active run that is not itself a valid run-start (SpawnerService guarantees startsRun
+            // is never true while run is not null - its own step 2, an impure RunStore check, already
+            // refused that combination before this method was ever called) leaves EVERYTHING
+            // untouched - no supersede, no skill switch, nothing. AC5: the service records it as a
+            // steer for the conductor's next trigger set (task 6); this pure method only has to not
+            // get in the way.
+            if (run is not null) return (current, notes);
+
+            if (current is { Status: ExchangeStatus.Open } && run is null)
             {
                 // D5: the running spawn finishes (its completion lands on this object, which is no
                 // longer open, so it cannot conclude or spawn); everything queued is dropped.
+                // `run is null` is always true here (the early return above already caught the other
+                // case) - a second line of defence, not the first (task 6's note).
                 current.Status = ExchangeStatus.Superseded;
                 current.Pending.Clear();
             }
-            // A skill the hub cannot hand over intact spends nothing: the owner asked for an
+
+            // Step 4: a run-start invocation needs a directory to bind the run to (AC2).
+            if (startsRun && !hasDirectory)
+            {
+                var name = (skill as SkillResolution.Found)?.Skill.Name
+                    ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
+                notes.Add($"/{name} starts a run, which needs a room bound to a directory; this room has none.");
+                return (current, notes);
+            }
+
+            // Step 5: a skill the hub cannot hand over intact spends nothing: the owner asked for an
             // instruction, and spawning without it would burn real model calls on the wrong ask
             // (D-c). The supersede above still stands - the owner spoke (M5-D5).
             switch (skill)
@@ -85,6 +119,21 @@ public sealed class ExchangePolicy
                     notes.Add($"Could not read skill /{a.Name}: {a.Reason}. Nothing was spawned.");
                     return (current, notes);
             }
+
+            // Step 6: a run needs exactly one conductor - zero or many are both refused (AC2).
+            if (startsRun && mentioned.Count != 1)
+            {
+                var name = (skill as SkillResolution.Found)?.Skill.Name
+                    ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
+                notes.Add(mentioned.Count == 0
+                    ? $"/{name} starts a run and needs exactly one conductor mentioned; none was."
+                    : $"/{name} starts a run and needs exactly one conductor mentioned; {mentioned.Count} were: {string.Join(", ", mentioned.Select(m => "@" + m))}.");
+                return (current, notes);
+            }
+
+            // Step 7: otherwise, the pre-row-19 behaviour - unaffected whether or not this is a
+            // run-start invocation, since a run-start invocation that reached here already has a
+            // directory and exactly one mention.
             if (mentioned.Count == 0)
             {
                 // A skill with nobody to run it: say so, or the owner watches an invocation do
@@ -131,6 +180,82 @@ public sealed class ExchangePolicy
         }
         if (refused.Count > 0)
             notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. A new owner message starts a fresh exchange.");
+    }
+
+    /// <summary>Row 19, task 8: every id a conductor's post @-mentions that is spawnable - UNLIKE the
+    /// mention set <see cref="OnMessage"/> builds for itself, a self-mention is deliberately kept
+    /// rather than dropped, because <see cref="RefuseConductorPost"/>'s own rule ("mentions the
+    /// conductor itself") needs to see it in order to refuse it - silently filtering it out here would
+    /// make that rule unreachable.</summary>
+    public IReadOnlyList<string> MentionedSpawnable(Message message) =>
+        _mentions.Find(message.Body).Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
+
+    /// <summary>Row 19, task 8 (D8/AC6): the class rules a conductor's post inside its run must pass,
+    /// pure and side-effect free - null means valid, otherwise names which rule failed, in AC6's own
+    /// order. <paramref name="mentioned"/> is <see cref="MentionedSpawnable"/>'s output (self kept).
+    /// <paramref name="artifactAuthor"/> resolves a normalized path to who last touched it (task 1's
+    /// RunStore), or null if never recorded; <paramref name="artifactExists"/> answers whether the
+    /// path is present in the room's directory tree - either one satisfies "recorded or in the room
+    /// tree" (P4). Never touches a database or a filesystem itself: those two functions are the
+    /// service's impure edges, kept out of this pure class (D-b).</summary>
+    public string? RefuseConductorPost(Message message, RunContext run, IReadOnlyList<string> mentioned,
+        Func<string, string?> artifactAuthor, Func<string, bool> artifactExists)
+    {
+        if (!PhaseTag.TryParse(message.Body, out var tag))
+            return "the first line must be a valid phase tag: 'phase: <kind>' or 'phase: <kind>/<name>'";
+        if (mentioned.Contains(run.ConductorId))
+            return "a conductor post cannot mention itself";
+        if (tag!.Kind == "ping") return null;   // no mention required; every rule below is skipped
+
+        if (mentioned.Count == 0)
+            return $"phase {tag} needs a mention of who does the work";
+
+        if (tag.Kind == "build" && !mentioned.Any(id => _roster.TryGetValue(id, out var p)
+                && (ParticipantClasses.Has(p, ParticipantClasses.Plumbing) || ParticipantClasses.Has(p, ParticipantClasses.Visible))))
+            return "phase build needs a mention of a plumbing- or visible-class row";
+
+        if (tag.Kind == "critique")
+        {
+            var artifact = PhaseTag.Artifact(message.Body);
+            if (artifact is null) return "a critique needs an artifact: line";
+            var author = artifactAuthor(artifact);
+            if (author is null && !artifactExists(artifact))
+                return $"artifact '{artifact}' is neither recorded nor in the room tree";
+            if (!mentioned.Any(id => _roster.TryGetValue(id, out var p) && ParticipantClasses.Has(p, ParticipantClasses.Judge) && id != author))
+                return "a critique needs a judge mentioned other than the artifact's recorded author";
+        }
+
+        return null;
+    }
+
+    /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
+    /// same acceptance path as a fresh owner-started exchange (<see cref="Accept"/> seeds the
+    /// mentioned rows as pending against the ordinary turn budget), but rooted at the conductor's own
+    /// post rather than an owner's, and carrying no <see cref="Exchange.Skill"/>: workers see the run
+    /// state (task 7) and the conductor's own words, not the raw skill fence.</summary>
+    public (Exchange Next, IReadOnlyList<string> Notes) OpenForWorkers(string roomId, long rootMessageId, IReadOnlyList<string> mentioned, DateTimeOffset now)
+    {
+        var notes = new List<string>();
+        var x = new Exchange { RoomId = roomId, RootMessageId = rootMessageId, Budget = _limits.Budget };
+        Accept(x, mentioned, rootMessageId, now, notes);
+        return (x, notes);
+    }
+
+    /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
+    /// <see cref="OnMessage"/>'s human-only rule is untouched (P2). The conductor is the sole pending
+    /// entry, budgeted for exactly the one turn it is being asked for; every id in
+    /// <paramref name="triggerIds"/> is queued as its trigger. Sets <see cref="Exchange.Skill"/>
+    /// (pass 1's M9): the skill is never posted into the room, only rendered into the prompt, so
+    /// omitting it here would leave every re-spawn after the first exchange with no instruction at
+    /// all.</summary>
+    public static Exchange OpenForConductor(string roomId, string conductorId, long rootMessageId, IReadOnlyList<long> triggerIds, DateTimeOffset now, ResolvedSkill skill)
+    {
+        var x = new Exchange { RoomId = roomId, RootMessageId = rootMessageId, Budget = 1, Skill = skill };
+        var pending = new PendingSpawn { LastTriggerAt = now };
+        foreach (var id in triggerIds) pending.TriggerIds.Add(id);
+        x.Pending[conductorId] = pending;
+        x.TurnsCommitted = 1;
+        return x;
     }
 
     /// <summary>Which pending spawns may launch now. <paramref name="inFlightInRoom"/> is the room's

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using ChopItUp.Core.Skills;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Skills;
 
@@ -88,6 +89,22 @@ public sealed class SkillImportTests : IDisposable
 
         Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
         AssertTargetAbsent("Invalid_Name");
+    }
+
+    // Row 19, task 13: the reserved `/stop` command cannot be shadowed by an installed skill. Checked
+    // purely on the directory name, before the frontmatter is even read - ValidSkillBody's own
+    // `name: demo` would otherwise mismatch the "stop" directory and refuse for a DIFFERENT reason
+    // (Refusal 5), which would prove nothing about the reserved-name rule itself.
+    [Fact]
+    public void Refuses_to_import_a_skill_named_stop_the_reserved_run_command()
+    {
+        var source = NewSourceDir(RunCommands.StopName, ValidSkillBody);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("reserved", result.Message);
+        AssertTargetAbsent(RunCommands.StopName);
     }
 
     [Fact]
@@ -313,6 +330,72 @@ public sealed class SkillImportTests : IDisposable
         Assert.Equal(beforeHash, _hashes.Expected("demo"));
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.replaced")));
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+    }
+
+    // --- Row 19 task 12a: the whole-tree manifest -------------------------------------------------
+
+    [Fact]
+    public void A_valid_import_records_a_manifest_of_every_installed_file_hashed_after_the_copy()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        var manifest = _hashes.ExpectedTree("demo");
+        Assert.Equal(2, manifest.Count);
+        foreach (var relative in new[] { "SKILL.md", "references/notes.md" })
+        {
+            var installed = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", relative));
+            var expectedHash = Convert.ToHexString(SHA256.HashData(installed)).ToLowerInvariant();
+            Assert.Equal(expectedHash, manifest[relative]);
+        }
+    }
+
+    [Fact]
+    public void A_forced_reimport_replaces_the_manifest_rather_than_accumulating_stale_entries()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(source, _skillsRoot, force: false, _hashes).Outcome);
+        Assert.Equal(2, _hashes.ExpectedTree("demo").Count);
+        Directory.Delete(Path.Combine(source, "references"), recursive: true);   // the re-import drops the reference file
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: v2.\n---\n# v2\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: true, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        var manifest = _hashes.ExpectedTree("demo");
+        Assert.Equal(["SKILL.md"], manifest.Keys);
+    }
+
+    [Fact]
+    public void Refuses_when_a_declared_gate_script_is_not_in_the_import_and_writes_nothing()
+    {
+        var gatedBody = "---\nname: gated\ndescription: d.\nrun: true\ngates: check-it\n---\n# Gated\n";
+        var source = NewSourceDir("gated", gatedBody);   // no scripts/check-it.ps1
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("check-it", result.Message);
+        Assert.Contains("scripts/check-it.ps1", result.Message);
+        AssertTargetAbsent("gated");
+        Assert.Null(_hashes.Expected("gated"));
+    }
+
+    [Fact]
+    public void A_declared_gate_whose_script_is_present_installs_and_is_hashed_in_the_manifest()
+    {
+        var gatedBody = "---\nname: gated-ok\ndescription: d.\nrun: true\ngates: check-it(--Foo bar)\n---\n# Gated\n";
+        var source = NewSourceDir("gated-ok", gatedBody);
+        var scripts = Path.Combine(source, "scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "check-it.ps1"), "exit 0\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.True(_hashes.ExpectedTree("gated-ok").ContainsKey("scripts/check-it.ps1"));
     }
 
     [Fact]
