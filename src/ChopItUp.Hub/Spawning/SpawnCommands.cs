@@ -93,8 +93,17 @@ public static class SpawnCommands
     /// a Write under a denied `~/` folder while a cwd Write succeeded (claims 23, 35). Deny rules apply in
     /// every permission mode and are prefix rules: an absolute-path `git.exe` is NOT caught (measured) and
     /// is left to the trail. There is deliberately no allow list here (the command line carries it) and
-    /// no read fence (measured ineffective on this version — a rule in the prompt instead, decision 8).</summary>
-    public static IReadOnlyList<string> ClaudeDenyRules()
+    /// no read fence (measured ineffective on this version — a rule in the prompt instead, decision 8).
+    ///
+    /// <paramref name="dataDir"/> (row 11, D-i measure (a)): when given, adds Read/Write/Edit deny rules
+    /// for the hub's data directory, forward-slashed and `/**`-suffixed. The skill store lives under
+    /// this directory and its text becomes instruction in a later spawn's prompt (D-i); the hash pin in
+    /// the `skills` table is the actual control, and this is a second lock whose binding is UNVERIFIED -
+    /// every deny form ever measured on 2.1.220 used the `~/` shape (claim 23), never an absolute path.
+    /// The M11 check probes it live. The Codex asymmetry is NOT closed here: Codex directory spawns get
+    /// no deny list at all, and row 13 ("symmetric confinement") owns both. Null (the default) omits
+    /// these rules entirely, so a caller with no data directory in scope gets the pre-row-11 list.</summary>
+    public static IReadOnlyList<string> ClaudeDenyRules(string? dataDir = null)
     {
         var rules = new List<string>();
         foreach (var verb in GitWriteVerbs)
@@ -113,11 +122,17 @@ public static class SpawnCommands
             rules.Add($"Write(~/{folder}/**)");
             rules.Add($"Edit(~/{folder}/**)");
         }
+        if (dataDir is not null)
+        {
+            var forward = dataDir.Replace('\\', '/');
+            foreach (var verb in new[] { "Read", "Write", "Edit" })
+                rules.Add($"{verb}({forward}/**)");
+        }
         return rules;
     }
 
-    public static string ClaudeSettingsJson() =>
-        JsonSerializer.Serialize(new { permissions = new { deny = ClaudeDenyRules() } });
+    public static string ClaudeSettingsJson(string? dataDir = null) =>
+        JsonSerializer.Serialize(new { permissions = new { deny = ClaudeDenyRules(dataDir) } });
 
     /// <summary>A spawn in a directory room (M9 decision 9): cwd is the room's tree; `dontAsk` plus the
     /// allow list runs the six built-ins and the three MCP tools without a prompt and auto-denies

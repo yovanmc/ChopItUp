@@ -1,6 +1,10 @@
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Memory;
+using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -70,6 +74,20 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         // From the fake's launch-time snapshot, never the file: the work dir may already be gone.
         using var doc = JsonDocument.Parse(_runner.McpJsonOf(spec) ?? throw new InvalidOperationException("the fake captured no mcp.json for this spec"));
         return doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("headers").GetProperty("Authorization").GetString()!["Bearer ".Length..];
+    }
+
+    /// <summary>Writes a fixture skill straight into the store's directory and records its fingerprint
+    /// in the same `chopitup.db` the running hub uses (via the DI-registered <see cref="ChopDb"/>),
+    /// exactly the shape Task 5's --import-skill produces. Row 11 fixtures only - no third-party
+    /// skill text (D-g).</summary>
+    private void WriteSkill(string name, string body)
+    {
+        var dir = Path.Combine(_dir, "skills", name);
+        Directory.CreateDirectory(dir);
+        var bytes = new UTF8Encoding(false).GetBytes(body);
+        File.WriteAllBytes(Path.Combine(dir, "SKILL.md"), bytes);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        new SkillHashes(_host.Services.GetRequiredService<ChopDb>()).Record(name, hash, "test-fixture");
     }
 
     [Fact]
@@ -266,6 +284,129 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         var third = await _runner.NextSpecAsync(Wait);                              // now it runs
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(third));
         Assert.Contains("Turn 3 of 4", third.StandardInput);
+    }
+
+    // --- Task 4: the exchange carries the skill; the prompt renders it ----------------------------
+
+    [Fact]
+    public async Task Skill_04_an_owner_invocation_renders_the_skill_into_every_spawn_of_the_exchange_it_roots()
+    {
+        WriteSkill("demo", "# Demo Skill\n\nDo the demo thing.\n");
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") await PostAs("sonnet", "@opus your turn");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwner("/demo @sonnet please begin");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(first));
+        Assert.Contains("Skill in force for this exchange: demo.", first.StandardInput);
+        Assert.Contains("Do the demo thing.", first.StandardInput);
+
+        var second = await _runner.NextSpecAsync(Wait);                            // a later turn of the SAME exchange
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(second));
+        Assert.Contains("Skill in force for this exchange: demo.", second.StandardInput);
+
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("is in force for this exchange"));
+        Assert.Equal("Skill /demo is in force for this exchange; every turn of it is rendered the same instruction.", note.Body);
+    }
+
+    [Fact]
+    public async Task Skill_04_an_unknown_skill_name_launches_nothing_and_names_what_is_installed()
+    {
+        WriteSkill("demo", "Demo body.\n");
+        await PostAsOwner("/nope @sonnet do something");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("No skill named"));
+        Assert.Equal("No skill named '/nope'. Installed: /demo.", note.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal("idle", Spawner.Snapshot("general").Status);
+    }
+
+    [Fact]
+    public async Task Skill_04_a_model_typed_slash_line_is_ordinary_text_and_carries_no_skill()
+    {
+        WriteSkill("demo", "Demo body.\n");
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "opus") await PostAs("opus", "/demo @sonnet handing off");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwner("@opus start (no skill invoked)");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(first));
+        Assert.DoesNotContain("Skill in force", first.StandardInput);
+
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.DoesNotContain("Skill in force", second.StandardInput);              // opus's /demo is prose, not an invocation
+        Assert.Contains("/demo @sonnet handing off", second.StandardInput);         // carried verbatim, as any other message body
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+    }
+
+    /// <summary>M-8: nothing tested the row's own control before this. Mutating the fixture after its
+    /// hash was recorded reproduces exactly what a directory-room spawn with shell access could do
+    /// to the store (D-i's threat model) — the read must refuse rather than render the new bytes.</summary>
+    [Fact]
+    public async Task Skill_04_M8_a_skill_edited_after_import_is_tampered_and_launches_nothing()
+    {
+        WriteSkill("demo", "Original body.\n");
+        File.WriteAllText(Path.Combine(_dir, "skills", "demo", "SKILL.md"), "Mutated body!\n");   // hash now stale
+
+        await PostAsOwner("/demo @sonnet please begin");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("does not match what was imported"));
+        Assert.Equal("Skill /demo does not match what was imported; nothing was spawned. Re-import it with --import-skill before using it.", note.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal(0, _runner.Count);
+    }
+
+    /// <summary>M-8: the <c>ReadAllBytes</c> seam (mirroring <c>ChopDb.BackupDestinationFactory</c>) is
+    /// the only way to reach <c>Unavailable</c> from outside the store — a real disk failure is not
+    /// reproducible in a test.</summary>
+    [Fact]
+    public async Task Skill_04_M8_a_store_read_failure_is_unavailable_not_unknown_and_launches_nothing()
+    {
+        WriteSkill("demo", "Body.\n");
+        _host.Services.GetRequiredService<SkillStore>().ReadAllBytes = _ => throw new IOException("disk went away");
+
+        await PostAsOwner("/demo @sonnet please begin");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Could not read skill"));
+        Assert.Equal("Could not read skill /demo: disk went away. Nothing was spawned.", note.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal(0, _runner.Count);
+    }
+
+    /// <summary>4f / D-i measure (a), tested here rather than in SpawnCommandsTests: that file is
+    /// outside this dispatch's Files list, and <see cref="SpawnCommands.ClaudeSettingsJson"/> keeps a
+    /// backward-compatible no-arg overload precisely so that file needed no edit. The directory-room
+    /// spawn path (SpawnerService.Launch) is what actually threads the data directory through, so
+    /// this is where the resulting deny rules are observable end to end. Whether the rule BINDS on
+    /// 2.1.220 is unverified (claim 23 only ever measured the `~/` shape) - the M11 live check probes
+    /// that; this only pins that the rule is written.</summary>
+    [Fact]
+    public async Task Skill_04_4f_a_directory_room_spawns_settings_deny_read_write_and_edit_of_the_data_directory()
+    {
+        var dir = await MakeRoom("lab-skill-deny");
+        string? settingsAtLaunch = null;
+        _runner.Handler = (spec, _, _) =>
+        {
+            var args = spec.Arguments.ToList();
+            settingsAtLaunch = File.ReadAllText(args[args.IndexOf("--settings") + 1]);
+            return Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+        };
+
+        await PostAsOwnerIn("lab-skill-deny", "@sonnet look around");
+        await _runner.NextSpecAsync(Wait);
+        // The fake's channel-write races the handler body that sets settingsAtLaunch (FakeProcessRunner
+        // queues the spec before awaiting Handler); wait for the trail note, which only posts after
+        // OnFinished, to be sure the handler actually ran before reading the captured settings.json.
+        await WaitForMessageIn("lab-skill-deny", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
+
+        var forward = _dir.Replace('\\', '/');
+        Assert.Contains($"\"Read({forward}/**)\"", settingsAtLaunch);
+        Assert.Contains($"\"Write({forward}/**)\"", settingsAtLaunch);
+        Assert.Contains($"\"Edit({forward}/**)\"", settingsAtLaunch);
     }
 }
 

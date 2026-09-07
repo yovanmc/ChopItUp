@@ -1,3 +1,5 @@
+using ChopItUp.Hub.Skills;
+
 namespace ChopItUp.Hub.Spawning;
 
 public enum ExchangeStatus { Open, Concluded, Superseded, Stopped }
@@ -25,6 +27,10 @@ public sealed class Exchange
     public int TurnsStarted { get; set; }
     public OrderedDictionary<string, PendingSpawn> Pending { get; } = new(StringComparer.Ordinal);
     public HashSet<string> InFlight { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>The skill in force for every spawn of this exchange (row 11, D-b): set once when the
+    /// exchange opens and never changed, so turn 4 answers the same instruction as turn 1.</summary>
+    public ResolvedSkill? Skill { get; init; }
 }
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two
