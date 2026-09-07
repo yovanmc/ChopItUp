@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+﻿using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -943,5 +943,59 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(RunStatus.Ended, runs.Latest(room)!.Status);
         var ended = await WaitForNoteContaining(host, room, "ended");
         Assert.Contains("stopped by the owner", ended.Body);
+    }
+
+    /// <summary>AC7's SELECTION rule, which task 11 left uncovered: its tests proved each spawn
+    /// builder appends the flag when handed one, never that Launch hands one to the right rows. The
+    /// whole rule is one expression in <c>SpawnerService.Launch</c> - conductor OR judge class, and
+    /// only inside a run - so dropping either clause is a silent behaviour change that spends the
+    /// owner's budget on every spawn. The conductor here is <c>sonnet</c>, whose only class is
+    /// plumbing, so "high" can have come from nothing but the conductor clause; the out-of-run row is
+    /// <c>fable</c>, which IS a judge, so the absence of a flag can have come from nothing but the
+    /// active-run guard.</summary>
+    [Fact]
+    public async Task Run11_AC7_the_conductor_gets_effort_high_and_a_judge_outside_a_run_gets_no_flag()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-effort-conductor");
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+
+        await PostAsOwnerIn("lab-run-effort-conductor", "/build-thing @sonnet begin");
+        var conductor = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductor));
+        Assert.Equal(["--effort", "high"], conductor.Arguments.TakeLast(2));
+
+        await PostAsOwner("@fable outside any run");
+        var outside = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("fable", FakeProcessRunner.ParticipantOf(outside));
+        Assert.DoesNotContain("--effort", outside.Arguments);
+    }
+
+    /// <summary>The other half of AC7's selection rule: inside a run, a judge-class worker thinks
+    /// harder and everyone else does not. Captured inside <c>Handler</c> rather than read off
+    /// <c>NextSpecAsync</c> because two workers are launched from one rooted exchange and their order
+    /// is not something this test should depend on.</summary>
+    [Fact]
+    public async Task Run11_AC7_inside_a_run_a_judge_worker_gets_effort_high_and_a_plumbing_worker_gets_no_flag()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-effort-workers");
+        var sonnet = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fable = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, _) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus": await PostAsIn("opus", "lab-run-effort-workers", "phase: build @sonnet @fable write the thing"); break;
+                case "sonnet": sonnet.TrySetResult(spec.Arguments); break;
+                case "fable": fable.TrySetResult(spec.Arguments); break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-effort-workers", "/build-thing @opus begin");
+
+        Assert.Equal(["--effort", "high"], (await fable.Task.WaitAsync(Wait)).TakeLast(2));
+        Assert.DoesNotContain("--effort", await sonnet.Task.WaitAsync(Wait));
     }
 }

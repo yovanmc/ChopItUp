@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -117,7 +117,7 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
             var result = await runner.RunAsync(spec, limits.SpawnTimeout, cancellationToken);
             var outcome = result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}";
             runs.RecordGateRun(runId, roomId, gate, caller, result.ExitCode, outcome, now);
-            PostNote(roomId, $"run_gate {gate} by @{caller}: {(result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}")}");
+            PostNote(roomId, $"run_gate {gate} by @{caller}: {outcome}");
 
             return JsonSerializer.Serialize(new
             {
