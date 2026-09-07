@@ -26,6 +26,7 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 | D8 | Enforcement | Every conductor post inside a run opens with a `phase:` line. The hub parses it and checks the mention set against roster classes: a critique phase must mention a judge-class row that is not the artifact's recorded author; a build phase must mention a plumbing or visible row; never the conductor itself. A failing post is refused with the reason and the conductor is re-spawned once with the refusal as trigger; a second refusal in the same phase parks the run and pings the owner. D4 caps stay in code. |
 | D9 | Ceiling | Per run, hard code: 80 spawns, 8 h wall-clock, 30 min per in-run spawn, the same phase entered at most 3 times. Any cap trips = the run parks and pings the owner; the stop button is the fourth stop. Estimate for a HIGH milestone with 8 tickets ≈ 18 conductor + 21 worker spawns. This confirms the D4 numbers (no longer ASSUMED). |
 | D10 | Effort | By roster class, hard code in `SpawnCommands`: conductor and judge-class spawns run `--effort high` (Claude) / `-c model_reasoning_effort=high` (Codex); plumbing and visible rows run the model default with no flag. Never xhigh or max. Codex accepted values unverified (F10): the first plan probes it in its claim ledger. Resolves R2. |
+| D11 | Split | Three rows in dispatch order: row 11 (id kept) = skill substrate; new row = runs; new row = the roadmap skill ported with an end-to-end acceptance run. Row 18 memory v1.1 after all three (M5 ledger order). Each row ships something usable alone and has a real-CLI check like M5/M9/M10. |
 
 ## Facts (verified this session unless labelled)
 
@@ -59,3 +60,4 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 - Q8 Enforcement: A phase-tagged posts + class rules checked at post time / B prose only / C caps + author-not-critic. Recommended A. Owner: **A**. ANSWERED → D8.
 - Q9 Ceiling: A 80 / 8 h / re-entry 3; B 50 / 4 h / 2; C 150 / 24 h / 5. Recommended A. Owner: **A**. ANSWERED → D9, D4 numbers confirmed.
 - Q10 Effort: A by class hard code / B skill-declared / C none. Recommended A. Owner: **A**. ANSWERED → D10.
+- Q11 Split: A three rows / B two / C one. Recommended A. Owner: **A**. ANSWERED → D11.
