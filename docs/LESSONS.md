@@ -40,3 +40,14 @@ PowerShell 7.6 `Invoke-RestMethod` hands a top-level JSON array back as ONE nest
 
 ### [signalr, cross-room-ui, verification] M9 (2026-09-06, cf237e8)
 The M9 rail shows every room's unread count and orders rooms by recency, but `MessagePosted` is broadcast with `Clients.Group(roomId)` and the client joined only the room it had open, so a message in any other room reached the browser only on the next full refresh: the badge never rose, the count went stale and the order froze. Unit tests and the type-checker were both silent because the bug is in which group the client subscribes to, not in the handler, whose non-open branch was simply unreachable. A UI that renders state for rooms it is not showing must subscribe to all of them, and a plan that adds cross-room state to a per-room fan-out has to say so in the task that touches the client. Only the live interactive gate caught it, which is the argument for driving the real hub rather than trusting a green suite.
+
+### [2026-09-07] Start-Process joins -ArgumentList with spaces and quotes nothing
+
+`Invoke-M19RunCheck.ps1`'s first real run died in setup with `'Agent' is not a valid skill name`: its
+default `-SkillSource` is this repo's own `tools\skills\toy-run`, the repo lives under `C:\Agent
+Projects\`, and `Start-Process -ArgumentList @('--import-skill', $SkillSource)` handed the exe
+`--import-skill C:\Agent` plus a stray positional. Four sibling check scripts carry the identical
+shape and had never tripped it only because their default paths sit under `%USERPROFILE%`. So: any
+path passed through `-ArgumentList` is quoted inside the argument string, always, not only when the
+current default happens to contain a space — quoting a space-free path is a no-op, and the next
+caller who passes a spaced path is not the person who should discover this.
