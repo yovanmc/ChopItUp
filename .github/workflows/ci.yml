@@ -21,3 +21,11 @@ jobs:
         run: dotnet build ChopItUp.slnx -c Debug -warnaserror --no-restore -v minimal
       - name: Test
         run: dotnet test ChopItUp.slnx -c Debug --no-build --nologo -v minimal
+      # The build step above already ran `npm ci` (ClientInstall) and `npm run build` for the
+      # client, so node_modules is present here. This step exists because the run strip's parked
+      # and ended renders are proved ONLY by RunBar.test.tsx - the caps are hard-coded, so those
+      # two states are unreachable against a real hub (row 19, pass 2's F-20). A render proof that
+      # nothing runs is a render proof that rots on the first refactor.
+      - name: Test the web client
+        run: npm test
+        working-directory: src/ChopItUp.Hub/client
