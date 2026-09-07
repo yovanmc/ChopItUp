@@ -145,6 +145,7 @@ public static class HubHost
             app.MapChatApi();
             app.MapRoomsApi();
             app.MapExchangeApi();
+            app.MapRunsApi();
             app.MapMemoryApi();
             app.MapSkillsApi();
             return app;

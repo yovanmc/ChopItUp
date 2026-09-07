@@ -10,10 +10,11 @@ import MemoryPanel from './MemoryPanel';
 import NewRoomDialog from './NewRoomDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
+import RunBar from './RunBar';
 import Thread from './Thread';
 import TrailDialog from './TrailDialog';
 import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
-import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room } from './types';
+import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room, RunSnapshot } from './types';
 
 /** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
  *  `null` accepts anything, a `seq` bump for the room already shown always wins, and a snapshot for a
@@ -38,6 +39,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [exchange, setExchange] = useState<ExchangeSnapshot | null>(null);
+  const [run, setRun] = useState<RunSnapshot | null>(null);
   const [stopping, setStopping] = useState(false);
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
@@ -84,6 +86,17 @@ export default function App() {
     const room = currentRoom.current;
     const ids = roomIds.current;
     return room !== null && !ids.includes(room) ? [room, ...ids] : ids;
+  }, []);
+
+  /** Row 19: the run strip has no socket event of its own, so it rides the room's existing refresh
+   *  points — opening the room, an exchange change (a run's whole life is exchanges opening and
+   *  closing), a hub note (started, parked, ended), and a reconnect. Per room, deliberately: a park
+   *  in a room the browser is not showing waits until the owner opens that room, and the rail's
+   *  unread badge on the park note is the signal in the meantime. Guarded on the ref for the same
+   *  reason `loadProposals` is. */
+  const refreshRun = useCallback(async (room: string, signal?: AbortSignal) => {
+    const snapshot = await api.getRun(room, signal);
+    if (currentRoom.current === room) setRun(snapshot);
   }, []);
 
   /** Pending proposals of the open room. Guarded on the ref so a fetch that outlives a room switch
@@ -196,6 +209,9 @@ export default function App() {
       if (open && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
         loadProposals(message.roomId).catch(() => undefined);
       }
+      // Row 19: a run starts, parks and ends by hub note, and no event carries the run itself — so a
+      // note from the hub is the cue to re-read it. Cheap, loopback, and only for the open room.
+      if (open && isSystem(message.authorId)) refreshRun(message.roomId).catch(() => undefined);
       if (open && !fromThisHand) scheduleRead(message.roomId);
       // The owner's own posts advance the owner's cursor on the hub, so they never count as unread.
       setRooms((previous) =>
@@ -217,6 +233,8 @@ export default function App() {
     connection.on('ExchangeChanged', (snapshot: ExchangeSnapshot) => {
       if (snapshot.roomId !== currentRoom.current) return;
       setExchange((previous) => applyExchange(previous, snapshot));
+      // Inside a run the counters move with the exchanges, and the run's own park lands on one.
+      refreshRun(snapshot.roomId).catch(() => undefined);
     });
     connection.onreconnecting(() => setLiveness('connecting'));
     connection.onclose(() => setLiveness('offline'));
@@ -237,6 +255,7 @@ export default function App() {
           Promise.all([
             api.readMessages(room, lastId.current).then(merge),
             api.getExchange(room).then((snapshot) => setExchange((previous) => applyExchange(previous, snapshot))),
+            refreshRun(room),
             loadProposals(room),
           ]),
         )
@@ -257,7 +276,7 @@ export default function App() {
       joinedGroups.current.clear();
       void connection.stop();
     };
-  }, [merge, loadProposals, scheduleRead, joinGroups, groupIds]);
+  }, [merge, loadProposals, refreshRun, scheduleRead, joinGroups, groupIds]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
   // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
@@ -266,6 +285,7 @@ export default function App() {
   useEffect(() => {
     currentRoom.current = roomId;
     setExchange(null);
+    setRun(null);
     setProposals([]);
     if (!roomId) return;
     const abort = new AbortController();
@@ -284,6 +304,9 @@ export default function App() {
           .catch((failure) => {
             if (!abort.signal.aborted) setError(api.describeError(failure));
           }),
+        refreshRun(roomId, abort.signal).catch((failure) => {
+          if (!abort.signal.aborted) setError(api.describeError(failure));
+        }),
         loadProposals(roomId, abort.signal).catch((failure) => {
           if (!abort.signal.aborted) setError(api.describeError(failure));
         }),
@@ -298,7 +321,7 @@ export default function App() {
       // No LeaveRoom: switching away must not unsubscribe us, or the room we left stops reporting
       // its unread badge, count and activity order until the next full refresh.
     };
-  }, [roomId, loadProposals, joinGroups]);
+  }, [roomId, loadProposals, refreshRun, joinGroups]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -452,6 +475,7 @@ export default function App() {
               locked={(exchange?.inFlight.length ?? 0) > 0}
               onDecide={decide}
             />
+            <RunBar run={run} />
             <ExchangeBar exchange={exchange} stopping={stopping} onStop={stop} />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
           </>

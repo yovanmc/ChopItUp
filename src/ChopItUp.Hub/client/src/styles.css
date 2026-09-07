@@ -757,6 +757,87 @@ input {
   }
 }
 
+/* ---------- run strip (row 19) ----------
+
+   The exchange bar's sibling, directly above it: same flex row, same gutter, same `--accent` trick,
+   so a room inside a run reads as one stack of two strips rather than a new region. The three states
+   are meant to be told apart from the other side of the room without reading a word of them, which is
+   what the accent and the weight below are for — active takes the Claude amber and leads with the
+   phase, parked takes the danger colour and leads with the REASON at full size, ended goes grey and
+   drops to the same weight as the counters. */
+.run {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 24px;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+  font-size: 12px;
+}
+
+.run-active {
+  --accent: var(--accent-claude);
+}
+
+/* A park is the one state that needs the owner, so it is the only strip in the app that shades
+   itself: a heavier wash and a colour nothing else in the room uses. */
+.run-parked {
+  --accent: var(--danger);
+  background: color-mix(in srgb, var(--accent) 15%, var(--bg));
+}
+
+.run-ended {
+  --accent: var(--dim);
+}
+
+.run-lead {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.run-tail {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* "Run", "Run parked", "Run finished": the state in words, for anyone reading rather than glancing. */
+.run-label {
+  color: var(--accent);
+  font-weight: 560;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+}
+
+.run-phase {
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.run-reason {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.run-counters {
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.run-conductor {
+  color: var(--faint);
+}
+
 /* Stop cuts someone else's turn short, so it reads as destructive even though it is recoverable —
    the owner's next message opens a fresh exchange. While the POST is in flight it greys out in place
    rather than disappearing, so the strip does not reflow under the cursor. */
@@ -1090,6 +1171,7 @@ input {
   .room-head,
   .composer,
   .exchange,
+  .run,
   .thread-note,
   .banner {
     padding-left: 14px;

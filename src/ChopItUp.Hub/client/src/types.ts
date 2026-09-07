@@ -77,6 +77,53 @@ export interface ExchangeSnapshot {
   seq: number;
 }
 
+/** Who last wrote a path inside a run, read out of the spawn's own git diff (Web/RunsApi.cs). */
+export interface RunArtifact {
+  path: string;
+  authorId: string;
+  at: string;
+}
+
+/** One recorded `run_gate` call. `exitCode` is null when the gate was refused rather than run. */
+export interface RunGate {
+  gate: string;
+  callerId: string;
+  exitCode: number | null;
+  outcome: string;
+  at: string;
+}
+
+/** Mirrors `GET /api/rooms/{id}/run` (Web/RunsApi.cs `RunSnapshot`). A room that has never had a run
+ *  answers 204 and `api.getRun` turns that into `null`, so "no run here" is one value, not a throw.
+ *
+ *  `status` is the whole of `RunStatus` (Core/Model/Run.cs) and nothing else: RunBar's label map is
+ *  keyed on this union, so a status added to the hub without a label here is a compile error.
+ *
+ *  `phaseEntries` counts entries into `phase` only — the cap it is read against is per tag.
+ *  `elapsedMinutes` is time the run spent ACTIVE (parked time excluded, frozen while parked, stopped
+ *  at `endedAt` once it ends), which is the number the wall-clock cap is spent against. */
+export interface RunSnapshot {
+  id: number;
+  roomId: string;
+  conductorId: string;
+  skillName: string;
+  status: 'active' | 'parked' | 'ended';
+  reason: string | null;
+  capSpent: boolean;
+  phase: string;
+  phaseEntries: number;
+  phaseEntryCap: number;
+  exchanges: number;
+  spawnsUsed: number;
+  spawnCap: number;
+  startedAt: string;
+  endedAt: string | null;
+  elapsedMinutes: number;
+  wallClockCapMinutes: number;
+  artifacts: RunArtifact[];
+  gateRuns: RunGate[];
+}
+
 /** Mirrors `GET /api/memory/proposals` and the approve/reject responses (Web/MemoryApi.cs). */
 export interface MemoryProposal {
   id: number;
