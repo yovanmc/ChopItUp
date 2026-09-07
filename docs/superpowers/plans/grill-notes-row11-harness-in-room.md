@@ -25,6 +25,7 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 | D7 | Gate scripts | A hub-owned skill is a directory `data/skills/<name>/` holding `SKILL.md`, references and scripts, copied from the harness folder by a hub command. In-run spawns get a fourth MCP tool `run_gate` that runs only a script the skill manifest declares, `pwsh -NoProfile`, cwd = room directory, output capped and returned. Same seam lets the hub run a gate itself. No vendoring per repo, no copying into the room tree. |
 | D8 | Enforcement | Every conductor post inside a run opens with a `phase:` line. The hub parses it and checks the mention set against roster classes: a critique phase must mention a judge-class row that is not the artifact's recorded author; a build phase must mention a plumbing or visible row; never the conductor itself. A failing post is refused with the reason and the conductor is re-spawned once with the refusal as trigger; a second refusal in the same phase parks the run and pings the owner. D4 caps stay in code. |
 | D9 | Ceiling | Per run, hard code: 80 spawns, 8 h wall-clock, 30 min per in-run spawn, the same phase entered at most 3 times. Any cap trips = the run parks and pings the owner; the stop button is the fourth stop. Estimate for a HIGH milestone with 8 tickets ≈ 18 conductor + 21 worker spawns. This confirms the D4 numbers (no longer ASSUMED). |
+| D10 | Effort | By roster class, hard code in `SpawnCommands`: conductor and judge-class spawns run `--effort high` (Claude) / `-c model_reasoning_effort=high` (Codex); plumbing and visible rows run the model default with no flag. Never xhigh or max. Codex accepted values unverified (F10): the first plan probes it in its claim ledger. Resolves R2. |
 
 ## Facts (verified this session unless labelled)
 
@@ -57,3 +58,4 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 - Q7 Gate scripts: A hub skill folder + run_gate tool / B vendored per repo / C copied into tree at run start. Recommended A. Owner: **A**. ANSWERED → D7.
 - Q8 Enforcement: A phase-tagged posts + class rules checked at post time / B prose only / C caps + author-not-critic. Recommended A. Owner: **A**. ANSWERED → D8.
 - Q9 Ceiling: A 80 / 8 h / re-entry 3; B 50 / 4 h / 2; C 150 / 24 h / 5. Recommended A. Owner: **A**. ANSWERED → D9, D4 numbers confirmed.
+- Q10 Effort: A by class hard code / B skill-declared / C none. Recommended A. Owner: **A**. ANSWERED → D10.
