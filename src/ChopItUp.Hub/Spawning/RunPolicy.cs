@@ -79,6 +79,12 @@ public abstract record RunDecision
 /// run first") cannot be satisfied on the state that most needs it.</summary>
 public sealed class RunPolicy(RunLimits limits)
 {
+    /// <summary>Row 16's exact text - a public constant (row 19, task 9f) so the service can post the
+    /// identical refusal when it short-circuits AROUND <see cref="Decide"/> for a resume-of-a-parked-
+    /// run (rows 1/2's pre-check would misfire on a parked run's stale, pre-resume Elapsed/SpawnsUsed
+    /// either way - pass 2's F-4), rather than duplicating the string.</summary>
+    public const string CapSpentRefusal = "this run is parked because a cap is spent; /stop and start a new one";
+
     public RunDecision Decide(RunState s, RunEvent e, IReadOnlyList<long> pendingSteers)
     {
         if (e is not RunEvent.StopRequested)
@@ -165,7 +171,7 @@ public sealed class RunPolicy(RunLimits limits)
         {
             // Row 16.
             if (s.CapSpent)
-                return new RunDecision.Refuse("this run is parked because a cap is spent; /stop and start a new one");
+                return new RunDecision.Refuse(CapSpentRefusal);
             // Row 15.
             return new RunDecision.OpenConductor(s.RootMessageId, [h.MessageId]);
         }

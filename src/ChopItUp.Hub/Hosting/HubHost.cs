@@ -22,7 +22,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -76,11 +76,24 @@ public static class HubHost
             // Row 19's clock seam (pass 2's F-13): .NET's own TimeProvider, not a hand-rolled
             // interface, so a run's whole timeline can be driven by a fake clock in tests without
             // waiting on a wall clock (D9's 8-hour cap).
-            builder.Services.AddSingleton(clock ?? TimeProvider.System);
+            var effectiveClock = clock ?? TimeProvider.System;
+            builder.Services.AddSingleton(effectiveClock);
             // Row 19: the runs table and its satellites (schema v8), and D9's hard-coded caps -
-            // exactly as unreachable from inside a room as SpawnLimits.Default above.
-            builder.Services.AddSingleton(new RunStore(db));
-            builder.Services.AddSingleton(RunLimits.Default);
+            // exactly as unreachable from inside a room as SpawnLimits.Default above. runLimits is an
+            // override for the same reason `limits` (SpawnLimits) is one: task 9's tests need a small
+            // ceiling and a controllable clock to prove a cap parks a run without actually waiting
+            // out 80 spawns or 8 hours.
+            var runs = new RunStore(db);
+            builder.Services.AddSingleton(runs);
+            builder.Services.AddSingleton(runLimits ?? RunLimits.Default);
+            // Row 19, task 9e (AC12): a stored 'active' run means the hub died, was killed, or was
+            // force-stopped while something was driving it - nothing IS driving it anymore in this
+            // fresh process, so it must never be left 'active' across a restart (the plan's
+            // termination obligation). Parked before anything is served: MessageSignal and
+            // SpawnerService do not exist yet at this point in Build, so there is nowhere to post a
+            // note to - AC12 asks for none.
+            foreach (var stale in runs.ListActive())
+                runs.Park(stale.Id, "the hub restarted while this run was active", capSpent: false, effectiveClock.GetUtcNow());
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             builder.Services.AddSingleton<SpawnerService>();

@@ -55,6 +55,11 @@ public sealed class SpawnerService : BackgroundService
         public required string Token { get; init; }
         public required CancellationTokenSource Cancel { get; init; }
         public string? Directory { get; init; }
+        // Row 19, task 9c: captured AT LAUNCH (Launch reads _runs.Active once, before this handle
+        // exists), never re-derived once the spawn's own task body or OnFinished runs - a run can
+        // park or end while its spawn is still alive, and the two "did not reply in time" notes at
+        // OnFinished must describe the SAME timeout the spawn was actually given.
+        public required TimeSpan Timeout { get; init; }
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
     }
@@ -95,6 +100,13 @@ public sealed class SpawnerService : BackgroundService
     // change (F-22), so a stale count from an earlier phase can never leak into a later one.
     private readonly Dictionary<long, int> _refusalsThisPhase = new();
     private readonly Dictionary<long, int> _silencesThisPhase = new();
+    // Row 19, task 9b (pass 2's F-7): the instant each active run was last known BUSY (exchange
+    // open or something in flight), so ArmWake can arm a bounded stall wake at
+    // "SpawnTimeout after that instant" rather than "SpawnTimeout after ArmWake happened to run" -
+    // the latter would let an unrelated room's activity (which re-runs ArmWake for every room) push
+    // a genuinely stalled run's deadline forward forever. Cleared whenever the run is next observed
+    // busy, or is no longer active (park/end) - see ArmWake.
+    private readonly Dictionary<long, DateTimeOffset> _lastRunActivity = new();
     private readonly Dictionary<string, DateTimeOffset> _lastStart = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCli> _clis = new(StringComparer.Ordinal);
@@ -208,8 +220,22 @@ public sealed class SpawnerService : BackgroundService
                 try { reply = OnStop(s.RoomId); }
                 finally { s.Reply.TrySetResult(reply); }   // a throw here must not hang the HTTP caller
                 break;
-            case TickEvent: break;
+            case TickEvent: OnTick(); break;
         }
+    }
+
+    /// <summary>Row 19, task 9b: the periodic wake ArmWake arms (the wall-clock deadline, or the
+    /// bounded stall wake) fires as a bare <see cref="TickEvent"/> with no room of its own - unlike
+    /// the steer branch's immediate, single-run <c>DriveRun(runRow, Tick)</c> call (task 6), this
+    /// checks EVERY active run, because one shared timer can be the earliest deadline for any of
+    /// them. <see cref="RunPolicy"/>'s rows 1/2 (checked first, for every event) are what actually
+    /// makes this useful: a run that is still busy gets <see cref="RunDecision.Nothing"/> here
+    /// unless it has separately spent a hard cap, in which case THIS is what parks it (pass 2's
+    /// F-7 - without a Tick ever reaching a busy-but-capped run, row 19's stall park and AC8's
+    /// wall-clock park while idle are both unreachable in production).</summary>
+    private void OnTick()
+    {
+        foreach (var run in _runs.ListActive()) DriveRun(run, new RunEvent.Tick());
     }
 
     private void OnMessage(Message m)
@@ -261,6 +287,37 @@ public sealed class SpawnerService : BackgroundService
             if (latest is { Status: RunStatus.Parked })
             {
                 PostNote(m.RoomId, $"A run is parked in this room (#{latest.Id}); resume it with a message or /stop it before starting another.");
+                return;
+            }
+        }
+
+        // Row 19, task 9f (AC15): a human post that reaches here has no active run in this room
+        // (the conductor-post branch above only fires when one exists, and startsRun's own checks
+        // just above already returned for an active-or-parked room) and is not itself a run-start.
+        // If the room's most recent run is PARKED, this is exactly AC15's resume. Decided directly
+        // here rather than through RunPolicy.Decide: that method's rows 1/2 run first for every
+        // event and read the PARKED run's raw, pre-resume SpawnsUsed/Elapsed, which misfire in
+        // BOTH directions - a hard-capped run's SpawnsUsed/Elapsed are still at or over the cap and
+        // would produce a re-Park instead of the one-line Refuse AC15 asks for, while a SOFT park's
+        // Elapsed keeps growing for as long as it sits parked (parked_seconds is not yet updated)
+        // and would cross the wall clock purely from having sat parked overnight (pass 2's F-4 - the
+        // very bug parked_seconds/RunStore.Resume exist to close). RunStore.Resume folds the whole
+        // parked interval into parked_seconds and flips the row to active BEFORE anything is
+        // decided, so the run's timeline is correct from this point forward; RunStore.Resume itself
+        // already refuses (throws) a resume of a cap-spent run, which is why the CapSpent check
+        // below reads the row directly rather than racing that throw.
+        if (activeRun is null && !startsRun && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
+        {
+            var latestForResume = _runs.Latest(m.RoomId);
+            if (latestForResume is { Status: RunStatus.Parked } parkedRun)
+            {
+                if (parkedRun.CapSpent)
+                    PostNote(m.RoomId, RunPolicy.CapSpentRefusal);
+                else
+                {
+                    var resumed = _runs.Resume(parkedRun.Id, now);
+                    OpenConductorExchange(resumed, resumed.RootMessageId, new List<long> { m.Id });
+                }
                 return;
             }
         }
@@ -420,11 +477,12 @@ public sealed class SpawnerService : BackgroundService
     /// <summary>Row 19: writes the parked row, stops the room's open exchange and cancels its
     /// in-flight spawns (pass 1's M3 - a park that touches neither would let an in-flight conductor's
     /// later post resolve <c>run == null</c> and take the plain model branch, launching more spawns
-    /// from a parked run), posts the note naming the reason and @owner, and publishes. This is the
-    /// minimal slice of task 9's 9a the deferred pins need now (row19-runs dispatch, task 8): the
-    /// second-bad-post-in-one-phase park (AC6) must actually stop the run, not merely flip a database
-    /// column nothing else notices. Task 9 owns the rest (the stall/wall-clock wakes, the 30-minute
-    /// in-run timeout).</summary>
+    /// from a parked run), posts the note naming the reason and @owner, and publishes. Landed in
+    /// task 8 for AC6's second-bad-post-in-one-phase park; task 9's 9a audited it against the plan's
+    /// full spec (spawn/wall-clock/phase-entry caps, all reached through the SAME <see
+    /// cref="RunDecision.Park"/> arm via <see cref="CarryOut"/>) and found it already complete -
+    /// task 9 adds the wakes that make every cap REACHABLE (<see cref="ArmWake"/>, <see
+    /// cref="OnTick"/>) and the 30-minute in-run timeout, not a second park path.</summary>
     private void ParkRun(Run run, string reason, bool capSpent)
     {
         var now = _clock.GetUtcNow();
@@ -515,7 +573,7 @@ public sealed class SpawnerService : BackgroundService
 
     private void LaunchDue()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.GetUtcNow();
         foreach (var x in _rooms.Values.ToList())
         {
             if (x.Status != ExchangeStatus.Open) continue;
@@ -537,14 +595,23 @@ public sealed class SpawnerService : BackgroundService
         var workDir = Path.GetFullPath(Path.Combine(_options.DataDir, "spawns", spawnId));
         ExchangePolicy.Started(x, request);
         _lastStart[participant.Id] = now;
+        // Row 19, task 9c: captured HERE, at launch - not re-read inside the spawn's own task body
+        // or at OnFinished - because a run can park or end while this spawn is still alive, and both
+        // the timeout actually given to IProcessRunner and the notes OnFinished writes about it must
+        // agree on the SAME value.
+        var activeRun = _runs.Active(request.RoomId);
+        var timeout = activeRun is not null ? _runLimits.SpawnTimeout : _limits.Timeout;
         try
         {
+            // Row 19, task 9d: counted before anything below can throw - a spawn that fails even to
+            // start (a bad token, a directory that vanished) still used one of the run's spawns.
+            if (activeRun is not null) _runs.CountSpawn(activeRun.Id);
             var token = _tokens.Tokens[participant.Id];
             Directory.CreateDirectory(workDir);
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
-            var runView = _runs.Active(request.RoomId) is { } activeRunForPrompt ? BuildRunView(activeRunForPrompt, participant.Id, _clock.GetUtcNow()) : null;
+            var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) : null;
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
@@ -578,7 +645,7 @@ public sealed class SpawnerService : BackgroundService
             var handle = new SpawnHandle
             {
                 Request = request, Exchange = x, Participant = participant, SpawnId = spawnId, WorkDir = workDir, Token = token,
-                Cancel = new CancellationTokenSource(), Directory = directory,
+                Cancel = new CancellationTokenSource(), Directory = directory, Timeout = timeout,
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
@@ -601,7 +668,7 @@ public sealed class SpawnerService : BackgroundService
                             owner = await git.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
                         headBefore = await git.HeadAsync(CancellationToken.None);
                     }
-                    try { result = await _runner.RunAsync(spec, _limits.Timeout, handle.Cancel.Token); }
+                    try { result = await _runner.RunAsync(spec, timeout, handle.Cancel.Token); }
                     catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
                     if (git is not null)
                     {
@@ -651,8 +718,8 @@ public sealed class SpawnerService : BackgroundService
         if (r.TimedOut)
         {
             PostNote(room, h.Posted
-                ? $"@{id} posted but did not exit within {Describe(_limits.Timeout)}; its process was stopped."
-                : $"@{id} did not reply within {Describe(_limits.Timeout)} and was stopped.");
+                ? $"@{id} posted but did not exit within {Describe(h.Timeout)}; its process was stopped."
+                : $"@{id} did not reply within {Describe(h.Timeout)} and was stopped.");
         }
         else if (r.Cancelled)
         {
@@ -713,7 +780,7 @@ public sealed class SpawnerService : BackgroundService
 
     private void ArmWake()
     {
-        var now = DateTimeOffset.UtcNow;
+        var now = _clock.GetUtcNow();
         DateTimeOffset? next = null;
         foreach (var x in _rooms.Values)
         {
@@ -721,6 +788,31 @@ public sealed class SpawnerService : BackgroundService
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }
+
+        // Row 19, task 9b (pass 2's F-7): every ACTIVE run gets two wakes of its own, neither of
+        // which the exchange-only loop above can see - a run with nothing open and nothing in
+        // flight has no Open exchange in _rooms at all for _policy.NextWake to consider. The
+        // wall-clock wake is unconditional (D9's 8-hour hard cap must trip even while the run is
+        // busy - AC8 says "stop its open exchange and in-flight spawns", not "only while idle"); the
+        // stall wake only arms while genuinely idle, SpawnTimeout after the last instant the run was
+        // known busy - never "SpawnTimeout from right now", or an unrelated room's activity (which
+        // reruns THIS method on every pass of the loop) would keep pushing a truly stalled run's
+        // deadline forward forever, and it would never actually fire.
+        var activeIds = new HashSet<long>();
+        foreach (var run in _runs.ListActive())
+        {
+            activeIds.Add(run.Id);
+            var wallClockDeadline = run.StartedAt + TimeSpan.FromSeconds(run.ParkedSeconds) + _runLimits.WallClock;
+            if (next is null || wallClockDeadline < next) next = wallClockDeadline;
+
+            var busy = (_rooms.TryGetValue(run.RoomId, out var rx) && rx.Status == ExchangeStatus.Open) || InFlightIn(run.RoomId).Count > 0;
+            if (busy) { _lastRunActivity.Remove(run.Id); continue; }
+            if (!_lastRunActivity.TryGetValue(run.Id, out var idleSince)) _lastRunActivity[run.Id] = idleSince = now;
+            var stallDeadline = idleSince + _runLimits.SpawnTimeout;
+            if (next is null || stallDeadline < next) next = stallDeadline;
+        }
+        foreach (var staleId in _lastRunActivity.Keys.Where(id => !activeIds.Contains(id)).ToList()) _lastRunActivity.Remove(staleId);
+
         _wake?.Cancel();
         _wake?.Dispose();
         _wake = null;
@@ -729,7 +821,9 @@ public sealed class SpawnerService : BackgroundService
         if (delay < TimeSpan.FromMilliseconds(10)) delay = TimeSpan.FromMilliseconds(10);
         var cts = new CancellationTokenSource();
         _wake = cts;
-        _ = Task.Delay(delay, cts.Token).ContinueWith(t => { if (!t.IsCanceled) _events.Writer.TryWrite(new TickEvent()); }, TaskScheduler.Default);
+        // Row 19, task 9b: the TimeProvider overload, not the bare one - a FakeTimeProvider's
+        // Advance() must be able to fire this without a test actually waiting out 8 hours.
+        _ = Task.Delay(delay, _clock, cts.Token).ContinueWith(t => { if (!t.IsCanceled) _events.Writer.TryWrite(new TickEvent()); }, TaskScheduler.Default);
     }
 
     private long _seq;

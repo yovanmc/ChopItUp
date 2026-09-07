@@ -39,10 +39,10 @@ public sealed class HubTestHost : IAsyncDisposable
         RoomsRoot = roomsRoot;
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null)
     {
         var options = new HubOptions(dir, Port: 0, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms");
-        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock);
+        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits);
         await app.StartAsync();
         var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose, options.RoomsRootPath);

@@ -423,15 +423,15 @@ public sealed partial class SpawnerServiceTests
         Assert.False(run.CapSpent);   // a refusal park is soft (D8's own second-refusal rule, not a hard cap)
     }
 
-    /// <summary>Deferred from tasks 5/6 (pass 2's F-1), reachable end to end only once task 8 gives the
-    /// conductor a way to root a SECOND exchange while its own is still in flight (AC5): a steer
-    /// posted while a run is genuinely idle - nothing open, nothing in flight IN MEMORY, even though
-    /// the run row is still 'active' in the database - wakes the conductor through table row 18's Tick
-    /// arm. Before task 9's AC12 exists, the one legitimate way to reach that state is a restart: a
-    /// fresh SpawnerService against the SAME data starts with empty _rooms/_inFlight while the run
-    /// persists as active.</summary>
+    /// <summary>Superseded by task 9's AC12 (row19-runs, ticket 09): before AC12 existed, a restart
+    /// against the SAME data dir was the one legitimate way to see a run 'active' in the database
+    /// with nothing open or in flight in memory (empty <c>_rooms</c>/<c>_inFlight</c>), and a steer
+    /// then woke it through table row 18's Tick arm. Task 9e closes exactly that state: <see
+    /// cref="HubHost.Build"/> now parks every stored 'active' run before serving anything, so this
+    /// now proves AC12 (the restart-park itself) and AC15 (a later human message resumes it,
+    /// re-opening the conductor's exchange with that message as sole trigger) instead.</summary>
     [Fact]
-    public async Task Run08_AC5_a_steer_into_a_run_idle_in_memory_but_active_in_the_db_wakes_the_conductor_via_tick()
+    public async Task Run09_AC12_AC15_a_stored_active_run_is_parked_by_restart_and_a_later_message_resumes_it()
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_spawner_idle_" + Guid.NewGuid().ToString("N"));
         var roomsRoot = dir + "_rooms";
@@ -465,16 +465,29 @@ public sealed partial class SpawnerServiceTests
 
         var runnerB = new FakeProcessRunner();
         await using var hostB = await HubTestHost.StartAsync(dir, deleteOnDispose: true, processRunner: runnerB, limits: Fast, roomsRoot: roomsRoot);
-        var runOnB = hostB.Services.GetRequiredService<RunStore>().Active("lab");
-        Assert.NotNull(runOnB);   // still active - AC12's restart-park is task 9's job, not yet wired
-        Assert.Equal(rootMessageId, runOnB!.RootMessageId);
+        var runsB = hostB.Services.GetRequiredService<RunStore>();
+        Assert.Null(runsB.Active("lab"));                         // AC12: parked before anything was served
+        var parked = runsB.Latest("lab");
+        Assert.Equal(RunStatus.Parked, parked!.Status);
+        Assert.Equal(rootMessageId, parked.RootMessageId);
+        Assert.False(parked.CapSpent);
+        Assert.Contains("restarted", parked.Reason);
+        Assert.DoesNotContain(await AllMessagesFrom(hostB, "lab"), m => m.Body.Contains("restarted"));   // AC12: no note
 
         runnerB.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
-        var steer = await hostB.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@opus reconsider this" });
-        Assert.Equal(System.Net.HttpStatusCode.Created, steer.StatusCode);
+        var resume = await hostB.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@opus reconsider this" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, resume.StatusCode);
 
-        var spawned = await runnerB.NextSpecAsync(Wait);   // row 18: Tick -> OpenConductor, woken by the steer alone
+        var spawned = await runnerB.NextSpecAsync(Wait);   // AC15: resumed, conductor re-opened with this post as trigger
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spawned));
+        Assert.Equal(RunStatus.Active, runsB.Active("lab")!.Status);
+    }
+
+    private static async Task<List<(string Author, string Body)>> AllMessagesFrom(HubTestHost host, string room)
+    {
+        using var doc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
+        return doc.RootElement.GetProperty("messages").EnumerateArray()
+            .Select(m => (m.GetProperty("authorId").GetString()!, m.GetProperty("body").GetString()!)).ToList();
     }
 
     [Fact]
@@ -494,5 +507,214 @@ public sealed partial class SpawnerServiceTests
         await Task.Delay(300);
         Assert.Equal("superseded", Spawner.Snapshot("general").Status);
         release.SetResult();
+    }
+
+    // --- Task 9 (row 19): caps, park semantics, the stall wake, restart and resume (ticket 09) ----
+
+    /// <summary>A standalone host (own RunLimits, optionally a fake clock) for the task 9 tests -
+    /// the shared `_host` fixture (Fast SpawnLimits, RunLimits.Default) cannot exercise a small
+    /// spawn/wall-clock/phase-entry ceiling. Debounce/MinSpacing are zero so a frozen fake clock
+    /// never blocks an ordinary launch.</summary>
+    private static readonly SpawnLimits Instant = new(Budget: 4, Debounce: TimeSpan.Zero, MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
+
+    private static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(RunLimits runLimits, TimeProvider? clock = null)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_run9_" + Guid.NewGuid().ToString("N"));
+        var roomsRoot = dir + "_rooms";
+        var runner = new FakeProcessRunner();
+        var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Instant, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
+        const string room = "lab";
+        var roomDir = Path.Combine(roomsRoot, room);
+        Assert.True(await new GitTrail(roomDir).InitAsync());
+        host.Services.GetRequiredService<MessageStore>().CreateRoom(room, "LAB", roomDir);
+
+        var skillDir = Path.Combine(dir, "skills", "build-thing");
+        Directory.CreateDirectory(skillDir);
+        var bytes = new System.Text.UTF8Encoding(false).GetBytes(RunSkillMd);
+        File.WriteAllBytes(Path.Combine(skillDir, "SKILL.md"), bytes);
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        new SkillHashes(host.Services.GetRequiredService<ChopDb>()).Record("build-thing", hash, "test-fixture");
+        return (host, runner, room);
+    }
+
+    private static async Task PostAsInHost(HubTestHost host, string participant, string room, string body)
+    {
+        await using var client = await host.ClientFor(participant);
+        HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
+    }
+
+    private static async Task<(string Author, string Body)> WaitForNoteContaining(HubTestHost host, string room, string text)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            var hit = (await AllMessagesFrom(host, room)).FirstOrDefault(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains(text));
+            if (hit != default) return hit;
+            await Task.Delay(100);
+        }
+        throw new TimeoutException($"No hub note containing '{text}' in '{room}' within {Wait}");
+    }
+
+    [Fact]
+    public async Task Run09_9c_a_spawn_inside_an_active_run_gets_the_30_minute_run_timeout_not_the_5_minute_default()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-timeout");
+        // TCS, not a plain field read after NextSpecAsync: FakeProcessRunner queues the spec on the
+        // channel BEFORE awaiting Handler (a known race - see Skill_04_4f's comment above), so a test
+        // thread unblocked by NextSpecAsync can run ahead of the producer thread's own call into
+        // Handler. Setting the TCS INSIDE Handler and awaiting it directly closes that race.
+        var inRunCaptured = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var outOfRunCaptured = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = (spec, timeout, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") inRunCaptured.TrySetResult(timeout); else outOfRunCaptured.TrySetResult(timeout);
+            return Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+        };
+
+        await PostAsOwnerIn("lab-run-timeout", "/build-thing @sonnet begin");
+        Assert.Equal(RunLimits.Default.SpawnTimeout, await inRunCaptured.Task.WaitAsync(Wait));   // 30 minutes, not Fast's 1 second
+
+        await PostAsOwner("@opus outside any run");
+        Assert.Equal(Fast.Timeout, await outOfRunCaptured.Task.WaitAsync(Wait));                  // the ordinary out-of-run default, unaffected
+    }
+
+    [Fact]
+    public async Task Run09_the_spawn_cap_parks_the_run_as_a_hard_cap_and_a_parked_run_launches_nothing_more()
+    {
+        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                // 9d already counted this launch as the run's ONE allowed spawn; the very next
+                // decision made about this run - this post itself - must find the cap already spent.
+                await PostAsInHost(host, "sonnet", room, "phase: build @opus first post - the cap is already spent by the launch");
+                await PostAsInHost(host, "sonnet", room, "phase: build @opus second post - parked by now, must do nothing");
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        var parkedNote = await WaitForNoteContaining(host, room, "parked");
+        Assert.Contains("its 1 spawns", parkedNote.Body);
+        Assert.Contains("@owner", parkedNote.Body);
+
+        var run = host.Services.GetRequiredService<RunStore>().Latest(room);
+        Assert.Equal(RunStatus.Parked, run!.Status);
+        Assert.True(run.CapSpent);                                            // AC8: the spawn cap is a HARD cap
+        Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // opus never spawned - neither post launched anything
+    }
+
+    [Fact]
+    public async Task Run09_the_wall_clock_cap_parks_a_run_even_while_its_conductor_is_still_in_flight()
+    {
+        var fakeClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromMinutes(1), SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(runLimits, fakeClock);
+        await using var _ = host;
+
+        var holdConductor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken conductorCt = default;
+        runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                conductorCt = ct;
+                try { await holdConductor.Task.WaitAsync(ct); } catch (OperationCanceledException) { }
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);   // sonnet launched, held in flight - never idle
+
+        fakeClock.Advance(TimeSpan.FromMinutes(2));   // past the 1-minute wall clock, while sonnet is STILL in flight
+
+        var parkedNote = await WaitForNoteContaining(host, room, "parked");
+        Assert.Contains("active time", parkedNote.Body);
+
+        var run = host.Services.GetRequiredService<RunStore>().Latest(room);
+        Assert.Equal(RunStatus.Parked, run!.Status);
+        Assert.True(run.CapSpent);                       // AC8: the wall clock is a HARD cap
+        Assert.True(conductorCt.IsCancellationRequested);   // AC8/9a: "stop ... in-flight spawns", even mid-turn
+        holdConductor.TrySetResult();
+    }
+
+    /// <summary>Pass 2's F-4, the ruling 9f exists to satisfy: a SOFT park (a refusal park, never a
+    /// hard cap) that happens to sit parked past the wall clock must not immediately re-park itself
+    /// the instant a human message resumes it. Before RunStore.Resume folded the whole parked
+    /// interval into parked_seconds, Elapsed kept growing for as long as the run sat parked, and the
+    /// very first post-resume decision would cross the wall clock purely from having been parked -
+    /// converting a recoverable park into a permanently dead run.</summary>
+    [Fact]
+    public async Task Run09_F4_a_soft_park_that_sits_past_the_wall_clock_does_not_re_park_itself_on_resume()
+    {
+        var fakeClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
+        var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromMinutes(1), SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(runLimits, fakeClock);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await PostAsInHost(host, "sonnet", room, "no phase tag at all, first bad post");
+                await PostAsInHost(host, "sonnet", room, "still no phase tag, second bad post");
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        var parkedNote = await WaitForNoteContaining(host, room, "parked");
+        var runs = host.Services.GetRequiredService<RunStore>();
+        var parked = runs.Latest(room);
+        Assert.Equal(RunStatus.Parked, parked!.Status);
+        Assert.False(parked.CapSpent);   // a refusal park is soft (AC6), never a hard cap
+
+        fakeClock.Advance(TimeSpan.FromMinutes(5));   // well past the 1-minute wall clock, while sitting parked
+
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+        var resume = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@opus reconsider" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, resume.StatusCode);
+
+        var spawned = await runner.NextSpecAsync(Wait);   // F-4: resumed, NOT re-parked as a spent wall-clock cap
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spawned));
+        Assert.Equal(RunStatus.Active, runs.Active(room)!.Status);
+    }
+
+    [Fact]
+    public async Task Run09_a_resume_attempt_against_a_hard_capped_park_is_refused_in_one_line_and_stays_parked()
+    {
+        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);   // sonnet's one allowed spawn; it exits silently
+
+        // Concluding sonnet's own exchange is the very next event decided for this run - the spawn
+        // cap (already spent by 9d's count at launch) trips right there, before task 10 exists to
+        // treat the silence itself specially.
+        await WaitForNoteContaining(host, room, "parked");
+        var runs = host.Services.GetRequiredService<RunStore>();
+        var parked = runs.Latest(room);
+        Assert.Equal(RunStatus.Parked, parked!.Status);
+        Assert.True(parked.CapSpent);
+
+        var resumeAttempt = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@opus try again" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, resumeAttempt.StatusCode);
+        var refusal = await WaitForNoteContaining(host, room, "cap is spent");
+        Assert.Equal(RunPolicy.CapSpentRefusal, refusal.Body);
+        Assert.Equal(RunStatus.Parked, runs.Latest(room)!.Status);   // still parked - never resumed
+        Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
     }
 }
