@@ -5,14 +5,26 @@ using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Skills;
 
+/// <summary>One gate a skill declares in its (fingerprinted) frontmatter (row 19, task 2d): a name
+/// resolved to <c>data/skills/&lt;skill&gt;/scripts/&lt;gate&gt;.ps1</c> and the exact argument tokens
+/// <c>run_gate</c> (task 12) passes and no others. The argument string lives inside the same
+/// frontmatter bytes <see cref="SkillHashes"/> hashes, so it is exactly as tamper-protected as the
+/// gate name itself.</summary>
+public sealed record GateDeclaration(string Name, IReadOnlyList<string> Arguments);
+
 /// <summary>What the prompt renders for one skill. No overlay member: D-j keeps OVERLAY.md out of
-/// row 11 entirely, because an unpinned file rendered inside the pinned fence defeats the pin.</summary>
-public sealed record ResolvedSkill(string Name, string Title, string Body, bool Truncated);
+/// row 11 entirely, because an unpinned file rendered inside the pinned fence defeats the pin.
+/// <see cref="IsRun"/> and <see cref="Gates"/> are row 19 (D1/D9): a skill whose frontmatter carries
+/// <c>run: true</c> starts a run when invoked, and <c>Gates</c> is what <c>run_gate</c> may execute
+/// inside one. Both default so every pre-row-19 construction site still compiles.</summary>
+public sealed record ResolvedSkill(string Name, string Title, string Body, bool Truncated,
+    bool IsRun = false, IReadOnlyList<GateDeclaration>? Gates = null);
 
 /// <summary>One row of GET /api/skills and of the import verb's output. This is THE shape: tasks 6a,
 /// 6's tests, 7a and ticket 06 all quote it verbatim and none of them invents a field. <c>Chars</c>
-/// is the body length after frontmatter stripping.</summary>
-public sealed record SkillSummary(string Name, string Title, string Description, int Chars);
+/// is the body length after frontmatter stripping. <see cref="IsRun"/> is row 19: the skill list the
+/// UI shows says which skills start a run.</summary>
+public sealed record SkillSummary(string Name, string Title, string Description, int Chars, bool IsRun = false);
 
 /// <summary>What <see cref="SkillStore.Read"/> found.</summary>
 public abstract record SkillRead
@@ -127,7 +139,7 @@ public sealed class SkillStore(string root, SkillHashes hashes)
                 switch (ReadCore(name, out var description))
                 {
                     case SkillRead.Ok ok:
-                        summaries.Add(new SkillSummary(name, ok.Skill.Title, description ?? "", ok.Skill.Body.Length));
+                        summaries.Add(new SkillSummary(name, ok.Skill.Title, description ?? "", ok.Skill.Body.Length, ok.Skill.IsRun));
                         break;
                     case SkillRead.NotFound:
                         Console.Error.WriteLine($"Skipping skill '{name}': no readable SKILL.md.");
@@ -180,22 +192,48 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         // CRLF (claim 19): the harness skills are CRLF, so a frontmatter scan that compares a split
         // line to "---" sees "---\r", strips nothing, and renders the YAML header as instruction.
         var text = new UTF8Encoding(false).GetString(bytes).Replace("\r\n", "\n");
-        var (body, title, desc) = StripFrontmatter(text, name);
+        var (body, title, desc, isRun, gates) = StripFrontmatter(text, name);
         description = desc;
         var (cut, truncated) = Cut(body, MaxSkillChars);
-        return new SkillRead.Ok(new ResolvedSkill(name, title, cut, truncated));
+        return new SkillRead.Ok(new ResolvedSkill(name, title, cut, truncated, isRun, gates));
+    }
+
+    /// <summary>Row 19: a comma-separated list of gate names, each optionally followed by
+    /// <c>(&lt;args&gt;)</c> — e.g. <c>gates: budget(--RoadmapPath ROADMAP.md), count-files</c>. A
+    /// malformed entry is dropped, never thrown on (<see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>'s
+    /// rule): one bad cell in a skill's frontmatter must not make the whole skill unreadable.</summary>
+    private static readonly Regex GateEntryPattern = new(
+        @"^(?<name>[a-z0-9][a-z0-9-]{0,31})(?:\((?<args>[^()]*)\))?$", RegexOptions.Compiled);
+
+    private static IReadOnlyList<GateDeclaration> ParseGates(string value)
+    {
+        var gates = new List<GateDeclaration>();
+        foreach (var raw in value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var match = GateEntryPattern.Match(raw.Trim());
+            if (!match.Success) continue;
+            var argsText = match.Groups["args"].Success ? match.Groups["args"].Value.Trim() : "";
+            IReadOnlyList<string> arguments = argsText.Length == 0
+                ? []
+                : argsText.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            gates.Add(new GateDeclaration(match.Groups["name"].Value, arguments));
+        }
+        return gates;
     }
 
     /// <summary>When the normalised first line is exactly `---`, everything through the next line
-    /// that is exactly `---` is dropped from the body and `name:`/`description:` are read out of it.
-    /// Title is frontmatter `name`, else the first `# ` heading, else the directory name. Description
-    /// is frontmatter `description` trimmed to 300 characters, else the first non-blank non-heading
-    /// line, else empty.</summary>
-    private static (string Body, string Title, string Description) StripFrontmatter(string text, string dirName)
+    /// that is exactly `---` is dropped from the body and `name:`/`description:`/`run:`/`gates:` are
+    /// read out of it. Title is frontmatter `name`, else the first `# ` heading, else the directory
+    /// name. Description is frontmatter `description` trimmed to 300 characters, else the first
+    /// non-blank non-heading line, else empty. <c>run:</c> is true only for the literal (case
+    /// insensitive) value `true`; <c>gates:</c> is parsed by <see cref="ParseGates"/>.</summary>
+    private static (string Body, string Title, string Description, bool IsRun, IReadOnlyList<GateDeclaration> Gates) StripFrontmatter(string text, string dirName)
     {
         var lines = text.Split('\n');
         string? frontmatterName = null;
         string? frontmatterDescription = null;
+        var isRun = false;
+        IReadOnlyList<GateDeclaration> gates = [];
         var bodyStart = 0;
 
         if (lines.Length > 0 && lines[0].Trim() == "---")
@@ -215,6 +253,10 @@ public sealed class SkillStore(string root, SkillHashes hashes)
                     if (nameMatch.Success) frontmatterName = nameMatch.Groups[1].Value.Trim();
                     var descMatch = Regex.Match(lines[i], "^description:\\s*(.*)$");
                     if (descMatch.Success) frontmatterDescription = descMatch.Groups[1].Value.Trim();
+                    var runMatch = Regex.Match(lines[i], "^run:\\s*(.*)$");
+                    if (runMatch.Success) isRun = string.Equals(runMatch.Groups[1].Value.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+                    var gatesMatch = Regex.Match(lines[i], "^gates:\\s*(.*)$");
+                    if (gatesMatch.Success) gates = ParseGates(gatesMatch.Groups[1].Value);
                 }
                 bodyStart = end + 1;
             }
@@ -225,7 +267,7 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         var description = frontmatterDescription is { Length: > 300 } d
             ? d[..300]
             : frontmatterDescription ?? FirstNonBlankNonHeadingLine(body) ?? "";
-        return (body, title, description);
+        return (body, title, description, isRun, gates);
     }
 
     private static string? FirstHeading(string body)

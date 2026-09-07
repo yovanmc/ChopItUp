@@ -22,7 +22,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -73,6 +73,10 @@ public static class HubHost
             builder.Services.AddSingleton<IReadOnlyList<Participant>>(roster);
             builder.Services.AddSingleton(options);
             builder.Services.AddSingleton(limits ?? SpawnLimits.Default);
+            // Row 19's clock seam (pass 2's F-13): .NET's own TimeProvider, not a hand-rolled
+            // interface, so a run's whole timeline can be driven by a fake clock in tests without
+            // waiting on a wall clock (D9's 8-hour cap).
+            builder.Services.AddSingleton(clock ?? TimeProvider.System);
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             builder.Services.AddSingleton<SpawnerService>();

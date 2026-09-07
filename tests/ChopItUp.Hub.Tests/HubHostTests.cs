@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
@@ -57,6 +58,32 @@ public sealed class HubHostTests : IAsyncLifetime
     {
         var ex = Assert.Throws<InvalidOperationException>(() => HubHost.Build(new HubOptions(_dir, Port: 0)));
         Assert.Contains("one hub per data directory", ex.Message);
+    }
+
+    /// <summary>Row 19 task 2b: the clock seam. Nothing yet reads it off a run path (that starts at
+    /// task 4), so this proves the seam itself — the injected fake reaches the DI container the
+    /// hub was built with, rather than every consumer silently falling back to the real wall clock.</summary>
+    [Fact]
+    public async Task A_HubTestHost_built_with_a_fake_TimeProvider_reports_the_fakes_time()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_clock_" + Guid.NewGuid().ToString("N"));
+        var fake = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+
+        await using var host = await HubTestHost.StartAsync(dir, clock: fake);
+
+        Assert.Same(fake, host.Services.GetRequiredService<TimeProvider>());
+        Assert.Equal(fake.GetUtcNow(), host.Services.GetRequiredService<TimeProvider>().GetUtcNow());
+
+        fake.Advance(TimeSpan.FromHours(3));
+        Assert.Equal(DateTimeOffset.Parse("2026-01-01T03:00:00Z"), host.Services.GetRequiredService<TimeProvider>().GetUtcNow());
+    }
+
+    /// <summary>A host built with no clock argument falls back to the real wall clock (the production
+    /// default), not to some fixed or null value.</summary>
+    [Fact]
+    public void With_no_clock_argument_HubHost_registers_the_real_TimeProvider()
+    {
+        Assert.Same(TimeProvider.System, _host.Services.GetRequiredService<TimeProvider>());
     }
 
     [Fact]

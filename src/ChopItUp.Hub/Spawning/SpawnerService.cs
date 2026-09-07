@@ -78,6 +78,7 @@ public sealed class SpawnerService : BackgroundService
     private readonly Participant _owner;
     private readonly ExchangePolicy _policy;
     private readonly SkillStore _skills;
+    private readonly TimeProvider _clock;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
@@ -88,13 +89,14 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills)
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills, TimeProvider clock)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
         _trails = trails; _owner = roster.First(p => p.Id == participants.OwnerId());
         _policy = new ExchangePolicy(roster, limits);
         _skills = skills;
+        _clock = clock;
     }
 
     public ExchangeSnapshot Snapshot(string roomId) => _snapshots.TryGetValue(roomId, out var s) ? s : Idle(roomId);
@@ -205,7 +207,10 @@ public sealed class SpawnerService : BackgroundService
             handle.Posted = true;
             acceptMentions = ReferenceEquals(handle.Exchange, current);
         }
-        var (next, notes) = _policy.OnMessage(current, m, DateTimeOffset.UtcNow, acceptMentions, ResolveSkill(m));
+        // Row 19's clock seam (task 2b): OnMessage is the run-start site (task 4's _runs.Start reads
+        // this same instant), so it goes through the injected clock; LaunchDue/ArmWake stay on the
+        // real wall clock until a run path needs them too.
+        var (next, notes) = _policy.OnMessage(current, m, _clock.GetUtcNow(), acceptMentions, ResolveSkill(m));
         if (next is null) _rooms.Remove(m.RoomId); else _rooms[m.RoomId] = next;
         foreach (var note in notes) PostNote(m.RoomId, note);
         if (next is not null || current is not null) Publish(m.RoomId);

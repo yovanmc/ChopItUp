@@ -54,10 +54,10 @@ public sealed class SkillsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Two_fixture_skills_answer_both_rows_with_exactly_the_four_SkillSummary_fields()
+    public async Task Two_fixture_skills_answer_both_rows_with_exactly_the_five_SkillSummary_fields()
     {
         WriteSkill("alpha", "---\nname: alpha\ndescription: First skill.\n---\n# Alpha\n\nAlpha body.\n");
-        WriteSkill("bravo", "---\nname: bravo\ndescription: Second skill.\n---\n# Bravo\n\nBravo body text.\n");
+        WriteSkill("bravo", "---\nname: bravo\ndescription: Second skill.\nrun: true\n---\n# Bravo\n\nBravo body text.\n");
 
         var rows = (await GetSkills()).EnumerateArray().ToList();
 
@@ -65,17 +65,19 @@ public sealed class SkillsApiTests : IAsyncLifetime
         foreach (var row in rows)
         {
             var fields = row.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { "chars", "description", "name", "title" }, fields);   // SkillSummary, no others (M-5)
+            Assert.Equal(new[] { "chars", "description", "isRun", "name", "title" }, fields);   // SkillSummary, no others (M-5, +isRun row 19)
         }
 
         var alpha = rows.Single(r => r.GetProperty("name").GetString() == "alpha");
         Assert.Equal("alpha", alpha.GetProperty("title").GetString());
         Assert.Equal("First skill.", alpha.GetProperty("description").GetString());
         Assert.True(alpha.GetProperty("chars").GetInt32() > 0);
+        Assert.False(alpha.GetProperty("isRun").GetBoolean());
 
         var bravo = rows.Single(r => r.GetProperty("name").GetString() == "bravo");
         Assert.Equal("bravo", bravo.GetProperty("title").GetString());
         Assert.Equal("Second skill.", bravo.GetProperty("description").GetString());
+        Assert.True(bravo.GetProperty("isRun").GetBoolean());
     }
 
     [Fact]

@@ -50,12 +50,14 @@ export interface Participant {
 }
 
 /** Mirrors `GET /api/skills` (Web/SkillsApi.cs). `chars` is the size of the text the hub renders
- *  into every spawn of an exchange the skill roots. Four fields, matching `SkillSummary` exactly. */
+ *  into every spawn of an exchange the skill roots. `isRun` (row 19) says whether invoking this
+ *  skill starts a run. Matches `SkillSummary` exactly. */
 export interface Skill {
   name: string;
   title: string;
   description: string;
   chars: number;
+  isRun: boolean;
 }
 
 /** Mirrors `GET /api/rooms/{id}/exchange` and the `POST .../exchange/stop` response

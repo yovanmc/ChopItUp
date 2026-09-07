@@ -216,6 +216,69 @@ public sealed class SkillStoreTests : IDisposable
         Assert.Equal("demo", summary.Title);
         Assert.Equal("A demo skill for tests.", summary.Description);
         Assert.True(summary.Chars > 0);
+        Assert.False(summary.IsRun);
+    }
+
+    // --- Row 19 task 2d: `run:` and `gates:` frontmatter -----------------------------------------
+
+    [Fact]
+    public void A_skill_declaring_run_true_reads_back_as_IsRun_and_a_skill_without_it_does_not()
+    {
+        WriteSkill("runner", "---\nname: runner\ndescription: Starts a run.\nrun: true\n---\n# Runner\n");
+        WriteSkill("plain", ValidSkillBody);
+
+        Assert.True(((SkillRead.Ok)_store.Read("runner")).Skill.IsRun);
+        Assert.False(((SkillRead.Ok)_store.Read("plain")).Skill.IsRun);
+
+        var runner = _store.List().Single(s => s.Name == "runner");
+        var plain = _store.List().Single(s => s.Name == "plain");
+        Assert.True(runner.IsRun);
+        Assert.False(plain.IsRun);
+    }
+
+    [Theory]
+    [InlineData("True")]
+    [InlineData("TRUE")]
+    public void run_is_case_insensitive_for_the_literal_true(string value)
+    {
+        WriteSkill("runner-case", $"---\nname: runner-case\ndescription: d.\nrun: {value}\n---\nBody.\n");
+        Assert.True(((SkillRead.Ok)_store.Read("runner-case")).Skill.IsRun);
+    }
+
+    [Fact]
+    public void gates_parses_a_bare_name_and_a_name_with_arguments()
+    {
+        WriteSkill("gated", "---\nname: gated\ndescription: d.\nrun: true\ngates: budget(--RoadmapPath ROADMAP.md), count-files\n---\nBody.\n");
+
+        var gates = ((SkillRead.Ok)_store.Read("gated")).Skill.Gates!;
+
+        Assert.Equal(2, gates.Count);
+        Assert.Equal("budget", gates[0].Name);
+        Assert.Equal(["--RoadmapPath", "ROADMAP.md"], gates[0].Arguments);
+        Assert.Equal("count-files", gates[1].Name);
+        Assert.Empty(gates[1].Arguments);
+    }
+
+    [Fact]
+    public void A_malformed_gate_entry_is_dropped_rather_than_thrown_on()
+    {
+        // "Bad_Name" fails the [a-z0-9][a-z0-9-]{0,31} pattern (uppercase, underscore); "ok-one" is
+        // still parsed either side of it.
+        WriteSkill("gated-bad", "---\nname: gated-bad\ndescription: d.\ngates: ok-one, Bad_Name, ok-two\n---\nBody.\n");
+
+        var gates = ((SkillRead.Ok)_store.Read("gated-bad")).Skill.Gates!;
+
+        Assert.Equal(["ok-one", "ok-two"], gates.Select(g => g.Name));
+    }
+
+    [Fact]
+    public void A_skill_with_no_gates_line_has_an_empty_Gates_list_never_null()
+    {
+        WriteSkill("no-gates", ValidSkillBody);
+
+        var gates = ((SkillRead.Ok)_store.Read("no-gates")).Skill.Gates!;
+
+        Assert.Empty(gates);
     }
 
     [Fact]
