@@ -7,12 +7,23 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 6;
+    public const int LatestSchemaVersion = 7;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
     /// model, never spawned, never in a mention list.</summary>
     public const string HubParticipantId = "hub";
+
+    /// <summary>The owner's own row. Kind 'human' is no longer unique (v7 adds the remote proxy), so
+    /// "the owner" is this id and not "the one human": every owner-scoped read — the room list's
+    /// unread counts, the web UI's post author, the spawner's trail identity — resolves through
+    /// <see cref="ParticipantStore.OwnerId"/> to this row.</summary>
+    public const string OwnerParticipantId = "owner";
+
+    /// <summary>The owner's hand on another machine's keyboard (grill ledger D3). Kind 'human' so its
+    /// posts start and steer exchanges exactly as the owner's do; a distinct id so the transcript and
+    /// the commit trail show which hand typed. Revoking its token cuts the path.</summary>
+    public const string OwnerRemoteParticipantId = "owner-remote";
 
     /// <summary>The roster a fresh database starts with, in display order. Ids of spawn rows are the
     /// model names their host accepts on the command line, so M5 reads <c>Model</c> straight off the
@@ -23,9 +34,9 @@ public sealed class ChopDb
         new("owner",         "Owner",         "human", "human",  null,            null),
         new("claude",        "Claude",        "model", "claude", null,            "App-backed: Claude Desktop or Claude Code, whatever model the app has selected."),
         new("codex",         "Codex",         "model", "codex",  null,            "App-backed: the Codex app or CLI, whatever model the app has selected."),
-        new("opus",          "Opus",          "model", "claude", "opus",          null),
-        new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null),
-        new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits."),
+        new("opus",          "Opus",          "model", "claude", "opus",          null, "visible,judge"),
+        new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null, "plumbing"),
+        new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits.", "judge"),
         new("gpt-6-astra",   "GPT-6 Astra",   "model", "codex",  "gpt-6-astra",   null),
         new("gpt-5.6-sol",   "GPT-5.6 Sol",   "model", "codex",  "gpt-5.6-sol",   null),
         new("gpt-5.6-terra", "GPT-5.6 Terra", "model", "codex",  "gpt-5.6-terra", null),
@@ -33,6 +44,7 @@ public sealed class ChopDb
         new("gpt-5.5",       "GPT-5.5",       "model", "codex",  "gpt-5.5",       null),
         new("gpt-5.4-mini",  "GPT-5.4 Mini",  "model", "codex",  "gpt-5.4-mini",  null),
         new(HubParticipantId, "Hub",           "system", "hub",    null,            "The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned."),
+        new(OwnerRemoteParticipantId, "Owner (remote)", "human", "human", null,   "The owner, posting from a session on another device. Same authority as owner; the hub stamps which hand typed. Last in the roster because rowid order is seed order and this row is newer than every other."),
     ];
 
     /// <summary>Path of the backup written by the most recent migration on this instance, or null
@@ -103,6 +115,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 4) ApplyV4(conn);
             if (GetUserVersion(conn) < 5) ApplyV5(conn);
             if (GetUserVersion(conn) < 6) ApplyV6(conn);
+            if (GetUserVersion(conn) < 7) ApplyV7(conn);
             return 0;
         });
     }
@@ -406,6 +419,68 @@ public sealed class ChopDb
         cmd.CommandText = ddl + "PRAGMA user_version = 6;";
         cmd.ExecuteNonQuery();
         tx.Commit();
+    }
+
+    /// <summary>v7 (row 11): participants gain <c>classes</c> (plumbing / visible / judge, grill
+    /// ledger D5), the roster gains <c>owner-remote</c> (D3), and the <c>skills</c> table records the
+    /// fingerprint <c>--import-skill</c> takes of each skill's SKILL.md (D-i). The fingerprint lives
+    /// here rather than in a file beside the skill precisely because the directory it would sit in is
+    /// writable by the thing it guards against. The column is probed before its ALTER and the table is
+    /// IF NOT EXISTS, so a torn v7 re-runs; the seed is the same OR IGNORE pass V3 runs, so a fresh
+    /// database and a migrated one end identical; classes are back-filled only where the column is
+    /// still NULL, so a class the owner set by hand is never overwritten. The stamp is the last
+    /// statement of the same transaction (LESSONS, M1).</summary>
+    private static void ApplyV7(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        var ddl = new System.Text.StringBuilder();
+        using (var probe = conn.CreateCommand())
+        {
+            probe.Transaction = tx;
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'classes'";
+            if (Convert.ToInt64(probe.ExecuteScalar()) == 0)
+                ddl.Append("ALTER TABLE participants ADD COLUMN classes TEXT;\n");
+        }
+        ddl.Append("""
+            CREATE TABLE IF NOT EXISTS skills (
+                name        TEXT PRIMARY KEY,
+                body_sha256 TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                source      TEXT
+            );
+            """);
+        using (var alter = conn.CreateCommand())
+        {
+            alter.Transaction = tx;
+            alter.CommandText = ddl.ToString();
+            alter.ExecuteNonQuery();
+        }
+        SeedParticipants(conn, tx);   // adds owner-remote; existing rows keep their display_name
+        BackfillNotes(conn, tx);
+        BackfillClasses(conn, tx);
+        using (var stamp = conn.CreateCommand())
+        {
+            stamp.Transaction = tx;
+            stamp.CommandText = "PRAGMA user_version = 7;";
+            stamp.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Only NULL is filled: a class the owner set by hand is never replaced (the same rule
+    /// <see cref="BackfillNotes"/> follows for notes).</summary>
+    private static void BackfillClasses(SqliteConnection conn, SqliteTransaction tx)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE participants SET classes = $classes WHERE id = $id AND classes IS NULL";
+        var id = cmd.Parameters.Add("$id", SqliteType.Text);
+        var cls = cmd.Parameters.Add("$classes", SqliteType.Text);
+        foreach (var p in SeedRoster.Where(p => p.Classes is not null))
+        {
+            id.Value = p.Id; cls.Value = p.Classes;
+            cmd.ExecuteNonQuery();
+        }
     }
 
     private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx)

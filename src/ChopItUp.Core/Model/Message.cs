@@ -27,5 +27,8 @@ public sealed record MessagePage(IReadOnlyList<Message> Messages, long NextAfter
 /// <c>claude</c> (Claude Desktop / Claude Code) or <c>codex</c>. <see cref="Model"/> is null for the
 /// human and for the app-backed rows (whatever model the app has selected), and the model name the
 /// host takes on its command line for a spawn row (M5). <see cref="Note"/> is owner-facing text
-/// shown beside the row in the generated README, e.g. the usage-credit warning on <c>fable</c>.</summary>
-public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note);
+/// shown beside the row in the generated README, e.g. the usage-credit warning on <c>fable</c>.
+/// <see cref="Classes"/> is the raw stored form of the row's roles (grill ledger D5, owner ruling
+/// 2026-09-07: a SET, not one value) — parse it with <see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>,
+/// never by hand.</summary>
+public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Classes = null);

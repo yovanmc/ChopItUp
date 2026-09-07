@@ -1,3 +1,4 @@
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using Microsoft.Data.Sqlite;
 
@@ -242,6 +243,136 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    private void WriteRawV6()
+    {
+        // v5 shape plus exactly what ApplyV6 adds: the two nullable room columns. Raw SQL on purpose
+        // (LESSONS M2): this must keep describing v6 after ChopDb can no longer produce one.
+        Directory.CreateDirectory(_dir);
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
+        conn.Open();
+        using (var wal = conn.CreateCommand())
+        {
+            wal.CommandText = "PRAGMA journal_mode=WAL;";
+            wal.ExecuteNonQuery();
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE participants (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, kind TEXT NOT NULL, host TEXT, model TEXT, note TEXT);
+            CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, directory TEXT, archived_at TEXT);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id),
+                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL,
+                client_key TEXT);
+            CREATE INDEX ix_messages_room_id ON messages(room_id, id);
+            CREATE UNIQUE INDEX ux_messages_client_key ON messages(room_id, author_id, client_key) WHERE client_key IS NOT NULL;
+            CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
+                room_id TEXT NOT NULL REFERENCES rooms(id), last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (participant_id, room_id));
+            CREATE TABLE memory_proposals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id     TEXT NOT NULL REFERENCES rooms(id),
+                author_id   TEXT NOT NULL REFERENCES participants(id),
+                topic       TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                source      TEXT,
+                created_at  TEXT NOT NULL,
+                decided_at  TEXT,
+                written_to  TEXT,
+                commit_hash TEXT
+            );
+            CREATE INDEX ix_memory_proposals_status ON memory_proposals(status, room_id, id);
+            INSERT INTO participants (id, display_name, kind, host, model, note) VALUES
+                ('owner','Owner','human','human',NULL,NULL),
+                ('claude','Claude','model','claude',NULL,'App-backed: Claude Desktop or Claude Code, whatever model the app has selected.'),
+                ('codex','Codex','model','codex',NULL,'App-backed: the Codex app or CLI, whatever model the app has selected.'),
+                ('opus','Opus','model','claude','opus',NULL),
+                ('sonnet','Sonnet','model','claude','sonnet',NULL),
+                ('fable','Fable','model','claude','fable','May bill to usage credits instead of the plan''s included limits.'),
+                ('gpt-6-astra','GPT-6 Astra','model','codex','gpt-6-astra',NULL),
+                ('gpt-5.6-sol','GPT-5.6 Sol','model','codex','gpt-5.6-sol',NULL),
+                ('gpt-5.6-terra','GPT-5.6 Terra','model','codex','gpt-5.6-terra',NULL),
+                ('gpt-5.6-luna','GPT-5.6 Luna','model','codex','gpt-5.6-luna',NULL),
+                ('gpt-5.5','GPT-5.5','model','codex','gpt-5.5',NULL),
+                ('gpt-5.4-mini','GPT-5.4 Mini','model','codex','gpt-5.4-mini',NULL),
+                ('hub','Hub','system','hub',NULL,'The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned.');
+            INSERT INTO rooms (id, name, created_at) VALUES ('general','General','2026-09-01T10:00:00.000+00:00');
+            INSERT INTO messages (id, room_id, author_id, body, created_at, client_key) VALUES
+                (1,'general','owner','@opus first v3 message','2026-09-01T10:01:00.000+00:00',NULL),
+                (2,'general','opus','second v3 message','2026-09-01T10:02:00.000+00:00','k-1');
+            INSERT INTO read_cursors (participant_id, room_id, last_read_id) VALUES ('opus','general',2);
+            INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, created_at) VALUES
+                ('general','opus','user','Likes tests','Yes.','pending','2026-09-01T10:03:00.000+00:00');
+            PRAGMA user_version = 6;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public void M11_A1_v6_database_is_backed_up_then_migrated_to_v7_with_classes_the_skills_table_and_owner_remote_seeded()
+    {
+        WriteRawV6();
+
+        // Simulate a torn v7: an operator already ran the ALTER by hand, with a value already set on
+        // an existing seed row (gpt-6-astra, which the seed leaves NULL) and on a row the seed list
+        // does not know about at all (guest). BackfillClasses must never touch either (D-h): only
+        // NULL is filled.
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                ALTER TABLE participants ADD COLUMN classes TEXT;
+                UPDATE participants SET classes = 'judge' WHERE id = 'gpt-6-astra';
+                INSERT INTO participants (id, display_name, kind, host, model, note, classes) VALUES ('guest','Guest','model','codex',NULL,NULL,'plumbing');
+                """;
+            cmd.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.NotNull(db.LastBackupPath);
+        Assert.Contains(".v6.", Path.GetFileName(db.LastBackupPath!));
+
+        using (var conn = db.Open())
+        {
+            using (var probe = conn.CreateCommand())
+            {
+                probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'classes'";
+                Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+            }
+            using (var probe = conn.CreateCommand())
+            {
+                probe.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skills'";
+                Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+            }
+        }
+
+        var roster = new ParticipantStore(db).List();
+        Assert.Equal("owner", new ParticipantStore(db).OwnerId());
+        var ownerRemote = roster.Single(p => p.Id == ChopDb.OwnerRemoteParticipantId);
+        Assert.Equal("human", ownerRemote.Kind);
+
+        var opus = roster.Single(p => p.Id == "opus");
+        Assert.Equal(new[] { "visible", "judge" }, ParticipantClasses.Parse(opus.Classes));
+        var sonnet = roster.Single(p => p.Id == "sonnet");
+        Assert.Equal(new[] { "plumbing" }, ParticipantClasses.Parse(sonnet.Classes));
+        var fable = roster.Single(p => p.Id == "fable");
+        Assert.Equal(new[] { "judge" }, ParticipantClasses.Parse(fable.Classes));
+
+        // Hand-set classes survive the migration: BackfillClasses only fills NULL (D-h).
+        Assert.Equal("judge", roster.Single(p => p.Id == "gpt-6-astra").Classes);
+        Assert.Equal("plumbing", roster.Single(p => p.Id == "guest").Classes);
+
+        db.EnsureDatabase();
+        Assert.Null(db.LastBackupPath);
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+    }
+
     [Fact]
     public void M9_A1_v5_database_is_backed_up_then_migrated_to_v6_with_two_nullable_room_columns_and_nothing_else_changed()
     {
@@ -250,7 +381,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(6, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.Contains(".v5.", Path.GetFileName(db.LastBackupPath!));
 
@@ -279,7 +410,7 @@ public sealed class SchemaMigrationTests : IDisposable
 
         db.EnsureDatabase();
         Assert.Null(db.LastBackupPath);
-        Assert.Equal(6, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
     }
 
     [Fact]
@@ -298,7 +429,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(6, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         using var check = db.Open();
         using var count = check.CreateCommand();
         count.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms')";
@@ -319,7 +450,7 @@ public sealed class SchemaMigrationTests : IDisposable
 
         var roster = new ParticipantStore(db).List();
         Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), roster.Select(p => p.Id));
-        Assert.Equal("owner", new ParticipantStore(db).HumanId());
+        Assert.Equal("owner", new ParticipantStore(db).OwnerId());
 
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
@@ -355,7 +486,7 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), roster.Select(p => p.Id));   // hub is last, by rowid
         var hub = roster.Single(p => p.Id == ChopDb.HubParticipantId);
         Assert.Equal(("system", "hub", (string?)null), (hub.Kind, hub.Host, hub.Model));
-        Assert.Equal("owner", new ParticipantStore(db).HumanId());                      // still exactly one human
+        Assert.Equal("owner", new ParticipantStore(db).OwnerId());                      // owner, not "the one human" (owner-remote lands at v7)
         var fable = roster.Single(p => p.Id == "fable");
         Assert.Contains("usage credits", fable.Note);                                   // v3 rows untouched
 

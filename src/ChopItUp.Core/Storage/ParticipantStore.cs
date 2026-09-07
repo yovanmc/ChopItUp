@@ -19,24 +19,40 @@ public sealed class ParticipantStore(ChopDb db)
     public static IReadOnlyList<Participant> ReadAll(SqliteConnection conn)
     {
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, display_name, kind, host, model, note FROM participants ORDER BY rowid";
+        cmd.CommandText = "SELECT id, display_name, kind, host, model, note, classes FROM participants ORDER BY rowid";
         using var reader = cmd.ExecuteReader();
         var rows = new List<Participant>();
         while (reader.Read())
             rows.Add(new Participant(
                 reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
                 reader.IsDBNull(4) ? null : reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetString(5)));
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
         return rows;
     }
 
-    /// <summary>The one human. The schema allows more than one row of kind 'human'; the hub does not
-    /// (grill: "the owner is the only human here"), so this throws rather than picking one.</summary>
-    public string HumanId()
-    {
-        var humans = List().Where(p => p.Kind == "human").Select(p => p.Id).ToArray();
-        return humans.Length == 1
-            ? humans[0]
-            : throw new InvalidOperationException($"Expected exactly one participant of kind 'human', found {humans.Length}.");
-    }
+    /// <summary>The owner's row. Kind 'human' stopped being unique at v7 (the remote proxy, grill
+    /// ledger D3), so this is an id lookup, not a kind filter: `owner` is the identity every
+    /// owner-scoped read resolves to — unread counts, the web UI's post author, the trail identity —
+    /// while `owner-remote` is a second hand on the same authority, distinguished in the transcript.
+    /// Throws when the row is absent, which no migrated or fresh database can be.</summary>
+    public string OwnerId() =>
+        List().Any(p => p.Id == ChopDb.OwnerParticipantId)
+            ? ChopDb.OwnerParticipantId
+            : throw new InvalidOperationException($"The roster has no '{ChopDb.OwnerParticipantId}' row; this database was not created or migrated by this build.");
+
+    /// <summary>Every row that may speak with the owner's authority (kind 'human'). The exchange
+    /// policy keys on kind, not on this list; this is for prose and diagnostics.</summary>
+    public IReadOnlyList<string> HumanIds() =>
+        List().Where(p => p.Kind == "human").Select(p => p.Id).ToList();
+
+    /// <summary>Deviation from plan 1d, reported: the plan says "delete HumanId()", but its nine
+    /// production call sites (plan claim 4: <c>SpawnerService</c>, <c>ChatApi</c>, <c>RoomsApi</c>)
+    /// live in Hub files outside task 1's scope, and task 2 (blocked by task 1) is what renames them
+    /// to <see cref="OwnerId"/>. Deleting the method here would fail the Hub build before task 2 ever
+    /// runs. Kept as a thin delegate instead of the old throw-on-two-humans body — that behaviour
+    /// cannot survive owner-remote's arrival regardless of which method name callers use — so the
+    /// existing call sites keep resolving to the owner correctly until task 2 removes this and
+    /// renames them directly.</summary>
+    public string HumanId() => OwnerId();
 }
