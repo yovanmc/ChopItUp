@@ -130,6 +130,18 @@ public static class SkillImport
         if (targetExisted && !force)
             return new SkillImportResult(SkillImportOutcome.BadArgument, $"'{name}' already exists. Re-import with --force to replace it.");
 
+        // Refusal 9 (row 19, task 12a): a declared gate whose script the import does not ship is a
+        // hard failure, checked against the SOURCE (nothing has moved yet) with the SAME frontmatter
+        // parser SkillStore.Read uses at every later call (SkillStore.StripFrontmatter, made internal
+        // for exactly this) — import-time and read-time can never disagree on what a skill declares.
+        // Without this, `run_gate` (task 12) would only discover the missing script the first time a
+        // conductor tries to call it, well after the skill looked installed and usable.
+        var (_, _, _, _, declaredGates) = SkillStore.StripFrontmatter(sourceText.Replace("\r\n", "\n"), name);
+        var missingGate = declaredGates.FirstOrDefault(g => !File.Exists(Path.Combine(sourceDir, "scripts", g.Name + ".ps1")));
+        if (missingGate is not null)
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"Skill declares gate '{missingGate.Name}' but 'scripts/{missingGate.Name}.ps1' is not in the import.");
+
         // Every refusal above returns before this line: nothing has been written yet.
 
         // Leftover staging can only be this mutex-holder's own debris — nobody else can be mid-import
@@ -155,6 +167,14 @@ public static class SkillImport
             var installedBytes = File.ReadAllBytes(Path.Combine(target, "SKILL.md"));
             var hash = Convert.ToHexString(SHA256.HashData(installedBytes)).ToLowerInvariant();
             hashes.Record(name, hash, sourceDir);
+
+            // Row 19, task 12a (P5): the WHOLE tree, hashed as installed (same "after the move"
+            // rule as the SKILL.md hash above) — a per-script hash alone would let a spawn rewrite a
+            // sibling data file a gate reads (the roadmap gate's baselines.json is exactly this) and
+            // make the gate pass a violating result. Replaces whatever was recorded before in one
+            // transaction (RecordTree), so a forced re-import never leaves a stale entry for a file
+            // the new version dropped.
+            hashes.RecordTree(name, HashTree(target));
 
             if (replacedTargetMoved) Directory.Delete(replaced, recursive: true);
 
@@ -284,6 +304,22 @@ public static class SkillImport
                 bytes += new FileInfo(file).Length;
             }
         }
+    }
+
+    /// <summary>Row 19, task 12a: every file under <paramref name="root"/> (the INSTALLED target, not
+    /// the source), forward-slashed relative path to SHA-256 — the exact shape
+    /// <see cref="SkillHashes.RecordTree"/> stores and <see cref="SkillStore.VerifyTree"/> later
+    /// re-checks against. No `.git` skip needed here: <see cref="CopyTree"/> already excluded it, so
+    /// the installed target can never contain one.</summary>
+    private static Dictionary<string, string> HashTree(string root)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+            map[relative] = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file))).ToLowerInvariant();
+        }
+        return map;
     }
 
     /// <summary>Copies <paramref name="sourceRoot"/> into <paramref name="destRoot"/> (which must not

@@ -665,14 +665,22 @@ public sealed class SpawnerService : BackgroundService
                     {
                         var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room (decision 8)
                         File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort);
+                        // Row 19, task 12e: run_gate joins the allowlist only for an in-run spawn - the
+                        // built-in tool set (--tools) is untouched either way, and an out-of-run
+                        // directory spawn never sees the extra MCP tool at all.
+                        var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort, allowedTools);
                     }
                     break;
                 }
                 case "codex":
+                    // Row 19, task 12f (pass 1's M7): the CLI's default 60 s MCP tool-call timeout
+                    // kills a 30-minute run_gate call well before it can finish. Raised to this run's
+                    // SpawnTimeout for an in-run directory spawn only; every other Codex spawn keeps 60 s.
+                    var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.SpawnTimeout.TotalSeconds : 60;
                     spec = directory is null
                         ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
-                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label, effort);
+                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds);
                     break;
                 default:
                     throw new InvalidOperationException($"Participant '{participant.Id}' has host '{participant.Host}', which the spawner does not know how to start.");

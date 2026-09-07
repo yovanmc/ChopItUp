@@ -475,7 +475,13 @@ public sealed class ChopDb
     /// re-parks the moment it is resumed (AC15). run_phases counts re-entries per full phase tag;
     /// run_artifacts records authorship read out of the spawn's own git diff; run_gate_runs is the
     /// hub-written record the live check reads, and its run_id is NULLABLE because the refusals AC10
-    /// requires it to record include "there is no run here". Stamp last (LESSONS, M1).</summary>
+    /// requires it to record include "there is no run here". skill_files is task 12's whole-tree
+    /// manifest (P5): one row per file under a skill's installed directory, recorded at import
+    /// alongside the SKILL.md hash the `skills` table already carried since v7 — never beside the
+    /// skill itself (D-i), for the same reason the SKILL.md hash lives here and not there. Folded into
+    /// v8 rather than a new version because nothing has deployed v8 yet (task 16 is the first deploy of
+    /// this row); once that happens this table's shape is as frozen as every other v8 table. Stamp
+    /// last (LESSONS, M1).</summary>
     private static void ApplyV8(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -525,6 +531,12 @@ public sealed class ChopDb
                     exit_code INTEGER,
                     outcome   TEXT NOT NULL,
                     at        TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS skill_files (
+                    skill_name TEXT NOT NULL REFERENCES skills(name),
+                    path       TEXT NOT NULL,
+                    sha256     TEXT NOT NULL,
+                    PRIMARY KEY (skill_name, path)
                 );
                 """;
             ddl.ExecuteNonQuery();

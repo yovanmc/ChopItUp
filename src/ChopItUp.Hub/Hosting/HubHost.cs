@@ -96,6 +96,10 @@ public static class HubHost
                 runs.Park(stale.Id, "the hub restarted while this run was active", capSpent: false, effectiveClock.GetUtcNow());
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
+            // Row 19, task 12d: one gate per room at a time. A singleton so the lock survives
+            // regardless of RunTools' own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no
+            // state of its own).
+            builder.Services.AddSingleton<GateLocks>();
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             builder.Services.AddHttpContextAccessor();
@@ -108,7 +112,7 @@ public static class HubHost
                 sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir), options.RoomsRootPath));
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
-                .WithTools<RoomTools>().WithTools<MemoryTools>();
+                .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>();
             builder.Services.AddSignalR();
 
             var app = builder.Build();

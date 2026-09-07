@@ -753,4 +753,45 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(runLimits.PhaseEntries, runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase));
         Assert.Equal(runLimits.PhaseEntries + 2, launches);        // the entry-count trace above: N+2 asks total
     }
+
+    // --- Task 12 (row 19): run_gate's launch-time wiring (tickets 12e, 12f) ------------------------
+
+    /// <summary>12e: an in-run Claude conductor's directory spawn gets run_gate ADDED to the ordinary
+    /// six-builtin-plus-three-MCP allowlist; the built-in --tools list (what actually turns Bash etc
+    /// on) is untouched either way.</summary>
+    [Fact]
+    public async Task Run12e_an_in_run_claude_conductor_is_launched_with_run_gate_on_its_allowlist()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        var spec = await runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
+        Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
+    }
+
+    /// <summary>12f: an in-run Codex conductor's directory spawn gets the MCP tool-call timeout raised
+    /// from the ordinary 60 s to this run's SpawnTimeout - a 30-minute run_gate call must survive
+    /// long enough to finish (pass 1's M7).</summary>
+    [Fact]
+    public async Task Run12f_an_in_run_codex_conductor_is_launched_with_the_tool_timeout_raised_to_the_run_spawn_timeout()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @gpt-6-astra begin" });
+        var spec = await runner.NextSpecAsync(Wait);
+
+        Assert.Equal("gpt-6-astra", FakeProcessRunner.ParticipantOf(spec));
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1800", spec.Arguments);
+        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
+    }
 }

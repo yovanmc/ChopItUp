@@ -13,12 +13,12 @@ public sealed class RoomToolsTests : IAsyncLifetime
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     [Fact]
-    public async Task Tools_list_is_exactly_the_six_tools()
+    public async Task Tools_list_is_exactly_the_seven_tools()
     {
         await using var client = await _host.ClientFor("claude");
         var tools = await client.ListToolsAsync();
-        Assert.Equal(6, tools.Count);
-        Assert.Equal(new[] { "list_rooms", "post_message", "propose_memory", "read_messages", "recall", "wait_for_message" }, tools.Select(t => t.Name).OrderBy(n => n));
+        Assert.Equal(7, tools.Count);
+        Assert.Equal(new[] { "list_rooms", "post_message", "propose_memory", "read_messages", "recall", "run_gate", "wait_for_message" }, tools.Select(t => t.Name).OrderBy(n => n));
         Assert.All(tools, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
 
         // A7's default is part of the published contract: the SDK emits parameter defaults into the input schema.

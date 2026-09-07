@@ -5,6 +5,8 @@ using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Tests.Skills;
 
+
+
 public sealed class SkillStoreTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skills_" + Guid.NewGuid().ToString("N"));
@@ -302,6 +304,129 @@ public sealed class SkillStoreTests : IDisposable
         var result = trailing.Read("demo");
 
         Assert.IsType<SkillRead.Ok>(result);
+    }
+
+    // --- Row 19 task 12b: VerifyTree and ReadGate ---------------------------------------------------
+
+    /// <summary>Installs a skill through the REAL write path (<see cref="SkillImport"/>) rather than
+    /// the low-level <see cref="WriteSkill"/> fixture above, so the whole-tree manifest (task 12a)
+    /// exists to verify against — <see cref="WriteSkill"/> only ever records the SKILL.md hash.</summary>
+    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null)
+    {
+        var source = Path.Combine(_dir, "sources", name);
+        Directory.CreateDirectory(source);
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), skillMd);
+        foreach (var (relative, content) in extraFiles ?? new Dictionary<string, string>())
+        {
+            var full = Path.Combine(source, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllText(full, content);
+        }
+        var result = SkillImport.Run(source, _store.Root, force: false, _hashes);
+        Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
+    }
+
+    private const string GatedSkillMd = "---\nname: gated\ndescription: d.\nrun: true\ngates: check-it\n---\n# Gated\n";
+
+    [Fact]
+    public void VerifyTree_is_Ok_right_after_a_clean_import()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+
+        Assert.IsType<TreeVerification.Ok>(_store.VerifyTree("gated"));
+    }
+
+    [Fact]
+    public void VerifyTree_reports_Missing_for_a_skill_with_no_manifest_at_all()
+    {
+        WriteSkill("legacy", ValidSkillBody);   // SKILL.md hash only, no tree manifest (pre-row-19 shape)
+
+        Assert.IsType<TreeVerification.Missing>(_store.VerifyTree("legacy"));
+    }
+
+    [Fact]
+    public void VerifyTree_reports_Missing_when_a_manifested_file_is_deleted()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        File.Delete(Path.Combine(_store.Root, "gated", "scripts", "check-it.ps1"));
+
+        var result = _store.VerifyTree("gated");
+
+        Assert.Equal("scripts/check-it.ps1", Assert.IsType<TreeVerification.Missing>(result).Path);
+    }
+
+    [Fact]
+    public void VerifyTree_reports_Tampered_when_a_neighbouring_manifested_file_is_edited()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string>
+        {
+            ["scripts/check-it.ps1"] = "exit 0\n",
+            ["scripts/baselines.json"] = "{}",
+        });
+        File.WriteAllText(Path.Combine(_store.Root, "gated", "scripts", "baselines.json"), "{\"tampered\":true}");
+
+        var result = _store.VerifyTree("gated");
+
+        Assert.Equal("scripts/baselines.json", Assert.IsType<TreeVerification.Tampered>(result).Path);
+    }
+
+    [Fact]
+    public void VerifyTree_reports_Tampered_for_an_extra_file_the_manifest_never_recorded()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        File.WriteAllText(Path.Combine(_store.Root, "gated", "scripts", "sneaky.ps1"), "Write-Output evil");
+
+        var result = _store.VerifyTree("gated");
+
+        Assert.Equal("scripts/sneaky.ps1", Assert.IsType<TreeVerification.Tampered>(result).Path);
+    }
+
+    [Fact]
+    public void ReadGate_is_NotDeclared_for_a_gate_the_skill_never_named()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+
+        Assert.IsType<GateRead.NotDeclared>(_store.ReadGate("gated", "no-such-gate"));
+    }
+
+    [Fact]
+    public void ReadGate_is_Ok_with_the_declaration_for_a_matching_gate()
+    {
+        var withArgs = "---\nname: gated2\ndescription: d.\nrun: true\ngates: check-it(--Foo bar)\n---\n# Gated\n";
+        ImportSkill("gated2", withArgs, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+
+        var ok = Assert.IsType<GateRead.Ok>(_store.ReadGate("gated2", "check-it"));
+
+        Assert.Equal("check-it", ok.Gate.Name);
+        Assert.Equal(["--Foo", "bar"], ok.Gate.Arguments);
+    }
+
+    [Fact]
+    public void ReadGate_is_Tampered_when_the_gates_own_script_is_edited_after_import()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        File.WriteAllText(Path.Combine(_store.Root, "gated", "scripts", "check-it.ps1"), "exit 1\n");
+
+        var result = _store.ReadGate("gated", "check-it");
+
+        Assert.Equal("scripts/check-it.ps1", Assert.IsType<GateRead.Tampered>(result).Path);
+    }
+
+    [Fact]
+    public void ReadGate_is_Ok_for_a_declared_gate_even_while_VerifyTree_finds_a_neighbouring_file_tampered()
+    {
+        // This is the case P5 exists to catch (plan, task 12): a gate's OWN script can be untouched
+        // while a sibling data file it reads or writes has been rewritten, so run_gate (task 12d)
+        // must require BOTH checks, never either alone.
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string>
+        {
+            ["scripts/check-it.ps1"] = "exit 0\n",
+            ["scripts/baselines.json"] = "{}",
+        });
+        File.WriteAllText(Path.Combine(_store.Root, "gated", "scripts", "baselines.json"), "{\"tampered\":true}");
+
+        Assert.IsType<GateRead.Ok>(_store.ReadGate("gated", "check-it"));
+        Assert.IsType<TreeVerification.Tampered>(_store.VerifyTree("gated"));
     }
 
     public void Dispose()

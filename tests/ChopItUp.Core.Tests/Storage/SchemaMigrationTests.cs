@@ -397,7 +397,7 @@ public sealed class SchemaMigrationTests : IDisposable
 
         using (var conn = db.Open())
         {
-            foreach (var table in new[] { "runs", "run_phases", "run_artifacts", "run_gate_runs" })
+            foreach (var table in new[] { "runs", "run_phases", "run_artifacts", "run_gate_runs", "skill_files" })
             {
                 using var probe = conn.CreateCommand();
                 probe.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=$name";
