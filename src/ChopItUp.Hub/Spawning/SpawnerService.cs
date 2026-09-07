@@ -631,6 +631,11 @@ public sealed class SpawnerService : BackgroundService
         // agree on the SAME value.
         var activeRun = _runs.Active(request.RoomId);
         var timeout = activeRun is not null ? _runLimits.SpawnTimeout : _limits.Timeout;
+        // Row 19, task 11 (AC7/D10): a conductor thinks harder about its own loop, and a judge about
+        // what it is asked to judge; everyone else, and anything outside a run, gets no effort flag
+        // at all rather than an explicit default. Never xhigh or max.
+        var effort = activeRun is not null && (participant.Id == activeRun.ConductorId || ParticipantClasses.Has(participant, ParticipantClasses.Judge))
+            ? "high" : null;
         try
         {
             // Row 19, task 9d: counted before anything below can throw - a spawn that fails even to
@@ -655,19 +660,19 @@ public sealed class SpawnerService : BackgroundService
                     var mcpPath = Path.Combine(workDir, "mcp.json");
                     File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token));
                     if (directory is null)
-                        spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label);
+                        spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label, effort);
                     else
                     {
                         var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room (decision 8)
                         File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label);
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort);
                     }
                     break;
                 }
                 case "codex":
                     spec = directory is null
-                        ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label)
-                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label);
+                        ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
+                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label, effort);
                     break;
                 default:
                     throw new InvalidOperationException($"Participant '{participant.Id}' has host '{participant.Host}', which the spawner does not know how to start.");

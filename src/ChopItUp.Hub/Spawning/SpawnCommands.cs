@@ -18,13 +18,16 @@ public static class SpawnCommands
     /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable (LESSONS,
     /// M5 tool-surface); `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP
     /// servers and settings out of the spawn; `--no-session-persistence` is D9; `--bare` is NEVER
-    /// used — it switches auth to API key only, and this app holds no key.</summary>
-    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label) =>
+    /// used — it switches auth to API key only, and this app holds no key. <paramref name="effort"/>
+    /// is row 19's AC7/D10: null outside a run and for an ordinary in-run row (nothing appended); a
+    /// conductor or a `judge`-class row gets exactly `--effort high` — never `xhigh` or `max`.</summary>
+    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--tools", "", "--strict-mcp-config", "--mcp-config", mcpConfigPath,
              "--allowedTools", ClaudeToolAllowed, "--no-session-persistence", "--model", model,
-             "--output-format", "json", "--disable-slash-commands", "--setting-sources", ""],
+             "--output-format", "json", "--disable-slash-commands", "--setting-sources", "",
+             .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             new Dictionary<string, string>(),
             workDir, prompt, label);
 
@@ -44,8 +47,10 @@ public static class SpawnCommands
     /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
     /// tool (LESSONS, M5 approvals); `--ignore-user-config` keeps the owner's config.toml out while
     /// auth still comes from CODEX_HOME (verified); `-c` values are literal strings when they are
-    /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.</summary>
-    public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label) =>
+    /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.
+    /// <paramref name="effort"/> is row 19's AC7/D10, as `-c model_reasoning_effort=<value>` — null
+    /// appends nothing.</summary>
+    public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "exec", "--ephemeral", "--ignore-user-config",
@@ -53,6 +58,7 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.bearer_token_env_var={TokenEnvVar}",
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec=60",
+             .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
              "--approve-for-me", "-C", workDir, "--skip-git-repo-check", "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },
@@ -145,12 +151,13 @@ public static class SpawnCommands
     /// folder beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
     /// what carries the Bash calls the trail records; <paramref name="systemRules"/> (`SpawnPrompt.DirectoryRules`)
     /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.</summary>
-    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label) =>
+    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--permission-mode", "dontAsk", "--tools", ClaudeBuiltins, "--strict-mcp-config", "--mcp-config", mcpConfigPath,
              "--allowedTools", ClaudeDirectoryToolsAllowed, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence", "--model", model,
-             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", ""],
+             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", "",
+             .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             new Dictionary<string, string>(),
             roomDir, prompt, label);
 
@@ -158,7 +165,7 @@ public static class SpawnCommands
     /// not skipped), `--json` carries the command_execution items the trail records, and network is on
     /// inside workspace-write (D10). Measured 2026-09-06 (claim 24): every flag accepted; note the
     /// sandbox did NOT stop a `git commit` — the prompt rule and the trail are the mechanism (decision 7).</summary>
-    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label) =>
+    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "exec", "--ephemeral", "--ignore-user-config", "--json",
@@ -167,6 +174,7 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec=60",
              "-c", "sandbox_workspace_write.network_access=true",
+             .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
              "--approve-for-me", "-C", roomDir, "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },
