@@ -143,7 +143,12 @@ function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
 # fresh-directory guards above.
 $importOut = Join-Path $DataDir 'import.out.log'
 $importErr = Join-Path $DataDir 'import.err.log'
-$import = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--import-skill', $SkillSource) -PassThru -Wait -NoNewWindow `
+# Every path below is quoted INSIDE the argument string. Start-Process joins -ArgumentList with
+# spaces and quotes nothing, so an unquoted path containing a space arrives at the exe as two
+# arguments: this script's own default -SkillSource lives under 'C:\Agent Projects', and unquoted
+# it imported as the skill named 'Agent'. The M11 script this scaffolding came from has the same
+# shape and never tripped it only because its default path has no space in it.
+$import = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $importOut -RedirectStandardError $importErr
 if ($import.ExitCode -ne 0) {
     Write-Error "Importing '$SkillSource' failed (exit $($import.ExitCode)); see $importErr." -ErrorAction Continue
@@ -151,7 +156,7 @@ if ($import.ExitCode -ne 0) {
 }
 
 try {
-    $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', $DataDir, '--port', "$Port", '--rooms-root', $RoomsRoot) -WindowStyle Hidden -PassThru `
+    $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--port', "$Port", '--rooms-root', "`"$RoomsRoot`"") -WindowStyle Hidden -PassThru `
         -RedirectStandardError (Join-Path $DataDir 'hub.stderr.log') -RedirectStandardOutput (Join-Path $DataDir 'hub.stdout.log')
     $health = $null
     foreach ($i in 1..40) {
