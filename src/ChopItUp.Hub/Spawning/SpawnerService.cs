@@ -268,8 +268,20 @@ public sealed class SpawnerService : BackgroundService
         }
 
         // Row 19, task 6 (AC5): a human post inside an active run that did not start a new one is a
-        // steer, recorded by a later task. ExchangePolicy already left `current` untouched above
-        // (its own step 3) - nothing further happens here yet.
+        // steer. ExchangePolicy already left `current` untouched above (its own step 3); this is the
+        // impure half - record it, tell the owner, and if the conductor is idle, wake it now.
+        if (run is not null && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
+        {
+            var runRow = activeRun!;
+            var pending = _steers.TryGetValue(m.RoomId, out var list) ? list : (_steers[m.RoomId] = new List<long>());
+            pending.Add(m.Id);
+            var state = AssembleRunState(runRow);
+            // Table row 14: Nothing while active. Routed through the policy anyway (P7) rather than
+            // assumed by the service, even though the only reachable outcome here is a no-op.
+            CarryOut(runRow, _runPolicy.Decide(state, new RunEvent.HumanPosted(m.Id), pending));
+            PostNote(m.RoomId, $"Steer noted; @{run.ConductorId} is given it when the current exchange concludes.");
+            if (!state.ExchangeOpen && !state.AnythingInFlight) DriveRun(runRow, new RunEvent.Tick());
+        }
     }
 
     /// <summary>Everything <see cref="RunPolicy"/> needs to know about <paramref name="run"/> right

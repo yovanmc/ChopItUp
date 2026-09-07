@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
@@ -220,5 +221,66 @@ public sealed partial class SpawnerServiceTests
         var artifacts = Runs.Artifacts(run!.Id).Select(a => (a.Path, a.AuthorId)).OrderBy(x => x.Path, StringComparer.Ordinal).ToList();
         Assert.Equal([("hub-written.txt", "sonnet"), ("rogue.txt", "sonnet")], artifacts);
         holdFurtherTurns.SetResult();
+    }
+
+    // --- Task 6 (row 19): steer (ticket 06) ---------------------------------------------------------
+
+    private async Task<long> MessageIdIn(string room, string body)
+    {
+        using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
+        return doc.RootElement.GetProperty("messages").EnumerateArray()
+            .First(m => m.GetProperty("body").GetString() == body).GetProperty("id").GetInt64();
+    }
+
+    [Fact]
+    public async Task Run06_an_owner_post_during_a_run_is_noted_as_a_steer_leaves_the_queue_intact_and_drains_into_the_next_trigger_set()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-steer2");
+        var holdTurn1 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (Interlocked.Increment(ref calls) == 1) await holdTurn1.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-steer2", "/build-thing @sonnet begin");
+        await _runner.NextSpecAsync(Wait);   // turn 1 launched, held in flight
+
+        await PostAsOwnerIn("lab-run-steer2", "@opus actually reconsider this");
+        var noted = await WaitForMessageIn("lab-run-steer2", m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Steer noted"));
+        Assert.Equal("Steer noted; @sonnet is given it when the current exchange concludes.", noted.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // opus never spawned; nothing woken while turn 1 runs
+        var stillActive = Runs.Active("lab-run-steer2");
+        Assert.Equal("sonnet", stillActive!.ConductorId);                          // the run's queue (its conductor) is untouched
+
+        var steerId = await MessageIdIn("lab-run-steer2", "@opus actually reconsider this");
+        holdTurn1.SetResult();   // turn 1 concludes -> the conductor is re-spawned, draining the steer
+
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.Contains($"#{steerId}", second.StandardInput);   // the steer is among its triggers
+
+        Assert.Equal(2, Runs.Active("lab-run-steer2")!.Exchanges);
+    }
+
+    [Fact]
+    public async Task Run06_outside_a_run_an_owner_post_still_supersedes()
+    {
+        // The regression F-23 asks to keep: task 4's step 3 already returns for a run; this room
+        // never has one, so the pre-row-19 supersede path is exactly what runs.
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "opus") await release.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+        await PostAsOwner("@opus think slowly");
+        await _runner.NextSpecAsync(Wait);
+        await PostAsOwner("never mind");
+        await Task.Delay(300);
+        Assert.Equal("superseded", Spawner.Snapshot("general").Status);
+        release.SetResult();
     }
 }
