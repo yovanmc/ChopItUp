@@ -717,4 +717,40 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(RunStatus.Parked, runs.Latest(room)!.Status);   // still parked - never resumed
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
     }
+
+    // --- Task 10 (row 19): conductor silence (ticket 10, A2) ---------------------------------------
+
+    /// <summary>The transition table's rows 10-12 (task 3): the first silence in a phase is free (ask
+    /// again, no cost); every silence after that ALSO counts a phase entry for that ask, which is
+    /// what lets row 11 eventually reach the phase's own entry cap and PARK instead of asking
+    /// forever - "at most twice per phase entry" (ticket 10), for whatever RunLimits.PhaseEntries
+    /// says, never a hardcoded two. With PhaseEntries: N, a conductor that never posts is launched
+    /// N+2 times (the initial launch, one free re-ask, then N counted re-asks) before the (N+2)th
+    /// silence finds the cap already spent and parks rather than asking again.</summary>
+    [Fact]
+    public async Task Run10_a_persistently_silent_conductor_is_asked_until_the_phase_cap_parks_the_run_never_leaving_it_active()
+    {
+        var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 2);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+
+        var launches = 0;
+        runner.Handler = (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") Interlocked.Increment(ref launches);
+            return Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));   // never posts, ever
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+
+        var parkedNote = await WaitForNoteContaining(host, room, "parked");
+        Assert.Contains("did not post", parkedNote.Body);
+
+        var runs = host.Services.GetRequiredService<RunStore>();
+        var run = runs.Latest(room);
+        Assert.Equal(RunStatus.Parked, run!.Status);              // A2: never left active with nothing driving it
+        Assert.False(run.CapSpent);                               // a silence park is soft, not a hard cap
+        Assert.Equal(runLimits.PhaseEntries, runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase));
+        Assert.Equal(runLimits.PhaseEntries + 2, launches);        // the entry-count trace above: N+2 asks total
+    }
 }

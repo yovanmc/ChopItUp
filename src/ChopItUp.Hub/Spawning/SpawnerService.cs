@@ -462,6 +462,34 @@ public sealed class SpawnerService : BackgroundService
         CarryOut(run, decision);
     }
 
+    /// <summary>Row 19, task 10 (A2): the run's CONDUCTOR finished without posting. Table rows 10-12
+    /// all still ask again with the SAME triggers it was given (<paramref name="triggerIds"/>), but
+    /// the bookkeeping differs: the FIRST silence in a phase costs nothing (row 10); every one after
+    /// that ALSO counts a phase entry for THIS ask (row 12) - which is what lets row 11 eventually
+    /// reach the phase's own entry cap and park the run instead of asking forever. "At most twice
+    /// per phase entry" (ticket 10) falls out of that rule for whatever RunLimits.PhaseEntries says -
+    /// this never hardcodes "twice". Pass 1's B3 closed exactly this stall; the fold reintroduced it
+    /// by leaving the counter declared, consumed and reset with no write site (pass 2's F-2) -
+    /// written HERE, since RunPolicy only reads it. <see cref="AssembleRunState"/>'s
+    /// <c>SilencesThisPhase</c> is read ONCE, before the increment, so <see cref="RunPolicy.Decide"/>
+    /// sees how many silences already happened before this one - the same before-then-increment
+    /// order <see cref="HandleConductorPost"/> uses for the refusal counter.</summary>
+    private void HandleSpawnSilent(Run run, string participantId, IReadOnlyList<long> triggerIds)
+    {
+        var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
+        var state = AssembleRunState(run);
+        var decision = _runPolicy.Decide(state, new RunEvent.SpawnSilent(participantId, triggerIds), pending);
+
+        // Row 12's "the service counts a phase entry for this ask": only past the first silence, and
+        // only when the run is actually still being asked again (rows 1/2's hard caps still win
+        // first here exactly as everywhere else in RunPolicy, and a Park needs no phase entry).
+        if (state.SilencesThisPhase >= 1 && decision is RunDecision.OpenConductor)
+            _runs.EnterPhase(run.Id, run.Phase, _clock.GetUtcNow());
+        _silencesThisPhase[run.Id] = state.SilencesThisPhase + 1;
+
+        CarryOut(run, decision);
+    }
+
     /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
     /// rooted at that post (<see cref="RunDecision.OpenWorkers.RootMessageId"/>), never at the
     /// conductor's own re-spawn root.</summary>
@@ -753,8 +781,19 @@ public sealed class SpawnerService : BackgroundService
             // superseded it (pass 2's F-1); that newer exchange must be left alone.
             if (_runs.Active(room) is { } activeRun && ReferenceEquals(h.Exchange, _rooms.GetValueOrDefault(room)))
             {
-                var lastId = _store.ReadLast(room, 1).Select(msg => msg.Id).DefaultIfEmpty(h.Request.RootMessageId).First();
-                DriveRun(activeRun, new RunEvent.ExchangeConcluded(lastId));
+                // Row 19, task 10 (A2): the run's CONDUCTOR finishing WITHOUT posting is a silence,
+                // decided through RunEvent.SpawnSilent (ask again, then park once the phase's
+                // allowance is spent) rather than the unconditional immediate reopen every OTHER
+                // conclusion gets via ExchangeConcluded - a worker's turn, or the conductor's own
+                // turn when it DID post (even a refused post is still "posted": HandleConductorPost
+                // already asked it again itself, above this method entirely).
+                if (!h.Posted && activeRun.ConductorId == id)
+                    HandleSpawnSilent(activeRun, id, h.Request.TriggerIds);
+                else
+                {
+                    var lastId = _store.ReadLast(room, 1).Select(msg => msg.Id).DefaultIfEmpty(h.Request.RootMessageId).First();
+                    DriveRun(activeRun, new RunEvent.ExchangeConcluded(lastId));
+                }
             }
         }
         Publish(room);
