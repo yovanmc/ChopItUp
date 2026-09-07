@@ -28,6 +28,7 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 | D10 | Effort | By roster class, hard code in `SpawnCommands`: conductor and judge-class spawns run `--effort high` (Claude) / `-c model_reasoning_effort=high` (Codex); plumbing and visible rows run the model default with no flag. Never xhigh or max. Codex accepted values unverified (F10): the first plan probes it in its claim ledger. Resolves R2. |
 | D11 | Split | Three rows in dispatch order: row 11 (id kept) = skill substrate; new row = runs; new row = the roadmap skill ported with an end-to-end acceptance run. Row 18 memory v1.1 after all three (M5 ledger order). Each row ships something usable alone and has a real-CLI check like M5/M9/M10. |
 | D12 | Acceptance | Port row acceptance: first a scratch .NET repo with a seeded `ROADMAP.md` and one lite-path row, run end-to-end; then, as the row's final task, a room bound to the ChopItUp repo runs its own next row driven from the owner's phone session through the proxy credential. The row is not DONE until the second run has shipped. |
+| D13 | Skill source of truth | The harness folder `~/.claude/skills/roadmap/` stays canonical; a hub command re-imports it into `data/skills/roadmap/`. Room-specific mechanics (phase tags, `run_gate` names, class mentions, the ping as a post) live in ONE overlay file inside the hub skill folder that the import never touches. DEFERRED with trigger: after the D12 dogfood run ships, move to hub-canonical with a host-neutral core (option A) in a way that does not disturb the other harnesses. Owner: the switch must not impact the other harnesses. |
 
 ## Facts (verified this session unless labelled)
 
@@ -63,3 +64,4 @@ Consequences noted at the time: (1) a session posting through the `claude`/`code
 - Q10 Effort: A by class hard code / B skill-declared / C none. Recommended A. Owner: **A**. ANSWERED → D10.
 - Q11 Split: A three rows / B two / C one. Recommended A. Owner: **A**. ANSWERED → D11.
 - Q12 Acceptance target: A dogfood ChopItUp / B scratch repo / C scratch then dogfood. Recommended C. Owner: **C**. ANSWERED → D12.
+- Q13 Skill source of truth: A hub canonical / B harness canonical + overlay, revisit after dogfood / C fork. Recommended B. Owner: **B until proven, then A without impacting the other harnesses**. ANSWERED → D13 (+ DEFERRED trigger).
