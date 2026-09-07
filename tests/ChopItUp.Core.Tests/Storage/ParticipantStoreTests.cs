@@ -7,18 +7,18 @@ public sealed class ParticipantStoreTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_roster_" + Guid.NewGuid().ToString("N"));
 
     [Fact]
-    public void List_returns_the_seed_roster_in_seed_order_and_HumanId_is_owner()
+    public void List_returns_the_seed_roster_in_seed_order_and_OwnerId_is_owner()
     {
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
         var store = new ParticipantStore(db);
 
         Assert.Equal(ChopDb.SeedRoster, store.List());
-        Assert.Equal("owner", store.HumanId());
+        Assert.Equal("owner", store.OwnerId());
     }
 
     [Fact]
-    public void HumanId_throws_when_the_roster_has_two_humans()
+    public void OwnerId_is_owner_even_though_the_roster_has_two_humans()
     {
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
@@ -28,7 +28,30 @@ public sealed class ParticipantStoreTests : IDisposable
             cmd.CommandText = "INSERT INTO participants (id, display_name, kind, host) VALUES ('guest','Guest','human','human')";
             cmd.ExecuteNonQuery();
         }
-        Assert.Throws<InvalidOperationException>(() => new ParticipantStore(db).HumanId());
+        Assert.Equal("owner", new ParticipantStore(db).OwnerId());
+    }
+
+    [Fact]
+    public void OwnerId_throws_when_the_owner_row_is_absent()
+    {
+        var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
+        db.EnsureDatabase();
+        using (var conn = db.Open())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM participants WHERE id = 'owner'";
+            cmd.ExecuteNonQuery();
+        }
+        Assert.Throws<InvalidOperationException>(() => new ParticipantStore(db).OwnerId());
+    }
+
+    [Fact]
+    public void HumanIds_lists_owner_and_owner_remote()
+    {
+        var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
+        db.EnsureDatabase();
+
+        Assert.Equal(new[] { "owner", "owner-remote" }, new ParticipantStore(db).HumanIds());
     }
 
     public void Dispose()

@@ -37,7 +37,7 @@ public static class RoomsApi
         catch (RoomDirectoryException e) { return Results.BadRequest(new { error = e.Message }); }
         try { store.CreateRoom(id, name, directory); }
         catch (ArgumentException e) { return Results.Conflict(new { error = e.Message }); }   // lost a race for the id
-        return Results.Json(ChatApi.MapRoom(store.GetRoom(id, participants.HumanId())!), statusCode: StatusCodes.Status201Created);
+        return Results.Json(ChatApi.MapRoom(store.GetRoom(id, participants.OwnerId())!), statusCode: StatusCodes.Status201Created);
     }
 
     private static IResult Archive(string roomId, MessageStore store, ParticipantStore participants, SpawnerService spawner)
@@ -46,7 +46,7 @@ public static class RoomsApi
         if (roomId == "general") return Results.BadRequest(new { error = GeneralStays });
         if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });
         if (room.ArchivedAt is null) store.SetArchived(roomId, DateTimeOffset.UtcNow);
-        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.HumanId())!));
+        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.OwnerId())!));
     }
 
     private static IResult Unarchive(string roomId, MessageStore store, ParticipantStore participants, SpawnerService spawner)
@@ -54,7 +54,7 @@ public static class RoomsApi
         if (store.GetRoom(roomId) is null) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });
         store.SetArchived(roomId, null);
-        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.HumanId())!));
+        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.OwnerId())!));
     }
 
     /// <summary>Binds a directory to a legacy (M1–M10) room once. A room created after M9 always has one.</summary>
@@ -68,7 +68,7 @@ public static class RoomsApi
         catch (RoomDirectoryException e) { return Results.BadRequest(new { error = e.Message }); }
         if (!store.BindDirectory(roomId, directory))
             return Results.Conflict(new { error = $"Room '{roomId}' was bound by another request; reload." });
-        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.HumanId())!));
+        return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.OwnerId())!));
     }
 
     /// <summary>The owner's read cursor moves to the room's last message: the same row an MCP
@@ -76,7 +76,7 @@ public static class RoomsApi
     private static IResult MarkRead(string roomId, MessageStore store, ParticipantStore participants)
     {
         if (store.GetRoom(roomId) is not { } room) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
-        if (room.LastMessageId > 0) store.SetCursor(participants.HumanId(), roomId, room.LastMessageId);
+        if (room.LastMessageId > 0) store.SetCursor(participants.OwnerId(), roomId, room.LastMessageId);
         return Results.Json(new { roomId, unread = 0L });
     }
 

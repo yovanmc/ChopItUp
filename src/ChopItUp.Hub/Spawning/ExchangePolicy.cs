@@ -1,7 +1,26 @@
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
+using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Spawning;
+
+/// <summary>What the service found when it looked the message's slash command up. The policy needs
+/// these outcomes and no filesystem. Every arm except <c>None</c> and <c>Found</c> is a refusal: the
+/// owner asked for an instruction the hub cannot hand over intact, and spawning without it spends
+/// real model turns on the wrong ask (D-c).</summary>
+public abstract record SkillResolution
+{
+    public sealed record None : SkillResolution;
+    public sealed record Found(ResolvedSkill Skill, string Arguments) : SkillResolution;
+    public sealed record Unknown(string Name, IReadOnlyList<string> Known) : SkillResolution;
+    public sealed record Tampered(string Name) : SkillResolution;
+
+    /// <summary>The store could not be read at all (disk, permissions). Distinct from Unknown: the
+    /// skill may well exist, and telling the owner "no such skill" would be a lie.</summary>
+    public sealed record Unavailable(string Name, string Reason) : SkillResolution;
+
+    public static readonly SkillResolution Nothing = new None();
+}
 
 /// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange,
 /// and an owner message always closes the one that was open. D8: a mention is the only trigger,
@@ -27,7 +46,7 @@ public sealed class ExchangePolicy
 
     /// <summary>The room's exchange after this message, and the notes to post. The returned object is
     /// <paramref name="current"/> itself unless an owner message opened a new one.</summary>
-    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true)
+    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true, SkillResolution? skill = null)
     {
         var notes = new List<string>();
         if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (current, notes);
@@ -49,8 +68,40 @@ public sealed class ExchangePolicy
                 current.Status = ExchangeStatus.Superseded;
                 current.Pending.Clear();
             }
-            if (mentioned.Count == 0) return (current, notes);
-            var next = new Exchange { RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget };
+            // A skill the hub cannot hand over intact spends nothing: the owner asked for an
+            // instruction, and spawning without it would burn real model calls on the wrong ask
+            // (D-c). The supersede above still stands - the owner spoke (M5-D5).
+            switch (skill)
+            {
+                case SkillResolution.Unknown u:
+                    notes.Add(u.Known.Count == 0
+                        ? $"No skill named '/{u.Name}'; this hub has no skills installed. Import one with --import-skill."
+                        : $"No skill named '/{u.Name}'. Installed: {string.Join(", ", u.Known.Select(k => "/" + k))}.");
+                    return (current, notes);
+                case SkillResolution.Tampered t:
+                    notes.Add($"Skill /{t.Name} does not match what was imported; nothing was spawned. Re-import it with --import-skill before using it.");
+                    return (current, notes);
+                case SkillResolution.Unavailable a:
+                    notes.Add($"Could not read skill /{a.Name}: {a.Reason}. Nothing was spawned.");
+                    return (current, notes);
+            }
+            if (mentioned.Count == 0)
+            {
+                // A skill with nobody to run it: say so, or the owner watches an invocation do
+                // nothing at all and cannot tell it from a hub that ignored them.
+                if (skill is SkillResolution.Found idle)
+                    notes.Add($"/{idle.Skill.Name} needs a mention to run: nobody was addressed, so no exchange started.");
+                return (current, notes);
+            }
+            var found = skill as SkillResolution.Found;
+            var next = new Exchange
+            {
+                RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget,
+                Skill = found?.Skill,
+            };
+            if (found is not null)
+                notes.Add($"Skill /{found.Skill.Name} is in force for this exchange; every turn of it is rendered the same instruction."
+                    + (found.Skill.Truncated ? $" Its text was cut to {SkillStore.MaxSkillChars} characters." : ""));
             Accept(next, mentioned, message.Id, now, notes);
             return (next, notes);
         }

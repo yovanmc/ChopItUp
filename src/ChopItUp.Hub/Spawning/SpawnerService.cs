@@ -4,6 +4,7 @@ using System.Threading.Channels;
 using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
+using ChopItUp.Core.Skills;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Hosting;
@@ -11,6 +12,7 @@ using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Realtime;
 using ChopItUp.Hub.Rooms;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Skills;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.SignalR;
@@ -75,6 +77,7 @@ public sealed class SpawnerService : BackgroundService
     private readonly RoomTrails _trails;
     private readonly Participant _owner;
     private readonly ExchangePolicy _policy;
+    private readonly SkillStore _skills;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
@@ -85,12 +88,13 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants)
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
-        _trails = trails; _owner = roster.First(p => p.Id == participants.HumanId());
+        _trails = trails; _owner = roster.First(p => p.Id == participants.OwnerId());
         _policy = new ExchangePolicy(roster, limits);
+        _skills = skills;
     }
 
     public ExchangeSnapshot Snapshot(string roomId) => _snapshots.TryGetValue(roomId, out var s) ? s : Idle(roomId);
@@ -201,10 +205,50 @@ public sealed class SpawnerService : BackgroundService
             handle.Posted = true;
             acceptMentions = ReferenceEquals(handle.Exchange, current);
         }
-        var (next, notes) = _policy.OnMessage(current, m, DateTimeOffset.UtcNow, acceptMentions);
+        var (next, notes) = _policy.OnMessage(current, m, DateTimeOffset.UtcNow, acceptMentions, ResolveSkill(m));
         if (next is null) _rooms.Remove(m.RoomId); else _rooms[m.RoomId] = next;
         foreach (var note in notes) PostNote(m.RoomId, note);
         if (next is not null || current is not null) Publish(m.RoomId);
+    }
+
+    /// <summary>What the message's first line asks for, if anything. Only a human's post is ever
+    /// resolved (a model's `/whatever` is prose, acceptance 3) — the policy itself never touches the
+    /// filesystem (D-b), so this is the one place row 11's I/O happens.
+    ///
+    /// Safe to do on this loop's single thread: <see cref="SkillStore.Read"/> refuses on file length
+    /// before reading a byte (<c>MaxSkillFileBytes</c>), so a local read plus one SHA-256 of at most
+    /// 1 MB is sub-millisecond, and it happens once per exchange root, not per turn. That bound (and
+    /// the same one in <c>List</c>) is what makes this placement correct — without it, a single
+    /// oversized file in a store the threat model says is writable would stall every room's exchange
+    /// handling and the owner's stop button behind a read and a hash. Do not remove either guard as
+    /// "defensive".</summary>
+    private SkillResolution ResolveSkill(Message m)
+    {
+        var author = _roster.FirstOrDefault(p => p.Id == m.AuthorId);
+        if (author is not { Kind: "human" }) return SkillResolution.Nothing;
+        if (!SlashCommands.TryParse(m.Body, out var invocation)) return SkillResolution.Nothing;
+        try
+        {
+            return _skills.Read(invocation.Name) switch
+            {
+                SkillRead.Ok ok => new SkillResolution.Found(ok.Skill, invocation.Arguments),
+                SkillRead.Tampered => new SkillResolution.Tampered(invocation.Name),
+                // Exhaustive on purpose - NOT a `_ =>` catch-all. A future SkillRead arm falling
+                // through to "No skill named /x" would be the hub telling the owner a lie by default.
+                SkillRead.NotFound => new SkillResolution.Unknown(invocation.Name, _skills.List().Select(s => s.Name).ToList()),
+                var other => throw new InvalidOperationException($"Unhandled SkillRead {other.GetType().Name}."),
+            };
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Deliberately broad, and deliberately NOT a degrade to Nothing. Nothing would open a
+            // normal exchange and spend the model calls on a skill-less prompt, silently (D-c). A
+            // narrow catch is just as bad in the other direction: anything it misses escapes to the
+            // loop's Guarded, which logs and swallows the WHOLE PostedEvent - so no exchange opens,
+            // no note is posted, the supersede never happens, and a previously-open exchange stays
+            // Open in _rooms and keeps accepting model posts. That is silent state divergence.
+            return new SkillResolution.Unavailable(invocation.Name, e.Message);
+        }
     }
 
     private void LaunchDue()
@@ -241,7 +285,7 @@ public sealed class SpawnerService : BackgroundService
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
-                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory), _limits);
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -255,7 +299,7 @@ public sealed class SpawnerService : BackgroundService
                     else
                     {
                         var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room (decision 8)
-                        File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson());
+                        File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
                         spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label);
                     }
                     break;

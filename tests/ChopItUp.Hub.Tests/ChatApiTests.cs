@@ -228,4 +228,24 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal("codex", sol.GetProperty("host").GetString());
         Assert.Equal("gpt-5.6-sol", sol.GetProperty("model").GetString());
     }
+
+    /// <summary>Task 2, 2d: the API publishes a PARSED array, never the raw delimited string, and an
+    /// unclassed row answers [] rather than being absent or null.</summary>
+    [Fact]
+    public async Task Api_participants_publishes_each_rows_parsed_classes()
+    {
+        var response = await _host.Client.GetAsync("/api/participants");
+        response.EnsureSuccessStatusCode();
+        var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.EnumerateArray().ToArray();
+
+        var ownerRemote = rows.Single(r => r.GetProperty("id").GetString() == "owner-remote");
+        Assert.Equal("human", ownerRemote.GetProperty("kind").GetString());
+        Assert.Empty(ownerRemote.GetProperty("classes").EnumerateArray());
+
+        var opus = rows.Single(r => r.GetProperty("id").GetString() == "opus");
+        Assert.Equal(new[] { "visible", "judge" }, opus.GetProperty("classes").EnumerateArray().Select(e => e.GetString()));
+
+        var fable = rows.Single(r => r.GetProperty("id").GetString() == "fable");
+        Assert.Equal(new[] { "judge" }, fable.GetProperty("classes").EnumerateArray().Select(e => e.GetString()));
+    }
 }

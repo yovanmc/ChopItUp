@@ -12,7 +12,7 @@ import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import Thread from './Thread';
 import TrailDialog from './TrailDialog';
-import { isHuman, isSystem, setRoster } from './participants';
+import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
 import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room } from './types';
 
 /** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
@@ -184,13 +184,19 @@ export default function App() {
 
     connection.on('MessagePosted', (message: Message) => {
       const open = message.roomId === currentRoom.current;
+      // Since schema v7 "a human wrote it" and "this window wrote it" are different questions. Only
+      // the owner's own posts advance the owner's cursor on the hub; a post from the remote hand
+      // (D3) is read with ITS cursor, so for this window it is someone else's message — it has to
+      // bump the badge live and get read like any other, or the badge sits still until a reload
+      // disagrees with it.
+      const fromThisHand = isHuman(message.authorId) && !isOwnerRemote(message.authorId);
       if (open) merge([message]);
       // Every memory state change is announced by a hub note that starts with "Memory " (a proposal,
       // an import, an approval, a rejection); that note IS the refresh signal — no second event.
       if (open && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
         loadProposals(message.roomId).catch(() => undefined);
       }
-      if (open && !isHuman(message.authorId)) scheduleRead(message.roomId);
+      if (open && !fromThisHand) scheduleRead(message.roomId);
       // The owner's own posts advance the owner's cursor on the hub, so they never count as unread.
       setRooms((previous) =>
         byActivity(
@@ -201,7 +207,7 @@ export default function App() {
                   messageCount: room.messageCount + 1,
                   lastMessageId: message.id,
                   lastActivityAt: message.createdAt,
-                  unread: open || isHuman(message.authorId) ? room.unread : room.unread + 1,
+                  unread: open || fromThisHand ? room.unread : room.unread + 1,
                 }
               : room,
           ),

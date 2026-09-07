@@ -10,6 +10,7 @@ using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Realtime;
 using ChopItUp.Hub.Rooms;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Web;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -59,6 +60,10 @@ public static class HubHost
             // trail is created lazily by the first approval (plan decisions 1, 5).
             var memory = new MemoryStore(Path.Combine(options.DataDir, "memory"));
             memory.EnsureLayout();
+            // Row 11: read on demand, never cached (D-d) - a skill is a document, not a credential,
+            // and --import-skill must take effect without a restart.
+            var skills = new SkillStore(Path.Combine(options.DataDir, "skills"), new SkillHashes(db));
+            skills.EnsureLayout();
 
             builder.Services.AddSingleton(db);
             builder.Services.AddSingleton(new MessageStore(db));
@@ -74,6 +79,7 @@ public static class HubHost
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddSingleton(memory);
+            builder.Services.AddSingleton(skills);
             builder.Services.AddSingleton(new MemoryProposalStore(db));
             builder.Services.AddSingleton((memoryGit ?? (root => new MemoryGit(root)))(memory.Root));
             builder.Services.AddSingleton(new RoomTrails(roomGit ?? (dir => new GitTrail(dir))));
@@ -115,6 +121,7 @@ public static class HubHost
             app.MapRoomsApi();
             app.MapExchangeApi();
             app.MapMemoryApi();
+            app.MapSkillsApi();
             return app;
         }
         catch

@@ -30,10 +30,10 @@ public static class ChatApi
     }
 
     private static IResult GetRooms(MessageStore store, ParticipantStore participants, bool archived = false) =>
-        Results.Json(store.ListRooms(includeArchived: archived, unreadFor: participants.HumanId()).Select(MapRoom));
+        Results.Json(store.ListRooms(includeArchived: archived, unreadFor: participants.OwnerId()).Select(MapRoom));
 
     private static IResult GetParticipants(ParticipantStore participants) =>
-        Results.Json(participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }));
+        Results.Json(participants.List().Select(p => new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model, Classes = ParticipantClasses.Parse(p.Classes) }));
 
     private static IResult GetMessages(string roomId, MessageStore store, long afterId = 0, int limit = MessageStore.DefaultLimit)
     {
@@ -55,7 +55,7 @@ public static class ChatApi
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Body)) return Results.BadRequest(new { error = "body is empty." });
-        var message = store.Post(roomId, participants.HumanId(), body.Body);   // 3-arg overload: no client_key, always inserts
+        var message = store.Post(roomId, participants.OwnerId(), body.Body);   // 3-arg overload: no client_key, always inserts
         signal.Publish(roomId, message);
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }
@@ -71,7 +71,7 @@ public static class ChatApi
         var turns = SplitIntoTurns(body.Text);
         if (turns.Count == 0) return Results.BadRequest(new { error = "nothing to import." });
 
-        var humanId = participants.HumanId();
+        var humanId = participants.OwnerId();
         var posted = new List<Message>(turns.Count);
         foreach (var turn in turns)
         {

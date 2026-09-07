@@ -1,5 +1,6 @@
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
@@ -205,5 +206,113 @@ public sealed class ExchangePolicyTests
         Assert.Equal(["opus", "sonnet", "fable", "gpt-6-astra"], x.Pending.Keys);
         Assert.Contains("not spawning @gpt-5.5", Assert.Single(notes));
         Assert.All(Policy().Due(x, T0.AddSeconds(2), NoStarts, Nobody), d => Assert.Equal(0, d.RemainingAfter));
+    }
+
+    // --- Task 4: the exchange carries the skill in force ------------------------------------------
+
+    private static readonly ResolvedSkill DemoSkill = new("demo", "Demo Skill", "Do the demo thing.", false);
+    private static readonly ResolvedSkill TruncatedSkill = new("demo", "Demo Skill", "Do the demo thing.", true);
+
+    [Fact]
+    public void An_owner_post_with_a_found_skill_opens_an_exchange_carrying_it_and_notes_it_in_force()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/demo @sonnet please begin"), T0,
+            skill: new SkillResolution.Found(DemoSkill, "please begin"));
+        Assert.NotNull(x);
+        Assert.Same(DemoSkill, x!.Skill);
+        Assert.Equal(["sonnet"], x.Pending.Keys);
+        Assert.Contains(notes, n => n == "Skill /demo is in force for this exchange; every turn of it is rendered the same instruction.");
+    }
+
+    [Fact]
+    public void A_truncated_skill_says_so_in_the_in_force_note()
+    {
+        var (_, notes) = Policy().OnMessage(null, Msg(1, "owner", "/demo @sonnet"), T0,
+            skill: new SkillResolution.Found(TruncatedSkill, ""));
+        Assert.Contains(notes, n => n.Contains($"Its text was cut to {SkillStore.MaxSkillChars} characters."));
+    }
+
+    [Fact]
+    public void Unknown_tampered_and_unavailable_each_refuse_without_opening_an_exchange_but_still_supersede_one_that_was_open()
+    {
+        foreach (SkillResolution refusal in new SkillResolution[]
+                 {
+                     new SkillResolution.Unknown("nope", ["demo"]),
+                     new SkillResolution.Tampered("demo"),
+                     new SkillResolution.Unavailable("demo", "disk went away"),
+                 })
+        {
+            var p = Policy();
+            var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+            Assert.Equal(ExchangeStatus.Open, open!.Status);
+
+            var (next, notes) = p.OnMessage(open, Msg(2, "owner", "/x @sonnet"), T0.AddSeconds(1), skill: refusal);
+            Assert.Same(open, next);                                    // no NEW exchange opened
+            Assert.Equal(ExchangeStatus.Superseded, open.Status);       // but the owner still spoke (D5)
+            Assert.Empty(open.Pending);                                 // sonnet was never accepted
+            var note = Assert.Single(notes);
+            switch (refusal)
+            {
+                case SkillResolution.Unknown u:
+                    Assert.Equal("No skill named '/nope'. Installed: /demo.", note);
+                    break;
+                case SkillResolution.Tampered t:
+                    Assert.Equal("Skill /demo does not match what was imported; nothing was spawned. Re-import it with --import-skill before using it.", note);
+                    break;
+                case SkillResolution.Unavailable a:
+                    Assert.Equal("Could not read skill /demo: disk went away. Nothing was spawned.", note);
+                    break;
+            }
+        }
+    }
+
+    [Fact]
+    public void An_unknown_skill_with_no_skills_installed_says_so_rather_than_naming_none()
+    {
+        var (_, notes) = Policy().OnMessage(null, Msg(1, "owner", "/nope @sonnet"), T0,
+            skill: new SkillResolution.Unknown("nope", []));
+        Assert.Equal("No skill named '/nope'; this hub has no skills installed. Import one with --import-skill.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Found_with_no_mention_notes_and_opens_nothing()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/demo"), T0, skill: new SkillResolution.Found(DemoSkill, ""));
+        Assert.Null(x);
+        Assert.Equal("/demo needs a mention to run: nobody was addressed, so no exchange started.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void A_model_post_carrying_a_found_skill_never_opens_an_exchange()
+    {
+        // The service never actually produces this (only a human's post is resolved), but the policy's
+        // own human-only gate is what guarantees it, and that is worth pinning directly.
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "codex", "/demo @sonnet"), T0, skill: new SkillResolution.Found(DemoSkill, ""));
+        Assert.Null(x);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void Budget_refusal_and_the_skill_in_force_note_can_both_appear()
+    {
+        var limited = new ExchangePolicy(ChopDb.SeedRoster, Limits with { Budget = 1 });
+        var (x, notes) = limited.OnMessage(null, Msg(1, "owner", "/demo @opus @sonnet"), T0, skill: new SkillResolution.Found(DemoSkill, ""));
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        Assert.Contains(notes, n => n.StartsWith("Skill /demo is in force"));
+        Assert.Contains(notes, n => n.Contains("not spawning @sonnet"));
+    }
+
+    /// <summary>Pins the complete set of refusal arms (M-7): if a future arm is added to
+    /// <see cref="SkillResolution"/> without this list being updated too, this test is the thing that
+    /// catches it, since a plain switch statement does not fail to compile on a missing case.</summary>
+    [Fact]
+    public void Every_SkillResolution_arm_besides_None_and_Found_is_a_pinned_refusal()
+    {
+        var arms = typeof(SkillResolution).GetNestedTypes()
+            .Where(t => t != typeof(SkillResolution.None) && t != typeof(SkillResolution.Found))
+            .OrderBy(t => t.Name).ToList();
+        var expected = new[] { typeof(SkillResolution.Tampered), typeof(SkillResolution.Unavailable), typeof(SkillResolution.Unknown) }
+            .OrderBy(t => t.Name).ToList();
+        Assert.Equal(expected, arms);
     }
 }

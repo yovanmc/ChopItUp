@@ -49,6 +49,15 @@ export interface Participant {
   model: string | null;
 }
 
+/** Mirrors `GET /api/skills` (Web/SkillsApi.cs). `chars` is the size of the text the hub renders
+ *  into every spawn of an exchange the skill roots. Four fields, matching `SkillSummary` exactly. */
+export interface Skill {
+  name: string;
+  title: string;
+  description: string;
+  chars: number;
+}
+
 /** Mirrors `GET /api/rooms/{id}/exchange` and the `POST .../exchange/stop` response
  *  (Spawning/SpawnerService.cs `ExchangeSnapshot`). `seq` orders a snapshot fetched over HTTP against
  *  whatever `ExchangeChanged` delivers over the socket — never render one with a lower `seq` than

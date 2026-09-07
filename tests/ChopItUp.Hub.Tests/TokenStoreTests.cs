@@ -51,8 +51,14 @@ public sealed class TokenStoreTests : IDisposable
     {
         TokenStore.Load(_dir, ["owner", "claude"]);
         var ex = Assert.Throws<InvalidOperationException>(() => TokenStore.ReadExisting(_dir, Roster));
-        Assert.Contains("gpt-5.4-mini", ex.Message);
-        Assert.DoesNotContain("owner", ex.Message.Split(':').Last());
+        const string prefix = "has no token for: ";
+        const string suffix = ". Start the hub once to mint them.";
+        var listStart = ex.Message.IndexOf(prefix, StringComparison.Ordinal) + prefix.Length;
+        var listEnd = ex.Message.IndexOf(suffix, StringComparison.Ordinal);
+        var missing = ex.Message[listStart..listEnd].Split(',').Select(s => s.Trim()).ToArray();
+        Assert.Contains("gpt-5.4-mini", missing);
+        Assert.DoesNotContain("owner", missing);
+        Assert.Contains("owner-remote", missing);
     }
 
     public void Dispose()

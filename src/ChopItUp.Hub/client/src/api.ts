@@ -6,6 +6,7 @@ import type {
   Message,
   Participant,
   Room,
+  Skill,
   Trail,
 } from './types';
 
@@ -89,6 +90,13 @@ export async function getTrail(roomId: string, signal?: AbortSignal): Promise<Tr
 
 export async function listParticipants(signal?: AbortSignal): Promise<Participant[]> {
   return unwrap<Participant[]>(await fetch('/api/participants', { signal }));
+}
+
+/** The installed skill store, for the composer's slash menu. An empty store answers `[]`, and so does
+ *  one whose only skill failed its fingerprint check — the hub filters both out, so nothing here has
+ *  to. A throw is the composer's cue to show no menu at all rather than an error. */
+export async function listSkills(signal?: AbortSignal): Promise<Skill[]> {
+  return unwrap<Skill[]>(await fetch('/api/skills', { signal }));
 }
 
 /** Reads forward from `afterId` to the end of the room. The hub only pages forward, so the whole
