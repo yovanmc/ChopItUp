@@ -231,4 +231,20 @@ public sealed class SpawnCommandsTests
         Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1800", spec.Arguments);
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
+
+    // --- Row 19, orchestrator addition to task 12f: the Claude CLI's OWN MCP tool-call timeout -----
+
+    [Fact]
+    public void ClaudeInDirectory_sets_no_MCP_TOOL_TIMEOUT_by_default()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
+        Assert.Empty(spec.Environment);
+    }
+
+    [Fact]
+    public void ClaudeInDirectory_can_be_given_the_run_spawn_timeout_as_MCP_TOOL_TIMEOUT_in_milliseconds()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, mcpToolTimeoutMs: 1_800_000);
+        Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+    }
 }

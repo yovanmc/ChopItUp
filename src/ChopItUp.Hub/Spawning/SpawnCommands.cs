@@ -151,21 +151,39 @@ public static class SpawnCommands
     public static string ClaudeSettingsJson(string? dataDir = null) =>
         JsonSerializer.Serialize(new { permissions = new { deny = ClaudeDenyRules(dataDir) } });
 
+    /// <summary>Row 19, orchestrator addition to task 12f: the environment variable the installed
+    /// Claude CLI's own <c>--mcp-config</c> schema documents as its per-server tool-call timeout
+    /// ("Per-server tool-call timeout in milliseconds... Hard wall-clock limit per call; progress
+    /// notifications do not extend it. Values below 1000ms are ignored"). Task 12f measured that this
+    /// is read from the environment, not that raising it actually extends a live call that would
+    /// otherwise time out — the CLI's default value could not be extracted either. Inferred from the
+    /// binary's own embedded schema text this session, not from a round-trip that timed out and was
+    /// then rescued by this variable; treat it as unverified until such a round-trip is observed.</summary>
+    public const string ClaudeMcpToolTimeoutEnvVar = "MCP_TOOL_TIMEOUT";
+
     /// <summary>A spawn in a directory room (M9 decision 9): cwd is the room's tree; `dontAsk` plus the
     /// allow list runs the six built-ins and the three MCP tools without a prompt and auto-denies
     /// everything else (protected-path writes included — under `bypassPermissions` they would be
     /// auto-approved); the deny list rides in <paramref name="settingsPath"/>, which sits in the scratch
     /// folder beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
     /// what carries the Bash calls the trail records; <paramref name="systemRules"/> (`SpawnPrompt.DirectoryRules`)
-    /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.</summary>
-    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed) =>
+    /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.
+    /// <paramref name="mcpToolTimeoutMs"/> (orchestrator addition to task 12f) sets
+    /// <see cref="ClaudeMcpToolTimeoutEnvVar"/> in the child's environment when given — an in-run
+    /// Claude spawn only, at <c>RunLimits.SpawnTimeout</c> in milliseconds, so the CLI's own hard MCP
+    /// tool-call wall clock cannot kill a long <c>run_gate</c> call well before the hub's own 30-minute
+    /// per-spawn timeout does. Null (the default, every non-run caller) sets nothing, exactly the
+    /// pre-existing empty environment.</summary>
+    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--permission-mode", "dontAsk", "--tools", ClaudeBuiltins, "--strict-mcp-config", "--mcp-config", mcpConfigPath,
              "--allowedTools", allowedTools, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence", "--model", model,
              "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", "",
              .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
-            new Dictionary<string, string>(),
+            mcpToolTimeoutMs is null
+                ? new Dictionary<string, string>()
+                : new Dictionary<string, string> { [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString() },
             roomDir, prompt, label);
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is

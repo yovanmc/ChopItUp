@@ -795,6 +795,41 @@ public sealed partial class SpawnerServiceTests
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
+    /// <summary>Orchestrator addition to task 12f: task 12 raised the Codex side (above) but left the
+    /// installed Claude CLI's own MCP tool-call timeout alone, so a run_gate call from an in-run
+    /// Claude spawn could still be killed by the CLI itself well before the hub's own 30-minute
+    /// per-spawn timeout. An in-run Claude conductor's directory spawn gets MCP_TOOL_TIMEOUT set to
+    /// this run's SpawnTimeout in milliseconds.</summary>
+    [Fact]
+    public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_spawn_timeout()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        var spec = await runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+        Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+    }
+
+    /// <summary>The other half: a Claude directory spawn OUTSIDE any run never sees the variable -
+    /// only an in-run spawn's launch site passes it.</summary>
+    [Fact]
+    public async Task Run12f_claude_an_out_of_run_claude_directory_spawn_gets_no_MCP_TOOL_TIMEOUT()
+    {
+        var dir = await MakeRoom("lab-no-run-timeout");
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"done"}"""));
+
+        await PostAsOwnerIn("lab-no-run-timeout", "@sonnet just chat, no run here");
+        var spec = await _runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+        Assert.DoesNotContain(SpawnCommands.ClaudeMcpToolTimeoutEnvVar, spec.Environment.Keys);
+    }
+
     // --- Task 13 (row 19): /stop and the stop control (ticket 13) ----------------------------------
 
     [Fact]

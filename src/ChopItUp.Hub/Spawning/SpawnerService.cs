@@ -717,7 +717,14 @@ public sealed class SpawnerService : BackgroundService
                         // built-in tool set (--tools) is untouched either way, and an out-of-run
                         // directory spawn never sees the extra MCP tool at all.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort, allowedTools);
+                        // Orchestrator addition to task 12f: task 12 raised the Codex side
+                        // (mcp_servers.*.tool_timeout_sec, below) but left the installed Claude CLI's
+                        // own MCP tool-call timeout untouched - its --mcp-config schema text documents
+                        // MCP_TOOL_TIMEOUT (env var, milliseconds) as a hard wall-clock limit per call
+                        // that progress notifications do not extend. Raised to this run's SpawnTimeout
+                        // for an in-run Claude spawn only; every other Claude spawn sets nothing.
+                        var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.SpawnTimeout.TotalMilliseconds : null;
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
                     }
                     break;
                 }
