@@ -220,6 +220,24 @@ public sealed class RunPolicyTests
         Assert.Equal("this run is parked because a cap is spent; /stop and start a new one", refuse.Note);
     }
 
+    // Orchestrator diff-review finding against task 9f: rows 1/2 must not re-fire for a run that is
+    // not active. A hard-capped park's SpawnsUsed/Elapsed stay at or over the cap forever; without the
+    // Status == Active guard, this HumanPosted resume attempt would hit row 1 before row 16 ever ran,
+    // re-Parking instead of refusing.
+    [Fact]
+    public void Row16_refuses_even_though_the_spawn_and_wall_clock_caps_are_still_over_their_limits()
+    {
+        var s = Base() with
+        {
+            Status = RunStatus.Parked, CapSpent = true,
+            SpawnsUsed = Limits.Spawns + 1, Elapsed = Limits.WallClock + TimeSpan.FromHours(1),
+        };
+        var decision = _policy.Decide(s, new RunEvent.HumanPosted(16), []);
+
+        var refuse = Assert.IsType<RunDecision.Refuse>(decision);
+        Assert.Equal(RunPolicy.CapSpentRefusal, refuse.Note);
+    }
+
     // Row 17: /stop always ends the run, even one whose spawn cap is already spent - proving rows 1/2
     // are skipped for StopRequested (AC11: the owner must get End, never Park, on the state that most
     // needs it).

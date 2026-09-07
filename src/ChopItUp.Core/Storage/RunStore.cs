@@ -281,9 +281,19 @@ public sealed class RunStore(ChopDb db)
 
     /// <summary>The one place D9's wall clock is computed: total time since start, minus every second
     /// the run spent parked. Excluding parked time is what keeps an overnight restart-park from
-    /// re-parking itself the instant it is resumed (pass 2's F-4).</summary>
+    /// re-parking itself the instant it is resumed (pass 2's F-4). **Frozen while parked** (orchestrator
+    /// diff-review finding against task 9f): a parked run's own <c>parked_seconds</c> has not yet
+    /// absorbed the interval it is CURRENTLY sitting in, so reading against <paramref name="now"/>
+    /// while parked would let elapsed keep growing for as long as the run sits parked - the very bug
+    /// <c>parked_seconds</c> exists to close, just measured one call earlier than <see cref="Resume"/>.
+    /// While <see cref="Run.Status"/> is <see cref="RunStatus.Parked"/> with <see cref="Run.ParkedAt"/>
+    /// set, elapsed is pinned at what it was the instant the run parked: <c>(ParkedAt - StartedAt) -
+    /// ParkedSeconds</c>. This is the honest reading of "time it spent active" (AC8) for every caller,
+    /// not only the resume decision.</summary>
     public static TimeSpan ActiveElapsed(Run r, DateTimeOffset now) =>
-        (now - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds);
+        r.Status == RunStatus.Parked && r.ParkedAt is { } parkedAt
+            ? (parkedAt - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds)
+            : (now - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds);
 
     /// <summary>Strips one layer of surrounding backticks/quotes, backslashes to forward slashes,
     /// drops a leading <c>./</c>, trims, and lowercases (the ordinal-ignore-case compare) — used on

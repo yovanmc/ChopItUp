@@ -291,33 +291,24 @@ public sealed class SpawnerService : BackgroundService
             }
         }
 
-        // Row 19, task 9f (AC15): a human post that reaches here has no active run in this room
-        // (the conductor-post branch above only fires when one exists, and startsRun's own checks
-        // just above already returned for an active-or-parked room) and is not itself a run-start.
-        // If the room's most recent run is PARKED, this is exactly AC15's resume. Decided directly
-        // here rather than through RunPolicy.Decide: that method's rows 1/2 run first for every
-        // event and read the PARKED run's raw, pre-resume SpawnsUsed/Elapsed, which misfire in
-        // BOTH directions - a hard-capped run's SpawnsUsed/Elapsed are still at or over the cap and
-        // would produce a re-Park instead of the one-line Refuse AC15 asks for, while a SOFT park's
-        // Elapsed keeps growing for as long as it sits parked (parked_seconds is not yet updated)
-        // and would cross the wall clock purely from having sat parked overnight (pass 2's F-4 - the
-        // very bug parked_seconds/RunStore.Resume exist to close). RunStore.Resume folds the whole
-        // parked interval into parked_seconds and flips the row to active BEFORE anything is
-        // decided, so the run's timeline is correct from this point forward; RunStore.Resume itself
-        // already refuses (throws) a resume of a cap-spent run, which is why the CapSpent check
-        // below reads the row directly rather than racing that throw.
+        // Row 19, task 9f (AC15), restored to P7 (orchestrator diff-review finding): a human post
+        // that reaches here has no active run in this room (the conductor-post branch above only
+        // fires when one exists, and startsRun's own checks just above already returned for an
+        // active-or-parked room) and is not itself a run-start. If the room's most recent run is
+        // PARKED, this is exactly AC15's resume - decided through RunPolicy.Decide like every other
+        // transition, never here (P7: "nothing else in this row may hold run decisions"). The two
+        // misfires the original bypass worked around are now fixed at their source instead of routed
+        // around: RunPolicy.Decide's rows 1/2 only apply to a Status == Active run (a parked run
+        // cannot trip a cap again), and RunStore.ActiveElapsed freezes while parked, so a soft park's
+        // Elapsed no longer grows for as long as it sits parked (pass 2's F-4). CarryOut resumes
+        // (folding parked_seconds) only when the decision is OpenConductor; a Refuse posts the line
+        // and does nothing else.
         if (activeRun is null && !startsRun && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var latestForResume = _runs.Latest(m.RoomId);
             if (latestForResume is { Status: RunStatus.Parked } parkedRun)
             {
-                if (parkedRun.CapSpent)
-                    PostNote(m.RoomId, RunPolicy.CapSpentRefusal);
-                else
-                {
-                    var resumed = _runs.Resume(parkedRun.Id, now);
-                    OpenConductorExchange(resumed, resumed.RootMessageId, new List<long> { m.Id });
-                }
+                DriveRun(parkedRun, new RunEvent.HumanPosted(m.Id));
                 return;
             }
         }
@@ -397,10 +388,16 @@ public sealed class SpawnerService : BackgroundService
 
     /// <summary>What <see cref="RunPolicy"/> decided, carried out. <see cref="RunDecision.Nothing"/>,
     /// <see cref="RunDecision.OpenConductor"/> (tasks 4-6), <see cref="RunDecision.OpenWorkers"/>,
-    /// <see cref="RunDecision.RefuseAndAsk"/> and <see cref="RunDecision.Park"/> (task 8, the last one
-    /// only the minimal slice the deferred pins need - task 9 owns Park's full semantics) are wired;
-    /// <see cref="RunDecision.Refuse"/> and <see cref="RunDecision.End"/> are later tasks' (9/13), so
-    /// this fails loudly rather than silently if one is reached before its task lands.</summary>
+    /// <see cref="RunDecision.RefuseAndAsk"/>, <see cref="RunDecision.Park"/> (task 8/9) and
+    /// <see cref="RunDecision.Refuse"/> (task 9f, restored to P7) are wired; <see cref="RunDecision.End"/>
+    /// is a later task's (13), so this fails loudly rather than silently if it is reached before its
+    /// task lands.
+    ///
+    /// <see cref="RunDecision.OpenConductor"/> resumes first when <paramref name="run"/> is still
+    /// PARKED (row 15/AC15's only caller): <see cref="RunStore.Resume"/> folds the whole parked
+    /// interval into <c>parked_seconds</c> and flips the row to active before the exchange opens -
+    /// every other caller of this arm (tasks 4-6, 8, 10) already holds an ACTIVE run, so the check is
+    /// a no-op for them.</summary>
     private void CarryOut(Run run, RunDecision decision)
     {
         switch (decision)
@@ -408,7 +405,8 @@ public sealed class SpawnerService : BackgroundService
             case RunDecision.Nothing:
                 break;
             case RunDecision.OpenConductor oc:
-                OpenConductorExchange(run, oc.RootMessageId, oc.TriggerIds);
+                var target = run.Status == RunStatus.Parked ? _runs.Resume(run.Id, _clock.GetUtcNow()) : run;
+                OpenConductorExchange(target, oc.RootMessageId, oc.TriggerIds);
                 break;
             case RunDecision.OpenWorkers ow:
                 OpenWorkersExchange(run, ow);
@@ -419,6 +417,10 @@ public sealed class SpawnerService : BackgroundService
                 // eventually exits, task 5's ExchangeConcluded handling re-spawns it with this note as
                 // the trigger (table row 8) - the natural loop already does the asking.
                 PostNote(run.RoomId, ra.Note);
+                break;
+            case RunDecision.Refuse rf:
+                // Row 16 (AC15): post the line and do nothing else - never resumed (P7).
+                PostNote(run.RoomId, rf.Note);
                 break;
             case RunDecision.Park park:
                 ParkRun(run, park.Reason, park.CapSpent);

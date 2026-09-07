@@ -76,7 +76,16 @@ public abstract record RunDecision
 /// Rows 1 and 2 of the transition table are checked first for EVERY event EXCEPT
 /// <see cref="RunEvent.StopRequested"/>: an owner stopping a cap-exhausted run must get
 /// <see cref="RunDecision.End"/>, not <see cref="RunDecision.Park"/>, or AC11 ("without resuming the
-/// run first") cannot be satisfied on the state that most needs it.</summary>
+/// run first") cannot be satisfied on the state that most needs it.
+///
+/// **Rows 1/2 also require <see cref="RunState.Status"/> to be <see cref="RunStatus.Active"/>**
+/// (orchestrator diff-review finding against task 9f). A parked or ended run's <c>SpawnsUsed</c>/
+/// <c>Elapsed</c> stay at or over a spent cap forever, so without this guard a <see
+/// cref="RunEvent.HumanPosted"/> resume attempt against ANY parked run - soft or hard - would re-Park
+/// here before row 15/16 ever run: a hard-capped park re-Parks instead of the one-line row 16
+/// <see cref="RunDecision.Refuse"/> AC15 requires, and a soft park re-Parks as a spent wall-clock cap
+/// purely from having sat parked (the very case row 15 exists to resume). A run that is not running
+/// cannot trip a cap again.</summary>
 public sealed class RunPolicy(RunLimits limits)
 {
     /// <summary>Row 16's exact text - a public constant (row 19, task 9f) so the service can post the
@@ -87,7 +96,7 @@ public sealed class RunPolicy(RunLimits limits)
 
     public RunDecision Decide(RunState s, RunEvent e, IReadOnlyList<long> pendingSteers)
     {
-        if (e is not RunEvent.StopRequested)
+        if (e is not RunEvent.StopRequested && s.Status == RunStatus.Active)
         {
             // Row 1.
             if (s.SpawnsUsed >= limits.Spawns)

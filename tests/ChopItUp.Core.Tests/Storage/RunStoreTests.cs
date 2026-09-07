@@ -143,6 +143,18 @@ public sealed class RunStoreTests : IDisposable
     }
 
     [Fact]
+    public void ActiveElapsed_freezes_while_still_parked_rather_than_growing_with_the_wall_clock()
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var parked = _store.Park(run.Id, "idle", capSpent: false, T0.AddHours(1));   // 1 hour active before parking
+
+        // Asked long after, while STILL parked (never resumed), elapsed must stay pinned at what it
+        // was the instant the run parked, not keep growing with the wall clock.
+        var elapsed = RunStore.ActiveElapsed(parked, T0.AddHours(10));
+        Assert.Equal(TimeSpan.FromHours(1), elapsed);
+    }
+
+    [Fact]
     public void CountSpawn_and_CountExchange_increment_and_return_the_new_count()
     {
         var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
