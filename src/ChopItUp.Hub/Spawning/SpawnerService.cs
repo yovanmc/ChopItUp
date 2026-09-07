@@ -81,8 +81,13 @@ public sealed class SpawnerService : BackgroundService
     private readonly TimeProvider _clock;
     private readonly RunStore _runs;
     private readonly RunLimits _runLimits;
+    private readonly RunPolicy _runPolicy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
     private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
+    // Row 19, task 6: messages posted by a human inside an active run, waiting for the conductor's
+    // next trigger set. Empty until task 6 populates it; DriveRun (task 5) already drains it whenever
+    // an OpenConductor decision consumes it, so the two tasks never have to touch this line twice.
+    private readonly Dictionary<string, List<long>> _steers = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
     private readonly Dictionary<string, DateTimeOffset> _lastStart = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
@@ -102,6 +107,7 @@ public sealed class SpawnerService : BackgroundService
         _clock = clock;
         _runs = runs;
         _runLimits = runLimits;
+        _runPolicy = new RunPolicy(runLimits);
     }
 
     public ExchangeSnapshot Snapshot(string roomId) => _snapshots.TryGetValue(roomId, out var s) ? s : Idle(roomId);
@@ -266,6 +272,71 @@ public sealed class SpawnerService : BackgroundService
         // (its own step 3) - nothing further happens here yet.
     }
 
+    /// <summary>Everything <see cref="RunPolicy"/> needs to know about <paramref name="run"/> right
+    /// now, assembled from the store and the loop's own in-memory state (row 19, tasks 5/6).
+    /// <see cref="RunState.RefusalsThisPhase"/> and <see cref="RunState.SilencesThisPhase"/> are
+    /// always 0 here: nothing wired up through task 6 raises <c>ConductorPosted</c> or
+    /// <c>SpawnSilent</c>, the only events that read them (task 8/13's job).</summary>
+    private RunState AssembleRunState(Run run) => new(
+        run.Id, run.RoomId, run.ConductorId, run.Status, run.CapSpent,
+        run.Phase, _runs.PhaseEntries(run.Id),
+        run.SpawnsUsed, run.Exchanges, RunStore.ActiveElapsed(run, _clock.GetUtcNow()),
+        RefusalsThisPhase: 0, SilencesThisPhase: 0,
+        ExchangeOpen: _rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open,
+        AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
+        RootMessageId: run.RootMessageId);
+
+    /// <summary>Assembles the state, asks <see cref="RunPolicy"/>, carries the decision out - never
+    /// decided here (P7) - and drains this room's pending steers when the decision consumed them
+    /// (row 19, tasks 5/6).</summary>
+    private void DriveRun(Run run, RunEvent ev)
+    {
+        var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
+        var decision = _runPolicy.Decide(AssembleRunState(run), ev, pending);
+        CarryOut(run, decision);
+        if (decision is RunDecision.OpenConductor) pending.Clear();
+    }
+
+    /// <summary>What <see cref="RunPolicy"/> decided, carried out. Only <see cref="RunDecision.Nothing"/>
+    /// and <see cref="RunDecision.OpenConductor"/> are reachable through tasks 4-6; the rest
+    /// (OpenWorkers, Refuse(AndAsk), Park, End) are later tasks' wiring, so this fails loudly rather
+    /// than silently if one is reached before its task lands.</summary>
+    private void CarryOut(Run run, RunDecision decision)
+    {
+        switch (decision)
+        {
+            case RunDecision.Nothing:
+                break;
+            case RunDecision.OpenConductor oc:
+                OpenConductorExchange(run, oc.RootMessageId, oc.TriggerIds);
+                break;
+            default:
+                throw new NotSupportedException($"RunDecision {decision.GetType().Name} is not wired yet (row19-runs, a later task).");
+        }
+    }
+
+    /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
+    /// <see cref="ExchangePolicy.OnMessage"/>'s human-only rule is untouched (P2). Re-resolves the
+    /// skill by <see cref="Run.SkillName"/> at every launch, honouring the hash pin (5a): a skill that
+    /// no longer matches what was imported parks the run rather than continuing with no instruction.</summary>
+    private void OpenConductorExchange(Run run, long rootMessageId, IReadOnlyList<long> triggerIds)
+    {
+        var now = _clock.GetUtcNow();
+        if (_skills.Read(run.SkillName) is not SkillRead.Ok ok)
+        {
+            _runs.Park(run.Id, $"skill /{run.SkillName} does not match what was imported", capSpent: false, now);
+            PostNote(run.RoomId, $"Run #{run.Id} parked: skill /{run.SkillName} does not match what was imported; re-import it with --import-skill.");
+            Publish(run.RoomId);
+            return;
+        }
+        var exchange = ExchangePolicy.OpenForConductor(run.RoomId, run.ConductorId, rootMessageId, triggerIds, now, ok.Skill);
+        _rooms[run.RoomId] = exchange;
+        _runs.CountExchange(run.Id);
+        Publish(run.RoomId);
+        // Launching is left to LaunchDue on the next pass, never inline (task 5b) - a directory
+        // room's one-spawn-at-a-time exclusivity must not be bypassed.
+    }
+
     /// <summary>What the message's first line asks for, if anything. Only a human's post is ever
     /// resolved (a model's `/whatever` is prose, acceptance 3) — the policy itself never touches the
     /// filesystem (D-b), so this is the one place row 11's I/O happens.
@@ -403,6 +474,20 @@ public sealed class SpawnerService : BackgroundService
                         var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
                         var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), RoomCommits.IdentityOf(participant), allowEmpty: true, CancellationToken.None);
                         trail = new TrailReport(owner, agent, commands.Count, headMoved);
+
+                        // Row 19, task 5c (P4): artifact authorship, from the SPAWN'S WHOLE DIFF - not
+                        // one commit, so a host that commits its own work mid-spawn (Codex, or a rogue
+                        // Claude Bash call) is still attributed correctly. This runs off the spawner
+                        // loop (pass 2's F-21): the run lookup is _runs.Active (a database read, thread
+                        // safe), never a read of _rooms/_inFlight, which only the loop thread mutates.
+                        if (agent.Hash is not null && _runs.Active(roomId) is { } runForArtifacts)
+                        {
+                            var changed = headBefore is not null
+                                ? await git.ChangedFilesAsync($"{headBefore}..{agent.Hash}", CancellationToken.None)
+                                : await git.ChangedFilesInAsync(agent.Hash, CancellationToken.None);
+                            var stampedAt = _clock.GetUtcNow();
+                            foreach (var path in changed) _runs.RecordArtifact(runForArtifacts.Id, path, participant.Id, stampedAt);
+                        }
                     }
                 }
                 catch (Exception e) { Console.Error.WriteLine($"spawn {spawnId}: trail error {e.GetType().Name}: {e.Message}"); }
@@ -456,7 +541,18 @@ public sealed class SpawnerService : BackgroundService
         if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
         h.Cancel.Dispose();
         var note = ExchangePolicy.Finished(h.Exchange, id);
-        if (note is not null) PostNote(room, note);
+        if (note is not null)
+        {
+            PostNote(room, note);
+            // Row 19, task 5b: wake the run's loop, but only when the exchange that just concluded is
+            // still the room's CURRENT one - a conductor may already have rooted a newer exchange that
+            // superseded it (pass 2's F-1); that newer exchange must be left alone.
+            if (_runs.Active(room) is { } activeRun && ReferenceEquals(h.Exchange, _rooms.GetValueOrDefault(room)))
+            {
+                var lastId = _store.ReadLast(room, 1).Select(msg => msg.Id).DefaultIfEmpty(h.Request.RootMessageId).First();
+                DriveRun(activeRun, new RunEvent.ExchangeConcluded(lastId));
+            }
+        }
         Publish(room);
     }
 

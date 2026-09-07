@@ -177,6 +177,34 @@ public class GitTrail
         return commits;
     }
 
+    /// <summary>Every path that differs between the two ends of <paramref name="range"/> (e.g.
+    /// <c>"abc123..def456"</c>), via <c>git diff --name-only</c>. Row 19, task 5c (P4): artifact
+    /// authorship is read from the SPAWN'S WHOLE DIFF, not one commit, so a host that commits its own
+    /// work mid-spawn (Codex) is still attributed correctly. Empty on failure or when git/the
+    /// repository is unavailable, with <see cref="Reason"/> set.</summary>
+    public async Task<IReadOnlyList<string>> ChangedFilesAsync(string range, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return [];
+        var r = await Run(git, ["diff", "--name-only", range], "", cancellation);
+        if (r.ExitCode != 0) { Fail("git diff", r); return []; }
+        Reason = null;
+        return r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    /// <summary>The paths touched by exactly one commit, via <c>git show --name-only --pretty=format:</c>.
+    /// Row 19, task 5c's fallback when there is no known "before" hash to diff a range against (the
+    /// spawn's first ever commit in this room).</summary>
+    public async Task<IReadOnlyList<string>> ChangedFilesInAsync(string commitHash, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return [];
+        var r = await Run(git, ["show", "--name-only", "--pretty=format:", commitHash], "", cancellation);
+        if (r.ExitCode != 0) { Fail("git show", r); return []; }
+        Reason = null;
+        return r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
     private async Task<string?> HeadUnlocked(ResolvedCli git, bool logFailure, CancellationToken cancellation)
     {
         var head = await Run(git, ["rev-parse", "--short", "HEAD"], "", cancellation);

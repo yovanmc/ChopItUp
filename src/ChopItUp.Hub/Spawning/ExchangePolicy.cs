@@ -182,6 +182,23 @@ public sealed class ExchangePolicy
             notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. A new owner message starts a fresh exchange.");
     }
 
+    /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
+    /// <see cref="OnMessage"/>'s human-only rule is untouched (P2). The conductor is the sole pending
+    /// entry, budgeted for exactly the one turn it is being asked for; every id in
+    /// <paramref name="triggerIds"/> is queued as its trigger. Sets <see cref="Exchange.Skill"/>
+    /// (pass 1's M9): the skill is never posted into the room, only rendered into the prompt, so
+    /// omitting it here would leave every re-spawn after the first exchange with no instruction at
+    /// all.</summary>
+    public static Exchange OpenForConductor(string roomId, string conductorId, long rootMessageId, IReadOnlyList<long> triggerIds, DateTimeOffset now, ResolvedSkill skill)
+    {
+        var x = new Exchange { RoomId = roomId, RootMessageId = rootMessageId, Budget = 1, Skill = skill };
+        var pending = new PendingSpawn { LastTriggerAt = now };
+        foreach (var id in triggerIds) pending.TriggerIds.Add(id);
+        x.Pending[conductorId] = pending;
+        x.TurnsCommitted = 1;
+        return x;
+    }
+
     /// <summary>Which pending spawns may launch now. <paramref name="inFlightInRoom"/> is the room's
     /// whole in-flight set, across exchanges — a superseded exchange's spawn still counts.
     /// <paramref name="exclusive"/> (a directory room, M9 decision 5): at most one spawn in the room

@@ -372,6 +372,23 @@ public sealed class ExchangePolicyTests
         Assert.Equal(ExchangeStatus.Open, open!.Status);
     }
 
+    // --- Task 5a (row 19): the hub re-spawning its run's conductor ----------------------------------
+
+    [Fact]
+    public void OpenForConductor_builds_a_one_turn_exchange_carrying_the_skill_and_every_trigger()
+    {
+        var x = ExchangePolicy.OpenForConductor("general", "opus", rootMessageId: 5, triggerIds: [3, 4], T0, RunSkill);
+        Assert.Equal("general", x.RoomId);
+        Assert.Equal(5, x.RootMessageId);
+        Assert.Equal(1, x.Budget);
+        Assert.Equal(1, x.TurnsCommitted);
+        Assert.Equal(["opus"], x.Pending.Keys);
+        Assert.Equal([3L, 4L], x.Pending["opus"].TriggerIds);
+        Assert.Equal(T0, x.Pending["opus"].LastTriggerAt);
+        Assert.Same(RunSkill, x.Skill);
+        Assert.Equal(ExchangeStatus.Open, x.Status);
+    }
+
     /// <summary>Pins the complete set of refusal arms (M-7): if a future arm is added to
     /// <see cref="SkillResolution"/> without this list being updated too, this test is the thing that
     /// catches it, since a plain switch statement does not fail to compile on a missing case.</summary>

@@ -1,5 +1,8 @@
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Git;
+using ChopItUp.Hub.Memory;
+using ChopItUp.Hub.Spawning;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
@@ -128,5 +131,94 @@ public sealed partial class SpawnerServiceTests
         var spec = await _runner.NextSpecAsync(Wait);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
         Assert.NotNull(Runs.Active("lab-run-remote"));
+    }
+
+    // --- Task 5 (row 19): the loop, skill continuity, and artifact authorship (ticket 05) ----------
+
+    [Fact]
+    public async Task Run05_the_conductor_is_re_spawned_when_its_exchange_concludes_carrying_the_skill_again()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-respawn");
+        var holdSecondTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (Interlocked.Increment(ref calls) == 2) await holdSecondTurn.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-respawn", "/build-thing @sonnet begin");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(first));
+        Assert.Contains("Build the thing.", first.StandardInput);
+
+        // No owner post involved (AC3): the conductor's own exchange concluding is what re-spawns it.
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.Contains("Build the thing.", second.StandardInput);   // the skill fence, again (ticket 05)
+
+        var run = Runs.Active("lab-run-respawn");
+        Assert.NotNull(run);
+        Assert.Equal(2, run!.Exchanges);
+        holdSecondTurn.SetResult();
+    }
+
+    [Fact]
+    public async Task Run05_a_skill_tampered_after_the_first_turn_parks_the_run_rather_than_continuing_blind()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-run-tamper");
+        var releaseTurn1 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            await releaseTurn1.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-tamper", "/build-thing @sonnet begin");
+        await _runner.NextSpecAsync(Wait);
+        File.WriteAllText(Path.Combine(_dir, "skills", "build-thing", "SKILL.md"), "mutated\n");   // hash now stale
+        releaseTurn1.SetResult();   // turn 1 concludes -> re-spawn attempt reads the tampered skill
+
+        var note = await WaitForMessageIn("lab-run-tamper", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("parked"));
+        Assert.Contains("does not match what was imported", note.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // no second spawn
+
+        var run = Runs.Latest("lab-run-tamper");
+        Assert.Equal(RunStatus.Parked, run!.Status);
+        Assert.False(run.CapSpent);
+    }
+
+    [Fact]
+    public async Task Run05_artifact_authorship_is_recorded_from_the_conductors_whole_diff_including_self_committed_work()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        var dir = await MakeRoom("lab-run-artifacts");
+        // A seed commit so headBefore is non-null - the range-diff path (P4's main case). The
+        // no-prior-commit fallback (ChangedFilesInAsync) is unit-tested directly on GitTrail.
+        File.WriteAllText(Path.Combine(dir, "seed.txt"), "seed\n");
+        var holdFurtherTurns = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (Interlocked.Increment(ref calls) > 1) { await holdFurtherTurns.Task.WaitAsync(ct); return FakeProcessRunner.Ok("""{"result":"done"}"""); }
+            // The model commits some of its own work mid-spawn (the common case for Codex, and what
+            // a rogue Bash call does for Claude) - P4's scenario: authorship must still land on it.
+            File.WriteAllText(Path.Combine(spec.WorkingDirectory, "rogue.txt"), "committed by the model itself\n");
+            await new GitTrail(spec.WorkingDirectory).CommitAllAsync("rogue commit", new GitIdentity("Rogue", "rogue@example.test"), allowEmpty: false);
+            File.WriteAllText(Path.Combine(spec.WorkingDirectory, "hub-written.txt"), "left for the hub's own after-commit\n");
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-artifacts", "/build-thing @sonnet begin");
+        await _runner.NextSpecAsync(Wait);
+        await WaitForMessageIn("lab-run-artifacts", m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith(HubNotes.TrailPrefix));
+
+        var run = Runs.Active("lab-run-artifacts");
+        Assert.NotNull(run);
+        var artifacts = Runs.Artifacts(run!.Id).Select(a => (a.Path, a.AuthorId)).OrderBy(x => x.Path, StringComparer.Ordinal).ToList();
+        Assert.Equal([("hub-written.txt", "sonnet"), ("rogue.txt", "sonnet")], artifacts);
+        holdFurtherTurns.SetResult();
     }
 }
