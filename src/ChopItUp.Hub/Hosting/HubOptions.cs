@@ -1,6 +1,6 @@
 namespace ChopItUp.Hub.Hosting;
 
-public enum HubCommand { Serve, RotateToken, PrintConfig }
+public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill }
 
 /// <summary>Resolved startup options. Precedence: CLI args, then environment, then defaults.
 /// Default data dir is <c>data\</c> beside the executable (release layout); dev and tests pass
@@ -9,8 +9,13 @@ public enum HubCommand { Serve, RotateToken, PrintConfig }
 /// <paramref name="WebRoot"/> is the built web client (M3 D3): null means <c>wwwroot\</c> beside the
 /// executable, which is where the csproj's npm step lands it. It is not a CLI flag — the only reason
 /// it is settable is so tests can point at a fabricated client without writing into the test output.
-/// <paramref name="RoomsRoot"/> is where hub-created room directories go (M9).</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null)
+/// <paramref name="RoomsRoot"/> is where hub-created room directories go (M9).
+/// <paramref name="ImportSkillPath"/> is the source directory for <c>--import-skill</c> (row 11 task
+/// 5), already rooted with <see cref="Path.GetFullPath(string)"/> at parse time — the same M5 lesson
+/// <c>--data</c> follows — so a relative path resolves against THIS process's working directory and
+/// not against anything a later hub start does. <paramref name="Force"/> is <c>--force</c>: replace an
+/// already-imported skill of the same name instead of refusing.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false)
 {
     public const int DefaultPort = 8790;
 
@@ -29,6 +34,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         var command = HubCommand.Serve;
         string? rotate = null;
         string? rooms = null;
+        string? importSkillPath = null;
+        var force = false;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--data")
@@ -56,6 +63,19 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
                 if (i + 1 >= args.Length) throw new ArgumentException("--rooms-root requires a value.");
                 rooms = args[++i];
             }
+            else if (args[i] == "--import-skill")
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException("--import-skill requires a value.");
+                command = HubCommand.ImportSkill;
+                // Rooted here, not where SkillImport.Run happens to read it: a relative path must
+                // resolve against THIS command's working directory (row 11 task 5, m5/m6), the same
+                // rule --data already follows.
+                importSkillPath = Path.GetFullPath(args[++i]);
+            }
+            else if (args[i] == "--force")
+            {
+                force = true;
+            }
         }
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
@@ -65,6 +85,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             int.TryParse(port, out var p) ? p : DefaultPort,
             command,
             rotate,
-            RoomsRoot: string.IsNullOrWhiteSpace(rooms) ? null : rooms);
+            RoomsRoot: string.IsNullOrWhiteSpace(rooms) ? null : rooms,
+            ImportSkillPath: importSkillPath,
+            Force: force);
     }
 }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Skills;
 using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Hub.Hosting;
@@ -14,6 +15,7 @@ public static class HostCommands
     {
         HubCommand.RotateToken => RotateToken(options, output, error),
         HubCommand.PrintConfig => PrintConfig(options, output, error),
+        HubCommand.ImportSkill => ImportSkill(options, output, error),
         _ => throw new InvalidOperationException($"{options.Command} is not a non-serving command."),
     };
 
@@ -150,5 +152,31 @@ public static class HostCommands
             error.WriteLine($"Could not write host configurations: {e.Message}");
             return 3;
         }
+    }
+
+    /// <summary>Row 11 task 5: <c>--import-skill &lt;dir&gt;</c>. Unlike <see cref="RotateToken"/> and
+    /// <see cref="PrintConfig"/> this does NOT gate on <see cref="HubLock.IsHeld"/> and does not read
+    /// or rotate <c>tokens.json</c> — the store is read on demand (D-d), so nothing here needs the hub
+    /// stopped. It DOES ensure the database's <c>skills</c> table exists, the same idempotent way a
+    /// hub start does (<see cref="ChopDb.EnsureDatabase"/>), because the M11 check runs this verb
+    /// BEFORE any hub has ever started against a fresh data directory (grill ledger m6) — there is no
+    /// "start the hub once first" precondition to lean on here.</summary>
+    private static int ImportSkill(HubOptions options, TextWriter output, TextWriter error)
+    {
+        var db = new ChopDb(Path.Combine(options.DataDir, "chopitup.db"));
+        db.EnsureDatabase();
+        var hashes = new SkillHashes(db);
+        var skillsRoot = Path.Combine(options.DataDir, "skills");
+
+        var result = SkillImport.Run(options.ImportSkillPath!, skillsRoot, options.Force, hashes);
+        (result.Outcome == SkillImportOutcome.Ok ? output : error).WriteLine(result.Message);
+        return result.Outcome switch
+        {
+            SkillImportOutcome.Ok => 0,
+            SkillImportOutcome.BadArgument => 2,
+            SkillImportOutcome.IoFailure => 3,
+            SkillImportOutcome.SourceMissing => 4,
+            _ => 3,
+        };
     }
 }

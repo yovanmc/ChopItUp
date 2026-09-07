@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Skills;
 using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Hub.Tests;
@@ -469,5 +471,91 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(HubCommand.Serve, bare.Command);
 
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rotate-token"], _ => null));
+    }
+
+    // --- Row 11 task 5: --import-skill -----------------------------------------------------
+
+    [Fact]
+    public void Options_parse_recognises_import_skill_and_force()
+    {
+        var import = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--force"], _ => null);
+        Assert.Equal(HubCommand.ImportSkill, import.Command);
+        Assert.Equal(Path.GetFullPath("C:\\somewhere\\demo"), import.ImportSkillPath);
+        Assert.True(import.Force);
+
+        var withoutForce = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo"], _ => null);
+        Assert.False(withoutForce.Force);
+
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill"], _ => null));
+    }
+
+    /// <summary>A synthetic (never third-party, D-g) skill source directory outside the data dir.</summary>
+    private string NewSkillSource(string name, string skillMd)
+    {
+        var dir = Path.Combine(NewDir(), name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "SKILL.md"), skillMd);
+        return dir;
+    }
+
+    private const string DemoSkillBody = "---\nname: demo\ndescription: A demo skill for tests.\n---\n# Demo Skill\n\nBody text here.\n";
+
+    [Fact]
+    public void A9_import_skill_works_before_any_hub_has_ever_started_and_records_the_hash()
+    {
+        var dir = NewDir();   // no chopitup.db, no tokens.json - nothing has touched this dir yet
+        var source = NewSkillSource("demo", DemoSkillBody);
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ImportSkill, ImportSkillPath: source), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        var installed = Path.Combine(dir, "skills", "demo", "SKILL.md");
+        Assert.True(File.Exists(installed));
+        Assert.Contains("demo", output.ToString());
+
+        var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(installed))).ToLowerInvariant();
+        Assert.Equal(hash, new SkillHashes(db).Expected("demo"));
+    }
+
+    [Fact]
+    public void A9_import_skill_missing_source_exits_4_and_writes_nothing()
+    {
+        var dir = NewDir();
+        var missing = Path.Combine(dir, "nope-does-not-exist");
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ImportSkill, ImportSkillPath: missing), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains(missing, error.ToString());
+        Assert.False(Directory.Exists(Path.Combine(dir, "skills")) && Directory.EnumerateFileSystemEntries(Path.Combine(dir, "skills")).Any());
+    }
+
+    [Fact]
+    public void A9_import_skill_an_invalid_name_exits_2()
+    {
+        var dir = NewDir();
+        var source = NewSkillSource("Invalid_Name", DemoSkillBody);
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ImportSkill, ImportSkillPath: source), new StringWriter(), error);
+
+        Assert.Equal(2, exit);
+        Assert.NotEmpty(error.ToString());
+    }
+
+    [Fact]
+    public async Task A9_import_skill_does_not_need_the_hub_stopped()
+    {
+        var dir = NewDir();
+        await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
+        var source = NewSkillSource("demo", DemoSkillBody);
+
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ImportSkill, ImportSkillPath: source), new StringWriter(), new StringWriter());
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(Path.Combine(dir, "skills", "demo", "SKILL.md")));
     }
 }
