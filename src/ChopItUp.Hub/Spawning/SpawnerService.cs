@@ -270,12 +270,30 @@ public sealed class SpawnerService : BackgroundService
             return;
         }
 
-        // Row 19, task 4 (pass 2's F-9), steps 1-2 of the ordered human branch: these two refusals
+        // Row 19, task 13 (AC11, pass 2's F-9): step 1 of the ordered human branch, checked before
+        // anything below can post a note or touch a run's status. Ends an active OR parked run
+        // outright, through the SAME RunPolicy.Decide path every other transition takes (P7) - never
+        // resuming it first (RunPolicy's rows 1/2 are skipped for StopRequested, so a hard-capped
+        // park gets End, not Park - the state AC11 most needs this to work on). With no run in this
+        // room, RunCommands.IsStop still matched, but there is nothing to stop, so this falls straight
+        // through to ResolveSkill's ordinary result below - "/stop" was never anything but an
+        // unresolvable skill name before this task (SkillImport refuses to ever install one under
+        // that name), so "no run" behaves exactly as it did before.
+        if (RunCommands.IsStop(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
+        {
+            var stoppable = activeRun ?? (_runs.Latest(m.RoomId) is { Status: RunStatus.Parked } parkedForStop ? parkedForStop : null);
+            if (stoppable is not null)
+            {
+                DriveRun(stoppable, new RunEvent.StopRequested());
+                return;
+            }
+        }
+
+        // Row 19, task 4 (pass 2's F-9), steps 2-3 of the ordered human branch: these two refusals
         // need RunStore.Latest, which ExchangePolicy (pure) never reads - decided here, before the
         // policy is consulted at all, so a run-start invocation can never land on top of an active OR
         // a parked run (ux_runs_one_active_per_room only guards 'active'; a second Start against a
-        // parked room would otherwise succeed and leave two run rows for one room). Step 1 (`/stop`)
-        // is task 13's; nothing here special-cases it yet.
+        // parked room would otherwise succeed and leave two run rows for one room).
         if (startsRun)
         {
             if (activeRun is not null)
@@ -425,6 +443,9 @@ public sealed class SpawnerService : BackgroundService
             case RunDecision.Park park:
                 ParkRun(run, park.Reason, park.CapSpent);
                 break;
+            case RunDecision.End end:
+                EndRun(run, end.Reason);
+                break;
             default:
                 throw new NotSupportedException($"RunDecision {decision.GetType().Name} is not wired yet (row19-runs, a later task).");
         }
@@ -522,6 +543,33 @@ public sealed class SpawnerService : BackgroundService
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         PostNote(run.RoomId, $"Run #{run.Id} parked: {reason}. @{_owner.Id}");
+        Publish(run.RoomId);
+    }
+
+    /// <summary>Row 19, task 13 (AC11): ends a run - active OR parked, and whether or not an exchange
+    /// is open or anything is in flight - through the ONE path <see cref="RunDecision.End"/> ever
+    /// reaches (the text `/stop`, and the API/button stop via <see cref="OnStop"/>). Mirrors
+    /// <see cref="ParkRun"/>'s shape (stop the open exchange, cancel the room's in-flight spawns) but
+    /// also clears the room's pending steers (ticket 13: "ending a run clears the pending steer
+    /// list" - depends on task 6, which is the only other writer of <see cref="_steers"/>) and posts
+    /// ONE note naming how much of each cap the run used rather than a bare "parked: reason" line.
+    /// <see cref="RunStore.ActiveElapsed"/> is read against the SAME <paramref name="reason"/>-ending
+    /// instant <see cref="RunStore.End"/> stamps, and against the run as it stood before ending (an
+    /// ended run is never <see cref="RunStatus.Parked"/>, so it falls to that method's "not parked"
+    /// arm: elapsed time since start, minus whatever was already parked).</summary>
+    private void EndRun(Run run, string reason)
+    {
+        var now = _clock.GetUtcNow();
+        var ended = _runs.End(run.Id, reason, now);
+        if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
+            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+        foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
+            handle.Cancel.Cancel();
+        _steers.Remove(run.RoomId);
+        var elapsed = RunStore.ActiveElapsed(ended, now);
+        var phaseEntries = _runs.PhaseEntries(ended.Id).GetValueOrDefault(ended.Phase);
+        PostNote(run.RoomId, $"Run #{run.Id} ended: {reason}. Used {ended.SpawnsUsed}/{_runLimits.Spawns} spawns, "
+            + $"{elapsed.TotalHours:0.0}/{_runLimits.WallClock.TotalHours:0.0}h active time, phase '{ended.Phase}' entered {phaseEntries}/{_runLimits.PhaseEntries} time(s).");
         Publish(run.RoomId);
     }
 
@@ -817,9 +865,23 @@ public sealed class SpawnerService : BackgroundService
     /// <summary>Room-scoped, not exchange-scoped (critique pass 2, M1): a superseded exchange's spawn
     /// is still a live CLI in this room, and an owner message with no mention leaves the room with no
     /// open exchange while one runs. Stop kills every in-flight spawn of the room, closes the open
-    /// exchange if there is one, and answers null only when there is nothing at all to stop.</summary>
+    /// exchange if there is one, and answers null only when there is nothing at all to stop.
+    ///
+    /// Row 19, task 13 (AC11, ticket 13 - "the control must work even when there is nothing currently
+    /// running"): checked FIRST, ahead of the ordinary exchange-only stop below. An active OR parked
+    /// run in this room is ended through <see cref="EndRun"/> regardless of whether an exchange is
+    /// open or anything is in flight - the exact case the ordinary branch's "nothing to stop" null
+    /// (409 at the API) would otherwise hit for a parked run sitting with nothing open and nothing in
+    /// flight. A room with no run at all falls through to the pre-row-19 behaviour, unchanged.</summary>
     private ExchangeSnapshot? OnStop(string roomId)
     {
+        var run = _runs.Active(roomId) ?? (_runs.Latest(roomId) is { Status: RunStatus.Parked } parked ? parked : null);
+        if (run is not null)
+        {
+            EndRun(run, "stopped by the owner");
+            return Publish(roomId);
+        }
+
         _rooms.TryGetValue(roomId, out var x);
         var live = _inFlight.Values.Where(h => h.Request.RoomId == roomId).ToList();
         var open = x is { Status: ExchangeStatus.Open };

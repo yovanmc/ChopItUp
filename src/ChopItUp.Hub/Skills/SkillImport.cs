@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using ChopItUp.Core.Skills;
 using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Skills;
@@ -78,6 +79,14 @@ public static class SkillImport
         if (!SkillStore.NamePattern.IsMatch(name))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' is not a valid skill name: lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.");
+
+        // Refusal 2b (row 19, task 13): the reserved `/stop` command cannot be shadowed by an
+        // installed skill (ticket 13). Checked on the name alone, before anything about the
+        // frontmatter is even read, so a directory named "stop" is refused for THIS reason
+        // regardless of what its SKILL.md claims.
+        if (string.Equals(name, RunCommands.StopName, StringComparison.Ordinal))
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"'{name}' is a reserved name (the run stop command) and cannot be installed as a skill.");
 
         var target = Path.Combine(skillsRoot, name);
         var staging = Path.Combine(skillsRoot, name + ".importing");

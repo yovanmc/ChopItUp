@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
+using ChopItUp.Core.Skills;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Skills;
 
@@ -88,6 +89,22 @@ public sealed class SkillImportTests : IDisposable
 
         Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
         AssertTargetAbsent("Invalid_Name");
+    }
+
+    // Row 19, task 13: the reserved `/stop` command cannot be shadowed by an installed skill. Checked
+    // purely on the directory name, before the frontmatter is even read - ValidSkillBody's own
+    // `name: demo` would otherwise mismatch the "stop" directory and refuse for a DIFFERENT reason
+    // (Refusal 5), which would prove nothing about the reserved-name rule itself.
+    [Fact]
+    public void Refuses_to_import_a_skill_named_stop_the_reserved_run_command()
+    {
+        var source = NewSourceDir(RunCommands.StopName, ValidSkillBody);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("reserved", result.Message);
+        AssertTargetAbsent(RunCommands.StopName);
     }
 
     [Fact]
