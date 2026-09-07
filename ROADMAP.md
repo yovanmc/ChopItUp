@@ -1,4 +1,4 @@
-# Chop It Up — ROADMAP
+﻿# Chop It Up — ROADMAP
 <!-- roadmap-schema: whitelist-v3 -->
 
 ## Definition
@@ -7,9 +7,8 @@ Local Windows hub where Yovan, Claude (Claude Desktop) and GPT (Codex UI inside 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 11 | Skill substrate: hub-owned skills in `data/skills/`, slash invocation, roster classes, owner-remote credential | ✅ | DONE | — | Merged `4607779` (PR #40) 2026-09-07: schema v7 = `participants.classes` + `owner-remote` + `skills` fingerprints; `data/skills/` store, `--import-skill`, slash invocation in force for every turn of its exchange, composer menu. D13 overlay → row 20. 421 tests, M11 live 32/32, deployed at v7. |
-| 19 | Runs: a conductor participant re-spawned per phase, steer/stop/park, phase-tagged posts checked by the hub, run caps, effort by class, `run_gate` | 📝 | READY | [row19-runs.md](docs/superpowers/plans/row19-runs.md) | Ledger D1, D2, D4, D6, D8, D9, D10, A2, A3; amends M5-D2/D5/D7 in a run only. HIGH, 16 tasks, schema v8. Critique 5.0 → 6.3, 44 findings folded. F10 resolved 09-07. |
-| 20 | Roadmap skill ported: import + overlay, phases cut to 4-turn exchanges, gate manifest, ping as a post, scratch run then ChopItUp dogfood from a phone | [ ] | BLOCKED: row 19 not shipped | — | Ledger D12, D13, F10 probe. Not DONE until the dogfood run on this repo has shipped a row driven through `owner-remote`. |
+| 19 | Runs: a conductor participant re-spawned per phase, steer/stop/park, phase-tagged posts checked by the hub, run caps, effort by class, `run_gate` | ✅ | DONE | — | Merged `608c676` (PR #44) 2026-09-07: schema v8, runs tables, RunPolicy, caps, `run_gate`, run strip. 594 tests, M19 live 12/12, M2 corpus 24/24. NOT DEPLOYED: stopping the live hub was denied by the session guard (owner action). Unverified: MCP_TOOL_TIMEOUT inferred; no Codex row has a class, so Codex effort/timeout untested live. |
+| 20 | Roadmap skill ported: import + overlay, phases cut to 4-turn exchanges, gate manifest, ping as a post, scratch run then ChopItUp dogfood from a phone | [ ] | READY | — | Ledger D12, D13, F10 probe. Not DONE until the dogfood run on this repo has shipped a row driven through `owner-remote`. |
 | 18 | Memory v1.1: supersession, core-cap refusal, consolidation, recall search, fenced injection, approval card, room scope, vendor export | [ ] | BLOCKED: rows 19, 20 first (ledger order) | — | Ledger: docs/superpowers/plans/memory-v1-1-findings.md (BINDING). Defect: `core` approvals past 6,000 chars are silently cut from every spawn [V 2026-09-06 1b701b29]. |
 | 12 | Desktop shell: WebView2 window that starts the hub, hosts the room UI, sits in the tray | [ ] | BACKLOG | — | Grill D18. After the autonomy rows. |
 | 13 | Symmetric confinement: run Claude spawns under a restricted Windows account | [ ] | BACKLOG | — | Grill D13, F5. Only OS-level confinement works on native Windows. Measured: Codex `--approve-for-me` did not stop an in-workspace `git commit` (09-06); the abs-path deny binds Claude file tools but NOT `Bash`, so BOTH hosts reach the data dir (09-07). M9 residuals (no-auth `/api`, `tokens.json`, abs-path git) land here. |
