@@ -1,8 +1,8 @@
 # Row 11 — Skill substrate
 
-**Goal:** A hub-owned skill store that the owner invokes with a slash command in a room, whose text the hub renders into every spawn prompt of the exchange that command roots — plus the roster `class` column and the `owner-remote` credential that rows 19 and 20 build on.
+**Goal:** A hub-owned skill store that the owner invokes with a slash command in a room, whose text the hub renders into every spawn prompt of the exchange that command roots — plus the roster `classes` column and the `owner-remote` credential that rows 19 and 20 build on.
 
-**Architecture:** Three independent seams, joined at the exchange. (1) `data/skills/<name>/` is a directory store owned by the hub, filled by a new non-serving verb `--import-skill` and read on demand — no cache, so an import takes effect without a restart. (2) A human-authored post whose first line is `/<name>` is parsed in `Core` and resolved against the store in `SpawnerService` *before* the message reaches `ExchangePolicy`, which stays pure: it attaches the resolved skill to the `Exchange` it opens, or refuses to open one when the name is unknown. `SpawnPrompt` renders that skill into every spawn of that exchange, so two mentioned participants answer the same instruction. (3) Schema v7 adds `participants.class` and the `owner-remote` row of kind `human`, which forces `ParticipantStore.HumanId()` — today "the one human" — to become `OwnerId()`, "the owner row".
+**Architecture:** Three independent seams, joined at the exchange. (1) `data/skills/<name>/` is a directory store owned by the hub, filled by a new non-serving verb `--import-skill` and read on demand — no cache, so an import takes effect without a restart. (2) A human-authored post whose first line is `/<name>` is parsed in `Core` and resolved against the store in `SpawnerService` *before* the message reaches `ExchangePolicy`, which stays pure: it attaches the resolved skill to the `Exchange` it opens, or refuses to open one when the name is unknown. `SpawnPrompt` renders that skill into every spawn of that exchange, so two mentioned participants answer the same instruction. (3) Schema v7 adds `participants.classes` and the `owner-remote` row of kind `human`, which forces `ParticipantStore.HumanId()` — today "the one human" — to become `OwnerId()`, "the owner row".
 
 **Author model:** Opus 5.
 
@@ -26,7 +26,7 @@ Written for builder-subagent execution; if something doesn't match, STOP and rep
 2. WHEN a participant of kind `human` posts `/<name>` and the hub cannot hand that skill over intact — no such skill, a `SKILL.md` that no longer matches the fingerprint recorded at import, an unreadable store, or a known skill with nobody mentioned — THE SYSTEM SHALL post one hub note that distinguishes which of those happened, open no exchange, and start no spawn, while still superseding any exchange that was open.
 3. WHEN a participant of kind `model` posts a message whose first line starts with `/`, THE SYSTEM SHALL treat it as ordinary text: no skill resolved, no note posted, mentions handled exactly as today.
 4. WHEN `ChopItUp.Hub --import-skill <dir>` runs against a directory holding a valid `SKILL.md`, THE SYSTEM SHALL copy that tree to `<data>/skills/<name>/` and record a fingerprint of `SKILL.md` outside the copied tree; and WHEN the source has a reparse point anywhere in it, no `SKILL.md`, a `SKILL.md` over the character cap, frontmatter whose `name` disagrees with the directory, more than the file or byte cap, or the target already exists without `--force`, THE SYSTEM SHALL refuse with one line naming the reason and write nothing.
-5. WHEN the hub starts against a database at schema v6, THE SYSTEM SHALL migrate it to v7 — `participants.class` added, `owner-remote` of kind `human` seeded — and SHALL still resolve every owner-scoped read (room list, unread counts, web-UI post author, the spawner's trail identity) to `owner`.
+5. WHEN the hub starts against a database at schema v6, THE SYSTEM SHALL migrate it to v7 — `participants.classes` added, `owner-remote` of kind `human` seeded — and SHALL still resolve every owner-scoped read (room list, unread counts, web-UI post author, the spawner's trail identity) to `owner`.
 6. WHEN a request authenticated as `owner-remote` calls `post_message` with a mention of a spawnable row, THE SYSTEM SHALL store the message authored `owner-remote` and open an exchange exactly as an `owner` post does, and `--print-config` SHALL emit a host file carrying that row's token.
 7. WHEN the web UI's composer holds an empty draft and the owner types `/`, THE SYSTEM SHALL offer the skills from `GET /api/skills` and insert `/<name> ` into the draft on selection.
 8. WHEN a skill's `SKILL.md` differs from what was recorded at import — edited, replaced, or grown past the file-size bound — THE SYSTEM SHALL refuse to render it and refuse to open an exchange for it (acceptance 2) until it is re-imported, and SHALL say that it differs rather than that it is missing.
@@ -103,19 +103,49 @@ Written for builder-subagent execution; if something doesn't match, STOP and rep
 
 **D-g. No third-party skill text is committed.** The repo is public (2026-09-04). `grilling` and `codebase-design` are Matt Pocock's; they ship as *importable*, imported at run time from the owner's harness folder by `--import-skill`, and the M11 check does the importing. A fresh clone therefore starts with an empty store, which the README states. Tests use fixture skills the test writes itself.
 
-**D-h. Seed classes for three rows, `NULL` for the rest.** D5 says the owner sets the class, and offers no UI for it. Seeding `sonnet=plumbing`, `opus=visible`, `fable=judge` mirrors the owner's own harness pins and gives row 19 something to enforce on day one; every other row seeds `NULL` and the README documents the `UPDATE` statement. **Assumption, flagged:** if the owner wants all twelve rows classed, or wants no seeded values at all, this is the line to change — it is one array literal.
+**D-h. A row carries a SET of classes, not one — owner ruling 2026-09-07.** Pass 2 found that a single-valued column breaks row 19 the day it arrives: D8 refuses a critique phase that mentions no `judge`-class row, while the owner's standing policy makes `opus` both the owner-visible builder *and* a judge (judges are opus or fable, never sonnet). One value per row cannot hold that, so row 19 would have had to demote `opus` or re-migrate the column. Asked and ruled before the column exists: **the column is `classes`, holding a comma-separated set.**
+
+Vocabulary is closed — `plumbing`, `visible`, `judge` — and validated on read. Seeds: `opus` = `visible,judge`, `sonnet` = `plumbing`, `fable` = `judge`; every other row `NULL` for the owner to set, with the `UPDATE` documented in the README. This still reads D5 ("a class set once by the owner") faithfully — it sets *which* classes, not how many.
 
 ---
 
-## Task 1 — Schema v7: `participants.class` and the `owner-remote` row
+## Task 1 — Schema v7: `participants.classes` and the `owner-remote` row
 
 Files: `src/ChopItUp.Core/Model/Message.cs`, `src/ChopItUp.Core/Storage/ChopDb.cs`, `src/ChopItUp.Core/Storage/ParticipantStore.cs`, `tests/ChopItUp.Core.Tests/Storage/SchemaMigrationTests.cs`, `tests/ChopItUp.Core.Tests/Storage/ParticipantStoreTests.cs`.
 
 **1a.** `Message.cs` line 31 — add a seventh member with a default so the 13 target-typed seed entries keep compiling (claim 7):
 
 ```csharp
-public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Class = null);
+public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Classes = null);
 ```
+
+`Classes` is the raw stored form — a comma-separated set, or null. Parsing and the closed vocabulary live in one place, in `ChopItUp.Core/Model/ParticipantClasses.cs`, so no consumer splits the string by hand:
+
+```csharp
+/// <summary>The roles a roster row can hold (grill ledger D5, owner ruling 2026-09-07: a SET, not
+/// one value — `opus` is both the owner-visible builder and a judge). Row 11 stores and surfaces
+/// these; row 19 enforces them (D8) and picks effort from them (D10).</summary>
+public static class ParticipantClasses
+{
+    public const string Plumbing = "plumbing";
+    public const string Visible = "visible";
+    public const string Judge = "judge";
+    public static readonly IReadOnlyList<string> All = [Plumbing, Visible, Judge];
+
+    /// <summary>Splits, trims, lowercases, drops duplicates and anything outside the vocabulary, and
+    /// preserves <see cref="All"/> order so two rows with the same set serialise identically. A value
+    /// the owner mistyped by hand is dropped rather than thrown on: one bad cell must not stop every
+    /// spawn in the hub, and <see cref="Unknown"/> gives the caller what to warn about.</summary>
+    public static IReadOnlyList<string> Parse(string? stored);
+
+    /// <summary>The tokens Parse discarded, for a startup warning naming the row.</summary>
+    public static IReadOnlyList<string> Unknown(string? stored);
+
+    public static bool Has(Participant p, string cls) => Parse(p.Classes).Contains(cls);
+}
+```
+
+`HubHost.Build` logs one line per row whose `Unknown` is non-empty, at startup, beside the roster read — a mistyped class is otherwise invisible until row 19 silently refuses a phase.
 
 **1b.** `ChopDb.cs` — `LatestSchemaVersion` to `7`; add beside `HubParticipantId`:
 
@@ -137,7 +167,7 @@ public sealed record Participant(string Id, string DisplayName, string Kind, str
 So: leave every existing entry in place, add classes to three of them per D-h, and append one row:
 
 ```csharp
-        new("opus",          "Opus",          "model", "claude", "opus",          null, "visible"),
+        new("opus",          "Opus",          "model", "claude", "opus",          null, "visible,judge"),
         new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null, "plumbing"),
         new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits.", "judge"),
         …
@@ -152,7 +182,7 @@ The other nine rows are unchanged (no class argument ⇒ `null`).
 **1c.** `ApplyV7`, appended after `ApplyV6` and wired as `if (GetUserVersion(conn) < 7) ApplyV7(conn);` in `EnsureDatabase`. Same shape as V3/V6 — probe before ALTER, seed with OR IGNORE, stamp last in the same transaction:
 
 ```csharp
-    /// <summary>v7 (row 11): participants gain a <c>class</c> (plumbing / visible / judge, grill
+    /// <summary>v7 (row 11): participants gain <c>classes</c> (plumbing / visible / judge, grill
     /// ledger D5), the roster gains <c>owner-remote</c> (D3), and the <c>skills</c> table records the
     /// fingerprint <c>--import-skill</c> takes of each skill's SKILL.md (D-i). The fingerprint lives
     /// here rather than in a file beside the skill precisely because the directory it would sit in is
@@ -168,9 +198,9 @@ The other nine rows are unchanged (no class argument ⇒ `null`).
         using (var probe = conn.CreateCommand())
         {
             probe.Transaction = tx;
-            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'class'";
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'classes'";
             if (Convert.ToInt64(probe.ExecuteScalar()) == 0)
-                ddl.Append("ALTER TABLE participants ADD COLUMN class TEXT;\n");
+                ddl.Append("ALTER TABLE participants ADD COLUMN classes TEXT;\n");
         }
         ddl.Append("""
             CREATE TABLE IF NOT EXISTS skills (
@@ -204,18 +234,18 @@ The other nine rows are unchanged (no class argument ⇒ `null`).
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = "UPDATE participants SET class = $class WHERE id = $id AND class IS NULL";
+        cmd.CommandText = "UPDATE participants SET classes = $classes WHERE id = $id AND classes IS NULL";
         var id = cmd.Parameters.Add("$id", SqliteType.Text);
-        var cls = cmd.Parameters.Add("$class", SqliteType.Text);
-        foreach (var p in SeedRoster.Where(p => p.Class is not null))
+        var cls = cmd.Parameters.Add("$classes", SqliteType.Text);
+        foreach (var p in SeedRoster.Where(p => p.Classes is not null))
         {
-            id.Value = p.Id; cls.Value = p.Class;
+            id.Value = p.Id; cls.Value = p.Classes;
             cmd.ExecuteNonQuery();
         }
     }
 ```
 
-**Leave `SeedParticipants` on its existing 6-column INSERT.** It is called by `ApplyV3` too, which on a fresh database runs *before* the `class` column exists; extending its INSERT would break the V3 rung. All v7 knowledge stays in v7: `ApplyV7` adds the column, `SeedParticipants` adds the row, `BackfillClasses` sets the classes. V3 keeps behaving byte-identically.
+**Leave `SeedParticipants` on its existing 6-column INSERT.** It is called by `ApplyV3` too, which on a fresh database runs *before* the `classes` column exists; extending its INSERT would break the V3 rung. All v7 knowledge stays in v7: `ApplyV7` adds the column, `SeedParticipants` adds the row, `BackfillClasses` sets the classes. V3 keeps behaving byte-identically.
 
 **1d.** `ParticipantStore.cs` — read the column and replace `HumanId`:
 
@@ -283,9 +313,9 @@ Blocked by: 1. Files: `src/ChopItUp.Hub/Spawning/SpawnerService.cs`, `src/ChopIt
 ```
 Replace `{HUMANS}` with the comma-joined human ids.
 
-**2d.** Expose `class` on both roster surfaces. `ChatApi.GetParticipants` (line **35**) and `RoomTools.ListRooms` (line 50) both project `new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }` — add `p.Class` to each. `RoomTools` uses `RosterJsonOptions` (no `WhenWritingNull`), so `class` will be present-and-null on unclassed rows, matching how `model` behaves; that is intended. Extend the `list_rooms` tool `Description` to say the roster carries a class.
+**2d.** Expose `classes` on both roster surfaces. `ChatApi.GetParticipants` (line **35**) and `RoomTools.ListRooms` (line 50) both project `new { p.Id, p.DisplayName, p.Kind, p.Host, p.Model }` — add `Classes = ParticipantClasses.Parse(p.Classes)` to each, so both surfaces publish a **parsed array**, never the raw delimited string. An unclassed row answers `[]`, not null: a caller asking "is this a judge" should never have to distinguish absent from empty. Extend the `list_rooms` tool `Description` to say the roster carries a set of classes and what the vocabulary is.
 
-**Tests (RED first):** `ChatApiTests` — `/api/participants` includes `owner-remote` with `kind: "human"` and `class: null`, and `opus` with `class: "visible"`. `RoomToolsTests` — `list_rooms` roster carries `class` on every row. `SpawnPromptTests` — with a two-human roster the prompt names both ids and does not contain "is the only human here"; with a one-human roster it still says "is the only human here" (the single-human wording is not dead code, it is what a hand-trimmed roster gets). `ParticipationTests` — the instructions name both human ids.
+**Tests (RED first):** `ChatApiTests` — `/api/participants` includes `owner-remote` with `kind: "human"` and `classes: []`, `opus` with `classes: ["visible","judge"]`, and `fable` with `["judge"]`. `RoomToolsTests` — `list_rooms` roster carries a `classes` array on every row. `ParticipantClassesTests` (new, Core) — parse order is `All` order regardless of stored order, duplicates collapse, whitespace and case are tolerated, an unknown token is dropped and reported by `Unknown`, and null/empty both give `[]`. `SpawnPromptTests` — with a two-human roster the prompt names both ids and does not contain "is the only human here"; with a one-human roster it still says "is the only human here" (the single-human wording is not dead code, it is what a hand-trimmed roster gets). `ParticipationTests` — the instructions name both human ids.
 
 ## Task 3 — `SkillStore`, slash parsing, and the name rules
 
@@ -692,7 +722,7 @@ Registered in `HubHost.Build` beside `app.MapMemoryApi();`.
             var file = p.Id == ChopDb.OwnerRemoteParticipantId ? "`claude-code-owner-remote.json`"
                 : p.Kind == "human" ? "none (the web UI)"
 ```
-…and the table gains a `Class` column between `Model` and `File`, rendering `p.Class ?? "—"`.
+…and the table gains a `Classes` column between `Model` and `File`, rendering the parsed set joined with `, ` or `—` when empty.
 
 **6c-bis.** `Readme` currently states *"Claude Code gets no file of its own: it joins as `claude` by pasting the Claude Desktop entry above"* — 6b makes that false. Amend that paragraph: Claude Code still joins as `claude` when the owner wants one Claude identity across both hosts (the 2026-09-04 ruling, unchanged), and `owner-remote` is a separate, human-kind credential for driving the hub rather than participating in it. Also: `ClaudeMcpConfigJson` serialises un-indented with no trailing newline, while every other file in `host-configs\` is `WriteIndented` plus a newline and the README asks the owner to hand-merge it — write this one indented, with a trailing newline, like its neighbours.
 
@@ -710,7 +740,7 @@ Registered in `HubHost.Build` beside `app.MapMemoryApi();`.
 >
 > ## Roster classes
 >
-> `class` is `plumbing`, `visible` or `judge`, and the hub reads it but does not yet act on it (that is the runs milestone). Set one by hand with the hub stopped: `UPDATE participants SET class='judge' WHERE id='fable';` — it takes effect at the next start.
+> `classes` is a set drawn from `plumbing`, `visible` and `judge`, stored comma-separated. A row can hold more than one — `opus` ships as `visible,judge`, because it is both the model you want on anything you will look at and one of the two you want judging. The hub reads the set and validates it but does not yet act on it; that is the runs milestone. Set one by hand with the hub stopped: `UPDATE participants SET classes='visible,judge' WHERE id='gpt-6-astra';` — it takes effect at the next start, and anything outside the vocabulary is dropped with a warning in the hub's log at startup.
 
 **Tests (RED first):** `SkillsApiTests` — an empty store answers `[]`; two fixture skills answer both rows with exactly the four fields of `SkillSummary` and no others; a directory with no `SKILL.md` is absent from the list, and so is one whose `SKILL.md` no longer matches its recorded fingerprint. `HostCommandsTests` — `--print-config` writes `claude-code-owner-remote.json`, it parses as a `mcpServers.chopitup` block of `type: "http"`, it carries `owner-remote`'s token and **no other row's**, and the README table names it and carries a Class column. Plus the unit half of acceptance 6 (live check 7 is the other half, and a unit test is nearly free here): a request authenticated as `owner-remote` through the existing `HubTestHost` MCP client posts a message stamped `owner-remote` and the policy opens an exchange for it.
 
