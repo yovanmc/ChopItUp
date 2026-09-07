@@ -142,8 +142,8 @@ try {
 
     # --- Step 5: assertions ------------------------------------------------------------------------
 
-    # /health reports schema 7.
-    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 7) -Detail "schema=$($health.schema)"
+    # /health reports schema 8.
+    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 8) -Detail "schema=$($health.schema)"
 
     # Exactly one .bak exists, sound, correctly versioned, and its fingerprint (including the 500
     # WAL-only rows) equals the pre-migration fingerprint.

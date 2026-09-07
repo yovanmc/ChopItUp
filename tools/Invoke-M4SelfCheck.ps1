@@ -318,7 +318,7 @@ try {
     Add-Check -Name 'c2.no-database-in-working-directory' -Passed (-not (Test-Path -LiteralPath (Join-Path $workDir 'data'))) -Detail (Join-Path $workDir 'data')
 
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
-    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 7) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 8) -Detail "schema=$($health.schema)"
 
     $tokensPath = Join-Path $dataDir 'tokens.json'
     Wait-ForHubFile -Path $tokensPath -HubProcess $hubProcess -What 'tokens.json'
