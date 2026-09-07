@@ -1,4 +1,4 @@
-/** Mirrors the hub's `/api` JSON (camelCase, see Web/ChatApi.cs). `authorId` is stamped by the hub,
+﻿/** Mirrors the hub's `/api` JSON (camelCase, see Web/ChatApi.cs). `authorId` is stamped by the hub,
  *  never typed by the writer — including for imported transcripts, which are always `owner` (D1). */
 export interface Message {
   id: number;
@@ -122,6 +122,10 @@ export interface RunSnapshot {
   wallClockCapMinutes: number;
   artifacts: RunArtifact[];
   gateRuns: RunGate[];
+  /** Every phase tag the run has entered, with its own entry count. The strip does not draw it — it
+   *  is here because the field is on the wire and a type that omits half the payload invites the next
+   *  reader to re-derive it. The M19 live check is what reads it. */
+  phaseHistory: Record<string, number>;
 }
 
 /** Mirrors `GET /api/memory/proposals` and the approve/reject responses (Web/MemoryApi.cs). */

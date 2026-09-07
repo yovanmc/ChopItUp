@@ -1,4 +1,4 @@
-using ChopItUp.Core.Model;
+﻿using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Spawning;
 
@@ -30,6 +30,12 @@ public static class RunsApi
 /// <see cref="PhaseEntries"/> is entries into the phase the run is in RIGHT NOW, never a total across
 /// tags, because the cap it is read against is per tag (<see cref="RunLimits.PhaseEntries"/>).
 ///
+/// <see cref="PhaseHistory"/> is every tag the run has entered, with its own count. The strip does not
+/// draw it; the M19 live check reads it, because "the run entered two distinct phases" is otherwise
+/// only answerable by polling this endpoint and unioning whatever the polls happen to catch — and a
+/// phase the run left between two polls would then FAIL exactly like a conductor that never entered
+/// it. Task 15d exists to remove that ambiguity, not to add another source of it.
+///
 /// <see cref="ElapsedMinutes"/> comes from <see cref="RunStore.ActiveElapsed"/> and nowhere else: the
 /// wall-clock cap counts time the run spent ACTIVE, so parked time is excluded and a parked run's
 /// clock is frozen where it stood. An ended run is read at its own <c>endedAt</c> for the same
@@ -39,14 +45,20 @@ public sealed record RunSnapshot(
     long Id, string RoomId, string ConductorId, string SkillName, string Status, string? Reason,
     bool CapSpent, string Phase, int PhaseEntries, int PhaseEntryCap, int Exchanges, int SpawnsUsed,
     int SpawnCap, DateTimeOffset StartedAt, DateTimeOffset? EndedAt, int ElapsedMinutes,
-    int WallClockCapMinutes, IReadOnlyList<RunArtifact> Artifacts, IReadOnlyList<GateRun> GateRuns)
+    int WallClockCapMinutes, IReadOnlyList<RunArtifact> Artifacts, IReadOnlyList<GateRun> GateRuns,
+    IReadOnlyDictionary<string, int> PhaseHistory)
 {
-    public static RunSnapshot Of(Run run, RunStore runs, RunLimits limits, DateTimeOffset now) => new(
+    public static RunSnapshot Of(Run run, RunStore runs, RunLimits limits, DateTimeOffset now)
+    {
+        // One read, two uses: the current tag's count and the whole map are the same query.
+        var entries = runs.PhaseEntries(run.Id);
+        return new(
         run.Id, run.RoomId, run.ConductorId, run.SkillName, run.Status, run.Reason, run.CapSpent,
-        run.Phase, runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase), limits.PhaseEntries,
+        run.Phase, entries.GetValueOrDefault(run.Phase), limits.PhaseEntries,
         run.Exchanges, run.SpawnsUsed, limits.Spawns,
         run.StartedAt, run.EndedAt,
         (int)RunStore.ActiveElapsed(run, run.EndedAt ?? now).TotalMinutes,
         (int)limits.WallClock.TotalMinutes,
-        runs.Artifacts(run.Id), runs.GateRuns(run.Id));
+        runs.Artifacts(run.Id), runs.GateRuns(run.Id), entries);
+    }
 }

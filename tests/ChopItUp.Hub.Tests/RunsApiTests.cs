@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -97,7 +97,7 @@ public sealed class RunsApiTests : IAsyncLifetime
             {
                 "id", "roomId", "conductorId", "skillName", "status", "reason", "capSpent", "phase",
                 "phaseEntries", "phaseEntryCap", "exchanges", "spawnsUsed", "spawnCap", "startedAt",
-                "endedAt", "elapsedMinutes", "wallClockCapMinutes", "artifacts", "gateRuns",
+                "endedAt", "elapsedMinutes", "wallClockCapMinutes", "artifacts", "gateRuns", "phaseHistory",
             },
             Names(body));
     }
@@ -138,5 +138,27 @@ public sealed class RunsApiTests : IAsyncLifetime
         Assert.Equal(T0.AddMinutes(12), body.GetProperty("endedAt").GetDateTimeOffset());
         // An ended run's clock stopped when it ended: the strip must not keep counting it up.
         Assert.Equal(12, body.GetProperty("elapsedMinutes").GetInt32());
+    }
+
+    /// <summary>Every tag the run has passed through, not just the one it sits in. The M19 live check
+    /// asserts "two distinct phases were entered" and the only alternative source is polling the
+    /// endpoint and unioning what it happens to catch — which turns a phase the run left between two
+    /// polls into a FAIL indistinguishable from a conductor that never entered it (task 15d's whole
+    /// point is removing that ambiguity, not adding to it).</summary>
+    [Fact]
+    public async Task Run14_the_run_answers_every_phase_tag_it_entered_not_only_the_one_it_sits_in()
+    {
+        var run = Runs.Start("general", "sonnet", "build-thing", "begin", rootMessageId: 41, T0);
+        Runs.EnterPhase(run.Id, "build", T0);
+        Runs.EnterPhase(run.Id, "ping", T0);
+        Runs.EnterPhase(run.Id, "build", T0);
+
+        var (status, body) = await GetRun();
+
+        Assert.Equal(HttpStatusCode.OK, status);
+        var history = body.GetProperty("phaseHistory");
+        Assert.Equal(2, history.GetProperty("build").GetInt32());
+        Assert.Equal(1, history.GetProperty("ping").GetInt32());
+        Assert.Equal(["build", "ping"], Names(history).Order().ToArray());
     }
 }

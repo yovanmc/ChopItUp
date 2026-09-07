@@ -1,4 +1,4 @@
-import { renderToStaticMarkup } from 'react-dom/server';
+﻿import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test } from 'vitest';
 import RunBar from './RunBar';
 import { setRoster } from './participants';
@@ -22,6 +22,7 @@ const BASE: RunSnapshot = {
   reason: null,
   capSpent: false,
   phase: 'build/api',
+  phaseHistory: { 'build/api': 2, critique: 1 },
   phaseEntries: 2,
   phaseEntryCap: 3,
   exchanges: 5,

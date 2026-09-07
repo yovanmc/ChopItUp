@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     M19 live check: proves that a run — the hub's conductor loop from row 19 — gets a two-phase toy
     skill from start to its ping with no owner post between the phases, using real command-line
@@ -203,12 +203,19 @@ try {
     # --- run the whole thing to its end, spending real conductor/worker turns ----------------------
     $finalRun = Wait-Run -RoomId $roomId -Until 'ended,parked' -Seconds $TimeoutSeconds
     Add-Content -Path $log -Value ("final run: " + ($finalRun | ConvertTo-Json -Compress))
-    Add-Content -Path $log -Value ("phases seen: " + ($script:SeenPhases -join ','))
+    # phaseHistory is the run_phases table as the hub recorded it, so this is a RECORD proof. The
+    # polled union below it is kept only as log context: a phase the run entered and left inside one
+    # 3-second poll gap is invisible to polling, and a check that FAILed on that would be
+    # indistinguishable from a conductor that never entered the phase at all - which is the exact
+    # ambiguity 15d exists to remove.
+    $recorded = @()
+    if ($finalRun.phaseHistory) { $recorded = @($finalRun.phaseHistory.PSObject.Properties.Name) }
+    Add-Content -Path $log -Value ("phases recorded: " + ($recorded -join ',') + " | phases polled: " + ($script:SeenPhases -join ','))
 
-    $sawBuild = $script:SeenPhases.Contains('build')
-    $sawPing = $script:SeenPhases.Contains('ping') -or $finalRun.phase -eq 'ping'
+    $sawBuild = $recorded -contains 'build'
+    $sawPing = $recorded -contains 'ping'
     Add-ModelTriggeredCheck -Name 'run.two-phases' -Passed ($sawBuild -and $sawPing) `
-        -Detail "phases seen: $($script:SeenPhases -join ',')" -RoomId $roomId
+        -Detail "phases recorded: $($recorded -join ',')" -RoomId $roomId
 
     Add-Check -Name 'run.exchanges-at-least-three' -Passed ($finalRun.exchanges -ge 3) -Detail "exchanges=$($finalRun.exchanges)"
 
