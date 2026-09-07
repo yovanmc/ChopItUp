@@ -285,16 +285,26 @@ public sealed class RunToolsTests : IAsyncLifetime
     {
         ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Signals the instant the first call's gate process actually starts - which, per RunTools.RunGate,
+        // only happens after that call has taken GateLocks' per-room lock (locks.TryEnter precedes the
+        // Execute() that spawns this process; see RunTools.cs). Awaiting this instead of a fixed sleep is
+        // what makes the second call's race against the lock deterministic rather than load-dependent.
+        var firstEnteredGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CallToolResult? second = null;
         _runner.Handler = async (spec, _, ct) =>
         {
-            if (spec.Label.StartsWith("run_gate/")) { await release.Task.WaitAsync(ct); return FakeProcessRunner.Ok("ok"); }
+            if (spec.Label.StartsWith("run_gate/"))
+            {
+                firstEnteredGate.TrySetResult();
+                await release.Task.WaitAsync(ct);
+                return FakeProcessRunner.Ok("ok");
+            }
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
             {
                 await using var clientA = await _host.ClientFor("sonnet");
                 await using var clientB = await _host.ClientFor("sonnet");
                 var first = CallRunGate(clientA, "lab", "check-it");
-                await Task.Delay(250);   // give the first call time to acquire the per-room lock
+                await firstEnteredGate.Task.WaitAsync(Wait, ct);   // first call now holds the per-room lock
                 second = await CallRunGate(clientB, "lab", "check-it");
                 release.SetResult();
                 await first;
@@ -303,7 +313,10 @@ public sealed class RunToolsTests : IAsyncLifetime
         };
 
         await PostRunStart("gated");
-        await WaitUntil(() => second is not null, TimeSpan.FromSeconds(20));
+        // second is not null once the refusal round-trips; the first call's own "exit 0" row lands later
+        // still, only after release.SetResult() unblocks it and its Execute() records the row - so the
+        // wait has to cover both, not just the refusal, or the assert below can beat that tail write.
+        await WaitUntil(() => second is not null && AllGateRunRows().Count == 2, TimeSpan.FromSeconds(20));
 
         Assert.Contains("already running", ErrorText(second!));
         var rows = AllGateRunRows();
