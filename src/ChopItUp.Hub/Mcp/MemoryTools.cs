@@ -75,6 +75,12 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         [Description("The exact title of an entry this topic already holds that this proposal corrects or updates. On approval that entry is retired and this one takes its place. Omit to add a new entry.")] string? replaces = null)
     {
         var me = Caller;
+        // Normalized once here; every use below reads these locals rather than re-guarding the
+        // (non-nullable) parameters, so the flow state passed to proposals.Create stays definitely
+        // non-null (was CS8604 under -warnaserror: repeated `title ?? ""`/`body ?? ""` narrowed the
+        // parameters' flow state to maybe-null for the rest of the method).
+        var entryTitle = title ?? "";
+        var entryBody = body ?? "";
         if (!store.RoomExists(room_id)) throw new McpException($"Unknown room '{room_id}'. Call list_rooms.");
         var slug = (topic ?? "").Trim();
         if (!MemoryStore.TopicSlug.IsMatch(slug))
@@ -85,13 +91,13 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
             throw new McpException($"No entry titled '{target}' in topic '{slug}'. Titles: {(titles.Count == 0 ? "(none)" : string.Join(", ", titles.Take(20)))}.");
         // Order (critique P1-17a): the "memory already holds it" refusal first, so a repeat of a pending
         // proposal for a title the file already has is told about replaces rather than handed a duplicate.
-        if (target is null && titles.Contains((title ?? "").Trim(), StringComparer.Ordinal))
-            throw new McpException($"Memory already holds '{(title ?? "").Trim()}' in topic '{slug}'. To change it, propose again with replaces set to that title.");
-        if (proposals.FindPending(slug, title ?? "") is { } pending)
+        if (target is null && titles.Contains(entryTitle.Trim(), StringComparer.Ordinal))
+            throw new McpException($"Memory already holds '{entryTitle.Trim()}' in topic '{slug}'. To change it, propose again with replaces set to that title.");
+        if (proposals.FindPending(slug, entryTitle) is { } pending)
             return JsonSerializer.Serialize(new { pending.Id, pending.RoomId, pending.AuthorId, pending.Topic, pending.Title, pending.Status, Duplicate = true }, JsonOptions);
-        var flags = ProposalFlags.Compute(body ?? "", store.GetRoom(room_id)?.Directory is not null);
+        var flags = ProposalFlags.Compute(entryBody, store.GetRoom(room_id)?.Directory is not null);
         MemoryProposal proposal;
-        try { proposal = proposals.Create(room_id, me, slug, title, body, null, target, flags); }
+        try { proposal = proposals.Create(room_id, me, slug, entryTitle, entryBody, null, target, flags); }
         catch (ArgumentException e) { throw new McpException(e.Message); }
         // The row is the proposal; the note is its announcement. A note that fails must not turn into a
         // tool error that invites a retry and a duplicate row (critique pass 2, P2-8).
