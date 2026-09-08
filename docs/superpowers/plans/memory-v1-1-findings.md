@@ -2,7 +2,7 @@
 
 Review of the shipped M10 memory (`e838645`) against the 2025–2026 literature and the vendors' native memory, done 2026-09-06. BINDING for row 18: its plan is checked against this file. Items are labelled by how they were established: **code** = read at `1b701b29`; **doc** = a primary page fetched that day, URL given; **inferred** / **UNVERIFIED** as marked.
 
-Paired delete: this file is deleted in the commit that flips row 23 to DONE (row 18 carries items 1, 2, 4, 5, 6, 7; row 23 carries 3 and 8 — split 2026-09-08, see the row 18 plan header).
+Paired delete: this file is deleted in the commit that flips **row 24** to DONE (moved there 2026-09-08 when row 23 was split; row 23 carries item 3, row 24 carries item 8).
 
 ## What M10 is (code)
 
@@ -38,3 +38,42 @@ Vector or graph stores, importance scoring, benchmark harnesses (LoCoMo, LongMem
 - Both CLIs run unconfined on this host (Claude Code sandbox: native Windows unsupported; Codex `--approve-for-me` excludes `--sandbox`) — confirmed by docs, already row 13.
 
 Tier guess: HIGH (proposal kinds change schema v5, prompt shape changes, owner-visible panel). Row order: after 9 and 11, which items 3, 5, 6, 7 depend on.
+
+## Item 8 — pass-2 findings, recorded 2026-09-08 for row 24
+
+Row 23 was planned with items 3 and 8 together, critiqued twice, and split on the owner's ruling: the
+export became row 24. These three findings were raised against the export half of that plan by
+critique pass 2 (`opus`) and are **binding on row 24's plan**. Each is a data-loss path through the
+guard that was supposed to prevent data loss.
+
+- **The manifest must bind SOURCE identity, not just file identity.** A manifest of per-file SHA-256
+  proves "this directory is untouched since *an* export"; it never proves "an export *of this
+  store*". Sequence: export the real store to the target; later run `--export-memory` at the same
+  target from a different but valid data dir (a scratch or test one). Every hash matches, the
+  zero-entry guard passes, the net-delete guard passes, and the owner's exported memory is replaced,
+  exit 0, silently. Fix: record the source store's root path plus a hash over its entry set, and
+  refuse a mismatch naming both stores.
+- **Writing the manifest last wedges the target on a crash, and the parse-failure branch is
+  undefined.** Guard passes, files are written, stale files are deleted, the process dies before the
+  manifest lands: the directory now holds files that are unlisted or stale-hashed under the old
+  manifest, so every later run refuses. Recovery is a hand-delete inside the owner's memory folder —
+  the exact operation the guard exists to prevent. A half-written manifest is the likeliest real
+  state and nothing says whether it refuses, counts as absent, or NREs. Fix: write to a temp
+  directory and swap, or write the manifest first as an in-progress record and finalise it last;
+  state the parse-failure branch explicitly; document a recovery that is not a manual delete.
+- **The guard makes the export single-use against its own named consumer.** Claude Code's auto-memory
+  maintains its own `MEMORY.md` and writes memory files into the directory it is pointed at. The
+  moment a session writes anything there, the next export refuses — correctly, by design. So the
+  supported lifecycle is export once, then never again without emptying the directory by hand, and
+  there is no re-sync path. Decide the merge story at plan time rather than leaving it for the
+  builder: either a force that overrides the changed-file guard with a printed list of what it will
+  destroy, or an explicit rule that the export owns its directory and `autoMemoryDirectory` should be
+  pointed at a dedicated export dir, stated in the acceptance criteria and in `docs/verification.md`.
+
+Also settled while planning row 23, and no longer UNVERIFIED: `autoMemoryDirectory` and
+`autoMemoryEnabled` exist at Claude Code 2.1.220 (extracted from the installed binary's strings,
+2026-09-08). The memory-file template is `---` / `name:` / `description:` / `metadata:` / `  type:` /
+`---` / body, and the index is `MEMORY.md`, one line per memory, shaped `- [Title](file.md) — hook`.
+What remains unverified is whether a running session actually reads an exported directory — that is
+an owner-side probe (set the key in a throwaway project, start a session, ask what it remembers) and
+it belongs in row 24's verification section before this file is deleted.
