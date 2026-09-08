@@ -25,7 +25,9 @@ Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill 
 `POST /api/rooms {name, directory}`.
 
 Start a run: post `/roadmap @<conductor>` in the room (text after the mention is a free-text
-hint, never a row selector). Steer an active run by posting in the room; the conductor reads it
+hint, never a row selector). Only a human roster row can start a run (`SpawnerService.ResolveSkill`
+returns nothing for any other author), so an agent driving the hub needs the `owner-remote`
+credential rather than its own MCP identity. Steer an active run by posting in the room; the conductor reads it
 before its next phase post. `/stop` ends the run outright; a `phase: ping` post ends it on its
 own. Deploy only after a run ends, never inside one: the ping names deploy as the next step.
 
@@ -81,10 +83,13 @@ database half of the rollback mandatory rather than optional.
 1. Stop the hub.
 2. Restore the pre-migration backup `ChopDb` wrote over `data\chopitup.db`. `BackupBeforeMigration`
    names it `<database path>.v<version it is leaving>.<yyyyMMddTHHmmssZ>.bak`, beside the database, so
-   the file to restore is the newest `chopitup.db.v7.*.bak` in that folder. This step is not optional:
-   the old executable cannot open a database at the new schema version.
+   the file to restore is the newest `chopitup.db.v<N-1>.*.bak` in that folder, where N is the schema
+   version the new build reports on `/health` (for the v9 deploy that is `chopitup.db.v8.*.bak`; an
+   older `.v7.` file is a previous deploy's backup and restoring it loses everything since). This step
+   is not optional: the old executable cannot open a database at the new schema version.
 3. Redeploy the previous executable from the backup-aside directory that `Deploy-ChopItUp.ps1` left
    beside the install: `pwsh tools\Deploy-ChopItUp.ps1 -RestoreFrom <that directory>`, which runs the
-   same guarded pipeline in reverse rather than a hand-copy. For the v8 deploy of 2026-09-07 that
-   directory is `C:\Self Apps\ChopItUp.backup-20260907-195240`.
+   same guarded pipeline in reverse rather than a hand-copy. The directory for the most recent deploy is
+   the one named in the shipped ✅ row's Notes on `ROADMAP.md` (the deploy script prints it, and the
+   board flip records it); do not rely on a date remembered from an earlier deploy.
 4. Start the hub and confirm `/health` reports the old schema version.
