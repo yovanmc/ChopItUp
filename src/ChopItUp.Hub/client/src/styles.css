@@ -1273,6 +1273,95 @@ input {
 .memory-body {
   font-size: 13px;
 }
+
+/* ---- Row 18 (AC5): what the owner needs to judge a proposal, not just read it. All three blocks
+   are absent from a plain card, so the ordinary proposal looks exactly as it did before. Every rule
+   here wraps rather than scrolls: the room pane gets narrow and a hint that overflows is a hint the
+   owner does not read. */
+.memory-replaces {
+  margin: 2px 0 0;
+  color: var(--dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.memory-replaces q {
+  color: var(--text);
+  font-style: italic;
+}
+.memory-flags {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 6px 0 0;
+  padding: 0;
+}
+.memory-flag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+/* The two that say the text may not be a fact borrow the banner's tone (`--danger`), because they
+   are the ones that should change a decision. `from-directory` keeps the card's accent: it is
+   provenance, not a warning. */
+.memory-flag-instruction-like,
+.memory-flag-fence {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.memory-related {
+  display: block;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+}
+.memory-related-title {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+}
+.memory-related ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.memory-related li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+}
+.memory-related-entry {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.memory-related-replaced .memory-related-entry {
+  text-decoration: line-through;
+  color: var(--dim);
+}
+.memory-related-mark {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+  font-size: 10px;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+.memory-related-snippet {
+  flex: 1 1 100%;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
 .memory-actions {
   display: flex;
   justify-content: flex-end;
