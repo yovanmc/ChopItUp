@@ -247,4 +247,46 @@ public sealed class SpawnCommandsTests
         var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, mcpToolTimeoutMs: 1_800_000);
         Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
     }
+
+    // --- Row 20 task 3: the per-server mcp.json timeout and the idle-timeout env var ---------------
+
+    [Fact]
+    public void ClaudeMcpConfigJson_carries_a_per_server_timeout_only_when_given()
+    {
+        var withoutTimeout = SpawnCommands.ClaudeMcpConfigJson("http://127.0.0.1:8790/mcp", "tok123");
+        using (var doc = JsonDocument.Parse(withoutTimeout))
+            Assert.False(doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").TryGetProperty("timeout", out _));
+
+        var withTimeout = SpawnCommands.ClaudeMcpConfigJson("http://127.0.0.1:8790/mcp", "tok123", 1_500_000);
+        using (var doc = JsonDocument.Parse(withTimeout))
+        {
+            var server = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
+            Assert.Equal(1_500_000, server.GetProperty("timeout").GetInt32());
+            Assert.Equal("http", server.GetProperty("type").GetString());
+            Assert.Equal("http://127.0.0.1:8790/mcp", server.GetProperty("url").GetString());
+            Assert.Equal("Bearer tok123", server.GetProperty("headers").GetProperty("Authorization").GetString());
+        }
+    }
+
+    [Fact]
+    public void ClaudeInDirectory_sets_both_mcp_timeout_env_vars_together()
+    {
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, mcpToolTimeoutMs: 1_500_000);
+        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpIdleTimeoutEnvVar]);
+        Assert.Equal(2, spec.Environment.Count);
+    }
+
+    [Fact]
+    public void Out_of_run_mcp_json_and_environment_are_unchanged()
+    {
+        var withoutParam = SpawnCommands.ClaudeMcpConfigJson("http://127.0.0.1:8790/mcp", "tok123");
+        var withExplicitNull = SpawnCommands.ClaudeMcpConfigJson("http://127.0.0.1:8790/mcp", "tok123", null);
+        Assert.Equal(withoutParam, withExplicitNull);
+        using (var doc = JsonDocument.Parse(withoutParam))
+            Assert.False(doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").TryGetProperty("timeout", out _));
+
+        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
+        Assert.Empty(spec.Environment);
+    }
 }

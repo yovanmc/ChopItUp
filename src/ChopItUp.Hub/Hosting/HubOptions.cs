@@ -1,6 +1,6 @@
 namespace ChopItUp.Hub.Hosting;
 
-public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill }
+public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasses }
 
 /// <summary>Resolved startup options. Precedence: CLI args, then environment, then defaults.
 /// Default data dir is <c>data\</c> beside the executable (release layout); dev and tests pass
@@ -14,8 +14,13 @@ public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill }
 /// 5), already rooted with <see cref="Path.GetFullPath(string)"/> at parse time — the same M5 lesson
 /// <c>--data</c> follows — so a relative path resolves against THIS process's working directory and
 /// not against anything a later hub start does. <paramref name="Force"/> is <c>--force</c>: replace an
-/// already-imported skill of the same name instead of refusing.</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false)
+/// already-imported skill of the same name instead of refusing. <paramref name="OverlayPath"/> is
+/// <c>--overlay &lt;odir&gt;</c> (row 20 task 1), only valid alongside <c>--import-skill</c>, rooted the
+/// same way at parse time. <paramref name="SetClassesSpec"/> is the raw <c>&lt;id&gt;=&lt;classes&gt;</c>
+/// text of <c>--set-classes</c> (row 20 task 2); the split on <c>=</c> and the class normalization
+/// happen in <see cref="ChopItUp.Hub.Hosting.HostCommands"/>, not here — only the "has an <c>=</c>"
+/// shape is a parse-time refusal.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null)
 {
     public const int DefaultPort = 8790;
 
@@ -36,6 +41,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         string? rooms = null;
         string? importSkillPath = null;
         var force = false;
+        string? overlayPath = null;
+        string? setClassesSpec = null;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--data")
@@ -76,7 +83,25 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             {
                 force = true;
             }
+            else if (args[i] == "--overlay")
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException("--overlay requires a value.");
+                // Rooted here for the same reason --import-skill is (M5): a relative path must resolve
+                // against THIS command's working directory, not against anything a later hub start does.
+                overlayPath = Path.GetFullPath(args[++i]);
+            }
+            else if (args[i] == "--set-classes")
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException("--set-classes requires a value.");
+                var spec = args[++i];
+                if (!spec.Contains('=') || spec.StartsWith('='))
+                    throw new ArgumentException("--set-classes takes <participant>=<classes>; classes are comma-separated or empty to clear.");
+                command = HubCommand.SetClasses;
+                setClassesSpec = spec;
+            }
         }
+        if (overlayPath is not null && command != HubCommand.ImportSkill)
+            throw new ArgumentException("--overlay is only valid with --import-skill.");
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
         rooms ??= getEnv("CHOPITUP_ROOMS");
@@ -87,6 +112,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             rotate,
             RoomsRoot: string.IsNullOrWhiteSpace(rooms) ? null : rooms,
             ImportSkillPath: importSkillPath,
-            Force: force);
+            Force: force,
+            OverlayPath: overlayPath,
+            SetClassesSpec: setClassesSpec);
     }
 }

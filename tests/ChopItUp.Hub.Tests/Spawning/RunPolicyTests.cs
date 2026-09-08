@@ -9,7 +9,8 @@ namespace ChopItUp.Hub.Tests.Spawning;
 public sealed class RunPolicyTests
 {
     private static readonly RunLimits Limits = new(
-        Spawns: 5, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(5), PhaseEntries: 3);
+        Spawns: 5, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(5), PhaseEntries: 3,
+        GateTimeout: TimeSpan.FromMinutes(4));
 
     private readonly RunPolicy _policy = new(Limits);
 

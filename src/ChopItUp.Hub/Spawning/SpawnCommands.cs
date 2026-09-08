@@ -35,21 +35,30 @@ public static class SpawnCommands
     // host-configs\claude-code-owner-remote.json, which the owner hand-merges like every other file
     // in that folder, and those are all indented with a trailing newline. The per-spawn mcp.json
     // this also produces (SpawnerService) is read by the Claude CLI, which does not care either way.
-    public static string ClaudeMcpConfigJson(string mcpUrl, string token) =>
-        JsonSerializer.Serialize(new
+    //
+    // <paramref name="toolTimeoutMs"/> (row 20, task 3; ledger 11, 25): the installed CLI's own
+    // per-server <c>timeout</c> field, milliseconds - a documented override of
+    // <see cref="ClaudeMcpToolTimeoutEnvVar"/> for this one server. Null (every out-of-run caller, and
+    // every caller before this task) omits the field entirely rather than writing an explicit default,
+    // so the JSON this produces is byte-identical to before this task for every existing call site.
+    public static string ClaudeMcpConfigJson(string mcpUrl, string token, int? toolTimeoutMs = null)
+    {
+        object server = toolTimeoutMs is null
+            ? new { type = "http", url = mcpUrl, headers = new { Authorization = "Bearer " + token } }
+            : new { type = "http", url = mcpUrl, headers = new { Authorization = "Bearer " + token }, timeout = toolTimeoutMs.Value };
+        return JsonSerializer.Serialize(new
         {
-            mcpServers = new Dictionary<string, object>
-            {
-                [McpServerName] = new { type = "http", url = mcpUrl, headers = new { Authorization = "Bearer " + token } },
-            },
+            mcpServers = new Dictionary<string, object> { [McpServerName] = server },
         }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
+    }
 
     /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
     /// tool (LESSONS, M5 approvals); `--ignore-user-config` keeps the owner's config.toml out while
     /// auth still comes from CODEX_HOME (verified); `-c` values are literal strings when they are
     /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.
     /// <paramref name="effort"/> is row 19's AC7/D10, as `-c model_reasoning_effort=<value>` — null
-    /// appends nothing.</summary>
+    /// appends nothing. Row 20, task 3 (ledger 12): F10 measured 2026-09-07 on codex-cli 0.153.3 that
+    /// this `-c` override binds per spawn and that `high` is a value the CLI/API accepts.</summary>
     public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
@@ -158,8 +167,18 @@ public static class SpawnCommands
     /// is read from the environment, not that raising it actually extends a live call that would
     /// otherwise time out — the CLI's default value could not be extracted either. Inferred from the
     /// binary's own embedded schema text this session, not from a round-trip that timed out and was
-    /// then rescued by this variable; treat it as unverified until such a round-trip is observed.</summary>
+    /// then rescued by this variable; row 20 task 5's probe (rescue leg) is what verifies the round
+    /// trip — until that runs, treat this as unverified.</summary>
     public const string ClaudeMcpToolTimeoutEnvVar = "MCP_TOOL_TIMEOUT";
+
+    /// <summary>Row 20, task 3 (ledger 11): the env var the installed CLI documents for the HTTP MCP
+    /// transport's idle-abort timeout, milliseconds — separate from <see cref="ClaudeMcpToolTimeoutEnvVar"/>'s
+    /// hard per-call wall clock; the CLI's own default is 5 minutes when this is unset. Raised
+    /// alongside the other two knobs (this var, the env var above, and the per-server <c>timeout</c>
+    /// field in <see cref="ClaudeMcpConfigJson"/>) for an in-run Claude directory spawn only, all three
+    /// at the same value, so a long <c>run_gate</c> call cannot be cut by whichever of the three the
+    /// installed CLI actually enforces — the probe (task 5) is what tells them apart.</summary>
+    public const string ClaudeMcpIdleTimeoutEnvVar = "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT";
 
     /// <summary>A spawn in a directory room (M9 decision 9): cwd is the room's tree; `dontAsk` plus the
     /// allow list runs the six built-ins and the three MCP tools without a prompt and auto-denies
@@ -168,12 +187,13 @@ public static class SpawnCommands
     /// folder beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
     /// what carries the Bash calls the trail records; <paramref name="systemRules"/> (`SpawnPrompt.DirectoryRules`)
     /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.
-    /// <paramref name="mcpToolTimeoutMs"/> (orchestrator addition to task 12f) sets
-    /// <see cref="ClaudeMcpToolTimeoutEnvVar"/> in the child's environment when given — an in-run
-    /// Claude spawn only, at <c>RunLimits.SpawnTimeout</c> in milliseconds, so the CLI's own hard MCP
-    /// tool-call wall clock cannot kill a long <c>run_gate</c> call well before the hub's own 30-minute
-    /// per-spawn timeout does. Null (the default, every non-run caller) sets nothing, exactly the
-    /// pre-existing empty environment.</summary>
+    /// <paramref name="mcpToolTimeoutMs"/> (orchestrator addition to task 12f; row 20 task 3 raises the
+    /// value from <c>RunLimits.SpawnTimeout</c> to <c>RunLimits.EffectiveGateTimeout</c> and adds the
+    /// second env var) sets BOTH <see cref="ClaudeMcpToolTimeoutEnvVar"/> and
+    /// <see cref="ClaudeMcpIdleTimeoutEnvVar"/> in the child's environment, to the same value, when
+    /// given — an in-run Claude spawn only, so neither of the CLI's own MCP timeouts can kill a long
+    /// <c>run_gate</c> call before the hub's own per-spawn timeout does. Null (the default, every
+    /// non-run caller) sets nothing, exactly the pre-existing empty environment.</summary>
     public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
@@ -183,7 +203,11 @@ public static class SpawnCommands
              .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             mcpToolTimeoutMs is null
                 ? new Dictionary<string, string>()
-                : new Dictionary<string, string> { [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString() },
+                : new Dictionary<string, string>
+                {
+                    [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
+                    [ClaudeMcpIdleTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
+                },
             roomDir, prompt, label);
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is

@@ -14,6 +14,36 @@ Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryChe
 Room check (real Sonnet, scratch hub + scratch room dir, spends): `pwsh tools\Invoke-M9RoomCheck.ps1`.
 Skill check (real CLIs, scratch hub, spends): `pwsh tools\Invoke-M11SkillCheck.ps1`.
 Run check (real CLIs, scratch hub + scratch room dir, spends): a two-phase toy skill (`tools\skills\toy-run`) proves a run reaches its ping unattended, from the hub's own records: `pwsh tools\Invoke-M19RunCheck.ps1`.
+Roadmap-in-room check (real CLIs, scratch hub + scratch .NET repo, spends approx 6 spawns incl. one Codex): `pwsh tools\Invoke-M20RoadmapCheck.ps1`.
+MCP timeout probe (4 Sonnet calls): `pwsh tools\Probe-McpTimeouts.ps1`.
+
+## Running /roadmap in a room
+
+Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>
+--overlay <overlay dir>`. Class rows to build or judge, hub stopped: `--set-classes
+<id>=<classes>` (comma-separated; empty after `=` clears). Bind a room to a repository root:
+`POST /api/rooms {name, directory}`.
+
+Start a run: post `/roadmap @<conductor>` in the room (text after the mention is a free-text
+hint, never a row selector). Steer an active run by posting in the room; the conductor reads it
+before its next phase post. `/stop` ends the run outright; a `phase: ping` post ends it on its
+own. Deploy only after a run ends, never inside one: the ping names deploy as the next step.
+
+Owner-remote setup: `--print-config` writes `<data>\host-configs\claude-code-owner-remote.json`
+under the hub's DATA directory, not the repo. Merge its `chopitup` entry into the phone-driven
+Claude Code session's `.mcp.json` on the hub machine (A1: loopback only, so that session runs
+on the hub's own machine).
+
+### If the run parks
+
+A park from a cap, silence, or two refusals resumes on the owner's next post in the room (a
+steer), as long as the run is still active. A ping whose body starts `PARKED:` has already
+ENDED the run; re-post `/roadmap` to start a new one.
+
+The room clone's default branch is hub-owned: empty trail commits land on it, and the next
+`start-branch` gate resets it from origin. A branch already pushed with an open PR is reused
+by the next `finish-branch`, or closed by hand with `gh pr close`. To abandon a run's
+unfinished work outright, delete `room/m<row>` locally and on origin from a harness session.
 
 ## Deploying a schema change, and rolling one back
 

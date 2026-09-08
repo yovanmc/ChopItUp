@@ -435,7 +435,8 @@ public sealed class ExchangePolicyTests
         // fable is judge-only; gpt-6-astra carries no classes at all.
         var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
         Assert.NotNull(refusal);
-        Assert.Contains("plumbing", refusal);
+        Assert.Contains("plumbing- or visible-class row", refusal);
+        Assert.Contains("@opus, @sonnet", refusal);   // the qualifying rows, named
     }
 
     [Fact]
@@ -448,6 +449,19 @@ public sealed class ExchangePolicyTests
     public void Build_mentioning_a_visible_row_is_accepted()
     {
         Assert.Null(Refuse(Policy(), "phase: build @opus go", conductor: "fable"));     // opus: visible,judge
+    }
+
+    // --- Row 20 task 3 (AC4b): a refusal names the rows that would have satisfied the rule ----------
+
+    [Fact]
+    public void A_refused_build_post_names_the_qualifying_rows()
+    {
+        var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
+        Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: @opus, @sonnet", refusal);
+
+        var noneClassed = ChopDb.SeedRoster.Select(p => p with { Classes = null }).ToList();
+        var noneRefusal = Refuse(new ExchangePolicy(noneClassed, Limits), "phase: build @gpt-6-astra go", conductor: "fable");
+        Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: none is classed; set one with --set-classes", noneRefusal);
     }
 
     [Fact]
@@ -472,7 +486,8 @@ public sealed class ExchangePolicyTests
         var refusal = Refuse(Policy(), "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", conductor: "fable",
             artifactAuthor: _ => "sonnet");
         Assert.NotNull(refusal);
-        Assert.Contains("judge", refusal);
+        Assert.Contains("a judge mentioned other than the artifact's recorded author", refusal);
+        Assert.Contains("@opus, @fable", refusal);   // the qualifying judge rows other than "sonnet"
     }
 
     [Fact]

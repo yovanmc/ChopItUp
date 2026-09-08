@@ -169,6 +169,19 @@ public sealed class SpawnPromptTests
         Assert.Contains($"(Cut to the first {SkillStore.MaxSkillChars} characters.)\n--- begin skill demo ---", p);
     }
 
+    // --- Row 20 task 1: the overlay renders inside the fence, after the body ----------------------
+
+    [Fact]
+    public void The_overlay_renders_inside_the_fence_after_the_body()
+    {
+        var skill = new ResolvedSkill("demo", "Demo Skill", "Do the demo thing.", false, Overlay: "Room mechanics here.");
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "/demo @opus hi")) with { Skill = skill }, SpawnLimits.Default);
+
+        Assert.Contains(
+            "--- begin skill demo ---\nDo the demo thing.\n--- overlay: room mechanics for this skill, installed and fingerprinted with it ---\nRoom mechanics here.\n--- end skill demo ---",
+            p);
+    }
+
     [Fact]
     public void With_no_skill_in_force_the_prompt_is_unchanged_from_before_this_task()
     {
@@ -180,8 +193,8 @@ public sealed class SpawnPromptTests
 
     // --- Task 7 (row 19): the run-state section in the prompt --------------------------------------
 
-    private static RunView RunView(bool selfIsConductor = false, IReadOnlyList<RunArtifact>? artifacts = null, IReadOnlyList<GateRun>? gates = null) => new(
-        RunId: 7, ConductorId: "sonnet", SelfIsConductor: selfIsConductor,
+    private static RunView RunView(bool selfIsConductor = false, IReadOnlyList<RunArtifact>? artifacts = null, IReadOnlyList<GateRun>? gates = null, string skillName = "build-thing", string arguments = "") => new(
+        RunId: 7, ConductorId: "sonnet", SelfIsConductor: selfIsConductor, SkillName: skillName, Arguments: arguments,
         Phase: "build", PhaseEntries: 1, PhaseEntryCap: 3,
         Exchanges: 2, SpawnsUsed: 3, SpawnCap: 80,
         Elapsed: TimeSpan.FromMinutes(12), ElapsedCap: TimeSpan.FromHours(8),
@@ -194,7 +207,7 @@ public sealed class SpawnPromptTests
         Assert.DoesNotContain("Run #", plain);
 
         var inRun = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);
-        Assert.Contains("Run #7: conducted by @sonnet", inRun);
+        Assert.Contains("Run #7: started by /build-thing (conducted by @sonnet)", inRun);
         Assert.Contains("Phase build (entered 1 of 3 time(s))", inRun);
         Assert.Contains("2 exchange(s) opened", inRun);
         Assert.Contains("3 of 80 spawns used", inRun);
@@ -234,5 +247,57 @@ public sealed class SpawnPromptTests
         var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);
         Assert.Contains("No artifacts recorded yet.", p);
         Assert.Contains("No gates have been run yet.", p);
+    }
+
+    // --- Row 20 task 3: the run section names the skill/arguments, worker rules, peers with classes,
+    // and the conductor's last turn never asks the owner whether to continue ----------------------
+
+    [Fact]
+    public void The_run_section_names_the_skill_and_the_arguments()
+    {
+        var withArgs = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(skillName: "build-thing", arguments: "begin now") }, SpawnLimits.Default);
+        Assert.Contains("Run #7: started by /build-thing begin now (conducted by @sonnet)", withArgs);
+
+        var noArgs = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(skillName: "build-thing", arguments: "") }, SpawnLimits.Default);
+        Assert.Contains("Run #7: started by /build-thing (conducted by @sonnet)", noArgs);
+    }
+
+    [Fact]
+    public void A_conductor_prompt_never_asks_the_owner_whether_to_continue()
+    {
+        var p = SpawnPrompt.Render(Input(1, 0, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: true) }, SpawnLimits.Default);
+        Assert.DoesNotContain("This is the last turn of the exchange", p);
+        Assert.Contains("This is your one turn in this phase", p);
+        Assert.Contains("Never ask the owner whether to continue", p);
+        Assert.Contains("owner's /stop", p);
+    }
+
+    [Fact]
+    public void A_worker_prompt_carries_the_worker_rules()
+    {
+        var worker = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: false) }, SpawnLimits.Default);
+        Assert.Contains("You are a worker in this run, mentioned by its conductor.", worker);
+        Assert.Contains("run_gate tool (room_id, gate)", worker);
+        Assert.Contains("Do not commit: the hub commits your diff when you finish, authored as you.", worker);
+        Assert.Contains("Do not edit ROADMAP.md.", worker);
+        Assert.Contains("Mention nobody; end with one report post.", worker);
+
+        var conductor = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: true) }, SpawnLimits.Default);
+        Assert.DoesNotContain("You are a worker in this run", conductor);
+    }
+
+    [Fact]
+    public void In_run_peers_carry_their_classes_and_out_of_run_peers_do_not()
+    {
+        var outOfRun = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")), SpawnLimits.Default);
+        var outLine = outOfRun.Split('\n').Single(l => l.StartsWith("Participants you can hand the turn to:", StringComparison.Ordinal));
+        Assert.Contains("@sonnet", outLine);
+        Assert.DoesNotContain("(", outLine);
+
+        var inRun = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);
+        var inLine = inRun.Split('\n').Single(l => l.StartsWith("Participants you can hand the turn to:", StringComparison.Ordinal));
+        Assert.Contains("@sonnet (plumbing)", inLine);
+        Assert.Contains("@fable (judge)", inLine);
+        Assert.Contains("@gpt-6-astra (no class)", inLine);
     }
 }

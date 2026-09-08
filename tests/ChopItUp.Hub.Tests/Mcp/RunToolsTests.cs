@@ -6,6 +6,7 @@ using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Tests.Spawning;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -32,9 +33,15 @@ public sealed class RunToolsTests : IAsyncLifetime
     private HubTestHost _host = null!;
     private string _roomDir = null!;
 
+    /// <summary>Row 20, task 3b: GateProgressInterval is cut from Default's 30 s to 40 ms so the two
+    /// progress tests below see several ticks without a slow test. Every other RunLimits field stays at
+    /// Default's value - <see cref="run_gate_runs_a_script_under_GateTimeout"/> still asserts against
+    /// <see cref="RunLimits.Default"/>'s own EffectiveGateTimeout, which this leaves untouched.</summary>
     public async Task InitializeAsync()
     {
-        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner);
+        var runLimits = new RunLimits(RunLimits.Default.Spawns, RunLimits.Default.WallClock, RunLimits.Default.SpawnTimeout,
+            RunLimits.Default.PhaseEntries, GateProgressInterval: TimeSpan.FromMilliseconds(40));
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, runLimits: runLimits);
         _roomDir = Path.Combine(_host.RoomsRoot, "lab");
         Assert.True(await new GitTrail(_roomDir).InitAsync());
         _host.Services.GetRequiredService<MessageStore>().CreateRoom("lab", "LAB", _roomDir);
@@ -46,8 +53,10 @@ public sealed class RunToolsTests : IAsyncLifetime
 
     /// <summary>Installs a fixture skill through the real write path so task 12a's whole-tree manifest
     /// exists to verify against (a hand-written <see cref="SkillHashes.Record"/> only ever covers
-    /// SKILL.md).</summary>
-    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null)
+    /// SKILL.md). <paramref name="overlayMd"/>/<paramref name="overlayScripts"/> (row 20 task 1) compose
+    /// a hub-side overlay in through <c>--overlay</c> the same way a real import would.</summary>
+    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null,
+        string? overlayMd = null, IReadOnlyDictionary<string, string>? overlayScripts = null)
     {
         var source = Path.Combine(_dir, "sources", name);
         Directory.CreateDirectory(source);
@@ -58,8 +67,21 @@ public sealed class RunToolsTests : IAsyncLifetime
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             File.WriteAllText(full, content);
         }
+        string? overlayDir = null;
+        if (overlayMd is not null)
+        {
+            overlayDir = Path.Combine(_dir, "overlays", name);
+            Directory.CreateDirectory(overlayDir);
+            File.WriteAllText(Path.Combine(overlayDir, "OVERLAY.md"), overlayMd);
+            foreach (var (fileName, content) in overlayScripts ?? new Dictionary<string, string>())
+            {
+                var scriptsDir = Path.Combine(overlayDir, "scripts");
+                Directory.CreateDirectory(scriptsDir);
+                File.WriteAllText(Path.Combine(scriptsDir, fileName), content);
+            }
+        }
         var hashes = new SkillHashes(_host.Services.GetRequiredService<ChopDb>());
-        var result = SkillImport.Run(source, Path.Combine(_dir, "skills"), force: false, hashes);
+        var result = SkillImport.Run(source, Path.Combine(_dir, "skills"), force: false, hashes, overlayDir);
         Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
     }
 
@@ -156,6 +178,36 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Equal("sonnet", row.CallerId);
         Assert.Equal(3, row.ExitCode);
         Assert.Equal("exit 3", row.Outcome);
+    }
+
+    // --- Row 20 task 1: run_gate on an overlay-declared gate ---------------------------------------
+
+    [Fact]
+    public async Task run_gate_executes_an_overlay_declared_gate()
+    {
+        ImportSkill("overlay-gated", "---\nname: overlay-gated\ndescription: d.\nrun: true\n---\n# Overlay Gated\n",
+            overlayMd: "---\ngates: overlay-check\n---\nOverlay prose.\n",
+            overlayScripts: new Dictionary<string, string> { ["overlay-check.ps1"] = "exit 0\n" });
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (spec.Label.StartsWith("run_gate/"))
+                return new ProcessResult(0, false, false, "overlay gate ran\n", "", TimeSpan.FromMilliseconds(5));
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await CallRunGate(client, "lab", "overlay-check");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("overlay-gated");
+        await WaitUntil(() => gateResult is not null);
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("overlay-check", json.GetProperty("gate").GetString());
+        Assert.Equal(0, json.GetProperty("exit_code").GetInt32());
+        Assert.Equal("overlay gate ran\n", json.GetProperty("stdout").GetString());
     }
 
     [Fact]
@@ -280,6 +332,32 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(_dir, "gate-runs")) && Directory.EnumerateFileSystemEntries(Path.Combine(_dir, "gate-runs")).Any());
     }
 
+    // --- Row 20 task 3: run_gate's own process timeout is EffectiveGateTimeout, not SpawnTimeout ----
+
+    [Fact]
+    public async Task run_gate_runs_a_script_under_GateTimeout()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        TimeSpan? gateTimeout = null;
+        _runner.Handler = async (spec, timeout, _) =>
+        {
+            if (spec.Label.StartsWith("run_gate/")) { gateTimeout = timeout; return FakeProcessRunner.Ok("ok"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                await CallRunGate(client, "lab", "check-it");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateTimeout is not null);
+
+        Assert.Equal(RunLimits.Default.EffectiveGateTimeout, gateTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(25), gateTimeout);
+        Assert.NotEqual(RunLimits.Default.SpawnTimeout, gateTimeout);
+    }
+
     [Fact]
     public async Task A_second_concurrent_call_refuses_while_the_first_is_still_running()
     {
@@ -323,5 +401,74 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Equal(2, rows.Count);
         Assert.Contains(rows, r => r.Outcome == "exit 0");
         Assert.Contains(rows, r => r.Outcome == "refused: gate-running");
+    }
+
+    // --- Row 20 task 3b: run_gate reports progress while the script runs ----------------------------
+
+    /// <summary>Records every <see cref="ProgressNotificationValue"/> the MCP client hands back for a
+    /// <c>run_gate</c> call made with a progress sink attached.</summary>
+    private sealed class RecordingProgress : IProgress<ProgressNotificationValue>
+    {
+        private readonly List<ProgressNotificationValue> _reports = new();
+        public IReadOnlyList<ProgressNotificationValue> Reports { get { lock (_reports) return _reports.ToList(); } }
+        public void Report(ProgressNotificationValue value) { lock (_reports) _reports.Add(value); }
+    }
+
+    [Fact]
+    public async Task run_gate_reports_progress_every_interval_while_the_script_runs()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        var progress = new RecordingProgress();
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            // 40 ms GateProgressInterval (InitializeAsync) * 5 intervals = 200 ms of gate wall time.
+            if (spec.Label.StartsWith("run_gate/")) { await Task.Delay(TimeSpan.FromMilliseconds(200), ct); return FakeProcessRunner.Ok("ok"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await client.CallToolAsync("run_gate",
+                    new Dictionary<string, object?> { ["room_id"] = "lab", ["gate"] = "check-it" }, progress: progress);
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(20));
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("check-it", json.GetProperty("gate").GetString());
+        var reports = progress.Reports;
+        Assert.True(reports.Count >= 3, $"expected at least 3 progress reports, saw {reports.Count}");
+        Assert.All(reports, r => Assert.Contains("check-it", r.Message));
+    }
+
+    [Fact]
+    public async Task run_gate_with_no_progress_sink_still_records_the_outcome()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (spec.Label.StartsWith("run_gate/")) { await Task.Delay(TimeSpan.FromMilliseconds(200), ct); return FakeProcessRunner.Ok("no progress sink here\n"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await CallRunGate(client, "lab", "check-it");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(20));
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("check-it", json.GetProperty("gate").GetString());
+        Assert.Equal(0, json.GetProperty("exit_code").GetInt32());
+        Assert.False(json.GetProperty("timed_out").GetBoolean());
+        Assert.Equal("no progress sink here\n", json.GetProperty("stdout").GetString());
+
+        var row = Assert.Single(AllGateRunRows(), r => r.Gate == "check-it");
+        Assert.Equal("exit 0", row.Outcome);
     }
 }

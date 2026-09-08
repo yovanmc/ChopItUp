@@ -517,11 +517,22 @@ public sealed partial class SpawnerServiceTests
     /// never blocks an ordinary launch.</summary>
     private static readonly SpawnLimits Instant = new(Budget: 4, Debounce: TimeSpan.Zero, MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
 
-    private static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(RunLimits runLimits, TimeProvider? clock = null)
+    /// <summary><paramref name="seedClasses"/> (row 20, task 3) runs BEFORE the hub starts, against a
+    /// freshly-migrated database - the hub reads the roster once at startup (HubHost.Build) and never
+    /// again, so a class needed inside a run (a Codex judge, in particular) has to be set through
+    /// <see cref="ParticipantStore.SetClasses"/> here, the same host-command write path task 2 built,
+    /// not through the API once the hub is already running.</summary>
+    private static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(RunLimits runLimits, TimeProvider? clock = null, Action<ParticipantStore>? seedClasses = null)
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_run9_" + Guid.NewGuid().ToString("N"));
         var roomsRoot = dir + "_rooms";
         var runner = new FakeProcessRunner();
+        if (seedClasses is not null)
+        {
+            var seedDb = new ChopDb(Path.Combine(dir, "chopitup.db"));
+            seedDb.EnsureDatabase();
+            seedClasses(new ParticipantStore(seedDb));
+        }
         var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Instant, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
         const string room = "lab";
         var roomDir = Path.Combine(roomsRoot, room);
@@ -776,11 +787,13 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
     }
 
-    /// <summary>12f: an in-run Codex conductor's directory spawn gets the MCP tool-call timeout raised
-    /// from the ordinary 60 s to this run's SpawnTimeout - a 30-minute run_gate call must survive
-    /// long enough to finish (pass 1's M7).</summary>
+    /// <summary>12f, row 20 task 3: an in-run Codex conductor's directory spawn gets the MCP tool-call
+    /// timeout raised from the ordinary 60 s to this run's RunLimits.EffectiveGateTimeout (25 min by
+    /// default, not the full 30-minute SpawnTimeout - the 5-minute reserve is what lets a model post
+    /// after a gate that ran to its own ceiling) - a long run_gate call must survive long enough to
+    /// finish (pass 1's M7).</summary>
     [Fact]
-    public async Task Run12f_an_in_run_codex_conductor_is_launched_with_the_tool_timeout_raised_to_the_run_spawn_timeout()
+    public async Task Run12f_an_in_run_codex_conductor_is_launched_with_the_tool_timeout_raised_to_the_run_gate_timeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
         var (host, runner, room) = await StartRunHostAsync(runLimits);
@@ -791,17 +804,17 @@ public sealed partial class SpawnerServiceTests
         var spec = await runner.NextSpecAsync(Wait);
 
         Assert.Equal("gpt-6-astra", FakeProcessRunner.ParticipantOf(spec));
-        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1800", spec.Arguments);
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", spec.Arguments);
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
-    /// <summary>Orchestrator addition to task 12f: task 12 raised the Codex side (above) but left the
-    /// installed Claude CLI's own MCP tool-call timeout alone, so a run_gate call from an in-run
-    /// Claude spawn could still be killed by the CLI itself well before the hub's own 30-minute
-    /// per-spawn timeout. An in-run Claude conductor's directory spawn gets MCP_TOOL_TIMEOUT set to
-    /// this run's SpawnTimeout in milliseconds.</summary>
+    /// <summary>Orchestrator addition to task 12f, row 20 task 3: task 12 raised the Codex side (above)
+    /// but left the installed Claude CLI's own MCP tool-call timeout alone, so a run_gate call from an
+    /// in-run Claude spawn could still be killed by the CLI itself well before the hub's own per-spawn
+    /// timeout. An in-run Claude conductor's directory spawn gets MCP_TOOL_TIMEOUT set to this run's
+    /// EffectiveGateTimeout in milliseconds.</summary>
     [Fact]
-    public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_spawn_timeout()
+    public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_gate_timeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
         var (host, runner, room) = await StartRunHostAsync(runLimits);
@@ -812,7 +825,94 @@ public sealed partial class SpawnerServiceTests
         var spec = await runner.NextSpecAsync(Wait);
 
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
-        Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+    }
+
+    /// <summary>Row 20, task 3 (A5): the per-server `timeout` field in the conductor's own mcp.json AND
+    /// both environment variables, all three at EffectiveGateTimeout - none of them is left behind.</summary>
+    [Fact]
+    public async Task Run12g_an_in_run_claude_spawn_gets_the_per_server_timeout_and_both_env_vars_at_GateTimeout()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        var spec = await runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+        var mcpJson = runner.McpJsonOf(spec) ?? throw new InvalidOperationException("the fake captured no mcp.json for this spec");
+        using (var doc = JsonDocument.Parse(mcpJson))
+            Assert.Equal(1_500_000, doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("timeout").GetInt32());
+        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
+        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpIdleTimeoutEnvVar]);
+    }
+
+    /// <summary>Row 20, task 3: the same discount applies to a Codex WORKER a Claude conductor mentions
+    /// inside a run, not only to a Codex conductor (the renamed Run12f test above) - the timeout is
+    /// computed once, at Launch, for whichever host the spawn actually is.</summary>
+    [Fact]
+    public async Task Run12h_an_in_run_codex_spawn_tool_timeout_is_GateTimeout_seconds()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+        var codexWorker = new TaskCompletionSource<ProcessSpec>(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Handler = async (spec, _, _) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus": await PostAsInHost(host, "opus", room, "phase: build @sonnet @gpt-6-astra write the thing"); break;
+                case "gpt-6-astra": codexWorker.TrySetResult(spec); break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @opus begin" });
+
+        var codexSpec = await codexWorker.Task.WaitAsync(Wait);
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", codexSpec.Arguments);
+        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", codexSpec.Arguments);
+    }
+
+    /// <summary>Row 20, task 3 (A5): a Codex-hosted JUDGE worker inside a run gets both the effort
+    /// override (AC7/D10, pre-existing) and the raised tool timeout; a Codex plumbing worker in the
+    /// same run gets neither the effort flag nor the raised timeout dropped - it just never had one.
+    /// Classes are set through ParticipantStore.SetClasses (task 2) before the hub starts, since the
+    /// roster is read once at startup.</summary>
+    [Fact]
+    public async Task Run11_AC7_a_codex_hosted_judge_worker_inside_a_run_gets_model_reasoning_effort_high()
+    {
+        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+        var (host, runner, room) = await StartRunHostAsync(runLimits, seedClasses: p =>
+        {
+            Assert.True(p.SetClasses("gpt-6-astra", "judge"));
+            Assert.True(p.SetClasses("gpt-5.4-mini", "plumbing"));
+        });
+        await using var _ = host;
+
+        var judge = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var plumbing = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Handler = async (spec, _, _) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus": await PostAsInHost(host, "opus", room, "phase: build @gpt-6-astra @gpt-5.4-mini write the thing"); break;
+                case "gpt-6-astra": judge.TrySetResult(spec.Arguments); break;
+                case "gpt-5.4-mini": plumbing.TrySetResult(spec.Arguments); break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @opus begin" });
+
+        var judgeArgs = await judge.Task.WaitAsync(Wait);
+        Assert.Contains("model_reasoning_effort=high", judgeArgs);
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", judgeArgs);
+
+        var plumbingArgs = await plumbing.Task.WaitAsync(Wait);
+        Assert.DoesNotContain(plumbingArgs, a => a.StartsWith("model_reasoning_effort=", StringComparison.Ordinal));
     }
 
     /// <summary>The other half: a Claude directory spawn OUTSIDE any run never sees the variable -
