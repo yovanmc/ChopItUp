@@ -34,6 +34,16 @@ under the hub's DATA directory, not the repo. Merge its `chopitup` entry into th
 Claude Code session's `.mcp.json` on the hub machine (A1: loopback only, so that session runs
 on the hub's own machine).
 
+### Timeouts inside a run
+
+A `run_gate` call defaults to a 25-minute ceiling (`RunLimits.EffectiveGateTimeout`, `SpawnTimeout`
+minus a 5-minute reserve), but a hub-spawned Claude CLI cuts a silent MCP call at 300 s regardless
+of any timeout knob — only bytes on the wire reset that cut. `run_gate` answers with an MCP
+progress notification every 30 s while the gate script runs (`GateProgressInterval`), so a long
+gate stays alive across the CLI's cut. If a gate dies anyway, check that progress is actually
+reaching the client, not that some timeout needs to be bigger: `Probe-McpTimeouts.ps1` proves the
+cadence with a 400-s gate that survives.
+
 ### If the run parks
 
 A park from a cap, silence, or two refusals resumes on the owner's next post in the room (a
