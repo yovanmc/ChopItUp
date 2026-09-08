@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 8;
+    public const int LatestSchemaVersion = 9;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -117,6 +117,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 6) ApplyV6(conn);
             if (GetUserVersion(conn) < 7) ApplyV7(conn);
             if (GetUserVersion(conn) < 8) ApplyV8(conn);
+            if (GetUserVersion(conn) < 9) ApplyV9(conn);
             return 0;
         });
     }
@@ -547,6 +548,30 @@ public sealed class ChopDb
             stamp.CommandText = "PRAGMA user_version = 8;";
             stamp.ExecuteNonQuery();
         }
+        tx.Commit();
+    }
+
+    /// <summary>v9 (row 18): memory proposals gain <c>kind</c> (append | supersede; row 23 adds
+    /// rewrite without a migration), <c>replaces</c> (the title of the same-topic entry a supersede
+    /// retires) and <c>flags</c> (comma-joined review hints the panel shows). Each column is probed
+    /// before its ALTER so a torn v9 re-runs; the stamp is the last statement of the same transaction
+    /// (LESSONS, M1). Nothing existing changes shape.</summary>
+    private static void ApplyV9(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        var ddl = new System.Text.StringBuilder();
+        foreach (var (column, type) in new[] { ("kind", "TEXT NOT NULL DEFAULT 'append'"), ("replaces", "TEXT"), ("flags", "TEXT") })
+        {
+            using var probe = conn.CreateCommand();
+            probe.Transaction = tx;
+            probe.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('memory_proposals') WHERE name = '{column}'";
+            if (Convert.ToInt64(probe.ExecuteScalar()) == 0)
+                ddl.Append($"ALTER TABLE memory_proposals ADD COLUMN {column} {type};\n");
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = ddl + "PRAGMA user_version = 9;";
+        cmd.ExecuteNonQuery();
         tx.Commit();
     }
 
