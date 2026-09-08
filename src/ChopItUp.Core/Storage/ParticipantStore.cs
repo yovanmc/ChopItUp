@@ -45,4 +45,23 @@ public sealed class ParticipantStore(ChopDb db)
     /// policy keys on kind, not on this list; this is for prose and diagnostics.</summary>
     public IReadOnlyList<string> HumanIds() =>
         List().Where(p => p.Kind == "human").Select(p => p.Id).ToList();
+
+    /// <summary>Row 20 task 2: persists a class set on one roster row (a Codex row included), the
+    /// host command's only write path — normal service never assigns classes. <paramref name="classes"/>
+    /// is normalized through <see cref="ParticipantClasses.Parse"/> before it is stored: unrecognised
+    /// tokens are dropped, known ones deduplicated and reordered to <see cref="ParticipantClasses.All"/>'s
+    /// order, and an empty or whitespace input clears the row (stored as NULL, the same as a row that
+    /// never had a class). Returns whether the row existed (exactly one row updated); it never
+    /// inserts, so an unknown id changes nothing and returns false.</summary>
+    public bool SetClasses(string id, string classes)
+    {
+        var normalized = ParticipantClasses.Parse(classes);
+        var stored = normalized.Count == 0 ? null : string.Join(",", normalized);
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE participants SET classes = @classes WHERE id = @id";
+        cmd.Parameters.AddWithValue("@classes", (object?)stored ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@id", id);
+        return cmd.ExecuteNonQuery() == 1;
+    }
 }

@@ -16,6 +16,7 @@ public static class HostCommands
         HubCommand.RotateToken => RotateToken(options, output, error),
         HubCommand.PrintConfig => PrintConfig(options, output, error),
         HubCommand.ImportSkill => ImportSkill(options, output, error),
+        HubCommand.SetClasses => SetClasses(options, output, error),
         _ => throw new InvalidOperationException($"{options.Command} is not a non-serving command."),
     };
 
@@ -178,5 +179,47 @@ public static class HostCommands
             SkillImportOutcome.SourceMissing => 4,
             _ => 3,
         };
+    }
+
+    /// <summary>Row 20 task 2: <c>--set-classes &lt;id&gt;=&lt;a,b&gt;</c>. Like <see cref="RotateToken"/>
+    /// this needs the hub stopped (exit 5): the running hub holds its roster snapshot in memory and
+    /// would not see a class change until its next start, so writing one under a live hub would be
+    /// silently ignored. Unlike RotateToken/PrintConfig this does NOT gate on <c>tokens.json</c> —
+    /// <see cref="TryReadRoster"/>'s own "no chopitup.db" fence is the only existence check (plan
+    /// critique pass-2 M1): the M20 check script runs this verb before the first hub start, right
+    /// after <c>--import-skill</c> has created the database via <see cref="ChopDb.EnsureDatabase"/>
+    /// but before any hub start has ever minted a tokens.json.</summary>
+    private static int SetClasses(HubOptions options, TextWriter output, TextWriter error)
+    {
+        if (HubLock.IsHeld(options.DataDir))
+        {
+            error.WriteLine($"A hub is running on '{options.DataDir}'. Stop it first — setting classes while it runs writes a roster the running hub will not see until its next start.");
+            return 5;
+        }
+
+        var spec = options.SetClassesSpec!;
+        var eq = spec.IndexOf('=');
+        var id = spec[..eq];
+        var classes = spec[(eq + 1)..];
+
+        if (TryReadRoster(options, error, out _) is null) return 4;
+
+        var unknown = ParticipantClasses.Unknown(classes);
+        if (unknown.Count > 0)
+        {
+            error.WriteLine($"Unknown class '{unknown[0]}'. Known classes: {string.Join(", ", ParticipantClasses.All)}.");
+            return 2;
+        }
+
+        var store = new ParticipantStore(new ChopDb(Path.Combine(options.DataDir, "chopitup.db")));
+        if (!store.SetClasses(id, classes))
+        {
+            error.WriteLine($"No participant '{id}'.");
+            return 4;
+        }
+
+        var normalized = ParticipantClasses.Parse(classes);
+        output.WriteLine($"{id}: classes = {(normalized.Count == 0 ? "(none)" : string.Join(",", normalized))}");
+        return 0;
     }
 }

@@ -54,6 +54,22 @@ public sealed class ParticipantStoreTests : IDisposable
         Assert.Equal(new[] { "owner", "owner-remote" }, new ParticipantStore(db).HumanIds());
     }
 
+    [Fact]
+    public void SetClasses_normalizes_and_persists()
+    {
+        var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
+        db.EnsureDatabase();
+        var store = new ParticipantStore(db);
+
+        Assert.True(store.SetClasses("gpt-5.4-mini", "Judge, plumbing, judge, bogus"));
+        Assert.Equal("plumbing,judge", store.List().Single(p => p.Id == "gpt-5.4-mini").Classes);
+
+        Assert.True(store.SetClasses("gpt-5.4-mini", ""));
+        Assert.Null(store.List().Single(p => p.Id == "gpt-5.4-mini").Classes);
+
+        Assert.False(store.SetClasses("mallory", "judge"));
+    }
+
     public void Dispose()
     {
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();

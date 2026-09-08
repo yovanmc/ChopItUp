@@ -609,6 +609,98 @@ public sealed class HostCommandsTests : IDisposable
         Assert.True(File.Exists(Path.Combine(dir, "skills", "demo", "SKILL.md")));
     }
 
+    // --- Row 20 task 2: --set-classes ---------------------------------------------------------
+
+    [Fact]
+    public void Options_parse_recognises_set_classes()
+    {
+        var setClasses = HubOptions.Parse(["--set-classes", "gpt-5.4-mini=plumbing"], _ => null);
+        Assert.Equal(HubCommand.SetClasses, setClasses.Command);
+        Assert.Equal("gpt-5.4-mini=plumbing", setClasses.SetClassesSpec);
+
+        var clear = HubOptions.Parse(["--set-classes", "sonnet="], _ => null);
+        Assert.Equal("sonnet=", clear.SetClassesSpec);
+
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes", "no-equals-sign"], _ => null));
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes"], _ => null));
+    }
+
+    [Fact]
+    public void A8_set_classes_updates_a_codex_row_and_prints_the_normalized_set()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "gpt-5.4-mini=Judge,plumbing,judge"), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        Assert.Contains("gpt-5.4-mini: classes = plumbing,judge", output.ToString());
+
+        var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
+        var updated = new ParticipantStore(db).List().Single(p => p.Id == "gpt-5.4-mini");
+        Assert.Equal("plumbing,judge", updated.Classes);
+    }
+
+    [Fact]
+    public async Task A8_set_classes_is_refused_while_a_hub_owns_the_data_dir()
+    {
+        var dir = NewDir();
+        await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "sonnet=judge"), new StringWriter(), error);
+
+        Assert.Equal(5, exit);
+        Assert.Contains(dir, error.ToString());
+    }
+
+    [Fact]
+    public void A8_set_classes_rejects_an_unknown_class_and_changes_nothing()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+        var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
+        var before = new ParticipantStore(db).List().Single(p => p.Id == "sonnet").Classes;
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "sonnet=bogus"), new StringWriter(), error);
+
+        Assert.Equal(2, exit);
+        Assert.Contains("bogus", error.ToString());
+        var after = new ParticipantStore(db).List().Single(p => p.Id == "sonnet").Classes;
+        Assert.Equal(before, after);
+    }
+
+    [Fact]
+    public void A8_set_classes_with_an_unknown_participant_exits_4()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "mallory=judge"), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains("mallory", error.ToString());
+    }
+
+    [Fact]
+    public void A8_set_classes_works_before_the_first_hub_start()
+    {
+        var dir = NewDir();
+        // What --import-skill leaves behind before any hub has ever started: a v8 database with
+        // the roster seeded, no tokens.json.
+        new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "gpt-5.4-mini=plumbing"), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        Assert.Contains("gpt-5.4-mini: classes = plumbing", output.ToString());
+        Assert.False(File.Exists(Path.Combine(dir, TokenStore.FileName)));
+    }
+
     // --- Row 11 task 6: the owner-remote host config and acceptance 6's unit half -----------
 
     [Fact]
