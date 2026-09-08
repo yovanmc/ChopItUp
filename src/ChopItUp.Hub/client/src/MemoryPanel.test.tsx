@@ -50,6 +50,7 @@ describe('MemoryPanel (row 18, AC5)', () => {
     expect(html).not.toContain('memory-replaces');
     expect(html).not.toContain('memory-flags');
     expect(html).not.toContain('memory-related');
+    expect(html).not.toContain('Hub checks');
   });
 
   test('a supersede with three flags and two related entries renders all three', () => {
@@ -65,6 +66,10 @@ describe('MemoryPanel (row 18, AC5)', () => {
     });
 
     expect(html).toContain('Replaces <q>Shell</q> in user');
+    // The hints are the hub's own checks, not tags the proposing model attached, and a sighted owner
+    // has to be told that in words — an aria-label alone leaves two unlabelled pills in the same
+    // idiom as the topic chip above them (screenshot judge, finding 3).
+    expect(html).toContain('Hub checks');
     expect(html).toContain('reads like an instruction, not a fact');
     expect(html).toContain('contains a memory fence line');
     expect(html).toContain('proposed from a room with files and network');

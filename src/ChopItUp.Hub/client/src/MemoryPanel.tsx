@@ -69,13 +69,19 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 </p>
               )}
               {p.flags.length > 0 && (
-                <ul className="memory-flags" aria-label="Review hints">
-                  {p.flags.map((f) => (
-                    <li key={f} className={`memory-flag memory-flag-${f}`}>
-                      {FLAG_TEXT[f] ?? f}
-                    </li>
-                  ))}
-                </ul>
+                <div className="memory-flags-group">
+                  {/* Visible, not just an aria-label: in the same rounded-pill idiom as the topic chip
+                      above, unlabelled hints read as tags the proposing model attached. They are the
+                      hub's, and this panel says whose words are whose everywhere else. */}
+                  <span className="memory-flags-label">Hub checks</span>
+                  <ul className="memory-flags" aria-label="Hub checks">
+                    {p.flags.map((f) => (
+                      <li key={f} className={`memory-flag memory-flag-${f}`}>
+                        {FLAG_TEXT[f] ?? f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
               <div className="body memory-body" dangerouslySetInnerHTML={{ __html: renderBody(p.body) }} />
               {p.related.length > 0 && (
