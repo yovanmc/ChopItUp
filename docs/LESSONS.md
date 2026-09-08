@@ -51,3 +51,7 @@ shape and had never tripped it only because their default paths sit under `%USER
 path passed through `-ArgumentList` is quoted inside the argument string, always, not only when the
 current default happens to contain a space — quoting a space-free path is a no-op, and the next
 caller who passes a spaced path is not the person who should discover this.
+
+### [claude-code, mcp, timeouts, run_gate, progress, live-check] M20 (2026-09-08, 2f787c8)
+
+A silent MCP tool call from a hub-spawned Claude CLI (2.1.220, Bun-compiled) is cut at 300 s even with `MCP_TOOL_TIMEOUT`, the per-server `timeout` field and `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` all at 25 min: the CLI's own idle timer is `min(max(idle env, per-server timeout, 1 s), hard timeout)` polled every 30 s (so a 5 s idle knob cuts at the first tick, about 31 s), and the 300-s cut sits below it in the runtime's HTTP client, where only bytes on the wire reset it. `run_gate` therefore reports an MCP progress notification every 30 s while a script runs; the probe's rescue leg (a 400-s gate surviving, run ended by ping) is the proof, and a leg-4 FAIL with legs 1-3 passing means the progress is not reaching the client. Any future long server-side call over this transport needs the same cadence, not a bigger knob.
