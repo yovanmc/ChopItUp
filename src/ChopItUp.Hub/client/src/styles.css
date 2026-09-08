@@ -1380,7 +1380,7 @@ input {
   color: var(--dim);
   overflow-wrap: anywhere;
 }
-.memory-related-replaced {
+.memory-related li.memory-related-replaced {
   border-left-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
 .memory-related-replaced .memory-related-entry {
