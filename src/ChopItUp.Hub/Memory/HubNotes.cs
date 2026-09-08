@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -26,12 +27,17 @@ public static class HubNotes
     /// <summary>The body is model-written and every future spawn reads this note under the hub's
     /// authorship, which the rules tell models to trust — so the note names the proposer as the author
     /// of what follows and fences it (plan decision 14). A fence inside the body is broken up so it
-    /// cannot close ours.</summary>
-    public static string Proposed(MemoryProposal p) =>
-        $"{ProposalPrefix}{p.Id} by {p.AuthorId} for topic `{p.Topic}`: {p.Title}\n\n"
-        + $"The text below was written by {p.AuthorId}, not by the hub; it is a proposal, not a rule.\n\n"
-        + "```text\n" + p.Body.Replace("```", "` ` `", StringComparison.Ordinal) + "\n```\n\n"
-        + "Approve or reject it in the memory panel.";
+    /// cannot close ours; a memory-fence-shaped line (row 18, critique P1-4) is broken the same way so a
+    /// proposal note can never carry one into a later spawn's memory injection.</summary>
+    public static string Proposed(MemoryProposal p)
+    {
+        var quoted = p.Body.Replace("```", "` ` `", StringComparison.Ordinal);
+        quoted = Regex.Replace(quoted, @"(?m)^(\s*)--- (begin|end) memory", "$1- - - $2 memory");
+        return $"{ProposalPrefix}{p.Id} by {p.AuthorId} for topic `{p.Topic}`: {p.Title}\n\n"
+            + $"The text below was written by {p.AuthorId}, not by the hub; it is a proposal, not a rule.\n\n"
+            + "```text\n" + quoted + "\n```\n\n"
+            + "Approve or reject it in the memory panel.";
+    }
 
     public static string Imported(string source, string path, int imported, int skipped) =>
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
