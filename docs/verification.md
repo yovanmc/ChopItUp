@@ -1,4 +1,4 @@
-# Live verification checks
+﻿# Live verification checks
 
 Moved out of `CLAUDE.md` (row 19, task 15e) to keep that file under its 4 KB contract, which the
 roadmap gate ratchets. `CLAUDE.md` keeps one pointer line to here.
@@ -39,10 +39,12 @@ database half of the rollback mandatory rather than optional.
 **Rollback**
 
 1. Stop the hub.
-2. Restore the pre-migration backup `ChopDb` wrote (the path is in its own log line, and the concrete
-   path for this deploy is recorded in the row's board notes) over `data\chop.db`. This step is not
-   optional: the old executable cannot open a database at the new schema version.
+2. Restore the pre-migration backup `ChopDb` wrote over `data\chopitup.db`. `BackupBeforeMigration`
+   names it `<database path>.v<version it is leaving>.<yyyyMMddTHHmmssZ>.bak`, beside the database, so
+   the file to restore is the newest `chopitup.db.v7.*.bak` in that folder. This step is not optional:
+   the old executable cannot open a database at the new schema version.
 3. Redeploy the previous executable from the backup-aside directory that `Deploy-ChopItUp.ps1` left
    beside the install: `pwsh tools\Deploy-ChopItUp.ps1 -RestoreFrom <that directory>`, which runs the
-   same guarded pipeline in reverse rather than a hand-copy.
+   same guarded pipeline in reverse rather than a hand-copy. For the v8 deploy of 2026-09-07 that
+   directory is `C:\Self Apps\ChopItUp.backup-20260907-195240`.
 4. Start the hub and confirm `/health` reports the old schema version.
