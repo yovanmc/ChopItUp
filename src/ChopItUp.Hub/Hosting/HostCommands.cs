@@ -168,7 +168,7 @@ public static class HostCommands
         var hashes = new SkillHashes(db);
         var skillsRoot = Path.Combine(options.DataDir, "skills");
 
-        var result = SkillImport.Run(options.ImportSkillPath!, skillsRoot, options.Force, hashes);
+        var result = SkillImport.Run(options.ImportSkillPath!, skillsRoot, options.Force, hashes, options.OverlayPath);
         (result.Outcome == SkillImportOutcome.Ok ? output : error).WriteLine(result.Message);
         return result.Outcome switch
         {

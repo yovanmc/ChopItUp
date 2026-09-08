@@ -311,7 +311,8 @@ public sealed class SkillStoreTests : IDisposable
     /// <summary>Installs a skill through the REAL write path (<see cref="SkillImport"/>) rather than
     /// the low-level <see cref="WriteSkill"/> fixture above, so the whole-tree manifest (task 12a)
     /// exists to verify against — <see cref="WriteSkill"/> only ever records the SKILL.md hash.</summary>
-    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null)
+    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null,
+        string? overlayMd = null, IReadOnlyDictionary<string, string>? overlayScripts = null)
     {
         var source = Path.Combine(_dir, "sources", name);
         Directory.CreateDirectory(source);
@@ -322,7 +323,20 @@ public sealed class SkillStoreTests : IDisposable
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             File.WriteAllText(full, content);
         }
-        var result = SkillImport.Run(source, _store.Root, force: false, _hashes);
+        string? overlayDir = null;
+        if (overlayMd is not null)
+        {
+            overlayDir = Path.Combine(_dir, "overlays", name);
+            Directory.CreateDirectory(overlayDir);
+            File.WriteAllText(Path.Combine(overlayDir, "OVERLAY.md"), overlayMd);
+            foreach (var (fileName, content) in overlayScripts ?? new Dictionary<string, string>())
+            {
+                var scriptsDir = Path.Combine(overlayDir, "scripts");
+                Directory.CreateDirectory(scriptsDir);
+                File.WriteAllText(Path.Combine(scriptsDir, fileName), content);
+            }
+        }
+        var result = SkillImport.Run(source, _store.Root, force: false, _hashes, overlayDir);
         Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
     }
 
@@ -427,6 +441,34 @@ public sealed class SkillStoreTests : IDisposable
 
         Assert.IsType<GateRead.Ok>(_store.ReadGate("gated", "check-it"));
         Assert.IsType<TreeVerification.Tampered>(_store.VerifyTree("gated"));
+    }
+
+    // --- Row 20 task 1: overlay composition and pinned rendering ------------------------------------
+
+    [Fact]
+    public void Overlay_run_true_and_gates_are_honoured()
+    {
+        ImportSkill("demo", ValidSkillBody,
+            overlayMd: "---\nrun: true\ngates: overlay-gate\n---\nOverlay prose.\n",
+            overlayScripts: new Dictionary<string, string> { ["overlay-gate.ps1"] = "exit 0\n" });
+
+        var ok = Assert.IsType<SkillRead.Ok>(_store.Read("demo"));
+
+        Assert.True(ok.Skill.IsRun);
+        Assert.Contains(ok.Skill.Gates!, g => g.Name == "overlay-gate");
+        Assert.Equal("Overlay prose.", ok.Skill.Overlay!.Trim());
+    }
+
+    [Fact]
+    public void An_edited_overlay_reads_as_Tampered()
+    {
+        ImportSkill("demo", ValidSkillBody, overlayMd: "Overlay prose.\n");
+        File.AppendAllText(Path.Combine(_store.Root, "demo", "OVERLAY.md"), "tampered addition\n");
+
+        var result = _store.Read("demo");
+
+        var tampered = Assert.IsType<SkillRead.Tampered>(result);
+        Assert.Equal("demo", tampered.Name);
     }
 
     public void Dispose()

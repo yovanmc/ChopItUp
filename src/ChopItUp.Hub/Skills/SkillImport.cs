@@ -60,10 +60,10 @@ public static class SkillImport
     /// maps to — it never escapes <see cref="Run"/>.</summary>
     private sealed class SkillMoveException(string message) : Exception(message);
 
-    public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes) =>
-        PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes));
+    public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir = null) =>
+        PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir));
 
-    private static SkillImportResult RunCore(string sourceDir, string skillsRoot, bool force, SkillHashes hashes)
+    private static SkillImportResult RunCore(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir)
     {
         // m6: nothing before this point may assume a hub, or even this data directory, has ever
         // existed.
@@ -134,19 +134,99 @@ public static class SkillImport
         if (totalBytes > SkillStore.MaxBytes)
             return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source is {totalBytes} bytes; the cap is {SkillStore.MaxBytes}.");
 
+        // Refusal 7b (task 1): an overlay is hub-side and travels only through --overlay; a source
+        // that carries its own OVERLAY.md would let a third-party skill claim overlay standing for
+        // itself.
+        if (File.Exists(Path.Combine(sourceDir, SkillStore.OverlayFileName)))
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"'{name}' source carries OVERLAY.md; an overlay is hub-side and travels only through --overlay.");
+
+        // Refusal 7c (task 1): the overlay directory itself, validated before anything is staged —
+        // it must exist, hold OVERLAY.md under the character cap, and contain nothing else besides
+        // scripts/*.ps1 (no other files, no subdirectories beyond scripts, no reparse points, and no
+        // script name that collides with one the source already ships).
+        string? overlayMdPath = null;
+        string? overlayScriptsDir = null;
+        if (overlayDir is not null)
+        {
+            if (!Directory.Exists(overlayDir))
+                return new SkillImportResult(SkillImportOutcome.BadArgument, $"Overlay directory '{overlayDir}' does not exist.");
+
+            var overlayReparse = FindReparsePoint(overlayDir);
+            if (overlayReparse is not null)
+                return new SkillImportResult(SkillImportOutcome.BadArgument,
+                    $"'{overlayReparse}' is a link or junction; refusing to import a tree that contains one.");
+
+            overlayMdPath = Path.Combine(overlayDir, SkillStore.OverlayFileName);
+            if (!File.Exists(overlayMdPath))
+                return new SkillImportResult(SkillImportOutcome.BadArgument, $"Overlay directory '{overlayDir}' has no OVERLAY.md.");
+            var overlayMdChars = new UTF8Encoding(false).GetString(File.ReadAllBytes(overlayMdPath)).Length;
+            if (overlayMdChars > SkillStore.MaxOverlayChars)
+                return new SkillImportResult(SkillImportOutcome.BadArgument,
+                    $"OVERLAY.md is {overlayMdChars} characters; the cap is {SkillStore.MaxOverlayChars}.");
+
+            overlayScriptsDir = Path.Combine(overlayDir, SkillStore.ScriptsDirName);
+            foreach (var entry in Directory.EnumerateFileSystemEntries(overlayDir))
+            {
+                var entryName = Path.GetFileName(entry);
+                if (string.Equals(entryName, SkillStore.OverlayFileName, StringComparison.Ordinal)) continue;
+                if (string.Equals(entryName, SkillStore.ScriptsDirName, StringComparison.Ordinal) && Directory.Exists(entry)) continue;
+                return new SkillImportResult(SkillImportOutcome.BadArgument,
+                    $"'{entry}' is not allowed in the overlay directory; it may hold only OVERLAY.md and scripts/*.ps1.");
+            }
+            if (Directory.Exists(overlayScriptsDir))
+            {
+                foreach (var sub in Directory.EnumerateDirectories(overlayScriptsDir))
+                    return new SkillImportResult(SkillImportOutcome.BadArgument,
+                        $"'{sub}' is not allowed in the overlay's scripts directory; only *.ps1 files are.");
+                foreach (var file in Directory.EnumerateFiles(overlayScriptsDir))
+                {
+                    if (!file.EndsWith(".ps1", StringComparison.Ordinal))
+                        return new SkillImportResult(SkillImportOutcome.BadArgument,
+                            $"'{file}' is not allowed in the overlay's scripts directory; only *.ps1 files are.");
+                    var scriptBase = Path.GetFileNameWithoutExtension(file);
+                    if (File.Exists(Path.Combine(sourceDir, "scripts", scriptBase + ".ps1")))
+                        return new SkillImportResult(SkillImportOutcome.BadArgument,
+                            $"'{scriptBase}.ps1' exists in both the source and the overlay.");
+                }
+            }
+        }
+
         // Refusal 8: target already exists.
         var targetExisted = Directory.Exists(target);
         if (targetExisted && !force)
             return new SkillImportResult(SkillImportOutcome.BadArgument, $"'{name}' already exists. Re-import with --force to replace it.");
 
-        // Refusal 9 (row 19, task 12a): a declared gate whose script the import does not ship is a
-        // hard failure, checked against the SOURCE (nothing has moved yet) with the SAME frontmatter
-        // parser SkillStore.Read uses at every later call (SkillStore.StripFrontmatter, made internal
-        // for exactly this) — import-time and read-time can never disagree on what a skill declares.
-        // Without this, `run_gate` (task 12) would only discover the missing script the first time a
-        // conductor tries to call it, well after the skill looked installed and usable.
-        var (_, _, _, _, declaredGates) = SkillStore.StripFrontmatter(sourceText.Replace("\r\n", "\n"), name);
-        var missingGate = declaredGates.FirstOrDefault(g => !File.Exists(Path.Combine(sourceDir, "scripts", g.Name + ".ps1")));
+        // Refusal 8b (task 1): a forced re-import that would silently drop or rewrite an installed
+        // overlay is refused — the import never touches an overlay on its own; the caller must repeat
+        // it with --overlay to keep it.
+        if (targetExisted && force && overlayDir is null && File.Exists(Path.Combine(target, SkillStore.OverlayFileName)))
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"'{name}' carries an overlay; re-import with --overlay <dir> to keep it. The import never rewrites or drops an overlay on its own.");
+
+        // Refusal 9 (row 19, task 12a; extended task 1): a declared gate whose script the import does
+        // not ship is a hard failure, checked against the SOURCE (nothing has moved yet) with the SAME
+        // frontmatter parser SkillStore.Read uses at every later call (SkillStore.StripFrontmatter,
+        // made internal for exactly this) — import-time and read-time can never disagree on what a
+        // skill declares. The check now runs over the UNION of SKILL.md's gates and OVERLAY.md's gates
+        // against the union of the source's scripts/ and the overlay's scripts/; a name declared by
+        // both frontmatters is refused before either script is even looked for.
+        var (_, _, _, _, sourceGates) = SkillStore.StripFrontmatter(sourceText.Replace("\r\n", "\n"), name);
+        IReadOnlyList<GateDeclaration> overlayGates = [];
+        if (overlayMdPath is not null)
+        {
+            var overlayText = new UTF8Encoding(false).GetString(File.ReadAllBytes(overlayMdPath)).Replace("\r\n", "\n");
+            (_, _, _, _, overlayGates) = SkillStore.StripFrontmatter(overlayText, name);
+        }
+        var duplicateGate = sourceGates.Select(g => g.Name)
+            .Intersect(overlayGates.Select(g => g.Name), StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (duplicateGate is not null)
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"gate '{duplicateGate}' is declared twice (SKILL.md and OVERLAY.md).");
+        var missingGate = sourceGates.Concat(overlayGates).FirstOrDefault(g =>
+            !File.Exists(Path.Combine(sourceDir, "scripts", g.Name + ".ps1")) &&
+            !(overlayScriptsDir is not null && File.Exists(Path.Combine(overlayScriptsDir, g.Name + ".ps1"))));
         if (missingGate is not null)
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"Skill declares gate '{missingGate.Name}' but 'scripts/{missingGate.Name}.ps1' is not in the import.");
@@ -161,6 +241,18 @@ public static class SkillImport
         try
         {
             CopyTree(sourceDir, staging);
+
+            if (overlayMdPath is not null)
+            {
+                File.Copy(overlayMdPath, Path.Combine(staging, SkillStore.OverlayFileName));
+                if (overlayScriptsDir is not null && Directory.Exists(overlayScriptsDir))
+                {
+                    var stagingScripts = Path.Combine(staging, SkillStore.ScriptsDirName);
+                    Directory.CreateDirectory(stagingScripts);
+                    foreach (var file in Directory.EnumerateFiles(overlayScriptsDir))
+                        File.Copy(file, Path.Combine(stagingScripts, Path.GetFileName(file)));
+                }
+            }
 
             if (targetExisted)
             {
@@ -187,7 +279,8 @@ public static class SkillImport
 
             if (replacedTargetMoved) Directory.Delete(replaced, recursive: true);
 
-            return new SkillImportResult(SkillImportOutcome.Ok, $"Imported '{name}' ({files} file{(files == 1 ? "" : "s")}).", name, files);
+            return new SkillImportResult(SkillImportOutcome.Ok,
+                $"Imported '{name}' ({files} file{(files == 1 ? "" : "s")}, overlay: {(overlayDir is null ? "no" : "yes")}).", name, files);
         }
         catch (SkillMoveException e)
         {

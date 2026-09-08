@@ -12,13 +12,16 @@ namespace ChopItUp.Hub.Skills;
 /// gate name itself.</summary>
 public sealed record GateDeclaration(string Name, IReadOnlyList<string> Arguments);
 
-/// <summary>What the prompt renders for one skill. No overlay member: D-j keeps OVERLAY.md out of
-/// row 11 entirely, because an unpinned file rendered inside the pinned fence defeats the pin.
-/// <see cref="IsRun"/> and <see cref="Gates"/> are row 19 (D1/D9): a skill whose frontmatter carries
-/// <c>run: true</c> starts a run when invoked, and <c>Gates</c> is what <c>run_gate</c> may execute
-/// inside one. Both default so every pre-row-19 construction site still compiles.</summary>
+/// <summary>What the prompt renders for one skill. <see cref="Overlay"/> is row 20 (R2): the D-j
+/// objection from row 11 — an unpinned file inside the pinned fence would defeat the pin — is answered
+/// by composing an installed overlay into the SAME tree manifest <c>SkillHashes.RecordTree</c> pins, so
+/// it is exactly as tamper-protected as the skill body itself; null for a skill with no overlay, so
+/// every pre-row-20 construction site still compiles. <see cref="IsRun"/> and <see cref="Gates"/> are
+/// row 19 (D1/D9): a skill whose frontmatter carries <c>run: true</c> starts a run when invoked, and
+/// <c>Gates</c> is what <c>run_gate</c> may execute inside one — row 20 extends both to the union of
+/// SKILL.md and OVERLAY.md. All three default so every earlier construction site still compiles.</summary>
 public sealed record ResolvedSkill(string Name, string Title, string Body, bool Truncated,
-    bool IsRun = false, IReadOnlyList<GateDeclaration>? Gates = null);
+    bool IsRun = false, IReadOnlyList<GateDeclaration>? Gates = null, string? Overlay = null);
 
 /// <summary>One row of GET /api/skills and of the import verb's output. This is THE shape: tasks 6a,
 /// 6's tests, 7a and ticket 06 all quote it verbatim and none of them invents a field. <c>Chars</c>
@@ -160,9 +163,11 @@ public sealed class SkillHashes(ChopDb db)
 /// demand and never cached: a skill is a document, not a credential, and an import must take effect
 /// without restarting the hub. Nothing here writes — the import verb does.
 ///
-/// Row 11 renders SKILL.md into the prompt and nothing else — not OVERLAY.md (D-j: an unpinned file
-/// inside the pinned fence defeats the pin), not the references: no spawn is told it may read them,
-/// and reaching them is `run_gate`, which is row 19.</summary>
+/// Row 11 rendered SKILL.md into the prompt and nothing else. Row 20 (R2) renders a PINNED
+/// OVERLAY.md too, composed into the same tree manifest at import — the D-j objection (an unpinned
+/// file inside the pinned fence defeats the pin) is answered by pinning it, not by excluding it.
+/// References are still never rendered: no spawn is told it may read them, and reaching them is
+/// `run_gate`, which is row 19.</summary>
 public sealed class SkillStore(string root, SkillHashes hashes)
 {
     /// <summary>Sized in the plan (D-f) against the roadmap skill row 20 must carry — 20,161
@@ -179,6 +184,13 @@ public sealed class SkillStore(string root, SkillHashes hashes)
 
     public const int MaxFiles = 200;
     public const long MaxBytes = 2L * 1024 * 1024;
+
+    /// <summary>Task 1 (row 20): the hub-side overlay file name and the folder its gate scripts live
+    /// in, both composed into the skill tree by <c>SkillImport</c> and pinned in the same manifest as
+    /// SKILL.md — an overlay is not a separate, unpinned surface (D-j answered: pinned, not unpinned).</summary>
+    public const string OverlayFileName = "OVERLAY.md";
+    public const int MaxOverlayChars = 8_000;
+    public const string ScriptsDirName = "scripts";
 
     public static readonly Regex NamePattern = new(@"^[a-z0-9][a-z0-9-]{0,63}$", RegexOptions.Compiled);
 
@@ -275,9 +287,38 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         var text = new UTF8Encoding(false).GetString(bytes).Replace("\r\n", "\n");
         var (body, title, desc, isRun, gates) = StripFrontmatter(text, name);
         description = desc;
+
+        // Task 1 (row 20): an installed overlay is composed in, pinned exactly like every other file
+        // in the tree manifest (SkillHashes.RecordTree/ExpectedTree) — an overlay edited after import
+        // reads as Tampered, same as an edited SKILL.md, never silently rendered stale.
+        string? overlay = null;
+        var overlayPath = Path.Combine(dir, OverlayFileName);
+        if (File.Exists(overlayPath))
+        {
+            var expectedTree = hashes.ExpectedTree(name);
+            var overlayBytes = ReadAllBytes(overlayPath);
+            var overlayHash = Convert.ToHexString(SHA256.HashData(overlayBytes)).ToLowerInvariant();
+            if (!expectedTree.TryGetValue(OverlayFileName, out var expectedOverlaySha) ||
+                !string.Equals(overlayHash, expectedOverlaySha, StringComparison.Ordinal))
+                return new SkillRead.Tampered(name);
+
+            var overlayText = new UTF8Encoding(false).GetString(overlayBytes).Replace("\r\n", "\n");
+            var (obody, _, _, orun, ogates) = StripFrontmatter(overlayText, name);
+            isRun |= orun;
+            gates = Union(gates, ogates);
+            overlay = obody;
+        }
+
         var (cut, truncated) = Cut(body, MaxSkillChars);
-        return new SkillRead.Ok(new ResolvedSkill(name, title, cut, truncated, isRun, gates));
+        return new SkillRead.Ok(new ResolvedSkill(name, title, cut, truncated, isRun, gates, overlay));
     }
+
+    /// <summary>SKILL.md's gates followed by OVERLAY.md's (task 1). Import refuses a duplicate name
+    /// across the two before either is ever installed (<c>SkillImport</c> refusal 9), so a duplicate
+    /// surviving to here means the installed tree was tampered with after import — read-time does not
+    /// re-refuse; it is <see cref="TreeVerification"/>/the hash check above that catches that.</summary>
+    private static IReadOnlyList<GateDeclaration> Union(IReadOnlyList<GateDeclaration> a, IReadOnlyList<GateDeclaration> b) =>
+        a.Count == 0 ? b : b.Count == 0 ? a : [.. a, .. b];
 
     /// <summary>Row 19, task 12b (P5): re-hashes every entry <see cref="SkillHashes.RecordTree"/>
     /// wrote at import against what is on disk right now, then checks for a file present on disk that

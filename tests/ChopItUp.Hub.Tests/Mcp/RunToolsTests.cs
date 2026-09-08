@@ -46,8 +46,10 @@ public sealed class RunToolsTests : IAsyncLifetime
 
     /// <summary>Installs a fixture skill through the real write path so task 12a's whole-tree manifest
     /// exists to verify against (a hand-written <see cref="SkillHashes.Record"/> only ever covers
-    /// SKILL.md).</summary>
-    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null)
+    /// SKILL.md). <paramref name="overlayMd"/>/<paramref name="overlayScripts"/> (row 20 task 1) compose
+    /// a hub-side overlay in through <c>--overlay</c> the same way a real import would.</summary>
+    private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null,
+        string? overlayMd = null, IReadOnlyDictionary<string, string>? overlayScripts = null)
     {
         var source = Path.Combine(_dir, "sources", name);
         Directory.CreateDirectory(source);
@@ -58,8 +60,21 @@ public sealed class RunToolsTests : IAsyncLifetime
             Directory.CreateDirectory(Path.GetDirectoryName(full)!);
             File.WriteAllText(full, content);
         }
+        string? overlayDir = null;
+        if (overlayMd is not null)
+        {
+            overlayDir = Path.Combine(_dir, "overlays", name);
+            Directory.CreateDirectory(overlayDir);
+            File.WriteAllText(Path.Combine(overlayDir, "OVERLAY.md"), overlayMd);
+            foreach (var (fileName, content) in overlayScripts ?? new Dictionary<string, string>())
+            {
+                var scriptsDir = Path.Combine(overlayDir, "scripts");
+                Directory.CreateDirectory(scriptsDir);
+                File.WriteAllText(Path.Combine(scriptsDir, fileName), content);
+            }
+        }
         var hashes = new SkillHashes(_host.Services.GetRequiredService<ChopDb>());
-        var result = SkillImport.Run(source, Path.Combine(_dir, "skills"), force: false, hashes);
+        var result = SkillImport.Run(source, Path.Combine(_dir, "skills"), force: false, hashes, overlayDir);
         Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
     }
 
@@ -156,6 +171,36 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Equal("sonnet", row.CallerId);
         Assert.Equal(3, row.ExitCode);
         Assert.Equal("exit 3", row.Outcome);
+    }
+
+    // --- Row 20 task 1: run_gate on an overlay-declared gate ---------------------------------------
+
+    [Fact]
+    public async Task run_gate_executes_an_overlay_declared_gate()
+    {
+        ImportSkill("overlay-gated", "---\nname: overlay-gated\ndescription: d.\nrun: true\n---\n# Overlay Gated\n",
+            overlayMd: "---\ngates: overlay-check\n---\nOverlay prose.\n",
+            overlayScripts: new Dictionary<string, string> { ["overlay-check.ps1"] = "exit 0\n" });
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (spec.Label.StartsWith("run_gate/"))
+                return new ProcessResult(0, false, false, "overlay gate ran\n", "", TimeSpan.FromMilliseconds(5));
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await CallRunGate(client, "lab", "overlay-check");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("overlay-gated");
+        await WaitUntil(() => gateResult is not null);
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("overlay-check", json.GetProperty("gate").GetString());
+        Assert.Equal(0, json.GetProperty("exit_code").GetInt32());
+        Assert.Equal("overlay gate ran\n", json.GetProperty("stdout").GetString());
     }
 
     [Fact]

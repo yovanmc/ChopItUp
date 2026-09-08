@@ -169,6 +169,19 @@ public sealed class SpawnPromptTests
         Assert.Contains($"(Cut to the first {SkillStore.MaxSkillChars} characters.)\n--- begin skill demo ---", p);
     }
 
+    // --- Row 20 task 1: the overlay renders inside the fence, after the body ----------------------
+
+    [Fact]
+    public void The_overlay_renders_inside_the_fence_after_the_body()
+    {
+        var skill = new ResolvedSkill("demo", "Demo Skill", "Do the demo thing.", false, Overlay: "Room mechanics here.");
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "/demo @opus hi")) with { Skill = skill }, SpawnLimits.Default);
+
+        Assert.Contains(
+            "--- begin skill demo ---\nDo the demo thing.\n--- overlay: room mechanics for this skill, installed and fingerprinted with it ---\nRoom mechanics here.\n--- end skill demo ---",
+            p);
+    }
+
     [Fact]
     public void With_no_skill_in_force_the_prompt_is_unchanged_from_before_this_task()
     {

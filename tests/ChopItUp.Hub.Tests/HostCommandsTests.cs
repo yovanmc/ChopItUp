@@ -518,6 +518,27 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill"], _ => null));
     }
 
+    // --- Row 20 task 1: --overlay -----------------------------------------------------------
+
+    [Fact]
+    public void Options_parse_recognises_overlay_alongside_import_skill()
+    {
+        var withOverlay = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--overlay", "C:\\somewhere\\odir"], _ => null);
+        Assert.Equal(HubCommand.ImportSkill, withOverlay.Command);
+        Assert.Equal(Path.GetFullPath("C:\\somewhere\\odir"), withOverlay.OverlayPath);
+
+        var without = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo"], _ => null);
+        Assert.Null(without.OverlayPath);
+
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--overlay"], _ => null));
+    }
+
+    [Fact]
+    public void Overlay_without_import_skill_is_refused()
+    {
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--overlay", "C:\\somewhere\\odir"], _ => null));
+    }
+
     /// <summary>A synthetic (never third-party, D-g) skill source directory outside the data dir.</summary>
     private string NewSkillSource(string name, string skillMd)
     {

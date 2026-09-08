@@ -55,6 +55,24 @@ public sealed class SkillImportTests : IDisposable
     private void AssertTargetAbsent(string name) =>
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, name)));
 
+    /// <summary>A synthetic hub-side overlay directory (row 20 task 1): <c>OVERLAY.md</c> plus,
+    /// optionally, <c>scripts/*.ps1</c> named by <paramref name="scripts"/> (file name including the
+    /// <c>.ps1</c> extension to content).</summary>
+    private string NewOverlayDir(string overlayMd, IReadOnlyDictionary<string, string>? scripts = null)
+    {
+        var dir = Path.Combine(_root, "overlays", "overlay_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "OVERLAY.md"), overlayMd);
+        if (scripts is { Count: > 0 })
+        {
+            var scriptsDir = Path.Combine(dir, "scripts");
+            Directory.CreateDirectory(scriptsDir);
+            foreach (var (fileName, content) in scripts)
+                File.WriteAllText(Path.Combine(scriptsDir, fileName), content);
+        }
+        return dir;
+    }
+
     private static void CreateJunction(string linkPath, string targetPath)
     {
         var psi = new ProcessStartInfo("cmd.exe", $"/c mklink /J \"{linkPath}\" \"{targetPath}\"")
@@ -421,5 +439,132 @@ public sealed class SkillImportTests : IDisposable
         var forced = SkillImport.Run(newSource, _skillsRoot, force: true, _hashes);
         Assert.Equal(SkillImportOutcome.Ok, forced.Outcome);
         Assert.Contains("v2", File.ReadAllText(Path.Combine(_skillsRoot, "demo", "SKILL.md")));
+    }
+
+    // --- Row 20 task 1: overlay composition and pinned rendering ------------------------------------
+
+    [Fact]
+    public void An_overlay_dir_is_composed_into_the_skill_and_every_file_is_pinned()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var overlay = NewOverlayDir("Overlay prose.\n", new Dictionary<string, string> { ["x.ps1"] = "exit 0\n" });
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.True(File.Exists(Path.Combine(_skillsRoot, "demo", "OVERLAY.md")));
+        Assert.True(File.Exists(Path.Combine(_skillsRoot, "demo", "scripts", "x.ps1")));
+        var manifest = _hashes.ExpectedTree("demo");
+        Assert.True(manifest.ContainsKey("OVERLAY.md"));
+        Assert.True(manifest.ContainsKey("scripts/x.ps1"));
+        foreach (var relative in new[] { "SKILL.md", "OVERLAY.md", "scripts/x.ps1" })
+        {
+            var installed = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", relative));
+            var expectedHash = Convert.ToHexString(SHA256.HashData(installed)).ToLowerInvariant();
+            Assert.Equal(expectedHash, manifest[relative]);
+        }
+    }
+
+    [Fact]
+    public void A_source_carrying_OVERLAY_md_is_refused()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllText(Path.Combine(source, "OVERLAY.md"), "sneaky\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("OVERLAY.md", result.Message);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
+    public void A_forced_reimport_without_overlay_is_refused_when_the_skill_has_one()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var overlay = NewOverlayDir("Overlay prose.\n");
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay).Outcome);
+        var beforeSkillMd = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md"));
+        var beforeOverlayMd = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "OVERLAY.md"));
+
+        var result = SkillImport.Run(source, _skillsRoot, force: true, _hashes);   // no --overlay
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("overlay", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(beforeSkillMd, File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md")));
+        Assert.Equal(beforeOverlayMd, File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "OVERLAY.md")));
+    }
+
+    [Fact]
+    public void Overlay_gates_join_the_skill_gates_and_each_needs_a_script()
+    {
+        var gatedBody = "---\nname: gated-overlay\ndescription: d.\nrun: true\ngates: check-it\n---\n# Gated\n";
+        var source = NewSourceDir("gated-overlay", gatedBody);
+        var scripts = Path.Combine(source, "scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "check-it.ps1"), "exit 0\n");
+        var overlayMd = "---\nrun: true\ngates: overlay-gate\n---\nOverlay prose.\n";
+        var overlayWithoutScript = NewOverlayDir(overlayMd);
+
+        var missing = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlayWithoutScript);
+        Assert.Equal(SkillImportOutcome.BadArgument, missing.Outcome);
+        Assert.Contains("overlay-gate", missing.Message);
+        AssertTargetAbsent("gated-overlay");
+
+        var overlayWithScript = NewOverlayDir(overlayMd, new Dictionary<string, string> { ["overlay-gate.ps1"] = "exit 0\n" });
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlayWithScript);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        var manifest = _hashes.ExpectedTree("gated-overlay");
+        Assert.True(manifest.ContainsKey("scripts/check-it.ps1"));
+        Assert.True(manifest.ContainsKey("scripts/overlay-gate.ps1"));
+    }
+
+    [Fact]
+    public void A_gate_declared_in_both_SKILL_md_and_OVERLAY_md_is_refused()
+    {
+        var gatedBody = "---\nname: dup-gate\ndescription: d.\nrun: true\ngates: check-it\n---\n# Gated\n";
+        var source = NewSourceDir("dup-gate", gatedBody);
+        var scripts = Path.Combine(source, "scripts");
+        Directory.CreateDirectory(scripts);
+        File.WriteAllText(Path.Combine(scripts, "check-it.ps1"), "exit 0\n");
+        // No overlay script named check-it.ps1 here on purpose: shipping one would collide with the
+        // source's own scripts/check-it.ps1 and trip refusal 7c's cross-directory collision check
+        // before refusal 9's gate-union duplicate check ever runs.
+        var overlay = NewOverlayDir("---\nrun: true\ngates: check-it\n---\nOverlay prose.\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("check-it", result.Message);
+        Assert.Contains("twice", result.Message);
+        AssertTargetAbsent("dup-gate");
+    }
+
+    [Fact]
+    public void An_overlay_dir_with_a_stray_file_is_refused()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var overlay = NewOverlayDir("Overlay prose.\n");
+        File.WriteAllText(Path.Combine(overlay, "stray.txt"), "not allowed\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
+    public void An_overlay_over_MaxOverlayChars_is_refused()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var huge = new string('A', SkillStore.MaxOverlayChars + 1);
+        var overlay = NewOverlayDir(huge);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains(SkillStore.MaxOverlayChars.ToString(), result.Message);
+        AssertTargetAbsent("demo");
     }
 }
