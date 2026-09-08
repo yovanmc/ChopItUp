@@ -107,4 +107,33 @@ public sealed class MemoryProposalStoreTests : IDisposable
         Assert.Throws<SqliteException>(() => _store.Create("general", "nobody", "user", "T", "B", null));
         Assert.Empty(_store.List(null, null));
     }
+
+    [Fact]
+    public void R18_Create_stores_kind_replaces_and_flags_and_FindPending_ignores_author_and_decided_rows()
+    {
+        var store = _store;
+        var a = store.Create("general", "opus", "user", "Editor", "VS Code.", null, replaces: "Editor", flags: "from-directory");
+        Assert.Equal((MemoryProposalStore.KindSupersede, "Editor", "from-directory"), (a.Kind, a.Replaces, a.Flags));
+        var b = store.Create("general", "codex", "user", "Shell", "pwsh.", null);
+        Assert.Equal((MemoryProposalStore.KindAppend, (string?)null, (string?)null), (b.Kind, b.Replaces, b.Flags));
+        Assert.Equal(a.Id, store.FindPending("user", " Editor ")!.Id);
+        Assert.Equal(b.Id, store.FindPending("user", "Shell")!.Id);
+        Assert.Null(store.FindPending("user", "Nope"));
+        store.Decide(b.Id, MemoryProposalStore.Rejected, null, null);
+        Assert.Null(store.FindPending("user", "Shell"));
+        var c = store.Create("general", "codex", "user", "Editor", "Neovim.", null);           // a newer pending row with the same title
+        store.Decide(c.Id, MemoryProposalStore.Approved, null, null);
+        Assert.Equal(a.Id, store.FindPending("user", "Editor")!.Id);                          // an approved row never masks the pending one (critique P1-17b)
+        Assert.Equal(("supersede", "Editor", "from-directory"), (store.Get(a.Id)!.Kind, store.Get(a.Id)!.Replaces, store.Get(a.Id)!.Flags));
+    }
+
+    [Fact]
+    public void R18_a_v9_row_reads_kind_replaces_and_flags_back_through_the_store()
+    {
+        // The store-level half of task 1's migration test (critique P1-10): on a fresh v9 database the seed
+        // row of an older proposal reads as an append with nothing to replace and nothing flagged.
+        var store = _store;
+        var p = store.Create("general", "opus", "user", "Likes tests", "Yes.", null);
+        Assert.Equal((MemoryProposalStore.KindAppend, (string?)null, (string?)null), (store.Get(p.Id)!.Kind, store.Get(p.Id)!.Replaces, store.Get(p.Id)!.Flags));
+    }
 }
