@@ -15,8 +15,16 @@ namespace ChopItUp.Hub.Spawning;
 /// That reserve is what lets a conductor or worker still post a reply after a gate that ran all the
 /// way to its own ceiling, rather than being killed by the spawn's own wall clock at the same instant
 /// the gate call returns (ledger 24, 25) — so the invariant <c>EffectiveGateTimeout &lt; SpawnTimeout</c>
-/// is enforced in the constructor, never left to a caller to get right.</summary>
-public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTimeout, int PhaseEntries, TimeSpan? GateTimeout = null)
+/// is enforced in the constructor, never left to a caller to get right.
+///
+/// <see cref="GateProgressInterval"/> (row 20, task 3b, addendum 2026-09-08) is another trailing
+/// OPTIONAL parameter, same reason: the same ten call sites never set it. <c>run_gate</c> reports a
+/// progress notification on this cadence while its gate script is still running, so a client whose own
+/// idle timer resets on any traffic (measured: the installed CLI's does not, at 300 s, in the probe run)
+/// at least has a chance to see activity before the CLI's hard ceiling. <see cref="EffectiveGateProgressInterval"/>
+/// defaults to 30 seconds — no invariant against it is needed (unlike <see cref="GateTimeout"/>, a too-large
+/// value only means fewer reports, never a broken cap).</summary>
+public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTimeout, int PhaseEntries, TimeSpan? GateTimeout = null, TimeSpan? GateProgressInterval = null)
 {
     public static readonly RunLimits Default = new(
         Spawns: 80, WallClock: TimeSpan.FromHours(8),
@@ -33,6 +41,8 @@ public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTim
     public TimeSpan? GateTimeout { get; init; } = ValidatedGateTimeout(SpawnTimeout, GateTimeout);
 
     public TimeSpan EffectiveGateTimeout => GateTimeout ?? SpawnTimeout - TimeSpan.FromMinutes(5);
+
+    public TimeSpan EffectiveGateProgressInterval => GateProgressInterval ?? TimeSpan.FromSeconds(30);
 
     private static TimeSpan? ValidatedGateTimeout(TimeSpan spawnTimeout, TimeSpan? gateTimeout)
     {

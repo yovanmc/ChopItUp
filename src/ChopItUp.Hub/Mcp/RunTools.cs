@@ -54,7 +54,8 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
     public async Task<string> RunGate(
         [Description("Room id, e.g. \"lab\".")] string room_id,
         [Description("Gate name your run's skill declares, e.g. \"budget\".")] string gate,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IProgress<ProgressNotificationValue>? progress = null)
     {
         var me = Caller;
         var now = clock.GetUtcNow();
@@ -82,7 +83,7 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
             if (room?.Directory is null)
                 throw Refuse(run.Id, room_id, gate, me, now, "no-directory", $"Room '{room_id}' has no directory.");
 
-            return await Execute(run.Id, room_id, gate, me, room.Directory, run.SkillName, ok.Gate, now, cancellationToken);
+            return await Execute(run.Id, room_id, gate, me, room.Directory, run.SkillName, ok.Gate, now, progress, cancellationToken);
         }
         finally { locks.Exit(room_id); }
     }
@@ -97,7 +98,8 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
     /// copy's own directory — the script's own documented env-var seam (verified this session) — or
     /// moving the script's <c>$PSScriptRoot</c> would silently void its legitimate write.</summary>
     private async Task<string> Execute(long runId, string roomId, string gate, string caller, string roomDirectory,
-        string skillName, GateDeclaration declaration, DateTimeOffset now, CancellationToken cancellationToken)
+        string skillName, GateDeclaration declaration, DateTimeOffset now, IProgress<ProgressNotificationValue>? progress,
+        CancellationToken cancellationToken)
     {
         var copyDir = Path.Combine(options.DataDir, "gate-runs", Guid.NewGuid().ToString("N"));
         try
@@ -118,7 +120,7 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
             // default), not the spawn's own 30-minute wall clock - the 5-minute gap between the two is
             // what lets the spawn still post a reply after a gate that ran all the way to its ceiling
             // (RunLimits, ledger 24/25).
-            var result = await runner.RunAsync(spec, limits.EffectiveGateTimeout, cancellationToken);
+            var result = await ReportProgressWhileRunning(runner.RunAsync(spec, limits.EffectiveGateTimeout, cancellationToken), gate, progress, cancellationToken);
             var outcome = result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}";
             runs.RecordGateRun(runId, roomId, gate, caller, result.ExitCode, outcome, now);
             PostNote(roomId, $"run_gate {gate} by @{caller}: {outcome}");
@@ -136,6 +138,29 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
         {
             try { if (Directory.Exists(copyDir)) Directory.Delete(copyDir, recursive: true); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Console.Error.WriteLine($"run_gate: copy '{copyDir}' not deleted: {e.Message}"); }
+        }
+    }
+
+    /// <summary>Row 20, task 3b (addendum 2026-09-08): while <paramref name="runTask"/> is still pending,
+    /// reports a <see cref="ProgressNotificationValue"/> every <see cref="RunLimits.EffectiveGateProgressInterval"/>
+    /// so a client watching for traffic (the measured idle-timer gap the probe found) sees the gate is
+    /// still alive. The first report lands after one full interval, never immediately, and nothing is
+    /// reported once the run has actually completed - a bare <c>await runTask</c> when there is no
+    /// <paramref name="progress"/> sink, so the no-progress path never even allocates the delay loop.</summary>
+    private async Task<ProcessResult> ReportProgressWhileRunning(Task<ProcessResult> runTask, string gate,
+        IProgress<ProgressNotificationValue>? progress, CancellationToken cancellationToken)
+    {
+        if (progress is null) return await runTask;
+
+        var start = clock.GetUtcNow();
+        while (true)
+        {
+            var tick = Task.Delay(limits.EffectiveGateProgressInterval, cancellationToken);
+            var finished = await Task.WhenAny(runTask, tick);
+            if (finished == runTask || cancellationToken.IsCancellationRequested) return await runTask;
+
+            var elapsedSeconds = (int)(clock.GetUtcNow() - start).TotalSeconds;
+            progress.Report(new ProgressNotificationValue { Progress = elapsedSeconds, Message = $"gate {gate} running ({elapsedSeconds}s)" });
         }
     }
 

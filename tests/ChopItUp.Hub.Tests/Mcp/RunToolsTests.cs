@@ -6,6 +6,7 @@ using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Tests.Spawning;
 using Microsoft.Extensions.DependencyInjection;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 
@@ -32,9 +33,15 @@ public sealed class RunToolsTests : IAsyncLifetime
     private HubTestHost _host = null!;
     private string _roomDir = null!;
 
+    /// <summary>Row 20, task 3b: GateProgressInterval is cut from Default's 30 s to 40 ms so the two
+    /// progress tests below see several ticks without a slow test. Every other RunLimits field stays at
+    /// Default's value - <see cref="run_gate_runs_a_script_under_GateTimeout"/> still asserts against
+    /// <see cref="RunLimits.Default"/>'s own EffectiveGateTimeout, which this leaves untouched.</summary>
     public async Task InitializeAsync()
     {
-        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner);
+        var runLimits = new RunLimits(RunLimits.Default.Spawns, RunLimits.Default.WallClock, RunLimits.Default.SpawnTimeout,
+            RunLimits.Default.PhaseEntries, GateProgressInterval: TimeSpan.FromMilliseconds(40));
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, runLimits: runLimits);
         _roomDir = Path.Combine(_host.RoomsRoot, "lab");
         Assert.True(await new GitTrail(_roomDir).InitAsync());
         _host.Services.GetRequiredService<MessageStore>().CreateRoom("lab", "LAB", _roomDir);
@@ -394,5 +401,74 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Equal(2, rows.Count);
         Assert.Contains(rows, r => r.Outcome == "exit 0");
         Assert.Contains(rows, r => r.Outcome == "refused: gate-running");
+    }
+
+    // --- Row 20 task 3b: run_gate reports progress while the script runs ----------------------------
+
+    /// <summary>Records every <see cref="ProgressNotificationValue"/> the MCP client hands back for a
+    /// <c>run_gate</c> call made with a progress sink attached.</summary>
+    private sealed class RecordingProgress : IProgress<ProgressNotificationValue>
+    {
+        private readonly List<ProgressNotificationValue> _reports = new();
+        public IReadOnlyList<ProgressNotificationValue> Reports { get { lock (_reports) return _reports.ToList(); } }
+        public void Report(ProgressNotificationValue value) { lock (_reports) _reports.Add(value); }
+    }
+
+    [Fact]
+    public async Task run_gate_reports_progress_every_interval_while_the_script_runs()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        var progress = new RecordingProgress();
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            // 40 ms GateProgressInterval (InitializeAsync) * 5 intervals = 200 ms of gate wall time.
+            if (spec.Label.StartsWith("run_gate/")) { await Task.Delay(TimeSpan.FromMilliseconds(200), ct); return FakeProcessRunner.Ok("ok"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await client.CallToolAsync("run_gate",
+                    new Dictionary<string, object?> { ["room_id"] = "lab", ["gate"] = "check-it" }, progress: progress);
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(20));
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("check-it", json.GetProperty("gate").GetString());
+        var reports = progress.Reports;
+        Assert.True(reports.Count >= 3, $"expected at least 3 progress reports, saw {reports.Count}");
+        Assert.All(reports, r => Assert.Contains("check-it", r.Message));
+    }
+
+    [Fact]
+    public async Task run_gate_with_no_progress_sink_still_records_the_outcome()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        CallToolResult? gateResult = null;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (spec.Label.StartsWith("run_gate/")) { await Task.Delay(TimeSpan.FromMilliseconds(200), ct); return FakeProcessRunner.Ok("no progress sink here\n"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                gateResult = await CallRunGate(client, "lab", "check-it");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(20));
+
+        var json = HubTestHost.Json(gateResult!);
+        Assert.Equal("check-it", json.GetProperty("gate").GetString());
+        Assert.Equal(0, json.GetProperty("exit_code").GetInt32());
+        Assert.False(json.GetProperty("timed_out").GetBoolean());
+        Assert.Equal("no progress sink here\n", json.GetProperty("stdout").GetString());
+
+        var row = Assert.Single(AllGateRunRows(), r => r.Gate == "check-it");
+        Assert.Equal("exit 0", row.Outcome);
     }
 }
