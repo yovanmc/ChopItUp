@@ -250,6 +250,25 @@ public sealed class SkillImportTests : IDisposable
     }
 
     [Fact]
+    public void A_source_exactly_at_MaxFiles_plus_a_one_file_overlay_is_refused_with_the_cap_message()
+    {
+        // Source alone lands EXACTLY at the cap (MaxFiles total, including SKILL.md) - not over it on
+        // its own. The composed tree is what gets pinned (task 1), so the overlay's own OVERLAY.md
+        // must count too: one more file tips it over. Directory name must match ValidSkillBody's own
+        // frontmatter name ("demo") so refusal 5 (frontmatter/directory mismatch) does not fire first.
+        var source = NewSourceDir("demo", ValidSkillBody);
+        for (var i = 0; i < SkillStore.MaxFiles - 1; i++)   // + SKILL.md itself = MaxFiles total
+            File.WriteAllText(Path.Combine(source, $"f{i}.txt"), "x");
+        var overlay = NewOverlayDir("Overlay body.\n");
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, overlay);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("the cap is", result.Message);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
     public void Refuses_to_replace_an_existing_skill_without_force()
     {
         var source = NewSourceDir("demo", ValidSkillBody);

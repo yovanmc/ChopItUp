@@ -127,13 +127,6 @@ public static class SkillImport
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{reparse}' is a link or junction; refusing to import a tree that contains one.");
 
-        // Refusal 7: file/byte caps.
-        var (files, totalBytes) = CountTree(sourceDir);
-        if (files > SkillStore.MaxFiles)
-            return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source has {files} files; the cap is {SkillStore.MaxFiles}.");
-        if (totalBytes > SkillStore.MaxBytes)
-            return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source is {totalBytes} bytes; the cap is {SkillStore.MaxBytes}.");
-
         // Refusal 7b (task 1): an overlay is hub-side and travels only through --overlay; a source
         // that carries its own OVERLAY.md would let a third-party skill claim overlay standing for
         // itself.
@@ -191,6 +184,19 @@ public static class SkillImport
                 }
             }
         }
+
+        // Refusal 7 (moved here so it runs after 7c validates the overlay): file/byte caps over the
+        // COMPOSED tree, not just the source. The overlay's OVERLAY.md and scripts/*.ps1 are copied
+        // into the installed skill alongside the source (task 1's composition step) and pinned as one
+        // manifest, so they count toward the same caps the source alone used to be checked against.
+        var (sourceTreeFiles, sourceTreeBytes) = CountTree(sourceDir);
+        var (overlayFileCount, overlayByteCount) = overlayDir is not null ? CountTree(overlayDir) : (0, 0L);
+        var files = sourceTreeFiles + overlayFileCount;
+        var totalBytes = sourceTreeBytes + overlayByteCount;
+        if (files > SkillStore.MaxFiles)
+            return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source has {files} files; the cap is {SkillStore.MaxFiles}.");
+        if (totalBytes > SkillStore.MaxBytes)
+            return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source is {totalBytes} bytes; the cap is {SkillStore.MaxBytes}.");
 
         // Refusal 8: target already exists.
         var targetExisted = Directory.Exists(target);

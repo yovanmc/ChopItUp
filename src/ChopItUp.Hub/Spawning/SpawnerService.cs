@@ -709,8 +709,12 @@ public sealed class SpawnerService : BackgroundService
                     // `timeout` field (below) and the two environment variables ClaudeInDirectory sets
                     // (in the directory branch) agree on the same value - RunLimits.EffectiveGateTimeout
                     // (25 min by default), not the run's own 30-minute SpawnTimeout, leaving the 5-minute
-                    // reserve documented on RunLimits. Null outside a run (a run always binds a
-                    // directory, so this is never non-null with directory is null below).
+                    // reserve documented on RunLimits. Null outside a run. Inside a run this is written
+                    // once, before the `directory is null` split below, for BOTH spawn shapes on purpose
+                    // (plan task 3: mcp.json is written once before the split) - nothing in RunPolicy
+                    // requires a run to bind a directory, so a non-directory in-run spawn can happen, and
+                    // carrying the value there is harmless: ClaudeMcpConfigJson only sets it on the
+                    // `chopitup` server entry regardless of spawn shape.
                     var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.EffectiveGateTimeout.TotalMilliseconds : null;
                     var mcpPath = Path.Combine(workDir, "mcp.json");
                     File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token, mcpToolTimeoutMs));

@@ -25,7 +25,6 @@ public sealed class GateScriptFixture
     public string FinishBranchScript { get; }
     public string TestGateScript { get; }
     public string PlanClaimsScript { get; }
-    public bool PwshAvailable { get; }
 
     public GateScriptFixture()
     {
@@ -38,32 +37,6 @@ public sealed class GateScriptFixture
         foreach (var script in new[] { StartBranchScript, FinishBranchScript, TestGateScript, PlanClaimsScript })
         {
             if (!File.Exists(script)) throw new InvalidOperationException($"Expected gate script at '{script}' but it does not exist.");
-        }
-        PwshAvailable = ProbePwsh();
-    }
-
-    private static bool ProbePwsh()
-    {
-        try
-        {
-            var psi = new ProcessStartInfo("pwsh")
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("-NoProfile");
-            psi.ArgumentList.Add("-Command");
-            psi.ArgumentList.Add("exit 0");
-            using var proc = Process.Start(psi);
-            if (proc is null) return false;
-            if (!proc.WaitForExit(15_000)) { try { proc.Kill(); } catch { /* best effort */ } return false; }
-            return proc.ExitCode == 0;
-        }
-        catch (System.ComponentModel.Win32Exception)
-        {
-            return false;   // pwsh not on PATH
         }
     }
 
@@ -92,7 +65,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void start_branch_creates_room_m_for_the_topmost_READY_row_and_is_idempotent()
     {
-        if (!_fixture.PwshAvailable) return;   // pwsh not on PATH: nothing to characterize here
         string repo = NewTempRepo("startbranch_idem");
         WriteRoadmap(repo, "| 5 | Scratch task | [ ] | READY | — | LOW |");
         RunGit(repo, "add", "-A");
@@ -113,7 +85,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void start_branch_refuses_a_dirty_tree_with_exit_3()
     {
-        if (!_fixture.PwshAvailable) return;
         string repo = NewTempRepo("startbranch_dirty");
         WriteRoadmap(repo, "| 9 | Scratch task | [ ] | READY | — | LOW |");
         RunGit(repo, "add", "-A");
@@ -129,7 +100,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void finish_branch_commits_pending_and_merges_no_ff_into_main_without_a_remote()
     {
-        if (!_fixture.PwshAvailable) return;
         string repo = NewTempRepo("finishbranch_merge");
         File.WriteAllText(Path.Combine(repo, "seed.txt"), "seed");
         RunGit(repo, "add", "-A");
@@ -149,7 +119,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void finish_branch_refuses_off_a_room_branch_with_exit_3()
     {
-        if (!_fixture.PwshAvailable) return;
         string repo = NewTempRepo("finishbranch_notroom");
         File.WriteAllText(Path.Combine(repo, "seed.txt"), "seed");
         RunGit(repo, "add", "-A");
@@ -164,7 +133,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void test_gate_exits_2_with_no_solution()
     {
-        if (!_fixture.PwshAvailable) return;
         string repo = NewTempRepo("testgate_nosln");
 
         var result = RunGate(_fixture.TestGateScript, repo);
@@ -175,7 +143,6 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     [Fact]
     public void plan_claims_exits_0_with_no_plan_rows()
     {
-        if (!_fixture.PwshAvailable) return;
         string repo = NewTempRepo("planclaims_norows");
         // No 📝/🔨 row: plan-claims.ps1's own loop (tools/skills/roadmap-hub/scripts/plan-claims.ps1:12-24)
         // never finds a plan to check, so $checked stays 0 and $worst stays 0.
@@ -245,13 +212,19 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
         };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start git.");
-        string stdout = proc.StandardOutput.ReadToEnd();
-        string stderr = proc.StandardError.ReadToEnd();
+        // Read stdout and stderr concurrently, not sequentially: reading one synchronously to
+        // completion before starting the other can deadlock if git fills the OTHER pipe's OS buffer
+        // while this call is blocked waiting on the first (the same trap DeployScriptTests.cs avoids
+        // with its async event handlers).
+        var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        var stderrTask = proc.StandardError.ReadToEndAsync();
         if (!proc.WaitForExit(30_000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { /* best effort */ }
             throw new TimeoutException($"git {string.Join(' ', args)} did not exit within 30s in '{dir}'.");
         }
+        string stdout = stdoutTask.GetAwaiter().GetResult();
+        string stderr = stderrTask.GetAwaiter().GetResult();
         var result = new GitResult(proc.ExitCode, stdout, stderr);
         if (result.ExitCode != 0) throw new InvalidOperationException($"git {string.Join(' ', args)} failed ({result.ExitCode}) in '{dir}': {stderr}");
         return result;

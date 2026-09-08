@@ -50,6 +50,9 @@ public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTim
         if (effective >= spawnTimeout)
             throw new ArgumentOutOfRangeException(nameof(gateTimeout), gateTimeout,
                 $"EffectiveGateTimeout ({effective}) must leave headroom under SpawnTimeout ({spawnTimeout}) so a model can still post after a gate that ran to its own ceiling.");
+        if (effective <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(gateTimeout), gateTimeout,
+                $"EffectiveGateTimeout ({effective}) must be positive; SpawnTimeout ({spawnTimeout}) leaves no room for the default 5-minute reserve with no explicit GateTimeout.");
         return gateTimeout;
     }
 }

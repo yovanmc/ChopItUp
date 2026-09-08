@@ -32,4 +32,14 @@ public sealed class RunLimitsTests
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new RunLimits(Spawns: 80, WallClock: TimeSpan.FromHours(8), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(45)));
     }
+
+    [Fact]
+    public void A_SpawnTimeout_too_small_to_leave_a_positive_default_GateTimeout_is_refused()
+    {
+        // No explicit GateTimeout: EffectiveGateTimeout defaults to SpawnTimeout - 5 min. At a 4-minute
+        // SpawnTimeout that default is negative, which the old ">= SpawnTimeout" check alone missed
+        // (-1 min is not >= 4 min).
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(4), PhaseEntries: 1));
+    }
 }

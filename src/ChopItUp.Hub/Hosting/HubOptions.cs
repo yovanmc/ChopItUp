@@ -94,7 +94,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             {
                 if (i + 1 >= args.Length) throw new ArgumentException("--set-classes requires a value.");
                 var spec = args[++i];
-                if (!spec.Contains('='))
+                if (!spec.Contains('=') || spec.StartsWith('='))
                     throw new ArgumentException("--set-classes takes <participant>=<classes>; classes are comma-separated or empty to clear.");
                 command = HubCommand.SetClasses;
                 setClassesSpec = spec;

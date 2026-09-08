@@ -305,35 +305,53 @@ try {
     # one commit ourselves, rather than let the hub's own auto-init be the only thing that ever ran it.
     $repoDir = Join-Path $work 'leg4-repo'
     New-Item -ItemType Directory -Path $repoDir -Force | Out-Null
+
+    # Each git step's own exit code is checked explicitly (native command exit codes are not
+    # terminating errors here) so a broken seed reports itself as leg 4's own FAIL, naming which git
+    # step failed, instead of the room bind or the run wait failing later for an opaque reason.
+    $seedFailStep = $null
     & $gitCmd.Source -C $repoDir init -b main *> (Join-Path $work 'leg4-git-init.log')
-    Set-Content -LiteralPath (Join-Path $repoDir 'README.md') -Value "Scratch repo for the row 20 task 5 MCP timeout probe rescue leg.`n" -NoNewline -Encoding utf8
-    & $gitCmd.Source -C $repoDir add -A *> (Join-Path $work 'leg4-git-add.log')
-    & $gitCmd.Source -C $repoDir -c user.name='probe' -c user.email='probe@example.invalid' commit -m 'seed' *> (Join-Path $work 'leg4-git-commit.log')
+    if ($LASTEXITCODE -ne 0) { $seedFailStep = "git init (exit $LASTEXITCODE)" }
 
-    $room = Invoke-Api POST '/api/rooms' @{ name = 'Sleep probe'; directory = $repoDir }
-    $roomId = $room.id
-    Add-Content -Path $log -Value "leg4 room: id=$roomId directory=$($room.directory)"
-
-    $invokePosted = Invoke-Api POST "/api/rooms/$roomId/messages" @{ body = '/probe-sleep @sonnet' }
-    $startedRun = $null
-    foreach ($i in 1..20) {
-        try { $startedRun = Invoke-RestMethod -Uri "$base/api/rooms/$roomId/run" -TimeoutSec 10 } catch { }
-        if ($startedRun -and $startedRun.status -eq 'active') { break }
-        Start-Sleep -Seconds 1
+    if (-not $seedFailStep) {
+        Set-Content -LiteralPath (Join-Path $repoDir 'README.md') -Value "Scratch repo for the row 20 task 5 MCP timeout probe rescue leg.`n" -NoNewline -Encoding utf8
+        & $gitCmd.Source -C $repoDir add -A *> (Join-Path $work 'leg4-git-add.log')
+        if ($LASTEXITCODE -ne 0) { $seedFailStep = "git add (exit $LASTEXITCODE)" }
     }
-    if (-not ($startedRun -and $startedRun.status -eq 'active')) {
-        Add-Check -Name 'leg4.rescue-sleep-gate' -Passed $false -Detail "run never started: status=$($startedRun.status ?? 'none')"
+
+    if (-not $seedFailStep) {
+        & $gitCmd.Source -C $repoDir -c user.name='probe' -c user.email='probe@example.invalid' commit -m 'seed' *> (Join-Path $work 'leg4-git-commit.log')
+        if ($LASTEXITCODE -ne 0) { $seedFailStep = "git commit (exit $LASTEXITCODE)" }
+    }
+
+    if ($seedFailStep) {
+        Add-Check -Name 'leg4.rescue-sleep-gate' -Passed $false -Detail "leg4 seed repo failed: $seedFailStep; see leg4-git-*.log under $work"
     } else {
-        $finalRun = Wait-Run -RoomId $roomId -Until 'ended,parked' -Seconds $Leg4TimeoutSeconds
-        Add-Content -Path $log -Value ("leg4 final run: " + ($finalRun | ConvertTo-Json -Compress -Depth 6))
-        $sleepGate = @($finalRun.gateRuns | Where-Object { $_.gate -eq 'sleep' -and $_.exitCode -eq 0 })
-        $endedByPing = ($finalRun.status -eq 'ended') -and ($finalRun.reason -match 'pinged')
-        $passed = ($sleepGate.Count -eq 1) -and $endedByPing
-        Add-Check -Name 'leg4.rescue-sleep-gate' -Passed $passed `
-            -Detail "status=$($finalRun.status) reason=$($finalRun.reason) gateRuns=$(($finalRun.gateRuns | ForEach-Object { "$($_.gate):$($_.outcome):$($_.exitCode)" }) -join ' | ')"
-        if (-not $passed) {
-            $hubNotes = @((Get-Messages -RoomId $roomId) | Where-Object authorId -eq 'hub')
-            Add-Content -Path $log -Value ("leg4 hub notes: " + (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | '))
+        $room = Invoke-Api POST '/api/rooms' @{ name = 'Sleep probe'; directory = $repoDir }
+        $roomId = $room.id
+        Add-Content -Path $log -Value "leg4 room: id=$roomId directory=$($room.directory)"
+
+        $invokePosted = Invoke-Api POST "/api/rooms/$roomId/messages" @{ body = '/probe-sleep @sonnet' }
+        $startedRun = $null
+        foreach ($i in 1..20) {
+            try { $startedRun = Invoke-RestMethod -Uri "$base/api/rooms/$roomId/run" -TimeoutSec 10 } catch { }
+            if ($startedRun -and $startedRun.status -eq 'active') { break }
+            Start-Sleep -Seconds 1
+        }
+        if (-not ($startedRun -and $startedRun.status -eq 'active')) {
+            Add-Check -Name 'leg4.rescue-sleep-gate' -Passed $false -Detail "run never started: status=$($startedRun.status ?? 'none')"
+        } else {
+            $finalRun = Wait-Run -RoomId $roomId -Until 'ended,parked' -Seconds $Leg4TimeoutSeconds
+            Add-Content -Path $log -Value ("leg4 final run: " + ($finalRun | ConvertTo-Json -Compress -Depth 6))
+            $sleepGate = @($finalRun.gateRuns | Where-Object { $_.gate -eq 'sleep' -and $_.exitCode -eq 0 })
+            $endedByPing = ($finalRun.status -eq 'ended') -and ($finalRun.reason -match 'pinged')
+            $passed = ($sleepGate.Count -eq 1) -and $endedByPing
+            Add-Check -Name 'leg4.rescue-sleep-gate' -Passed $passed `
+                -Detail "status=$($finalRun.status) reason=$($finalRun.reason) gateRuns=$(($finalRun.gateRuns | ForEach-Object { "$($_.gate):$($_.outcome):$($_.exitCode)" }) -join ' | ')"
+            if (-not $passed) {
+                $hubNotes = @((Get-Messages -RoomId $roomId) | Where-Object authorId -eq 'hub')
+                Add-Content -Path $log -Value ("leg4 hub notes: " + (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | '))
+            }
         }
     }
 }

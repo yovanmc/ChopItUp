@@ -626,6 +626,12 @@ public sealed class HostCommandsTests : IDisposable
     }
 
     [Fact]
+    public void Options_parse_rejects_an_empty_participant_id()
+    {
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes", "=judge"], _ => null));
+    }
+
+    [Fact]
     public void A8_set_classes_updates_a_codex_row_and_prints_the_normalized_set()
     {
         var dir = NewDir();

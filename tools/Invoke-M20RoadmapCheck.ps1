@@ -123,7 +123,10 @@ function Initialize-ScratchRepo {
             'Gate: pwsh -NoProfile -File $HOME\.claude\skills\roadmap\preflight\Check-RoadmapBudget.ps1 -RoadmapPath ROADMAP.md -RequireSchema -RepoRoot .'
         )
 
-        Set-Content -LiteralPath 'ROADMAP.md' -Value @(
+        # UTF-8 explicitly (not the shell's default) so the legend glyphs below survive on disk exactly
+        # as they read in this repo's own ROADMAP.md; the repo.row-flipped check depends on matching a
+        # literal checkmark glyph after the run.
+        Set-Content -LiteralPath 'ROADMAP.md' -Encoding utf8 -Value @(
             '# Scratch - ROADMAP',
             '<!-- roadmap-schema: whitelist-v3 -->',
             '',
@@ -135,7 +138,7 @@ function Initialize-ScratchRepo {
             '|---|-------|--------|-------|------|-------|',
             '| 1 | Greeter.Greet returns "Hello, <name>!" | [ ] | READY | -- | LOW. Acceptance: Greet("Ada") == "Hello, Ada!"; a test proves it. |',
             '',
-            '**Legend:** [check] Merged - [plan] Plan ready - [research] Researching/Planning - [ ] Not started',
+            '**Legend:** ✅ Merged · 📝 Plan ready · 🔬 Researching/Planning · [ ] Not started',
             '',
             '## Pointers',
             '- Conventions: [CLAUDE.md](CLAUDE.md) - Lessons: [docs/LESSONS.md](docs/LESSONS.md)'
@@ -240,9 +243,9 @@ $base = "http://127.0.0.1:$Port"
 $hub = $null
 
 function Invoke-Api([string]$Method, [string]$Path, $Body = $null) {
-    $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
-    if ($null -ne $Body) { $args.ContentType = 'application/json'; $args.Body = ($Body | ConvertTo-Json -Compress) }
-    Invoke-RestMethod @args
+    $callArgs = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
+    if ($null -ne $Body) { $callArgs.ContentType = 'application/json'; $callArgs.Body = ($Body | ConvertTo-Json -Compress) }
+    Invoke-RestMethod @callArgs
 }
 function Get-Messages([string]$RoomId, [long]$AfterId = 0, [int]$Limit = 500) {
     try { @((Invoke-RestMethod -Uri "$base/api/rooms/$RoomId/messages?afterId=$AfterId&limit=$Limit" -TimeoutSec 10).messages) }
@@ -366,8 +369,11 @@ try {
     Add-ModelTriggeredCheck -Name 'run.reason-is-pinged' -Passed ($finalRun.reason -like '*pinged*') `
         -Detail "reason=$($finalRun.reason)" -RoomId $roomId
 
-    $sawBuild = $recorded -contains 'build'
-    $sawPing = $recorded -contains 'ping'
+    # phaseHistory keys are "<kind>/<slug>" or bare "<kind>" (measured on the live run: e.g.
+    # "build/greeter-greet", "ping"); match on the kind, the text before the first "/".
+    $recordedKinds = @($recorded | ForEach-Object { ($_ -split '/', 2)[0] })
+    $sawBuild = $recordedKinds -contains 'build'
+    $sawPing = $recordedKinds -contains 'ping'
     Add-ModelTriggeredCheck -Name 'run.phases-include-build-and-ping' -Passed ($sawBuild -and $sawPing) `
         -Detail "phases recorded: $($recorded -join ',')" -RoomId $roomId
 
@@ -405,7 +411,11 @@ finally {
     Add-Content -Path $log -Value $line
     Write-Host "Log: $log"
 
-    if (-not $KeepArtifacts) {
+    # Artifacts are deleted ONLY when every check passed and -KeepArtifacts is absent; on any FAIL they
+    # are kept regardless of -KeepArtifacts, because the log this script tells the operator to read
+    # (hub stdout/stderr, transcripts under $DataDir) lives inside them.
+    $allPassed = ($total -gt 0) -and ($passed -eq $total)
+    if ($allPassed -and -not $KeepArtifacts) {
         foreach ($d in @($DataDir, $RoomsRoot, $repoPath)) {
             if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
         }
