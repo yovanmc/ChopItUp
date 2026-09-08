@@ -15,7 +15,7 @@ Room check (real Sonnet, scratch hub + scratch room dir, spends): `pwsh tools\In
 Skill check (real CLIs, scratch hub, spends): `pwsh tools\Invoke-M11SkillCheck.ps1`.
 Run check (real CLIs, scratch hub + scratch room dir, spends): a two-phase toy skill (`tools\skills\toy-run`) proves a run reaches its ping unattended, from the hub's own records: `pwsh tools\Invoke-M19RunCheck.ps1`.
 Roadmap-in-room check (real CLIs, scratch hub + scratch .NET repo, spends approx 6 spawns incl. one Codex): `pwsh tools\Invoke-M20RoadmapCheck.ps1`.
-MCP timeout probe (5 Sonnet calls): `pwsh tools\Probe-McpTimeouts.ps1`.
+MCP timeout probe (4 Sonnet calls): `pwsh tools\Probe-McpTimeouts.ps1`.
 
 ## Running /roadmap in a room
 

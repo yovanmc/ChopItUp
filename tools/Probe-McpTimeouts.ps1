@@ -5,7 +5,7 @@
     knobs (row 20, task 3) keep one alive past the CLI's documented 5-minute idle default.
 
 .DESCRIPTION
-    SPEND: five Sonnet calls, roughly 12 minutes wall clock. This script is NOT part of the automated
+    SPEND: four Sonnet calls, about 10 minutes wall clock. This script is NOT part of the automated
     suite - the orchestrator runs it by hand, once, after task 3 has merged to this branch, and records
     the result in docs\verification.md. Never invoke it from a builder subagent or a CI job.
 
@@ -22,9 +22,13 @@
          fast machine cannot fake the cut legs that follow it.
       1. MCP_TOOL_TIMEOUT=5000 in the env, no per-server "timeout" field.
       2. No env knob, "timeout": 5000 on the chopitup server entry in the per-leg mcp.json.
-      3. CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=5000 in the env, no other knob.
-      Legs 1-3 PASS when the process exits in < 30s AND the stream-json output carries a tool_result
+      Legs 1-2 PASS when the process exits in < 30s AND the stream-json output carries a tool_result
       content block marked as an error.
+      3. CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=5000 in the env, no other knob. Measured probe run 1: the
+         installed CLI (2.1.220, Bun-compiled) polls its idle clock on a 30-second setInterval rather
+         than cutting at the knob's own 5s value, so the cut lands on the first or second tick. Leg 3
+         PASSes when the process exits with an error tool_result AND total wall clock is under 65s (one
+         or two 30-s ticks) AND shorter than leg 0's own elapsed time.
       4. RESCUE LEG (pass-1 M5), the product path: legs 0-3 only prove a knob can shorten a call: this
          leg proves the opposite direction the design actually needs - a call the CLI's 5-minute idle
          default WOULD cut survives when the hub raises the knobs it sets on its own in-run spawns
@@ -33,11 +37,12 @@
          plus one commit, made by this script - a room directory must be a repository root), posts
          "/probe-sleep @sonnet", and waits (<= 20 min) for the run to end. PASS when the run's own gate
          list records "sleep" at exit 0 (hub-controlled fact) and the run ended by the conductor's ping
-         rather than a silence park. Two Sonnet spawns.
+         rather than a silence park. One Sonnet spawn: the conductor calls run_gate itself, in the same
+         turn it posts the phase: ping (probe run 1's task 3b fix; the lite path's own shape).
 
-      A leg-4 FAIL with legs 1-3 all passing means the raised knobs from task 3 are not reaching the
-      real CLI process even though the knobs themselves can cut a call - that RE-OPENS TASK 3, not this
-      probe: nothing here should be "fixed" to make leg 4 pass on its own.
+      A leg-4 FAIL with legs 1-3 all passing means the hub's progress notifications (task 3b) are not
+      reaching the client, even though the CLI's own timeout knobs are fine - that RE-OPENS TASK 3B, not
+      this probe: nothing here should be "fixed" to make leg 4 pass on its own.
 
     Stream-json parsing (legs 0-3): the Claude Code CLI's `--output-format stream-json --verbose` shape
     is read as newline-delimited JSON events; a completed tool call is taken to surface as a
@@ -82,6 +87,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $RoomsRoot) { $RoomsRoot = "$DataDir.rooms" }   # a sibling: never under the data dir a deny rule protects
 $script:Checks = New-Object System.Collections.Generic.List[object]
+$script:LegSeconds = @{}   # LegName -> elapsed seconds, recorded by Invoke-DirectLeg; leg 3 compares against leg 0's
 $log = "$DataDir.timeout-probe.log"
 
 function Add-Check {
@@ -195,16 +201,18 @@ $mcpUrl = "http://127.0.0.1:$Port/mcp"
 $knobEnvVars = @('MCP_TOOL_TIMEOUT', 'CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT')
 
 function Invoke-DirectLeg {
-    param([string]$LegName, [hashtable]$EnvKnobs, $ToolTimeoutMs, [bool]$ExpectCut, [string]$Token)
+    param([string]$LegName, [hashtable]$EnvKnobs, $ToolTimeoutMs, [bool]$ExpectCut, [string]$Token, [double]$MaxCutSeconds = 30, $MustBeShorterThanSeconds = $null)
     $legDir = Join-Path $work $LegName
     New-Item -ItemType Directory -Path $legDir -Force | Out-Null
     $mcpJsonPath = Join-Path $legDir 'mcp.json'
     Set-Content -LiteralPath $mcpJsonPath -Value (New-McpJson -McpUrl $mcpUrl -Token $Token -ToolTimeoutMs $ToolTimeoutMs) -NoNewline -Encoding utf8
     $r = Invoke-Child -FileName $claudeCmd.Source -argv (New-ClaudeArgs -McpJsonPath $mcpJsonPath) `
         -Env $EnvKnobs -RemoveEnv $knobEnvVars -Stdin $prompt -WorkDir $legDir
+    $script:LegSeconds[$LegName] = $r.Seconds
     $parsed = Test-StreamJsonToolResult -StreamOut $r.Out
     $passed = if ($ExpectCut) {
-        ($r.Seconds -lt 30) -and $parsed.SawToolResult -and $parsed.IsError
+        ($r.Seconds -lt $MaxCutSeconds) -and $parsed.SawToolResult -and $parsed.IsError -and `
+            (($null -eq $MustBeShorterThanSeconds) -or ($r.Seconds -lt $MustBeShorterThanSeconds))
     } else {
         ($r.Seconds -ge 35) -and $parsed.SawToolResult -and (-not $parsed.IsError)
     }
@@ -287,7 +295,10 @@ try {
     Invoke-DirectLeg -LegName 'leg2.server-timeout-field' -EnvKnobs @{} -ToolTimeoutMs 5000 -ExpectCut $true -Token $sonnetToken
 
     # --- Leg 3: CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT env var only ----------------------------------------
-    Invoke-DirectLeg -LegName 'leg3.env-idle-timeout' -EnvKnobs @{ CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT = '5000' } -ToolTimeoutMs $null -ExpectCut $true -Token $sonnetToken
+    # Measured probe run 1: the installed CLI polls its idle clock on a 30-second setInterval, so the
+    # cut lands at one or two ticks (up to ~60s), not at the knob's own 5s value. PASS needs the error
+    # result, wall clock under 65s, and shorter than leg 0's own control time.
+    Invoke-DirectLeg -LegName 'leg3.env-idle-timeout' -EnvKnobs @{ CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT = '5000' } -ToolTimeoutMs $null -ExpectCut $true -Token $sonnetToken -MaxCutSeconds 65 -MustBeShorterThanSeconds $script:LegSeconds['leg0.control-no-knob']
 
     # --- Leg 4: rescue leg, the product path ----------------------------------------------------------
     # A room directory must be a repository root (RoomDirectories.PrepareAsync): git init it and make

@@ -5,4 +5,4 @@ run: true
 gates: sleep
 ---
 
-You are the conductor. Post exactly `phase: verify/sleep @sonnet run the sleep gate through run_gate, then post the result`. When re-asked after that exchange, post `phase: ping` and the gate outcome from the run record.
+You are the conductor. Call the run_gate tool exactly once with this room's id and gate "sleep", wait for its result, then post a message whose first line is "phase: ping" followed by the gate outcome line from the run record. Mention nobody.
