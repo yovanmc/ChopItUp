@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -43,10 +44,18 @@ public static class HubNotes
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
 
     public static string Approved(MemoryProposal p) =>
-        $"{ProposalPrefix}{p.Id} approved: written to memory/{p.WrittenTo}"
+        $"{ProposalPrefix}{p.Id} approved: " + (p.Replaces is null ? $"written to memory/{p.WrittenTo}" : $"replaced '{p.Replaces}' in memory/{p.WrittenTo}")
         + (p.CommitHash is null ? " (not committed: git unavailable or failed; see the hub log)." : $" (commit {p.CommitHash}).");
 
     public static string Rejected(MemoryProposal p) => $"{ProposalPrefix}{p.Id} rejected.";
+
+    /// <summary>Pass 2 P2-13: a core that is ALREADY over the cap (the L2 defect M10 shipped, or hand-written
+    /// prose with no entries) cannot be shrunk by any approval, so the message says which door opens.</summary>
+    public static string Refused(MemoryProposal p, int chars, int current) =>
+        $"{ProposalPrefix}{p.Id} refused: the core would be {chars} characters, over the {MemoryStore.CoreChars} cap. "
+        + (current > MemoryStore.CoreChars
+            ? $"The core is already {current} characters; edit MEMORY.md by hand before approving anything to it."
+            : "Fold it into a topic, or propose it with replaces to update an entry the core already holds.");
 
     /// <summary>The room's record of what the trail did around one spawn (M9 decision 6). One line;
     /// the commit itself is the detail.</summary>

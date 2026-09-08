@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using ChopItUp.Core.Memory;
 
 namespace ChopItUp.Hub.Memory;
@@ -76,6 +77,10 @@ public static class MemoryImport
         var title = FirstLine(fields.GetValueOrDefault("description") ?? fields.GetValueOrDefault("name") ?? stem);
         var type = (fields.GetValueOrDefault("type") ?? "").Trim().ToLowerInvariant();
         var topic = ClaudeTopics.Contains(type, StringComparer.Ordinal) ? type : "imported";
+        // Pass 2 P2-4: the Claude shape passes a whole file body through, and the owner's own memory
+        // files carry "## " sections, so demote before capping - the structure survives as "###", which
+        // MemoryStore's entry parser ignores.
+        body = Regex.Replace(body, @"(?m)^(#{1,2}) ", "### ");
         return new MemoryDraft(topic, title, Cap(body.Length == 0 ? title : body), file);
     }
 

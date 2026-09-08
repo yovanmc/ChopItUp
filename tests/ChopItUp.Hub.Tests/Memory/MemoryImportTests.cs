@@ -78,4 +78,12 @@ public sealed class MemoryImportTests : IDisposable
     [InlineData("---", "imported")]
     [InlineData("", "imported")]
     public void A6_slugify(string stem, string expected) => Assert.Equal(expected, MemoryImport.Slugify(stem));
+
+    [Fact]
+    public void R18_frontmatter_headings_in_the_body_are_demoted_so_they_are_not_entry_boundaries()
+    {
+        Write("note.md", "---\nname: note\ndescription: Has headings\nmetadata:\n  type: user\n---\nIntro.\n## Section\nDetail.\n");
+        var d = Assert.Single(MemoryImport.Read("claude", _dir));
+        Assert.Equal("Intro.\n### Section\nDetail.", d.Body);
+    }
 }
