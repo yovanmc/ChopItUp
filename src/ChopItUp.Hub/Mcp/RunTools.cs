@@ -114,7 +114,11 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
                 new Dictionary<string, string> { ["ROADMAP_GATE_BASELINE"] = baselinePath },
                 roomDirectory, "", $"run_gate/{gate}/{caller}");
 
-            var result = await runner.RunAsync(spec, limits.SpawnTimeout, cancellationToken);
+            // Row 20, task 3: the gate's own process timeout is limits.EffectiveGateTimeout (25 min by
+            // default), not the spawn's own 30-minute wall clock - the 5-minute gap between the two is
+            // what lets the spawn still post a reply after a gate that ran all the way to its ceiling
+            // (RunLimits, ledger 24/25).
+            var result = await runner.RunAsync(spec, limits.EffectiveGateTimeout, cancellationToken);
             var outcome = result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}";
             runs.RecordGateRun(runId, roomId, gate, caller, result.ExitCode, outcome, now);
             PostNote(roomId, $"run_gate {gate} by @{caller}: {outcome}");

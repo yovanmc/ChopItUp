@@ -31,7 +31,7 @@ public sealed record SpawnPromptInput(
 /// what gates the extra paragraph showing the conductor the exact post shape (task 7's own
 /// requirement: "show it; do not describe it").</summary>
 public sealed record RunView(
-    long RunId, string ConductorId, bool SelfIsConductor,
+    long RunId, string ConductorId, bool SelfIsConductor, string SkillName, string Arguments,
     string Phase, int PhaseEntries, int PhaseEntryCap,
     int Exchanges, int SpawnsUsed, int SpawnCap,
     TimeSpan Elapsed, TimeSpan ElapsedCap,
@@ -44,9 +44,12 @@ public static class SpawnPrompt
 {
     public static string Render(SpawnPromptInput input, SpawnLimits limits)
     {
+        // Row 20, task 3 (pass-2 B2): an in-run spawn sees every mentionable peer's classes beside its
+        // id, so a conductor deciding who to mention for a phase: build or critique line does not have
+        // to guess; an out-of-run spawn keeps the bare @id form byte-for-byte (AC4b).
         var peers = input.Roster
             .Where(p => p.Id != input.Self.Id && (p.Kind == "human" || (p.Kind == "model" && p.Model is not null)))
-            .Select(p => "@" + p.Id);
+            .Select(p => input.Run is null ? "@" + p.Id : $"@{p.Id} ({FormatClasses(p)})");
         var (shown, omitted) = Trim(input.Transcript, limits.TranscriptChars);
 
         // Roster-driven (Task 2, 2b): with one human row this reads exactly as it did before
@@ -64,8 +67,17 @@ public static class SpawnPrompt
         sb.Append("Why you are here: message(s) ").Append(string.Join(", ", input.TriggerIds.Select(id => "#" + id))).Append(" mentioned you. This exchange started at message #")
           .Append(input.RootMessageId).Append(". Turn ").Append(input.TurnNumber).Append(" of ").Append(input.Budget).Append("; ").Append(input.RemainingAfter).Append(" turn(s) remain after yours.\n");
         if (input.RemainingAfter == 0)
-            sb.Append("This is the last turn of the exchange: conclude on the original ask (message #").Append(input.RootMessageId)
-              .Append("), summarise the exchange in a few lines, and ask the owner whether to continue.\n");
+        {
+            // Row 20, task 3 (ledger 23, pass-1 M7): the conductor's own single-turn exchange
+            // (ExchangePolicy.OpenForConductor's Budget = 1) always hits this branch, so without this
+            // override every conductor spawn was told to ask the owner whether to continue - a run
+            // only ever stops on its own ping post, a cap, or /stop.
+            if (input.Run is { SelfIsConductor: true })
+                sb.Append("This is your one turn in this phase: end it with a phase: post as described in the run section. Never ask the owner whether to continue; a run only stops on your phase: ping post, a cap, or the owner's /stop.\n");
+            else
+                sb.Append("This is the last turn of the exchange: conclude on the original ask (message #").Append(input.RootMessageId)
+                  .Append("), summarise the exchange in a few lines, and ask the owner whether to continue.\n");
+        }
         sb.Append('\n');
         sb.Append("How to reply: call the chopitup tool post_message exactly once, with room_id \"").Append(input.RoomId).Append("\", client_key \"").Append(input.ClientKey)
           .Append("\", and your whole reply as body. Text you print instead of posting is not seen by the room. Keep it short enough to read in a chat pane. ")
@@ -141,8 +153,13 @@ public static class SpawnPrompt
     /// SHOWS the exact post shape rather than describing it (task 7's own wording).</summary>
     private static void AppendRunSection(StringBuilder sb, RunView run)
     {
-        sb.Append("Run #").Append(run.RunId).Append(": conducted by @").Append(run.ConductorId)
-          .Append(run.SelfIsConductor ? " (you)." : ".").Append(" Phase ").Append(run.Phase)
+        // Row 20, task 3 (AC6): names the skill and the arguments the run was started with, not only
+        // the conductor - a re-spawned conductor and every worker are stateless (D9) and otherwise have
+        // no way to know what invoked this run at all.
+        sb.Append("Run #").Append(run.RunId).Append(": started by /").Append(run.SkillName);
+        if (!string.IsNullOrEmpty(run.Arguments)) sb.Append(' ').Append(run.Arguments);
+        sb.Append(" (conducted by @").Append(run.ConductorId).Append(run.SelfIsConductor ? ", you)" : ")")
+          .Append(". Phase ").Append(run.Phase)
           .Append(" (entered ").Append(run.PhaseEntries).Append(" of ").Append(run.PhaseEntryCap).Append(" time(s)), ")
           .Append(run.Exchanges).Append(" exchange(s) opened, ")
           .Append(run.SpawnsUsed).Append(" of ").Append(run.SpawnCap).Append(" spawns used, ")
@@ -166,10 +183,28 @@ public static class SpawnPrompt
             sb.Append("build needs a mention of a plumbing- or visible-class row; critique needs the artifact: line, an artifact that is recorded or in the room's directory tree, and a judge mentioned who is not that artifact's recorded author. ");
             sb.Append("phase: ping needs no one mentioned and ends the run.\n");
         }
+        else
+        {
+            // Row 20, task 3 (pass-1 B1): every worker a conductor mentions inside a run gets these
+            // rules - without them, nothing told a worker that gates go through run_gate rather than
+            // its own shell, or that the hub (not the worker) owns the commit.
+            sb.Append("\nYou are a worker in this run, mentioned by its conductor. The post that mentioned you is your instruction. ")
+              .Append("Gates named in it run through the run_gate tool (room_id, gate); do not run their commands yourself. ")
+              .Append("Do not commit: the hub commits your diff when you finish, authored as you. Do not edit ROADMAP.md. Mention nobody; end with one report post.\n");
+        }
         sb.Append('\n');
     }
 
     private static string FormatDuration(TimeSpan t) => t.TotalHours >= 1 ? $"{t.TotalHours:0.#}h" : $"{t.TotalMinutes:0.#}m";
+
+    /// <summary>Row 20, task 3 (AC4b): a roster row's classes as shown beside its id in the peers line
+    /// of an in-run prompt - comma-space joined in <see cref="ParticipantClasses.All"/> order, or
+    /// "no class" for a row nothing has classed.</summary>
+    private static string FormatClasses(Participant p)
+    {
+        var classes = ParticipantClasses.Parse(p.Classes);
+        return classes.Count == 0 ? "no class" : string.Join(", ", classes);
+    }
 
     /// <summary>The fence for a spawn in a directory room (M9 decision 8, F10): sent to Claude as an
     /// appended system prompt — a channel the room transcript on stdin cannot write into — and repeated

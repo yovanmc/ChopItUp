@@ -212,7 +212,8 @@ public sealed class ExchangePolicy
 
         if (tag.Kind == "build" && !mentioned.Any(id => _roster.TryGetValue(id, out var p)
                 && (ParticipantClasses.Has(p, ParticipantClasses.Plumbing) || ParticipantClasses.Has(p, ParticipantClasses.Visible))))
-            return "phase build needs a mention of a plumbing- or visible-class row";
+            return "phase build needs a mention of a plumbing- or visible-class row: " + QualifyingRows(p =>
+                ParticipantClasses.Has(p, ParticipantClasses.Plumbing) || ParticipantClasses.Has(p, ParticipantClasses.Visible));
 
         if (tag.Kind == "critique")
         {
@@ -222,10 +223,21 @@ public sealed class ExchangePolicy
             if (author is null && !artifactExists(artifact))
                 return $"artifact '{artifact}' is neither recorded nor in the room tree";
             if (!mentioned.Any(id => _roster.TryGetValue(id, out var p) && ParticipantClasses.Has(p, ParticipantClasses.Judge) && id != author))
-                return "a critique needs a judge mentioned other than the artifact's recorded author";
+                return "a critique needs a judge mentioned other than the artifact's recorded author: " + QualifyingRows(p =>
+                    ParticipantClasses.Has(p, ParticipantClasses.Judge) && p.Id != author);
         }
 
         return null;
+    }
+
+    /// <summary>Row 20, task 3 (AC4b, pass-2 B2): every roster row a refused build or critique post
+    /// COULD have mentioned to satisfy the rule it just failed, in roster order, or a line telling the
+    /// owner to class one when nothing qualifies — never a bare "none qualified" that gives no next
+    /// step.</summary>
+    private string QualifyingRows(Func<Participant, bool> qualifies)
+    {
+        var ids = _roster.Values.Where(qualifies).Select(p => p.Id).ToList();
+        return ids.Count == 0 ? "none is classed; set one with --set-classes" : string.Join(", ", ids.Select(id => "@" + id));
     }
 
     /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -

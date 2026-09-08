@@ -387,7 +387,7 @@ public sealed class SpawnerService : BackgroundService
     /// Read fresh at every launch, never cached, so a re-spawned conductor sees the counters as they
     /// stand right now rather than as they stood when the run started.</summary>
     private RunView BuildRunView(Run run, string participantId, DateTimeOffset now) => new(
-        run.Id, run.ConductorId, participantId == run.ConductorId,
+        run.Id, run.ConductorId, participantId == run.ConductorId, run.SkillName, run.Arguments,
         run.Phase, _runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase), _runLimits.PhaseEntries,
         run.Exchanges, run.SpawnsUsed, _runLimits.Spawns,
         RunStore.ActiveElapsed(run, now), _runLimits.WallClock,
@@ -705,8 +705,15 @@ public sealed class SpawnerService : BackgroundService
             {
                 case "claude":
                 {
+                    // Row 20, task 3: computed BEFORE the mcp.json write so both the per-server
+                    // `timeout` field (below) and the two environment variables ClaudeInDirectory sets
+                    // (in the directory branch) agree on the same value - RunLimits.EffectiveGateTimeout
+                    // (25 min by default), not the run's own 30-minute SpawnTimeout, leaving the 5-minute
+                    // reserve documented on RunLimits. Null outside a run (a run always binds a
+                    // directory, so this is never non-null with directory is null below).
+                    var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.EffectiveGateTimeout.TotalMilliseconds : null;
                     var mcpPath = Path.Combine(workDir, "mcp.json");
-                    File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token));
+                    File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token, mcpToolTimeoutMs));
                     if (directory is null)
                         spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label, effort);
                     else
@@ -717,22 +724,17 @@ public sealed class SpawnerService : BackgroundService
                         // built-in tool set (--tools) is untouched either way, and an out-of-run
                         // directory spawn never sees the extra MCP tool at all.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
-                        // Orchestrator addition to task 12f: task 12 raised the Codex side
-                        // (mcp_servers.*.tool_timeout_sec, below) but left the installed Claude CLI's
-                        // own MCP tool-call timeout untouched - its --mcp-config schema text documents
-                        // MCP_TOOL_TIMEOUT (env var, milliseconds) as a hard wall-clock limit per call
-                        // that progress notifications do not extend. Raised to this run's SpawnTimeout
-                        // for an in-run Claude spawn only; every other Claude spawn sets nothing.
-                        var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.SpawnTimeout.TotalMilliseconds : null;
                         spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
                     }
                     break;
                 }
                 case "codex":
-                    // Row 19, task 12f (pass 1's M7): the CLI's default 60 s MCP tool-call timeout
-                    // kills a 30-minute run_gate call well before it can finish. Raised to this run's
-                    // SpawnTimeout for an in-run directory spawn only; every other Codex spawn keeps 60 s.
-                    var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.SpawnTimeout.TotalSeconds : 60;
+                    // Row 19, task 12f (pass 1's M7); row 20 task 3 lowers the ceiling from SpawnTimeout
+                    // to EffectiveGateTimeout (the same 5-minute reserve as the Claude side above): the
+                    // CLI's default 60 s MCP tool-call timeout kills a long run_gate call well before it
+                    // can finish. Raised for an in-run directory spawn only; every other Codex spawn
+                    // keeps 60 s.
+                    var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.EffectiveGateTimeout.TotalSeconds : 60;
                     spec = directory is null
                         ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
                         : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds);

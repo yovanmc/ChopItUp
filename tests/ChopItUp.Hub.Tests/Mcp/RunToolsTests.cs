@@ -325,6 +325,32 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(_dir, "gate-runs")) && Directory.EnumerateFileSystemEntries(Path.Combine(_dir, "gate-runs")).Any());
     }
 
+    // --- Row 20 task 3: run_gate's own process timeout is EffectiveGateTimeout, not SpawnTimeout ----
+
+    [Fact]
+    public async Task run_gate_runs_a_script_under_GateTimeout()
+    {
+        ImportSkill("gated", GatedSkillMd, new Dictionary<string, string> { ["scripts/check-it.ps1"] = "exit 0\n" });
+        TimeSpan? gateTimeout = null;
+        _runner.Handler = async (spec, timeout, _) =>
+        {
+            if (spec.Label.StartsWith("run_gate/")) { gateTimeout = timeout; return FakeProcessRunner.Ok("ok"); }
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await using var client = await _host.ClientFor("sonnet");
+                await CallRunGate(client, "lab", "check-it");
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostRunStart("gated");
+        await WaitUntil(() => gateTimeout is not null);
+
+        Assert.Equal(RunLimits.Default.EffectiveGateTimeout, gateTimeout);
+        Assert.Equal(TimeSpan.FromMinutes(25), gateTimeout);
+        Assert.NotEqual(RunLimits.Default.SpawnTimeout, gateTimeout);
+    }
+
     [Fact]
     public async Task A_second_concurrent_call_refuses_while_the_first_is_still_running()
     {
