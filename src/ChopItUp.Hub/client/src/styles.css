@@ -17,6 +17,10 @@
   --accent-codex: #59c9a5;
   --accent-other: #a78bfa;
   --danger: #ff8a8a;
+  /* Ink for small text sitting on a --danger tint. On the dark palette --danger already clears AA
+     there (measured 6.1:1 at 11px); on the light one it does not (4.1:1), so the light override
+     darkens it rather than every pill dropping its tint. */
+  --danger-ink: #ff8a8a;
 
   --own-tint: rgba(111, 178, 255, 0.055);
   --radius: 8px;
@@ -41,6 +45,7 @@
     --accent-codex: #12805f;
     --accent-other: #6a3fd0;
     --danger: #c02626;
+    --danger-ink: #8f1d1d;
 
     --own-tint: rgba(31, 111, 235, 0.05);
   }
@@ -1193,7 +1198,12 @@ input {
    quiet strip that is simply absent when there is nothing to decide. */
 .memory {
   flex: none;
-  max-height: 40vh;
+  /* Row 18: an enriched card (replaces line, hub checks, closest entries, actions) is ~291px, so with
+     the panel header it needs ~326px of viewport. A flat 40vh gave 288px on a 1280x720 window — the
+     owner could not see what approval retires and the Approve button at once, which is the whole
+     point of the card. The absolute cap stays where 40vh put it on a normal screen (400px at 1000px
+     tall); only short windows get more, and never over 55% of them. Several proposals still scroll. */
+  max-height: min(55vh, 400px);
   overflow-y: auto;
   border-top: 1px solid var(--line-soft);
   background: color-mix(in srgb, var(--accent-other) 5%, var(--bg));
@@ -1273,6 +1283,133 @@ input {
 .memory-body {
   font-size: 13px;
 }
+
+/* ---- Row 18 (AC5): what the owner needs to judge a proposal, not just read it. All three blocks
+   are absent from a plain card, so the ordinary proposal looks exactly as it did before. Every rule
+   here wraps rather than scrolls: the room pane gets narrow and a hint that overflows is a hint the
+   owner does not read. */
+/* A statement about the OLD entry, immediately above the text of the NEW one: it gets the same
+   8px-and-a-dashed-rule separation the related block uses below, because a 2px font-size step is not
+   enough to keep the two apart. */
+.memory-replaces {
+  margin: 2px 0 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--line);
+  color: var(--dim);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.memory-replaces q {
+  color: var(--text);
+  font-style: italic;
+}
+/* The label rides in the same wrap row as the pills, so saying whose checks these are costs no
+   height on a narrow pane. */
+.memory-flags-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 6px 0;
+}
+.memory-flags-label {
+  color: var(--dim);
+  font-size: 11px;
+}
+.memory-flags {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0;
+  padding: 0;
+}
+/* --accent is set per participant on the card, so a hint tinted with it would be green from codex
+   and orange from claude — the same hub-computed check in two colours. The neutral pill uses
+   participant-independent tokens; only the meaning changes its colour. */
+.memory-flag {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--dim) 14%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+/* The two that say the text may not be a fact borrow the banner's tone, because they are the ones
+   that should change a decision. `from-directory` stays neutral: it is provenance, not a warning. */
+.memory-flag-instruction-like,
+.memory-flag-fence {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-ink);
+}
+.memory-related {
+  display: block;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+}
+.memory-related-title {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+}
+.memory-related ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.memory-related li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  padding-left: 8px;
+  border-left: 2px solid transparent;
+}
+/* The block as a whole is secondary to the proposal body above it — neighbours the owner is not
+   deciding about sit at --dim and normal-ish weight, under the body's own 13px. The one entry
+   approval destroys is the exception: full --text, the heavier title, a danger rule down its side.
+   Before this it was the dimmest line in the block and the untouched neighbour the brightest. */
+.memory-related-entry {
+  font-weight: 500;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.memory-related li.memory-related-replaced {
+  border-left-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+.memory-related-replaced .memory-related-entry {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+  color: var(--text);
+  font-weight: 600;
+}
+.memory-related-mark {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-ink);
+  font-size: 11px;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+/* The snippet of a retired entry is the sentence approval deletes — it was --faint (2.7:1 light,
+   3.3:1 dark), the least readable text on a destroy-or-keep surface. Neighbours go to --dim, the
+   doomed one to --text. */
+.memory-related-snippet {
+  flex: 1 1 100%;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.memory-related-replaced .memory-related-snippet {
+  color: var(--text);
+}
+
 .memory-actions {
   display: flex;
   justify-content: flex-end;

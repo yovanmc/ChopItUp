@@ -14,17 +14,21 @@ public sealed class MemoryProposalStore(ChopDb db)
     public const string Rejected = "rejected";
     public const int DefaultLimit = 200;
     public const int MaxLimit = 500;
+    public const string KindAppend = "append";
+    public const string KindSupersede = "supersede";
 
-    public MemoryProposal Create(string roomId, string authorId, string topic, string title, string body, string? source)
+    public MemoryProposal Create(string roomId, string authorId, string topic, string title, string body, string? source, string? replaces = null, string? flags = null)
     {
         MemoryStore.RequireSlug(topic);
         MemoryStore.Validate(title, body);
+        replaces = replaces?.Trim();
+        var kind = replaces is null ? KindAppend : KindSupersede;
         var at = DateTimeOffset.UtcNow;
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, source, created_at)
-            VALUES ($room, $author, $topic, $title, $body, 'pending', $source, $at);
+            INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, source, created_at, kind, replaces, flags)
+            VALUES ($room, $author, $topic, $title, $body, 'pending', $source, $at, $kind, $replaces, $flags);
             SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$room", roomId);
@@ -34,8 +38,11 @@ public sealed class MemoryProposalStore(ChopDb db)
         cmd.Parameters.AddWithValue("$body", body.Trim());
         cmd.Parameters.AddWithValue("$source", (object?)source ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(at));
+        cmd.Parameters.AddWithValue("$kind", kind);
+        cmd.Parameters.AddWithValue("$replaces", (object?)replaces ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$flags", (object?)flags ?? DBNull.Value);
         var id = (long)cmd.ExecuteScalar()!;
-        return new MemoryProposal(id, roomId, authorId, topic, title.Trim(), body.Trim(), Pending, source, at, null, null, null);
+        return new MemoryProposal(id, roomId, authorId, topic, title.Trim(), body.Trim(), Pending, source, at, null, null, null, kind, replaces, flags);
     }
 
     public MemoryProposal? Get(long id)
@@ -126,7 +133,21 @@ public sealed class MemoryProposalStore(ChopDb db)
         return cmd.ExecuteNonQuery();
     }
 
-    private const string Select = "SELECT id, room_id, author_id, topic, title, body, status, source, created_at, decided_at, written_to, commit_hash FROM memory_proposals";
+    /// <summary>Row 18, decision 5: the oldest PENDING proposal with this topic + title by ANY author,
+    /// or null — pending only, so a newer approved row can never mask it (critique P1-17).
+    /// <see cref="Exists"/> stays author-keyed for the import path.</summary>
+    public MemoryProposal? FindPending(string topic, string title)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = Select + " WHERE topic = $topic AND title = $title AND status = 'pending' ORDER BY id LIMIT 1";
+        cmd.Parameters.AddWithValue("$topic", topic);
+        cmd.Parameters.AddWithValue("$title", title.Trim());
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? Map(reader) : null;
+    }
+
+    private const string Select = "SELECT id, room_id, author_id, topic, title, body, status, source, created_at, decided_at, written_to, commit_hash, kind, replaces, flags FROM memory_proposals";
 
     private static MemoryProposal Map(SqliteDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4), r.GetString(5), r.GetString(6),
@@ -134,5 +155,8 @@ public sealed class MemoryProposalStore(ChopDb db)
         Timestamps.Parse(r.GetString(8)),
         r.IsDBNull(9) ? null : Timestamps.Parse(r.GetString(9)),
         r.IsDBNull(10) ? null : r.GetString(10),
-        r.IsDBNull(11) ? null : r.GetString(11));
+        r.IsDBNull(11) ? null : r.GetString(11),
+        r.GetString(12),
+        r.IsDBNull(13) ? null : r.GetString(13),
+        r.IsDBNull(14) ? null : r.GetString(14));
 }

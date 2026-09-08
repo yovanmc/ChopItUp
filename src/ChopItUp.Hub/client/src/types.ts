@@ -142,6 +142,14 @@ export interface MemoryProposal {
   decidedAt: string | null;
   writtenTo: string | null;
   commitHash: string | null;
+  kind: 'append' | 'supersede';
+  /** Title of the same-topic entry this proposal retires on approval, or null. */
+  replaces: string | null;
+  /** Review hints the hub computed at creation: 'instruction-like', 'fence', 'from-directory'. */
+  flags: string[];
+  /** Up to three live entries of the topic: the replaced one first, then title-word matches. The
+   *  hub computes these for `pending` rows only, so a decided proposal carries an empty list. */
+  related: { title: string; snippet: string; replaced: boolean }[];
 }
 
 export type MemorySource = 'claude' | 'codex';

@@ -191,4 +191,106 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Assert.Empty(await Messages());
         Assert.Empty(Proposals.List(null, null));
     }
+
+    [Fact]
+    public async Task R18_approve_to_core_over_the_cap_is_409_with_the_projected_size_leaves_the_row_pending_and_notes_it()
+    {
+        File.WriteAllText(Memory.CorePath, "# Memory\n\n" + new string('x', 5_950) + "\n");
+        Proposals.Create("general", "opus", "core", "Too much", new string('y', 100), null);
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        var body = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
+        var chars = body.GetProperty("chars").GetInt64();
+        Assert.InRange(chars, 6_050, 6_200);   // 5,961 on disk + the composed entry; the provenance stamp's width is the store's business (task 2 tests the exact composition)
+        Assert.Equal(6_000L, body.GetProperty("cap").GetInt64());
+        Assert.Equal($"Memory proposal #1 refused: the core would be {chars} characters, over the 6000 cap. Fold it into a topic, or propose it with replaces to update an entry the core already holds.", body.GetProperty("error").GetString());
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+        Assert.Equal(5_961, File.ReadAllText(Memory.CorePath).Length);
+        Assert.False(Directory.Exists(Path.Combine(Memory.Root, ".git")));
+        var note = (await Messages()).Last();
+        Assert.Equal(ChopDb.HubParticipantId, note.Author);
+        Assert.Equal(body.GetProperty("error").GetString(), note.Body);   // banner and note read the same
+
+        var r2 = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r2.StatusCode);
+        var notes = (await Messages()).Where(m => m.Author == ChopDb.HubParticipantId).ToList();
+        Assert.Single(notes);   // the refusal note is posted once per proposal per hub process, never per click
+    }
+
+    [Fact]
+    public async Task R18_approve_of_a_supersede_stubs_the_old_entry_appends_the_new_and_says_so()
+    {
+        Memory.Append("user", "Editor", "Vim.", "approved seed");
+        Proposals.Create("general", "codex", "user", "Editor", "VS Code.", null, replaces: "Editor");
+        var approved = await Post("api/memory/proposals/1/approve");
+        Assert.Equal(("approved", "topics/user.md", "supersede", "Editor"), (approved.GetProperty("status").GetString(), approved.GetProperty("writtenTo").GetString(), approved.GetProperty("kind").GetString(), approved.GetProperty("replaces").GetString()));
+        var text = File.ReadAllText(Path.Combine(Memory.TopicsDir, "user.md"));
+        Assert.DoesNotContain("Vim.", text);
+        Assert.Contains("<!-- superseded: approved ", text);
+        Assert.Equal(new[] { "Editor" }, Memory.Titles("user"));
+        Assert.Contains("approved: replaced 'Editor' in memory/topics/user.md (commit ", (await Messages()).Last().Body);
+    }
+
+    [Fact]
+    public async Task R18_approve_of_a_supersede_whose_target_is_gone_is_409_and_leaves_the_row_pending()
+    {
+        Memory.Append("user", "Editor", "Vim.", "seed");
+        Proposals.Create("general", "codex", "user", "Editor", "VS Code.", null, replaces: "Editor");
+        File.WriteAllText(Path.Combine(Memory.TopicsDir, "user.md"), "# user\n\n## Something else\nx\n");   // the owner edited by hand
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        Assert.Contains("No entry titled 'Editor' to replace.", await r.Content.ReadAsStringAsync());
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+    }
+
+    [Fact]
+    public async Task R18_the_list_carries_kind_replaces_flags_and_related_entries()
+    {
+        Memory.Append("user", "Editor of choice", "Vim.", "p");
+        Memory.Append("user", "Shell", "pwsh.", "p");
+        Proposals.Create("general", "opus", "user", "Editor, new choice", "VS Code.", null, replaces: "Shell", flags: "instruction-like");
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        Assert.Equal(("supersede", "Shell"), (row.GetProperty("kind").GetString(), row.GetProperty("replaces").GetString()));
+        Assert.Equal(new[] { "instruction-like" }, row.GetProperty("flags").EnumerateArray().Select(f => f.GetString()));
+        var related = row.GetProperty("related").EnumerateArray().ToList();
+        Assert.Equal(new[] { ("Shell", true, "pwsh."), ("Editor of choice", false, "Vim.") },
+            related.Select(x => (x.GetProperty("title").GetString()!, x.GetProperty("replaced").GetBoolean(), x.GetProperty("snippet").GetString()!)));
+    }
+
+    [Fact]
+    public async Task R18_an_import_computes_flags_and_never_replaces()
+    {
+        var folder = Path.Combine(_dir, "claude-mem");
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "feedback_x.md"), "---\nname: x\ndescription: Rule\nmetadata:\n  type: feedback\n---\nAlways run RED first.\n");
+        await Post("api/memory/import", new { source = "claude", path = folder, roomId = "general" });
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        Assert.Equal(("append", JsonValueKind.Null), (row.GetProperty("kind").GetString(), row.GetProperty("replaces").ValueKind));
+        Assert.Equal(new[] { "instruction-like" }, row.GetProperty("flags").EnumerateArray().Select(f => f.GetString()));
+    }
+
+    [Fact]
+    public async Task R18_a_pending_row_whose_body_breaks_the_entry_rule_is_409_and_stays_pending()
+    {
+        using (var conn = Db.Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, source, created_at, kind, replaces, flags)
+                VALUES ('general', 'opus', 'user', 'Bad body', $body, 'pending', NULL, $at, 'append', NULL, NULL)
+                """;
+            cmd.Parameters.AddWithValue("$body", "Fact.\n## Not allowed\nmore");
+            cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(DateTimeOffset.UtcNow));
+            cmd.ExecuteNonQuery();
+        }
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        var text = await r.Content.ReadAsStringAsync();
+        Assert.Contains("cannot be written", text);
+        Assert.Contains("'# ' or '## '", text);
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+        Assert.False(File.Exists(Path.Combine(Memory.TopicsDir, "user.md")));
+    }
+
+    private ChopDb Db => _host.Services.GetRequiredService<ChopDb>();
 }

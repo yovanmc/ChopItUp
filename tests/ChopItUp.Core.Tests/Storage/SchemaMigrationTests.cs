@@ -383,6 +383,128 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    private void WriteRawV8()
+    {
+        // v7 shape plus exactly what ApplyV8 adds: the run tables. Raw SQL on purpose (LESSONS M2):
+        // this must keep describing v8 after ChopDb can no longer produce one.
+        Directory.CreateDirectory(_dir);
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
+        conn.Open();
+        using (var wal = conn.CreateCommand())
+        {
+            wal.CommandText = "PRAGMA journal_mode=WAL;";
+            wal.ExecuteNonQuery();
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE participants (id TEXT PRIMARY KEY, display_name TEXT NOT NULL, kind TEXT NOT NULL, host TEXT, model TEXT, note TEXT, classes TEXT);
+            CREATE TABLE rooms (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at TEXT NOT NULL, directory TEXT, archived_at TEXT);
+            CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL REFERENCES rooms(id),
+                author_id TEXT NOT NULL REFERENCES participants(id), body TEXT NOT NULL, created_at TEXT NOT NULL,
+                client_key TEXT);
+            CREATE INDEX ix_messages_room_id ON messages(room_id, id);
+            CREATE UNIQUE INDEX ux_messages_client_key ON messages(room_id, author_id, client_key) WHERE client_key IS NOT NULL;
+            CREATE TABLE read_cursors (participant_id TEXT NOT NULL REFERENCES participants(id),
+                room_id TEXT NOT NULL REFERENCES rooms(id), last_read_id INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (participant_id, room_id));
+            CREATE TABLE memory_proposals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id     TEXT NOT NULL REFERENCES rooms(id),
+                author_id   TEXT NOT NULL REFERENCES participants(id),
+                topic       TEXT NOT NULL,
+                title       TEXT NOT NULL,
+                body        TEXT NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'pending',
+                source      TEXT,
+                created_at  TEXT NOT NULL,
+                decided_at  TEXT,
+                written_to  TEXT,
+                commit_hash TEXT
+            );
+            CREATE INDEX ix_memory_proposals_status ON memory_proposals(status, room_id, id);
+            CREATE TABLE skills (
+                name        TEXT PRIMARY KEY,
+                body_sha256 TEXT NOT NULL,
+                imported_at TEXT NOT NULL,
+                source      TEXT
+            );
+            CREATE TABLE runs (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id         TEXT NOT NULL REFERENCES rooms(id),
+                conductor_id    TEXT NOT NULL REFERENCES participants(id),
+                skill_name      TEXT NOT NULL,
+                arguments       TEXT NOT NULL DEFAULT '',
+                status          TEXT NOT NULL,
+                reason          TEXT,
+                cap_spent       INTEGER NOT NULL DEFAULT 0,
+                phase           TEXT NOT NULL DEFAULT '(start)',
+                root_message_id INTEGER NOT NULL,
+                started_at      TEXT NOT NULL,
+                parked_at       TEXT,
+                parked_seconds  INTEGER NOT NULL DEFAULT 0,
+                ended_at        TEXT,
+                spawns_used     INTEGER NOT NULL DEFAULT 0,
+                exchanges       INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE UNIQUE INDEX ux_runs_one_active_per_room ON runs(room_id) WHERE status = 'active';
+            CREATE INDEX ix_runs_room ON runs(room_id, id);
+            CREATE TABLE run_phases (
+                run_id  INTEGER NOT NULL REFERENCES runs(id),
+                phase   TEXT NOT NULL,
+                entries INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (run_id, phase)
+            );
+            CREATE TABLE run_artifacts (
+                run_id    INTEGER NOT NULL REFERENCES runs(id),
+                path      TEXT NOT NULL,
+                author_id TEXT NOT NULL REFERENCES participants(id),
+                at        TEXT NOT NULL,
+                PRIMARY KEY (run_id, path)
+            );
+            CREATE TABLE run_gate_runs (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id    INTEGER REFERENCES runs(id),
+                room_id   TEXT NOT NULL,
+                gate      TEXT NOT NULL,
+                caller_id TEXT NOT NULL,
+                exit_code INTEGER,
+                outcome   TEXT NOT NULL,
+                at        TEXT NOT NULL
+            );
+            CREATE TABLE skill_files (
+                skill_name TEXT NOT NULL REFERENCES skills(name),
+                path       TEXT NOT NULL,
+                sha256     TEXT NOT NULL,
+                PRIMARY KEY (skill_name, path)
+            );
+            INSERT INTO participants (id, display_name, kind, host, model, note, classes) VALUES
+                ('owner','Owner','human','human',NULL,NULL,NULL),
+                ('claude','Claude','model','claude',NULL,'App-backed: Claude Desktop or Claude Code, whatever model the app has selected.',NULL),
+                ('codex','Codex','model','codex',NULL,'App-backed: the Codex app or CLI, whatever model the app has selected.',NULL),
+                ('opus','Opus','model','claude','opus',NULL,'visible,judge'),
+                ('sonnet','Sonnet','model','claude','sonnet',NULL,'plumbing'),
+                ('fable','Fable','model','claude','fable','May bill to usage credits instead of the plan''s included limits.','judge'),
+                ('gpt-6-astra','GPT-6 Astra','model','codex','gpt-6-astra',NULL,NULL),
+                ('gpt-5.6-sol','GPT-5.6 Sol','model','codex','gpt-5.6-sol',NULL,NULL),
+                ('gpt-5.6-terra','GPT-5.6 Terra','model','codex','gpt-5.6-terra',NULL,NULL),
+                ('gpt-5.6-luna','GPT-5.6 Luna','model','codex','gpt-5.6-luna',NULL,NULL),
+                ('gpt-5.5','GPT-5.5','model','codex','gpt-5.5',NULL,NULL),
+                ('gpt-5.4-mini','GPT-5.4 Mini','model','codex','gpt-5.4-mini',NULL,NULL),
+                ('hub','Hub','system','hub',NULL,'The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned.',NULL),
+                ('owner-remote','Owner (remote)','human','human',NULL,'The owner, posting from a session on another device. Same authority as owner; the hub stamps which hand typed. Last in the roster because rowid order is seed order and this row is newer than every other.',NULL);
+            INSERT INTO rooms (id, name, created_at) VALUES ('general', 'General', '2026-09-01T10:00:00.000+00:00');
+            INSERT INTO messages (id, room_id, author_id, body, created_at, client_key) VALUES
+                (1,'general','owner','@opus first v3 message','2026-09-01T10:01:00.000+00:00',NULL),
+                (2,'general','opus','second v3 message','2026-09-01T10:02:00.000+00:00','k-1');
+            INSERT INTO read_cursors (participant_id, room_id, last_read_id) VALUES ('opus','general',2);
+            INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, created_at) VALUES
+                ('general','opus','user','Likes tests','Yes.','pending','2026-09-01T10:03:00.000+00:00');
+            PRAGMA user_version = 8;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
     [Fact]
     public void Row19_Task1_v7_database_is_backed_up_then_migrated_to_v8_with_the_run_tables_and_nothing_else_changed()
     {
@@ -498,6 +620,56 @@ public sealed class SchemaMigrationTests : IDisposable
         using var count = check.CreateCommand();
         count.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='runs'";
         Assert.Equal(1L, (long)count.ExecuteScalar()!);
+    }
+
+    [Fact]
+    public void R18_T1_v8_database_is_backed_up_then_migrated_to_v9_with_three_proposal_columns_and_nothing_else_changed()
+    {
+        WriteRawV8();
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+        Assert.Equal(9, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.NotNull(db.LastBackupPath);
+        Assert.Contains(".v8.", Path.GetFileName(db.LastBackupPath!));
+        using (var conn = db.Open())
+        {
+            foreach (var column in new[] { "kind", "replaces", "flags" })
+            {
+                using var probe = conn.CreateCommand();
+                probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('memory_proposals') WHERE name = $name";
+                probe.Parameters.AddWithValue("$name", column);
+                Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+            }
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT kind, replaces, flags, title, status FROM memory_proposals WHERE id = 1";
+            using var r = cmd.ExecuteReader();
+            Assert.True(r.Read());
+            Assert.Equal(("append", true, true, "Likes tests", "pending"), (r.GetString(0), r.IsDBNull(1), r.IsDBNull(2), r.GetString(3), r.GetString(4)));
+        }
+        // Every meaning v8 carried survives: roster, messages, cursors, and the proposal reads back through the store.
+        Assert.Equal(ChopDb.SeedRoster.Select(p => p.Id), new ParticipantStore(db).List().Select(p => p.Id));
+        Assert.Equal("Likes tests", Assert.Single(new MemoryProposalStore(db).List("general")).Title);
+        db.EnsureDatabase();
+        Assert.Null(db.LastBackupPath);
+    }
+
+    [Fact]
+    public void R18_T1_a_torn_v9_with_the_columns_present_but_stamp_8_is_repaired_not_crashed()
+    {
+        WriteRawV8();
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE memory_proposals ADD COLUMN kind TEXT NOT NULL DEFAULT 'append'; ALTER TABLE memory_proposals ADD COLUMN replaces TEXT; ALTER TABLE memory_proposals ADD COLUMN flags TEXT;";
+            cmd.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+        Assert.Equal(9, db.GetSchemaVersion());
+        Assert.Single(new MemoryProposalStore(db).List("general"));
     }
 
     [Fact]
@@ -654,7 +826,7 @@ public sealed class SchemaMigrationTests : IDisposable
         cmd.CommandText = "SELECT COUNT(*) FROM memory_proposals";
         Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
         cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('memory_proposals')";
-        Assert.Equal(12L, (long)cmd.ExecuteScalar()!);
+        Assert.Equal(15L, (long)cmd.ExecuteScalar()!);   // 12 through v8, plus v9's kind, replaces, flags (row 18)
 
         db.EnsureDatabase();
         Assert.Null(db.LastBackupPath);

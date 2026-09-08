@@ -695,7 +695,7 @@ public sealed class HostCommandsTests : IDisposable
     public void A8_set_classes_works_before_the_first_hub_start()
     {
         var dir = NewDir();
-        // What --import-skill leaves behind before any hub has ever started: a v8 database with
+        // What --import-skill leaves behind before any hub has ever started: a v9 database with
         // the roster seeded, no tokens.json.
         new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
 

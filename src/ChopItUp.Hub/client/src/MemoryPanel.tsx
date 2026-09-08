@@ -12,12 +12,24 @@ interface Props {
   onDecide: (id: number, decision: 'approve' | 'reject') => void;
 }
 
+/** Row 18 (L6): the hub's words for the hints it computes, because a slug is not a reason. */
+const FLAG_TEXT: Record<string, string> = {
+  'instruction-like': 'reads like an instruction, not a fact',
+  fence: 'contains a memory fence line',
+  'from-directory': 'proposed from a room with files and network',
+};
+
 /** The owner's approval surface (D15: agents propose, the owner approves in the room). Every undecided
  *  proposal of the open room, oldest first — pending ones with Reject and Approve, and the rare
  *  approved-but-unwritten one (the hub died between marking and writing) with Retry. Renders nothing
  *  when there is nothing to decide, so a room without proposals looks exactly as it did before this row
  *  shipped. Bodies go through the same sanitised markdown as messages; an imported proposal shows where
- *  it came from, so it can never pass for something a model said live in the room. */
+ *  it came from, so it can never pass for something a model said live in the room.
+ *
+ *  Row 18 (L6, AC5) puts on the card what the owner needs to judge a proposal rather than merely read
+ *  it: which entry approval retires, why the text might be an instruction wearing a fact's clothes, and
+ *  the closest entries the topic already holds. All three are absent from a plain proposal's card, so
+ *  the ordinary case looks exactly as it did before. */
 function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
   if (proposals.length === 0) return null;
   return (
@@ -51,7 +63,41 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
               </div>
               <h3 className="memory-card-title">{p.title}</h3>
               {p.source && <p className="memory-source">imported from {p.source}</p>}
+              {p.replaces && (
+                <p className="memory-replaces">
+                  Replaces <q>{p.replaces}</q> in {p.topic}
+                </p>
+              )}
+              {p.flags.length > 0 && (
+                <div className="memory-flags-group">
+                  {/* Visible, not just an aria-label: in the same rounded-pill idiom as the topic chip
+                      above, unlabelled hints read as tags the proposing model attached. They are the
+                      hub's, and this panel says whose words are whose everywhere else. */}
+                  <span className="memory-flags-label">Hub checks</span>
+                  <ul className="memory-flags" aria-label="Hub checks">
+                    {p.flags.map((f) => (
+                      <li key={f} className={`memory-flag memory-flag-${f}`}>
+                        {FLAG_TEXT[f] ?? f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div className="body memory-body" dangerouslySetInnerHTML={{ __html: renderBody(p.body) }} />
+              {p.related.length > 0 && (
+                <section className="memory-related" aria-label={`Existing entries in ${p.topic}`}>
+                  <span className="memory-related-title">Closest entries already in {p.topic}</span>
+                  <ul>
+                    {p.related.map((r) => (
+                      <li key={r.title} className={r.replaced ? 'memory-related-replaced' : undefined}>
+                        <span className="memory-related-entry">{r.title}</span>
+                        {r.replaced && <span className="memory-related-mark">retired on approval</span>}
+                        <span className="memory-related-snippet">{r.snippet}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               <div className="memory-actions">
                 {!unwritten && (
                   <button

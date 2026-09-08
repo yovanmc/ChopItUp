@@ -308,7 +308,7 @@ try {
         Write-Error "Hub never answered /health on pid $($hub.Id); see $(Join-Path $DataDir 'hub.stderr.log')." -ErrorAction Continue
         exit 2
     }
-    Add-Check -Name 'health.schema-is-8' -Passed ($health.schema -eq 8) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-9' -Passed ($health.schema -eq 9) -Detail "schema=$($health.schema)"
 
     $skills = @(Invoke-RestMethod -Uri "$base/api/skills" -TimeoutSec 10 | ForEach-Object { $_ })   # M10: unwrap the array
     $roadmapSkill = $skills | Where-Object { $_.name -eq 'roadmap' } | Select-Object -First 1

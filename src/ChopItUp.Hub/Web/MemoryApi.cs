@@ -17,6 +17,9 @@ public static class MemoryApi
     // One decision at a time: two clicks on the same card must not race the mark-then-write sequence.
     private static readonly SemaphoreSlim Decisions = new(1, 1);
     public const string SpawnRunning = "A spawn is running; decide memory proposals when the exchange has finished.";
+    // Row 18, decision 3: the refusal note is posted once per proposal per hub process, never per click
+    // (keyed per store too, since the test process hosts many hubs whose ids all start at 1 - pass 2 P2-6).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Root, long Id), byte> RefusalNoted = new();
 
     public static void MapMemoryApi(this WebApplication app)
     {
@@ -28,12 +31,13 @@ public static class MemoryApi
         api.MapDelete("/proposals", Discard);
     }
 
-    private static IResult ListProposals(MemoryProposalStore proposals, string? room = null, string? status = MemoryProposalStore.Undecided)
+    private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, string? room = null, string? status = MemoryProposalStore.Undecided)
     {
         if (status is "all") status = null;
         if (status is not (null or MemoryProposalStore.Undecided or MemoryProposalStore.Pending or MemoryProposalStore.Approved or MemoryProposalStore.Rejected))
             return Results.BadRequest(new { error = "status must be undecided, pending, approved, rejected or all." });
-        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(Map));
+        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status)
+            .Select(p => Map(p, p.Status == MemoryProposalStore.Pending ? memory.Related(p.Topic, p.Title, p.Replaces) : null)));
     }
 
     private static async Task<IResult> Approve(long id, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
@@ -46,12 +50,47 @@ public static class MemoryApi
             if (p is null) return Results.NotFound(new { error = $"No memory proposal #{id}." });
             if (p.Status == MemoryProposalStore.Rejected || (p.Status == MemoryProposalStore.Approved && p.WrittenTo is not null))
                 return Results.Conflict(new { error = $"Memory proposal #{id} is already {p.Status}." });
+
+            // Row 18, decision 3: refuse BEFORE marking, so a refused row stays pending rather than becoming
+            // the replayable approved-but-unwritten state. A row that is ALREADY approved (a Retry after a crash
+            // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
+            // to finish it (critique P1-5).
+            var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
+            if (p.Status == MemoryProposalStore.Pending)
+            {
+                // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
+                // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
+                // rejected. The same check covers any future Validate rule.
+                try { MemoryStore.Validate(p.Title, p.Body); }
+                catch (ArgumentException e) { return Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }); }
+                if (p.Topic == MemoryStore.CoreTopic)
+                {
+                    int chars;
+                    try { chars = memory.ProjectedCoreChars(p.Replaces, p.Title, p.Body, provenance); }
+                    catch (KeyNotFoundException e) { return Results.Conflict(new { error = e.Message }); }
+                    if (chars > MemoryStore.CoreChars)
+                    {
+                        var current = memory.ReadTopic(MemoryStore.CoreTopic)!.FullChars;
+                        var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
+                        if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                        return Results.Conflict(new { error = refused, chars, current, cap = MemoryStore.CoreChars });
+                    }
+                }
+                else if (p.Replaces is not null && !memory.Titles(p.Topic).Contains(p.Replaces, StringComparer.Ordinal))
+                    return Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." });
+            }
+
             // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
             if (p.Status == MemoryProposalStore.Pending && proposals.Decide(id, MemoryProposalStore.Approved, null, null) is null)
                 return Results.Conflict(new { error = $"Memory proposal #{id} was decided concurrently." });
-            var written = memory.Append(p.Topic, p.Title, p.Body,
-                $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}",
-                dedupKey: $"proposal {p.Id} by {p.AuthorId}");
+            // A Supersede here can still throw KeyNotFoundException if the file changed between the check
+            // above and this write - only the owner's editor can do that (same process, same semaphore, no
+            // spawn in flight). Let it surface as a 500 with the row approved-but-unwritten, which the
+            // panel's Retry then re-checks.
+            var dedupKey = $"proposal {p.Id} by {p.AuthorId}";
+            var written = p.Replaces is null
+                ? memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey)
+                : memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey);
             var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
             var decided = proposals.RecordWrite(id, written, hash) ?? proposals.Get(id)!;
             Note(store, signal, decided.RoomId, HubNotes.Approved(decided));
@@ -103,7 +142,7 @@ public static class MemoryApi
         foreach (var d in drafts)
         {
             if (proposals.Exists(author, d.Topic, d.Title)) { skipped++; continue; }
-            try { added.Add(proposals.Create(body.RoomId, author, d.Topic, d.Title, d.Body, origin)); imported++; }
+            try { added.Add(proposals.Create(body.RoomId, author, d.Topic, d.Title, d.Body, origin, flags: ProposalFlags.Compute(d.Body, fromDirectory: false))); imported++; }
             catch (ArgumentException) { skipped++; }
         }
         Note(store, signal, body.RoomId, HubNotes.Imported(source, body.Path!, imported, skipped));
@@ -129,9 +168,12 @@ public static class MemoryApi
         catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"memory: note to '{roomId}' not posted ({e.GetType().Name}: {e.Message}): {text.Split('\n')[0]}"); }
     }
 
-    private static object Map(MemoryProposal p) => new
+    private static object Map(MemoryProposal p) => Map(p, null);
+
+    private static object Map(MemoryProposal p, IReadOnlyList<RelatedEntry>? related) => new
     {
         p.Id, p.RoomId, p.AuthorId, p.Topic, p.Title, p.Body, p.Status, p.Source, p.CreatedAt, p.DecidedAt, p.WrittenTo, p.CommitHash,
+        p.Kind, p.Replaces, Flags = ProposalFlags.Parse(p.Flags), Related = related ?? [],
     };
 
     internal sealed record ImportBody(string? Source, string? Path, string? RoomId);
