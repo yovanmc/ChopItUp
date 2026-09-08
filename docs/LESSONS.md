@@ -72,3 +72,21 @@ maybe-null for the rest of the method, which the later `Create(…)` call then t
 caught it, the local gate did not. The build gate is `dotnet clean` first, then the `-warnaserror`
 build — an incremental 0-warning build is not evidence. When the deploy target's exe is locked by a
 running hub, `--artifacts-path <fresh dir>` gives the same cold compile without touching it.
+
+### [subagents, critique-gate, dispatch, background-tasks] M23 (2026-09-08, 98e88a3)
+
+A `dissect-critic` dispatched with `run_in_background: true` spent its entire budget — 239k tokens,
+28 tool uses — and returned no verdict, ending its turn on "waiting on the completion notification".
+A subagent never receives task notifications, so any turn it ends in order to wait is a turn it never
+resumes; the parent sees a completed agent whose result is a status line. The documented recovery
+(continue it with `SendMessage`) did not exist either: `SendMessage` is disabled in some sessions,
+including that one, and the failure only surfaces at the call. Re-running the identical critique with
+`run_in_background: false` and a prompt that forbids the Agent tool, forbids backgrounding or polling
+anything, and states that the final message MUST be the verdict, returned a full verdict on the first
+try — and the stalled agent later returned one too, so the two passes corroborated rather than
+duplicated. So: a judge, critic or any other single-shot subagent whose output the current turn is
+blocked on is dispatched SYNCHRONOUSLY, with the anti-wait clause written into the prompt, and with
+an instruction to label unobtainable evidence "unverified" and move on rather than chase it — an
+unverified finding is useful, a missing verdict is worthless. Background dispatch stays correct for
+work whose result the turn does not need, such as the parallel code-comprehension digests that fed
+this same plan.
