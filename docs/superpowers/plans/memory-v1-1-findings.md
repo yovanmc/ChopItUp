@@ -2,7 +2,7 @@
 
 Review of the shipped M10 memory (`e838645`) against the 2025–2026 literature and the vendors' native memory, done 2026-09-06. BINDING for row 18: its plan is checked against this file. Items are labelled by how they were established: **code** = read at `1b701b29`; **doc** = a primary page fetched that day, URL given; **inferred** / **UNVERIFIED** as marked.
 
-Paired delete: this file is deleted in the commit that flips row 18 to DONE.
+Paired delete: this file is deleted in the commit that flips row 23 to DONE (row 18 carries items 1, 2, 4, 5, 6, 7; row 23 carries 3 and 8 — split 2026-09-08, see the row 18 plan header).
 
 ## What M10 is (code)
 

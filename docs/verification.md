@@ -25,7 +25,9 @@ Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill 
 `POST /api/rooms {name, directory}`.
 
 Start a run: post `/roadmap @<conductor>` in the room (text after the mention is a free-text
-hint, never a row selector). Steer an active run by posting in the room; the conductor reads it
+hint, never a row selector). Only a human roster row can start a run (`SpawnerService.ResolveSkill`
+returns nothing for any other author), so an agent driving the hub needs the `owner-remote`
+credential rather than its own MCP identity. Steer an active run by posting in the room; the conductor reads it
 before its next phase post. `/stop` ends the run outright; a `phase: ping` post ends it on its
 own. Deploy only after a run ends, never inside one: the ping names deploy as the next step.
 
