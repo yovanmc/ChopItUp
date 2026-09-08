@@ -694,11 +694,21 @@ public sealed class SpawnerService : BackgroundService
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
+            // Row 18 (L7): a directory room's spawn also gets the room's own topic, cut at RoomChars
+            // (budget ruling). A room id that is not a slug (the table has no CHECK) gets no section,
+            // not no spawn.
+            RoomMemory? roomMemory = null;
+            if (directory is not null && MemoryStore.TopicSlug.IsMatch(MemoryStore.RoomTopic(request.RoomId)))
+            {
+                var roomTopic = MemoryStore.RoomTopic(request.RoomId);
+                var text = _memory.ReadTopic(roomTopic, MemoryStore.RoomChars);
+                roomMemory = new RoomMemory(roomTopic, text?.Text ?? "", text?.Truncated ?? false);
+            }
             var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) : null;
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
-                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill, Run: runView), _limits);
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill, Run: runView, RoomMemory: roomMemory), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
