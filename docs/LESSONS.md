@@ -61,3 +61,14 @@ A silent MCP tool call from a hub-spawned Claude CLI (2.1.220, Bun-compiled) is 
 The board gate resolves the `Plan` cell as a literal path, so a cell written the markdown way —
 `` `.scratch/m21-…/brief.md` `` in backticks — FAILs with "Plan path does not resolve" while the bare
 path passes. Every other cell on the board is prose where backticks are house style; this one is not.
+
+### [build-gate, warnaserror, incremental-build] M18 (2026-09-08, ddfb053)
+
+`dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal` reports "0 Warning(s), 0 Error(s)"
+without recompiling a project whose inputs it thinks are unchanged, so a real error can sit in a file
+that no green build ever saw. Two consecutive builders reported the gate clean while
+`MemoryTools.cs:94` held two CS8604s (null-checking a non-nullable parameter narrows its flow state to
+maybe-null for the rest of the method, which the later `Create(…)` call then trips); CI would have
+caught it, the local gate did not. The build gate is `dotnet clean` first, then the `-warnaserror`
+build — an incremental 0-warning build is not evidence. When the deploy target's exe is locked by a
+running hub, `--artifacts-path <fresh dir>` gives the same cold compile without touching it.

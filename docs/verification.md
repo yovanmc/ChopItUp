@@ -12,6 +12,12 @@ sweeps its own orphan processes in a `finally` block. Each prints PASS/FAIL per 
 Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both orchestrator-run, both spend.
 Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryCheck.ps1`.
 Memory v1.1 check (no model calls, scratch hub, drives /mcp itself): `pwsh tools\Invoke-M18MemoryCheck.ps1`.
+
+A Debug hub serves static files from `src\ChopItUp.Hubin\Debug
+et10.0\wwwroot`, not from
+`src\ChopItUp.Hub\wwwroot` where `npm run build` writes. Verifying a client change against a hub that
+is already running needs the built assets copied into the served directory (or a `dotnet build`, which
+re-copies them); a client rebuild alone does not reach it.
 Room check (real Sonnet, scratch hub + scratch room dir, spends): `pwsh tools\Invoke-M9RoomCheck.ps1`.
 Skill check (real CLIs, scratch hub, spends): `pwsh tools\Invoke-M11SkillCheck.ps1`.
 Run check (real CLIs, scratch hub + scratch room dir, spends): a two-phase toy skill (`tools\skills\toy-run`) proves a run reaches its ping unattended, from the hub's own records: `pwsh tools\Invoke-M19RunCheck.ps1`.
