@@ -216,4 +216,84 @@ public sealed class MemoryToolsTests : IAsyncLifetime
         var note2 = (await Messages()).Last().Body;
         Assert.Contains("```text\n- - - begin memory ---", note2);
     }
+
+    [Fact]
+    public async Task R23_propose_rewrite_refuses_unknown_room_and_topic_and_creates_no_row()
+    {
+        await using var client = await _host.ClientFor("claude");
+        Assert.Contains("Unknown room", ErrorText(await Call(client, "propose_rewrite", new() { ["room_id"] = "nope", ["topic"] = "user", ["body"] = "# user\n## A\na.\n" })));
+        Memory.Append("user", "A", "a.", "p");
+        Assert.Contains("No topic 'ghost'. Topics: user.", ErrorText(await Call(client, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "ghost", ["body"] = "# ghost\n## A\na.\n" })));
+        Assert.Empty(Proposals.List(null, null));
+    }
+
+    [Fact]
+    public async Task R23_propose_rewrite_refuses_a_truncated_topic_naming_its_size()
+    {
+        File.WriteAllText(Path.Combine(Memory.TopicsDir, "big.md"), new string('t', 30_000));
+        await using var client = await _host.ClientFor("claude");
+        var err = ErrorText(await Call(client, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "big", ["body"] = "# big\n## A\na.\n" }));
+        Assert.Contains("Topic 'big' is 30000 characters, past the 24000", err);
+        Assert.Empty(Proposals.List(null, null));
+    }
+
+    // Pass 2 finding A: a body whose raw text alone stays under the topic cap (the cheap floor passes)
+    // can still compose, with real carried-forward provenance, over the cap. The tool must catch this
+    // at propose time, not only leave it to approval.
+    [Fact]
+    public async Task R23_propose_rewrite_refuses_a_body_under_the_floor_but_over_the_composed_cap()
+    {
+        var longProvenance = new string('p', 300);
+        var titles = Enumerable.Range(0, 20).Select(i => $"Entry{i}").ToArray();
+        foreach (var t in titles) Memory.Append("big", t, "old.", longProvenance);
+        var bodyPad = new string('x', 950);
+        var sb = new System.Text.StringBuilder("# big\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append(bodyPad).Append('\n');
+        MemoryStore.ValidateRewrite("big", sb.ToString());   // the cheap floor passes on its own
+
+        await using var client = await _host.ClientFor("claude");
+        var err = ErrorText(await Call(client, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "big", ["body"] = sb.ToString() }));
+        Assert.Contains("over the 24000-character cap", err);
+        Assert.Empty(Proposals.List(null, null));
+    }
+
+    [Fact]
+    public async Task R23_propose_rewrite_creates_a_pending_rewrite_posts_the_note_and_refuses_a_second_pending_one()
+    {
+        Memory.Append("user", "A", "a.", "p");
+        await using var client = await _host.ClientFor("claude");
+        var r = HubTestHost.Json(await Call(client, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "user", ["body"] = "# user\n## A\nnew a.\n" }));
+        Assert.Equal(("claude", "user", "Consolidate user", "pending", "rewrite"),
+            (r.GetProperty("author_id").GetString(), r.GetProperty("topic").GetString(), r.GetProperty("title").GetString(), r.GetProperty("status").GetString(), r.GetProperty("kind").GetString()));
+        Assert.False(r.TryGetProperty("replaces", out _));   // null Replaces is omitted (WhenWritingNull), same as an append proposal
+        Assert.Equal(MemoryProposalStore.KindRewrite, Proposals.Get(r.GetProperty("id").GetInt64())!.Kind);
+
+        var note = (await Messages()).Last().Body;
+        Assert.StartsWith($"Memory proposal #{r.GetProperty("id").GetInt64()} by claude for topic `user`: Consolidate user", note);
+
+        var err = ErrorText(await Call(client, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "user", ["body"] = "# user\n## A\nanother a.\n" }));
+        Assert.Contains($"A rewrite of 'user' is already pending (#{r.GetProperty("id").GetInt64()}); reject it before proposing another.", err);
+        Assert.Single(Proposals.List("general"));
+    }
+
+    [Fact]
+    public async Task R23_propose_rewrite_permits_a_claude_hosted_model_and_the_owner_but_refuses_a_caller_outside_the_set()
+    {
+        Memory.Append("user", "A", "a.", "p");
+
+        await using var opus = await _host.ClientFor("opus");   // kind=model, host=claude
+        var r1 = HubTestHost.Json(await Call(opus, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "user", ["body"] = "# user\n## A\nby opus.\n" }));
+        Assert.Equal("opus", r1.GetProperty("author_id").GetString());
+        Proposals.Decide(r1.GetProperty("id").GetInt64(), MemoryProposalStore.Rejected, null, null);
+
+        await using var owner = await _host.ClientFor("owner");   // kind=human, host=human
+        var r2 = HubTestHost.Json(await Call(owner, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "user", ["body"] = "# user\n## A\nby owner.\n" }));
+        Assert.Equal("owner", r2.GetProperty("author_id").GetString());
+        Proposals.Decide(r2.GetProperty("id").GetInt64(), MemoryProposalStore.Rejected, null, null);
+
+        await using var codex = await _host.ClientFor("codex");   // kind=model, host=codex — outside the set
+        var err = ErrorText(await Call(codex, "propose_rewrite", new() { ["room_id"] = "general", ["topic"] = "user", ["body"] = "# user\n## A\nby codex.\n" }));
+        Assert.Contains("propose_rewrite is not available to codex participants.", err);
+        Assert.Empty(Proposals.List(null, "pending"));
+    }
 }

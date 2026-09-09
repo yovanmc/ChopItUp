@@ -12,8 +12,10 @@ public static class SpawnCommands
     public const string McpServerName = "chopitup";
     public const string TokenEnvVar = "CHOPITUP_TOKEN";
     /// <summary>Comma-separated in one value (`claude --help`: "Comma or space-separated list"). Read
-    /// tools stay off the list: the prompt already carries the transcript (plan decision 11).</summary>
-    public const string ClaudeToolAllowed = "mcp__" + McpServerName + "__post_message,mcp__" + McpServerName + "__recall,mcp__" + McpServerName + "__propose_memory";
+    /// tools stay off the list: the prompt already carries the transcript (plan decision 11). Row 23
+    /// (item 3) adds <c>propose_rewrite</c>, keeping the composed idiom (claim 6) rather than a flat
+    /// literal.</summary>
+    public const string ClaudeToolAllowed = "mcp__" + McpServerName + "__post_message,mcp__" + McpServerName + "__recall,mcp__" + McpServerName + "__propose_memory,mcp__" + McpServerName + "__propose_rewrite";
 
     /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable (LESSONS,
     /// M5 tool-surface); `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP

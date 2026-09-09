@@ -19,7 +19,7 @@ public sealed partial class SpawnerServiceTests
         Assert.Contains("recall(query): check.", opus.StandardInput);
         Assert.Contains("propose_memory once, with room_id \"general\"", opus.StandardInput);
         var allowed = opus.Arguments[opus.Arguments.ToList().IndexOf("--allowedTools") + 1];
-        Assert.Equal("mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory", allowed);
+        Assert.Equal("mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory,mcp__chopitup__propose_rewrite", allowed);
     }
 
     [Fact]
