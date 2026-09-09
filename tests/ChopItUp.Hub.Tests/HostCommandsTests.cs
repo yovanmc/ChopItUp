@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
+using ChopItUp.Core.Memory;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
@@ -760,5 +761,127 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal("open", doc.RootElement.GetProperty("status").GetString());
 
         await host.Client.PostAsync("api/rooms/general/exchange/stop", null);   // clean up the hanging spawn before dispose
+    }
+
+    // --- Row 24 task 4: --export-memory -----------------------------------------------------
+
+    private static void SeedOneLiveMemory(string dataDir) =>
+        new MemoryStore(Path.Combine(dataDir, "memory")).Append("user", "A", "Body A.", "prov");
+
+    [Fact]
+    public void Options_parse_recognises_export_memory_roots_a_relative_path_and_trims_a_trailing_separator()
+    {
+        var relative = HubOptions.Parse(["--export-memory", "somedir"], _ => null);
+        Assert.Equal(HubCommand.ExportMemory, relative.Command);
+        Assert.Equal(Path.GetFullPath("somedir"), relative.ExportMemoryPath);
+        Assert.False(relative.AcceptNewSource);
+
+        var trimmed = HubOptions.Parse(["--export-memory", "C:\\x\\"], _ => null);
+        Assert.Equal("C:\\x", trimmed.ExportMemoryPath);
+
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory"], _ => null));
+    }
+
+    [Fact]
+    public void Options_parse_refuses_a_drive_root_for_export_memory()
+    {
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory", "C:\\"], _ => null));
+    }
+
+    [Fact]
+    public void Options_parse_recognises_accept_new_source_alongside_export_memory()
+    {
+        var withAccept = HubOptions.Parse(["--export-memory", "C:\\somewhere\\odir", "--accept-new-source"], _ => null);
+        Assert.Equal(HubCommand.ExportMemory, withAccept.Command);
+        Assert.True(withAccept.AcceptNewSource);
+    }
+
+    [Fact]
+    public void Accept_new_source_or_overlay_used_with_the_wrong_verb_is_refused()
+    {
+        // --accept-new-source belongs to --export-memory only (D9), the same idiom --overlay
+        // already follows for --import-skill (claim 15).
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--accept-new-source"], _ => null));
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--accept-new-source"], _ => null));
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory", "C:\\somewhere\\odir", "--overlay", "C:\\somewhere\\odir2"], _ => null));
+    }
+
+    [Fact]
+    public async Task A24_export_memory_is_refused_while_a_hub_owns_the_data_dir()
+    {
+        var dir = NewDir();
+        SeedOneLiveMemory(dir);
+        var target = Path.Combine(NewDir(), "export-target");
+        await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), new StringWriter(), error);
+
+        Assert.Equal(5, exit);
+        Assert.Contains(dir, error.ToString());
+        Assert.False(Directory.Exists(target));
+    }
+
+    [Fact]
+    public void A24_export_memory_against_a_data_dir_with_no_memory_directory_exits_4_and_creates_nothing()
+    {
+        var dir = NewDir();   // no memory\ subdirectory
+        var target = Path.Combine(NewDir(), "export-target");
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), new StringWriter(), error);
+
+        Assert.Equal(4, exit);
+        Assert.Contains("memory directory", error.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.False(Directory.Exists(Path.Combine(dir, "memory")));
+        Assert.False(Directory.Exists(target));
+    }
+
+    [Fact]
+    public void A24_export_memory_with_zero_live_entries_refuses_without_force_and_succeeds_with_it()
+    {
+        var dir = NewDir();
+        Directory.CreateDirectory(Path.Combine(dir, "memory"));   // memory\ exists but holds no entries
+        var target = Path.Combine(NewDir(), "export-target");
+
+        var error = new StringWriter();
+        var refused = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), new StringWriter(), error);
+        Assert.NotEqual(0, refused);
+        Assert.False(Directory.Exists(target));
+
+        var forced = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target, Force: true), new StringWriter(), new StringWriter());
+        Assert.Equal(0, forced);
+        Assert.True(Directory.Exists(target));
+    }
+
+    [Fact]
+    public void A24_export_memory_over_cap_store_exits_6_not_3()
+    {
+        var dir = NewDir();
+        var store = new MemoryStore(Path.Combine(dir, "memory"));
+        for (var i = 0; i < 200; i++)
+            store.Append("bulk", $"Title {i}", $"Body {i}.", "prov");
+        var target = Path.Combine(NewDir(), "export-target");
+
+        var error = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), new StringWriter(), error);
+
+        Assert.Equal(6, exit);
+        Assert.False(Directory.Exists(target));
+    }
+
+    [Fact]
+    public void A24_export_memory_a_clean_run_against_scratch_dirs_exits_0()
+    {
+        var dir = NewDir();
+        SeedOneLiveMemory(dir);
+        var target = Path.Combine(NewDir(), "export-target");
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(Path.Combine(target, "MEMORY.md")));
+        Assert.Contains("EXPORT_RESULT:", output.ToString());
     }
 }

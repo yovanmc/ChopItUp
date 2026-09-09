@@ -116,3 +116,72 @@ database half of the rollback mandatory rather than optional.
    the one named in the shipped ✅ row's Notes on `ROADMAP.md` (the deploy script prints it, and the
    board flip records it); do not rely on a date remembered from an earlier deploy.
 4. Start the hub and confirm `/health` reports the old schema version.
+
+## Exporting memory to a Claude Code directory
+
+`--export-memory <dir>` (row 24) renders the hub's memory store into the shape `autoMemoryDirectory`
+reads, then stages the whole export in a sibling directory and swaps it into `<dir>` — the target is
+never written to in place. Like `--rotate-token`, it refuses (exit 5) while `HubLock` is held: stop the
+hub first, because an approval landing mid-export would read a state that never existed.
+
+    ChopItUp.Hub.exe --data <data dir> --export-memory <export dir>
+
+Synthetic-corpus dry run (no model calls, scratch hub, drives the real exe over a fabricated 12-topic
+corpus): `pwsh tools\Invoke-M24DryRun.ps1`. Self-check (source-shape + doc rows, then the dry run
+itself): `pwsh tools\Invoke-M24ExportCheck.ps1`.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Exported. The last stdout line, `EXPORT_RESULT: { ... }`, names the target, the count, the previous-export directory (if any) and whether the store changed since the last export. |
+| 3 | An IO failure mid-swap — the target is a file, not a directory, or `Directory.Move` itself failed. The report is a FRESH check of what the target actually holds afterward, not the state assumed going in. |
+| 4 | No memory store at `--data`. Start the hub once against this data directory first, or check `--data`; nothing is created. |
+| 5 | A hub is running against this data directory. Stop it first. |
+| 6 | Refused by the guard: zero live entries without `--force`; the rendered index over the vendor's own 200-line/25,000-unit `MEMORY.md` cap (measured on the rendered index itself, never on an entry count); or the target is foreign, drifted, unreadable, or bound to a different store and the right override was not given. |
+
+**D1 — the export owns its directory.** Point `autoMemoryDirectory` at a directory nothing else writes
+to, never at one a Claude Code session also writes into. The guard cannot tell a session's own
+`MEMORY.md`/memory-file writes apart from any other drift — its only correct answer to drift is to
+refuse, not to guess which writer is trusted. Sharing the directory does not fail once and then keep
+working: it guarantees the *next* export correctly refuses, because the directory it is asked to
+replace no longer matches the manifest this tool wrote for it.
+
+**Recovery names.** A run that replaces a target retains what was there under one of two names, never a
+hand-delete of `<dir>` itself:
+- `<dir>.chopitup-export-previous` — the plain, reusable name, taken only when the replaced export was
+  clean and every file its manifest named is also produced by the new export (a superset). This is the
+  ONE name a later run reuses: the run about to replace it again deletes it first, before anything else
+  is moved.
+- `<dir>.chopitup-export-previous-<yyyyMMddTHHmmssZ>` — a shrinking store, a `--force` over drift, a
+  foreign directory, or an `--accept-new-source` all land here, and this tool never auto-deletes it. Two
+  such replacements of the same target within one UTC second get a `-2`, `-3`, … suffix appended after
+  the timestamp so they never collide; the timestamp prefix, and this whole enumeration, still match it.
+
+A `<dir>.chopitup-export-tmp-<nonce>` beside the target is a stage an earlier run never finished
+swapping in: it was never exposed to the target, so it holds only reproducible bytes — a re-render of
+the same store. This tool reports one on every later run and leaves it alone forever; deleting it is
+the owner's sanctioned cleanup, not something this tool does automatically.
+
+**`--accept-new-source`** is the right answer only when the data directory itself legitimately moved (a
+reinstall to a new path, a restored profile) and the target's manifest still names the old root — it
+prints both roots and the same affected-paths list a plain refusal would print, then proceeds. It is
+never the answer to ordinary drift inside an otherwise-correctly-sourced target (`--force` is that
+answer); `--force` in turn can never override a different source at all, because that override IS the
+attack the manifest exists to catch — a scratch store whose entries happen to match the real one
+refuses identically on content, so only the store's root path tells the two apart.
+
+The manifest holds the absolute path of the source memory directory (`<data>\memory`, not merely
+`<data>`) inside the export directory itself, and every later run's source check reads it from there.
+
+**Owner probe (post-merge, not a merge gate).** Whether a running Claude Code session actually reads an
+exported directory cannot be checked from here — no agent session in this repo can enable
+`autoMemoryDirectory`, start a session and ask it what it remembers. Set it to an exported scratch
+directory in a throwaway project, start a session, and ask; build the fixture so the answer actually
+distinguishes reading the directory from guessing:
+- one exported memory whose `metadata.type` is not one of the vendor's four enum values — `type:
+  room-general`, one of ChopItUp's own topic names, not `user`/`feedback`/`project`/`reference`. If the
+  session recalls it, the vendor reads by `name`/`description` regardless of `type`; if it recalls only
+  the four-value entries, `type` is filtered.
+- an index at exactly 198 entries and again at exactly 199 — the vendor's own cap is 200 lines including
+  the two-line header, so 198 fit and 199 do not; the answer at 199 is the only way from here to confirm
+  the line cap holds and see what it does with the memory that falls off (silently missing, or an
+  error). Record the answer on the board row.
