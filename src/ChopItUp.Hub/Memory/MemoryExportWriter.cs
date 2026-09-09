@@ -305,7 +305,7 @@ public static class MemoryExportWriter
     /// <c>-3</c>, … after the (still-readable) timestamp until the name is free. D8's timestamped
     /// previous is never auto-deleted, so the collision cannot be resolved by deleting it — only by
     /// not colliding in the first place.</summary>
-    private static string UniqueTimestampedPrevious(string targetDir)
+    internal static string UniqueTimestampedPrevious(string targetDir)
     {
         var baseName = targetDir + PreviousSuffix + "-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
         var candidate = baseName;

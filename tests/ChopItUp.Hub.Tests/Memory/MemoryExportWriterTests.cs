@@ -393,6 +393,36 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.True(Directory.Exists(r2.PreviousDir));
     }
 
+    // ---- 15. UniqueTimestampedPrevious itself disambiguates a forced, real collision --------
+    //          (not a lucky same-second race between two full Run() calls like T14 above; this
+    //          pre-creates the exact name the function just returned, so the collision is real by
+    //          construction and the test fails deterministically if the dedup loop is reverted).
+
+    [Fact]
+    public void T3_UniqueTimestampedPrevious_disambiguates_a_forced_collision_on_the_name_it_just_returned()
+    {
+        var targetDir = NewDir("t15-target", create: false);
+        var prefix = targetDir + ".chopitup-export-previous-";
+
+        // Nothing present yet: returns the plain timestamped name.
+        var plain = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
+        Assert.StartsWith(prefix, plain);
+        Assert.False(Directory.Exists(plain));
+
+        // Pre-create exactly the name just returned - a guaranteed collision, not a guess at the clock.
+        Directory.CreateDirectory(plain);
+        var second = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
+        Assert.StartsWith(prefix, second);
+        Assert.NotEqual(plain, second);
+        Assert.Equal(plain + "-2", second);
+
+        // Pre-create the "-2" name too: the next call must skip past it to "-3".
+        Directory.CreateDirectory(second);
+        var third = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
+        Assert.StartsWith(prefix, third);
+        Assert.Equal(plain + "-3", third);
+    }
+
     // ---- 13. a target that is a file, not a directory, refuses cleanly -----------------------
 
     [Fact]
