@@ -36,10 +36,21 @@ public static class MemoryExport
     /// floor, never the cap (D6, pass 2 B2).</summary>
     public const int MaxMemories = MaxIndexLines - 2;
 
-    public static ExportPlan Render(MemoryStore store)
+    /// <summary>D10: what the export IS — core first, then every topic in <see cref="MemoryStore.ListTopics"/>'s
+    /// own order (claim 9). The single source of this rule: <see cref="Render"/>,
+    /// <see cref="ExportManifest.Fingerprint"/>, and <c>HostCommands.ExportMemory</c>'s zero-entry
+    /// refusal all call this rather than each repeating it, so a change here can never desynchronise
+    /// the render, the fingerprint, and the refusal from each other (Standards, Duplicated Code).</summary>
+    public static IReadOnlyList<string> LiveTopics(MemoryStore store)
     {
         var topics = new List<string> { MemoryStore.CoreTopic };
-        topics.AddRange(store.ListTopics().Select(t => t.Slug));   // claim 9, D10: core first, then ListTopics' order
+        topics.AddRange(store.ListTopics().Select(t => t.Slug));
+        return topics;
+    }
+
+    public static ExportPlan Render(MemoryStore store)
+    {
+        var topics = LiveTopics(store);
 
         var live = new List<(string Topic, MemoryEntry Entry)>();
         foreach (var topic in topics)

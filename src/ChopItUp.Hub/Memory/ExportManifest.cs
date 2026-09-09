@@ -119,8 +119,7 @@ public sealed record ExportManifest(
     /// every legitimate re-export. Only <see cref="SourceRoot"/> distinguishes stores.</summary>
     public static string Fingerprint(MemoryStore store)
     {
-        var topics = new List<string> { MemoryStore.CoreTopic };
-        topics.AddRange(store.ListTopics().Select(t => t.Slug));
+        var topics = MemoryExport.LiveTopics(store);
 
         var sb = new StringBuilder();
         foreach (var topic in topics)

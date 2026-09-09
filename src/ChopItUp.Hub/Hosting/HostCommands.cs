@@ -255,8 +255,7 @@ public static class HostCommands
         }
 
         var store = new MemoryStore(memoryDir);
-        var topics = new List<string> { MemoryStore.CoreTopic };
-        topics.AddRange(store.ListTopics().Select(t => t.Slug));   // D10: core first, then ListTopics' order
+        var topics = MemoryExport.LiveTopics(store);   // D10: core first, then ListTopics' order
         var liveCount = topics.Sum(t => store.Titles(t).Count);   // Titles() already excludes superseded entries (D7)
         if (liveCount == 0 && !options.Force)
         {
