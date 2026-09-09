@@ -43,10 +43,6 @@ public sealed class MemoryStore
     /// a submitted body only at that position, never elsewhere — row 18 decision 1 says a marker
     /// quoted inside an entry body is text and stays text.</summary>
     public const string RewrittenPrefix = "<!-- rewritten: ";
-    /// <summary>ValidateRewrite's cheap floor per-heading provenance allowance (pass 2 finding A) — an
-    /// approximation only; <see cref="ProjectedRewriteChars"/>, which composes the real carried-forward
-    /// provenance, is the authoritative cap check.</summary>
-    public const int MaxProvenanceChars = 160;
     public const int SnippetChars = 300;
     public const int RelatedSnippetChars = 160;
     public const int MaxHits = 50;
@@ -198,8 +194,9 @@ public sealed class MemoryStore
                 var existing = File.ReadAllText(path, Utf8);
                 if (dedupKey is not null && HasProvenance(existing, dedupKey)) break;
                 var composed = ComposeRewrite(this, topic, body, provenance);   // throws before anything is touched
-                try { File.Copy(path, $"{path}.rewrite-{proposalId}.bak", overwrite: false); }
-                catch (IOException) { /* the backup already exists: a replay must not overwrite the first attempt's pre-state */ }
+                var bak = $"{path}.rewrite-{proposalId}.bak";
+                try { File.Copy(path, bak, overwrite: false); }
+                catch (IOException) when (File.Exists(bak)) { /* the backup already exists: a replay must not overwrite the first attempt's pre-state */ }
                 WriteAtomic(path, composed);
                 break;
             }
@@ -232,10 +229,12 @@ public sealed class MemoryStore
     /// <see cref="Validate"/> does not apply. Requires at least one non-empty <c>## </c> heading, no
     /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b> (claim 8:
     /// <c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its length
-    /// arithmetic — raw text plus an allowance for the H1, the marker line and
-    /// <see cref="MaxProvenanceChars"/> per heading — is a cheap floor only: it cannot see the real
-    /// carried-forward provenance and must never be relied on as the cap; <see cref="ProjectedRewriteChars"/>
-    /// is the cap.</summary>
+    /// arithmetic — raw text plus an allowance for the H1 and the marker line, and nothing per heading
+    /// (<see cref="ComposeRewrite"/> only ever adds a carried-forward provenance line to a <i>surviving</i>
+    /// live entry, never to a new or renamed heading, so the minimum any heading costs is zero) — is a
+    /// genuine floor: the smallest the composed file could possibly be. It can still under-count a body
+    /// that keeps many surviving titles, whose real carried-forward provenance this floor cannot see, so
+    /// it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
     public static void ValidateRewrite(string? topic, string? body)
     {
         RequireSlug(topic);
@@ -252,8 +251,8 @@ public sealed class MemoryStore
             if (!seen.Add(title)) throw new ArgumentException($"duplicate heading '{title}'.", nameof(body));
         }
         var cap = topic == CoreTopic ? CoreChars : TopicChars;
-        var floor = normalized.Trim().Length + topic!.Length + 3 + RewrittenPrefix.Length + CommentClose.Length + 1 + headings.Count * MaxProvenanceChars;
-        if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even by the cheap floor estimate.", nameof(body));
+        var floor = normalized.Trim().Length + topic!.Length + 3 + RewrittenPrefix.Length + CommentClose.Length + 1;
+        if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even at its minimum possible composed size.", nameof(body));
     }
 
     /// <summary>Row 23, pass 2 finding I: the live entry titles that carry a provenance comment today and

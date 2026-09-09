@@ -449,6 +449,22 @@ public sealed class MemoryStoreTests : IDisposable
     }
 
     [Fact]
+    public void R23_Rewrite_propagates_a_non_already_exists_backup_failure_and_writes_nothing()
+    {
+        // Review finding: Rewrite must swallow ONLY an already-exists IOException on the backup copy.
+        // A directory at the backup path makes File.Copy throw IOException while File.Exists(bak) is
+        // false (File.Exists is false for a directory) - the old unconditional `catch (IOException)`
+        // swallowed this too and went on to destroy the topic file with no backup.
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var path = Path.Combine(store.TopicsDir, "user.md");
+        var before = File.ReadAllText(path);
+        Directory.CreateDirectory(path + ".rewrite-99.bak");
+        Assert.Throws<IOException>(() => store.Rewrite("user", "# user\n## A\nnew a.\n", "prov", 99));
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
     public void R23_ValidateRewrite_rejects_empty_no_heading_duplicate_and_overlong_heading_but_accepts_case_difference()
     {
         Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", ""));
@@ -456,6 +472,25 @@ public sealed class MemoryStoreTests : IDisposable
         Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", "# user\n## Same\na.\n## Same\nb.\n"));
         Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", "# user\n## " + new string('t', 121) + "\nbody.\n"));
         MemoryStore.ValidateRewrite("user", "# user\n## Same\na.\n## same\nb.\n");   // differs only in case: accepted
+    }
+
+    [Fact]
+    public void R23_ValidateRewrite_does_not_overcharge_new_or_renamed_headings_and_still_refuses_a_genuinely_over_cap_body()
+    {
+        // Review finding: ComposeRewrite only carries a provenance line forward for a SURVIVING live
+        // entry - never for a new or renamed heading - so charging MaxProvenanceChars per heading makes
+        // the floor an over-estimate. Many new headings, comfortably under the real cap, must not be
+        // refused just because the old arithmetic multiplied a per-heading charge that never applies.
+        var titles = Enumerable.Range(0, 200).Select(i => $"H{i}").ToArray();
+        var sb = new System.Text.StringBuilder("# manyheadings\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append("b.\n");
+        var body = sb.ToString();
+
+        MemoryStore.ValidateRewrite("manyheadings", body);   // must NOT throw: every heading here is new
+
+        // The floor must still refuse a body that is genuinely over cap on raw text alone.
+        var overCapBody = "# big\n## Only\n" + new string('x', MemoryStore.TopicChars) + "\n";
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("big", overCapBody));
     }
 
     [Fact]
