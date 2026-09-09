@@ -1,6 +1,8 @@
 using System.Text.Json;
+using ChopItUp.Core.Memory;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Skills;
 using Microsoft.Data.Sqlite;
@@ -17,6 +19,7 @@ public static class HostCommands
         HubCommand.PrintConfig => PrintConfig(options, output, error),
         HubCommand.ImportSkill => ImportSkill(options, output, error),
         HubCommand.SetClasses => SetClasses(options, output, error),
+        HubCommand.ExportMemory => ExportMemory(options, output, error),
         _ => throw new InvalidOperationException($"{options.Command} is not a non-serving command."),
     };
 
@@ -221,5 +224,51 @@ public static class HostCommands
         var normalized = ParticipantClasses.Parse(classes);
         output.WriteLine($"{id}: classes = {(normalized.Count == 0 ? "(none)" : string.Join(",", normalized))}");
         return 0;
+    }
+
+    /// <summary>Row 24 task 4: <c>--export-memory &lt;dir&gt;</c>. Renders the memory store into the
+    /// vendor shape <see cref="ChopItUp.Hub.Memory.MemoryExport"/> defines and stages-and-swaps it into
+    /// <see cref="HubOptions.ExportMemoryPath"/> via <see cref="ChopItUp.Hub.Memory.MemoryExportWriter"/>
+    /// (T1-T3). Like <see cref="RotateToken"/> and <see cref="SetClasses"/> (D11) this needs the hub
+    /// stopped — an approval landing mid-export would read a state that never existed — but unlike them
+    /// it does not read or rotate <c>tokens.json</c>. Exit codes: 0 ok, 3 IO failure (a swap that fails
+    /// mid-move), 4 no memory store at <c>--data</c>, 5 a hub is running, 6 refused by the guard
+    /// (zero live entries without <c>--force</c>, the over-cap render refusal, or a drifted/foreign/
+    /// different-source target).</summary>
+    private static int ExportMemory(HubOptions options, TextWriter output, TextWriter error)
+    {
+        // D11: an approval landing mid-export would read a state that never existed.
+        if (HubLock.IsHeld(options.DataDir))
+        {
+            error.WriteLine($"A hub is running on '{options.DataDir}'. Stop it first — exporting while it runs could read memory mid-write.");
+            return 5;
+        }
+
+        // Fence BEFORE constructing the store (pass 2 M11): MemoryStore.EnsureLayout() WRITES, and
+        // ListTopics/Entries call it internally, so any read through the store touches the source
+        // layout. This plain existence check is the only way to refuse without creating anything.
+        var memoryDir = Path.Combine(options.DataDir, "memory");
+        if (!Directory.Exists(memoryDir))
+        {
+            error.WriteLine($"No memory directory in '{options.DataDir}'. Start the hub once against this data directory first, or check --data.");
+            return 4;
+        }
+
+        var store = new MemoryStore(memoryDir);
+        var topics = new List<string> { MemoryStore.CoreTopic };
+        topics.AddRange(store.ListTopics().Select(t => t.Slug));   // D10: core first, then ListTopics' order
+        var liveCount = topics.Sum(t => store.Titles(t).Count);   // Titles() already excludes superseded entries (D7)
+        if (liveCount == 0 && !options.Force)
+        {
+            error.WriteLine($"'{memoryDir}' holds no live memories to export. Use --force to export an empty index anyway.");
+            return 6;
+        }
+
+        // MemoryExportWriter.Run handles every other refusal itself (over-cap render, drift, a
+        // different source, a failed swap) and returns the exit code directly: an
+        // ExportRefusedException never reaches this frame, so it can never be caught and remapped to
+        // the shared exit-3 mapping (claim 21, pass 2 M5).
+        var result = MemoryExportWriter.Run(store, options.ExportMemoryPath!, options.Force, options.AcceptNewSource, output, error);
+        return result.ExitCode;
     }
 }

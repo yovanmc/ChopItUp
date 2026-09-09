@@ -1,6 +1,6 @@
 namespace ChopItUp.Hub.Hosting;
 
-public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasses }
+public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasses, ExportMemory }
 
 /// <summary>Resolved startup options. Precedence: CLI args, then environment, then defaults.
 /// Default data dir is <c>data\</c> beside the executable (release layout); dev and tests pass
@@ -19,8 +19,14 @@ public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasse
 /// same way at parse time. <paramref name="SetClassesSpec"/> is the raw <c>&lt;id&gt;=&lt;classes&gt;</c>
 /// text of <c>--set-classes</c> (row 20 task 2); the split on <c>=</c> and the class normalization
 /// happen in <see cref="ChopItUp.Hub.Hosting.HostCommands"/>, not here — only the "has an <c>=</c>"
-/// shape is a parse-time refusal.</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null)
+/// shape is a parse-time refusal. <paramref name="ExportMemoryPath"/> is the target directory for
+/// <c>--export-memory &lt;dir&gt;</c> (row 24 task 4), rooted the same way <c>--import-skill</c> is
+/// AND <see cref="Path.TrimEndingDirectorySeparator(string)"/>-ed, because <see cref="Path.GetFullPath(string)"/>
+/// alone preserves a trailing separator, which would put the writer's staging directory inside the
+/// target. A drive root is refused outright. <paramref name="AcceptNewSource"/> is
+/// <c>--accept-new-source</c>, only valid alongside <c>--export-memory</c> (D9): it proceeds past a
+/// target whose manifest names a different store root, which <c>--force</c> must never do.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false)
 {
     public const int DefaultPort = 8790;
 
@@ -43,6 +49,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         var force = false;
         string? overlayPath = null;
         string? setClassesSpec = null;
+        string? exportMemoryPath = null;
+        var acceptNewSource = false;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--data")
@@ -99,9 +107,28 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
                 command = HubCommand.SetClasses;
                 setClassesSpec = spec;
             }
+            else if (args[i] == "--export-memory")
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException("--export-memory requires a value.");
+                // Rooted here for the same reason --import-skill is (M5): a relative path must resolve
+                // against THIS command's working directory. TrimEndingDirectorySeparator runs AFTER
+                // GetFullPath (claim 20) — GetFullPath alone preserves a trailing separator, which
+                // would put the writer's staging directory inside the target.
+                var rooted = Path.TrimEndingDirectorySeparator(Path.GetFullPath(args[++i]));
+                if (string.Equals(rooted, Path.GetPathRoot(rooted), StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException($"--export-memory cannot target a drive root ('{rooted}').");
+                command = HubCommand.ExportMemory;
+                exportMemoryPath = rooted;
+            }
+            else if (args[i] == "--accept-new-source")
+            {
+                acceptNewSource = true;
+            }
         }
         if (overlayPath is not null && command != HubCommand.ImportSkill)
             throw new ArgumentException("--overlay is only valid with --import-skill.");
+        if (acceptNewSource && command != HubCommand.ExportMemory)
+            throw new ArgumentException("--accept-new-source is only valid with --export-memory.");
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
         rooms ??= getEnv("CHOPITUP_ROOMS");
@@ -114,6 +141,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             ImportSkillPath: importSkillPath,
             Force: force,
             OverlayPath: overlayPath,
-            SetClassesSpec: setClassesSpec);
+            SetClassesSpec: setClassesSpec,
+            ExportMemoryPath: exportMemoryPath,
+            AcceptNewSource: acceptNewSource);
     }
 }
