@@ -455,4 +455,51 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.True(File.Exists(targetDir));
         Assert.False(Directory.Exists(targetDir));
     }
+
+    // ---- 16. the SECOND move (stage into place) fails AFTER the target has already been moved
+    //          aside (AC8): the writer attempts to restore it, and the reported state comes from a
+    //          FRESH Directory.Exists check afterward, never from what it assumed going in (pass 2
+    //          M14) -----------------------------------------------------------------------------
+
+    [Fact]
+    public void T3_a_failure_after_the_target_is_moved_aside_restores_it_and_reports_a_fresh_existence_check()
+    {
+        var store = NewStore(NewDir("t16-store"));
+        store.Append("user", "A", "Body A.", "prov");
+        var targetDir = NewDir("t16-target", create: false);
+
+        // First export: target absent, so it is created directly - no aside move happens yet.
+        var first = Run(store, targetDir, false, false, out _, out _);
+        Assert.Equal(0, first.ExitCode);
+        var originalFile = Directory.EnumerateFiles(targetDir, "*.md")
+            .First(f => !f.EndsWith("MEMORY.md", StringComparison.OrdinalIgnoreCase));
+        var originalContent = File.ReadAllText(originalFile);
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        // Second export: the store is unchanged, so the target verifies Clean and the retention is
+        // the reusable plain slot - this run WILL attempt both moves. Neither the stage directory's
+        // GUID-suffixed name nor (in general) the aside name is predictable ahead of the call, so a
+        // test cannot pre-open a handle on either; the 8-arg overload's afterAsideMove hook hands both
+        // names to the test right after the FIRST move (target -> aside) has already succeeded, and
+        // right before the SECOND (stage -> target) is even attempted. Deleting the stage out from
+        // under the writer at that exact point makes the second move fail deterministically.
+        var result = MemoryExportWriter.Run(store, targetDir, false, false, output, error,
+            afterInitialVerify: null,
+            afterAsideMove: (stageDir, asideDir) => Directory.Delete(stageDir, recursive: true));
+
+        Assert.Equal(3, result.ExitCode);
+        var errText = error.ToString();
+        // A restore was attempted: nothing else occupies targetDir at that point (the first move
+        // already vacated it, and the stage was deleted rather than landing there), so the restore
+        // succeeds - moving the aside directory back into place.
+        Assert.Contains("restoring the previous target succeeded", errText);
+        // The reported state is a FRESH Directory.Exists check, not an assumption carried in from
+        // whether the second move succeeded: the restore just RE-CREATED the target, and the writer
+        // must observe that directly rather than assume "the swap failed, so the target is absent".
+        Assert.True(Directory.Exists(targetDir));
+        Assert.Equal(originalContent, File.ReadAllText(originalFile));
+        Assert.Null(result.PreviousDir);   // the aside directory was moved back, not left behind
+        Assert.False(Directory.Exists(targetDir + ".chopitup-export-previous"));
+    }
 }

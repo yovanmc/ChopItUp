@@ -61,7 +61,18 @@ public static class MemoryExportWriter
     /// <see cref="ExportManifest.Verify"/> decides to proceed, and before anything else — the seam
     /// pass 2 M6 is about, and one no test can reach by racing a real second thread inside one call.</summary>
     internal static ExportResult Run(MemoryStore store, string targetDir, bool force, bool acceptNewSource,
-        TextWriter output, TextWriter error, Action? afterInitialVerify)
+        TextWriter output, TextWriter error, Action? afterInitialVerify) =>
+        Run(store, targetDir, force, acceptNewSource, output, error, afterInitialVerify, afterAsideMove: null);
+
+    /// <summary>The 8-arg overload adds a second test-only hook, fired right after step 6's FIRST
+    /// <c>Directory.Move</c> (target aside) succeeds and before the SECOND (stage into place) is even
+    /// attempted. It hands the test the exact stage and aside directory names — both carry a
+    /// GUID/timestamp no test can predict ahead of the call — so a test can force the second move to
+    /// fail deterministically. This is the seam AC8's restore branch needs: no test can reach "the
+    /// second move fails after the target is already moved aside" by racing a real second thread
+    /// inside one call, the same reasoning <paramref name="afterInitialVerify"/> is here for.</summary>
+    internal static ExportResult Run(MemoryStore store, string targetDir, bool force, bool acceptNewSource,
+        TextWriter output, TextWriter error, Action? afterInitialVerify, Action<string, string>? afterAsideMove)
     {
         targetDir = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetDir));
         var parent = Path.GetDirectoryName(targetDir)
@@ -171,6 +182,8 @@ public static class MemoryExportWriter
                 error.WriteLine($"swap failed while moving the target aside: {ex.Message}. Target left untouched.");
                 return new ExportResult(3, targetDir, 0, null, otherStagingDirs);
             }
+
+            afterAsideMove?.Invoke(stageDir, asideDir);
 
             try
             {
