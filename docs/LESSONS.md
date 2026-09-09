@@ -73,6 +73,20 @@ caught it, the local gate did not. The build gate is `dotnet clean` first, then 
 build — an incremental 0-warning build is not evidence. When the deploy target's exe is locked by a
 running hub, `--artifacts-path <fresh dir>` gives the same cold compile without touching it.
 
+### [ui-gate, browser-pane, click-verification] M23 (2026-09-09, 034167a)
+
+The interactive gate for a web card could not use a real click: the Browser pane was hidden, and
+injected input into a hidden pane silently dispatches nothing — listeners on the button, the document
+and `pointerdown`/`mousedown`/`click` recorded zero events across three attempts, with no error from
+the tool, which reported the click as delivered at the right coordinate. Claude in Chrome was not
+connected either. Row 18 hit the same wall and shipped "handler proven programmatically", which
+leaves the hit-testing half unverified. The substitute that does cover it: assert
+`document.elementFromPoint(centre)` returns the button itself (that is the overlay and mis-position
+check, and it is better evidence than a screenshot), assert the button's box is non-zero and inside
+`innerHeight`, then dispatch `.click()` on the real rendered DOM and verify the server-side effect.
+Set a viewport first — a hidden pane reports `innerHeight` 0, which silently collapsed a
+`max-height: min(30vh, 220px)` to `0px` and made the first layout measurement meaningless.
+
 ### [subagents, critique-gate, dispatch, background-tasks] M23 (2026-09-08, 98e88a3)
 
 A `dissect-critic` dispatched with `run_in_background: true` spent its entire budget — 239k tokens,
