@@ -16,13 +16,33 @@ public sealed class MemoryProposalStore(ChopDb db)
     public const int MaxLimit = 500;
     public const string KindAppend = "append";
     public const string KindSupersede = "supersede";
+    /// <summary>Row 23 (item 3): a whole-topic replacement rather than one entry — see
+    /// <see cref="MemoryStore.Rewrite"/>.</summary>
+    public const string KindRewrite = "rewrite";
 
-    public MemoryProposal Create(string roomId, string authorId, string topic, string title, string body, string? source, string? replaces = null, string? flags = null)
+    /// <summary>Validates and stores a proposal. <paramref name="kind"/> defaults to
+    /// <see cref="KindAppend"/> so every existing call site compiles unchanged; the resolved kind is
+    /// <see cref="KindRewrite"/> when requested, otherwise inferred from <paramref name="replaces"/> as
+    /// before. A rewrite's <paramref name="body"/> is a whole file, so it is checked by
+    /// <see cref="MemoryStore.ValidateRewrite"/> rather than <see cref="MemoryStore.Validate"/> — but the
+    /// title still goes through the same title check <c>Validate</c> would have run, since this is public
+    /// Core API and a null title must fail with <see cref="ArgumentException"/>, not a
+    /// <c>NOT NULL</c> <see cref="Microsoft.Data.Sqlite.SqliteException"/> from the column.</summary>
+    public MemoryProposal Create(string roomId, string authorId, string topic, string title, string body, string? source, string? replaces = null, string? flags = null, string kind = KindAppend)
     {
         MemoryStore.RequireSlug(topic);
-        MemoryStore.Validate(title, body);
+        if (kind == KindRewrite && replaces is not null) throw new ArgumentException("a rewrite must not name an entry to replace.", nameof(replaces));
+        if (kind == KindRewrite)
+        {
+            ValidateTitle(title);
+            MemoryStore.ValidateRewrite(topic, body);
+        }
+        else
+        {
+            MemoryStore.Validate(title, body);
+        }
         replaces = replaces?.Trim();
-        var kind = replaces is null ? KindAppend : KindSupersede;
+        var resolvedKind = kind == KindRewrite ? KindRewrite : (replaces is null ? KindAppend : KindSupersede);
         var at = DateTimeOffset.UtcNow;
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
@@ -38,11 +58,11 @@ public sealed class MemoryProposalStore(ChopDb db)
         cmd.Parameters.AddWithValue("$body", body.Trim());
         cmd.Parameters.AddWithValue("$source", (object?)source ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(at));
-        cmd.Parameters.AddWithValue("$kind", kind);
+        cmd.Parameters.AddWithValue("$kind", resolvedKind);
         cmd.Parameters.AddWithValue("$replaces", (object?)replaces ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$flags", (object?)flags ?? DBNull.Value);
         var id = (long)cmd.ExecuteScalar()!;
-        return new MemoryProposal(id, roomId, authorId, topic, title.Trim(), body.Trim(), Pending, source, at, null, null, null, kind, replaces, flags);
+        return new MemoryProposal(id, roomId, authorId, topic, title.Trim(), body.Trim(), Pending, source, at, null, null, null, resolvedKind, replaces, flags);
     }
 
     public MemoryProposal? Get(long id)
@@ -145,6 +165,17 @@ public sealed class MemoryProposalStore(ChopDb db)
         cmd.Parameters.AddWithValue("$title", title.Trim());
         using var reader = cmd.ExecuteReader();
         return reader.Read() ? Map(reader) : null;
+    }
+
+    /// <summary>The title half of <see cref="MemoryStore.Validate"/>, run standalone for a rewrite whose
+    /// body goes through <see cref="MemoryStore.ValidateRewrite"/> instead — a rewrite is still a row
+    /// with a title column, and this is public Core API, so a null title must still fail with
+    /// <see cref="ArgumentException"/> rather than a <c>NOT NULL</c> constraint violation.</summary>
+    private static void ValidateTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is empty.", nameof(title));
+        if (title.Contains('\n') || title.Contains('\r')) throw new ArgumentException("title must be one line.", nameof(title));
+        if (title.Trim().Length > MemoryStore.MaxTitleChars) throw new ArgumentException($"title exceeds {MemoryStore.MaxTitleChars} characters.", nameof(title));
     }
 
     private const string Select = "SELECT id, room_id, author_id, topic, title, body, status, source, created_at, decided_at, written_to, commit_hash, kind, replaces, flags FROM memory_proposals";
