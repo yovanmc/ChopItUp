@@ -133,7 +133,13 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(html).toContain('Removes 2 entries');
     expect(html).toContain('Editor of choice');
     expect(html).toContain('Shell');
-    expect(html).toContain('2 surviving entries lose their approval record');
+    // `ProvenanceLost` counts every live entry whose provenance would not carry forward, which is the
+    // renamed headings AND the dropped ones (MemoryStore.ProvenanceLost: live, has provenance, title
+    // absent from the proposed body). Calling them "surviving" asserted something untrue of the
+    // dropped half and read as a second count of the line above it, so the copy names the records
+    // rather than the entries, and says what is actually lost.
+    expect(html).toContain('2 approval records will not carry forward: who approved those entries, and when.');
+    expect(html).not.toContain('surviving');
   });
 
   test('a pending rewrite with no git trail says so and names the backup that will be the only copy', () => {

@@ -170,7 +170,9 @@ export interface MemoryProposal {
   removedTitles?: string[];
   /** Entry titles in the proposed file that the topic does not hold today. */
   addedTitles?: string[];
-  /** Surviving entries whose approval record would NOT carry forward — a renamed heading loses it. */
+  /** Live entries whose approval record would NOT carry forward: the hub matches provenance by exact
+   *  heading, so a renamed entry loses its record and so does a removed one. Not a subset of the
+   *  survivors, and not a restatement of `removedTitles` — the two sets overlap. */
   provenanceLost?: number;
   /** Whether the hub can make a commit at all. False means the per-proposal backup is the only copy
    *  after approval; null when the hub did not compute it for this row. */

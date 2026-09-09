@@ -113,11 +113,15 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                           : `Removes ${removed.length} entries: `}
                       {removed.length > 0 && <span className="memory-diff-removed">{removed.join(', ')}</span>}
                     </p>
+                    {/* `provenanceLost` counts every live entry whose approval record would not carry
+                        forward: a renamed heading loses it and so does a dropped one, so the copy must
+                        not call them survivors. It names the records rather than the entries, which is
+                        also what keeps it from reading as a second count of the removals above. */}
                     {lost > 0 && (
                       <p className="memory-diff-lost">
                         {lost === 1
-                          ? '1 surviving entry loses its approval record'
-                          : `${lost} surviving entries lose their approval record`}
+                          ? '1 approval record will not carry forward: who approved that entry, and when.'
+                          : `${lost} approval records will not carry forward: who approved those entries, and when.`}
                       </p>
                     )}
                     {noGit && (

@@ -43,7 +43,8 @@ public static class MemoryApi
     /// <summary>Row 23 (item 5, ticket 05): a <c>rewrite</c> proposal that is pending or approved-but-
     /// unwritten (the panel's default <c>undecided</c> filter shows both — the second is the Retry state,
     /// pass 2 finding H) carries a computed line diff against what approval would write, the entry titles
-    /// it removes and adds, how many surviving entries would lose their provenance, and whether a commit
+    /// it removes and adds, how many live entries would lose their provenance (renamed or removed alike —
+    /// <see cref="MemoryStore.ProvenanceLost"/> matches by exact heading), and whether a commit
     /// can be made at all — all before the owner can approve it. Every other row gets the base shape with
     /// these fields present but empty/null (ticket 05: "always present", never missing), so the client
     /// never has to guess whether a field applies to a given kind. Cost is accepted, not optimised: one
