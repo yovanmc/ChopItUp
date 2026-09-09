@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
@@ -31,14 +32,63 @@ public static class MemoryApi
         api.MapDelete("/proposals", Discard);
     }
 
-    private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, string? room = null, string? status = MemoryProposalStore.Undecided)
+    private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, string? room = null, string? status = MemoryProposalStore.Undecided)
     {
         if (status is "all") status = null;
         if (status is not (null or MemoryProposalStore.Undecided or MemoryProposalStore.Pending or MemoryProposalStore.Approved or MemoryProposalStore.Rejected))
             return Results.BadRequest(new { error = "status must be undecided, pending, approved, rejected or all." });
-        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status)
-            .Select(p => Map(p, p.Status == MemoryProposalStore.Pending ? memory.Related(p.Topic, p.Title, p.Replaces) : null)));
+        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(p => MapForList(p, memory, git)));
     }
+
+    /// <summary>Row 23 (item 5, ticket 05): a <c>rewrite</c> proposal that is pending or approved-but-
+    /// unwritten (the panel's default <c>undecided</c> filter shows both — the second is the Retry state,
+    /// pass 2 finding H) carries a computed line diff against what approval would write, the entry titles
+    /// it removes and adds, how many live entries would lose their provenance (renamed or removed alike —
+    /// <see cref="MemoryStore.ProvenanceLost"/> matches by exact heading), and whether a commit
+    /// can be made at all — all before the owner can approve it. Every other row gets the base shape with
+    /// these fields present but empty/null (ticket 05: "always present", never missing), so the client
+    /// never has to guess whether a field applies to a given kind. Cost is accepted, not optimised: one
+    /// bounded <see cref="MemoryDiff"/> LCS per undecided rewrite per list call, for one local client.</summary>
+    private static object MapForList(MemoryProposal p, MemoryStore memory, MemoryGit git)
+    {
+        var isRewrite = p.Kind == MemoryProposalStore.KindRewrite;
+        var inScope = isRewrite && (p.Status == MemoryProposalStore.Pending || (p.Status == MemoryProposalStore.Approved && p.WrittenTo is null));
+
+        IReadOnlyList<RelatedEntry> related = !isRewrite && p.Status == MemoryProposalStore.Pending ? memory.Related(p.Topic, p.Title, p.Replaces) : [];
+        IReadOnlyList<object>? diff = null;
+        IReadOnlyList<string> removedTitles = [];
+        IReadOnlyList<string> addedTitles = [];
+        var provenanceLost = 0;
+        bool? gitAvailable = null;
+
+        if (inScope)
+        {
+            var before = memory.ReadTopic(p.Topic, int.MaxValue)?.Text ?? "";
+            var after = MemoryStore.PreviewRewrite(memory, p.Topic, p.Body);
+            diff = MemoryDiff.Hunks(MemoryDiff.Compute(before, after)).Select(l => (object)new { op = l.Op.ToString().ToLowerInvariant(), text = l.Text }).ToList();
+            var beforeTitles = memory.Titles(p.Topic);
+            var afterTitles = HeadingTitles(after);
+            removedTitles = beforeTitles.Except(afterTitles, StringComparer.Ordinal).ToList();
+            addedTitles = afterTitles.Except(beforeTitles, StringComparer.Ordinal).ToList();
+            provenanceLost = memory.ProvenanceLost(p.Topic, p.Body).Count;
+            gitAvailable = git.IsAvailable();
+        }
+
+        return new
+        {
+            p.Id, p.RoomId, p.AuthorId, p.Topic, p.Title, p.Body, p.Status, p.Source, p.CreatedAt, p.DecidedAt, p.WrittenTo, p.CommitHash,
+            p.Kind, p.Replaces, Flags = ProposalFlags.Parse(p.Flags), Related = related,
+            Diff = diff, RemovedTitles = removedTitles, AddedTitles = addedTitles, ProvenanceLost = provenanceLost, GitAvailable = gitAvailable,
+        };
+    }
+
+    /// <summary>The <c>## </c> heading titles of a composed (not-yet-written) rewrite body, in file order
+    /// — mirrors <see cref="MemoryStore.ValidateRewrite"/>'s own heading extraction, but Core's parser
+    /// (<c>ParseEntries</c>) is internal to Core and unreachable from the Hub (claim 15), and there is no
+    /// on-disk file to call <see cref="MemoryStore.Titles"/> against for text that only exists as a
+    /// preview.</summary>
+    private static IReadOnlyList<string> HeadingTitles(string text) =>
+        Regex.Matches(text.Replace("\r\n", "\n"), "(?m)^## (.*)$").Select(m => m.Groups[1].Value.Trim()).ToList();
 
     private static async Task<IResult> Approve(long id, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
@@ -56,7 +106,31 @@ public static class MemoryApi
             // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
             // to finish it (critique P1-5).
             var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
-            if (p.Status == MemoryProposalStore.Pending)
+
+            // Row 23, pass 2 finding H: a rewrite's pre-write checks run on BOTH the pending path AND the
+            // Retry path (approved, written_to still null) - unlike the append/supersede checks below, which
+            // stay pending-only under P1-5's ruling. Rewrite() itself throws KeyNotFoundException when the
+            // topic vanished in the crash window, and unlike append/supersede that must never reach the
+            // write uncaught: checking here turns it into a 409, not a 500.
+            if (p.Kind == MemoryProposalStore.KindRewrite)
+            {
+                try { MemoryStore.ValidateRewrite(p.Topic, p.Body); }
+                catch (ArgumentException e) { return Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }); }
+                if (memory.ReadTopic(p.Topic) is null)
+                    return Results.Conflict(new { error = $"No topic '{p.Topic}' to rewrite." });
+                var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+                int chars;
+                try { chars = memory.ProjectedRewriteChars(p.Topic, p.Body, provenance); }
+                catch (KeyNotFoundException e) { return Results.Conflict(new { error = e.Message }); }
+                if (chars > cap)
+                {
+                    var current = memory.ReadTopic(p.Topic)!.FullChars;
+                    var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
+                    if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                    return Results.Conflict(new { error = refused, chars, current, cap });
+                }
+            }
+            else if (p.Status == MemoryProposalStore.Pending)
             {
                 // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
                 // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
@@ -80,6 +154,10 @@ public static class MemoryApi
                     return Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." });
             }
 
+            // Row 23 (item 4): captured before the mark/write so the approval note can name what a
+            // rewrite removed - the set difference of live titles before and after the replacement.
+            var beforeTitles = p.Kind == MemoryProposalStore.KindRewrite ? memory.Titles(p.Topic) : null;
+
             // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
             if (p.Status == MemoryProposalStore.Pending && proposals.Decide(id, MemoryProposalStore.Approved, null, null) is null)
                 return Results.Conflict(new { error = $"Memory proposal #{id} was decided concurrently." });
@@ -88,12 +166,16 @@ public static class MemoryApi
             // spawn in flight). Let it surface as a 500 with the row approved-but-unwritten, which the
             // panel's Retry then re-checks.
             var dedupKey = $"proposal {p.Id} by {p.AuthorId}";
-            var written = p.Replaces is null
-                ? memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey)
-                : memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey);
+            var written = p.Kind switch
+            {
+                MemoryProposalStore.KindRewrite => memory.Rewrite(p.Topic, p.Body, provenance, p.Id, dedupKey),
+                _ when p.Replaces is null => memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey),
+                _ => memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey),
+            };
+            var removedTitles = beforeTitles is null ? null : beforeTitles.Except(memory.Titles(p.Topic), StringComparer.Ordinal).ToList();
             var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
             var decided = proposals.RecordWrite(id, written, hash) ?? proposals.Get(id)!;
-            Note(store, signal, decided.RoomId, HubNotes.Approved(decided));
+            Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
             return Results.Json(Map(decided));
         }
         finally { Decisions.Release(); }

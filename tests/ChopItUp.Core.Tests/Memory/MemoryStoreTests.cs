@@ -333,4 +333,192 @@ public sealed class MemoryStoreTests : IDisposable
         store.EnsureLayout();
         Assert.Equal("*.tmp\n*.bak\n", File.ReadAllText(Path.Combine(store.Root, ".gitignore")));
     }
+
+    [Fact]
+    public void R23_Rewrite_replaces_the_file_whole_and_leaves_a_byte_identical_backup()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        store.Append("user", "B", "old b.", "p2");
+        var before = File.ReadAllText(Path.Combine(store.TopicsDir, "user.md"));
+        var body = "# user\n## A\nnew a.\n## C\nnew c.\n";
+        var rel = store.Rewrite("user", body, "approved rewrite prov", 42);
+        Assert.Equal("topics/user.md", rel);
+        var backupPath = Path.Combine(store.TopicsDir, "user.md.rewrite-42.bak");
+        Assert.Equal(before, File.ReadAllText(backupPath));
+        var after = File.ReadAllText(Path.Combine(store.TopicsDir, "user.md"));
+        Assert.NotEqual(before, after);
+        var titles = store.Entries("user").Where(e => !e.Superseded).Select(e => e.Title);
+        Assert.Equal(new[] { "A", "C" }, titles);
+    }
+
+    [Fact]
+    public void R23_a_subsequent_Supersede_does_not_touch_the_rewrite_backup()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var body = "# user\n## A\nnew a.\n";
+        store.Rewrite("user", body, "prov", 7);
+        var backupPath = Path.Combine(store.TopicsDir, "user.md.rewrite-7.bak");
+        var backupBefore = File.ReadAllText(backupPath);
+        store.Supersede("user", "A", "A", "even newer a.", "prov2");
+        Assert.Equal(backupBefore, File.ReadAllText(backupPath));
+        Assert.True(File.Exists(Path.Combine(store.TopicsDir, "user.md.bak")));
+    }
+
+    [Fact]
+    public void R23_restoring_the_backup_reproduces_the_pre_rewrite_bytes_exactly()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var path = Path.Combine(store.TopicsDir, "user.md");
+        var before = File.ReadAllText(path);
+        store.Rewrite("user", "# user\n## A\nnew a.\n", "prov", 3);
+        var backupPath = path + ".rewrite-3.bak";
+        File.Copy(backupPath, path, overwrite: true);
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void R23_the_marker_sits_between_the_H1_and_the_first_heading_and_no_entry_body_contains_it()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        store.Rewrite("user", "# user\n## A\nnew a.\n", "prov", 1);
+        var lines = File.ReadAllText(Path.Combine(store.TopicsDir, "user.md")).Replace("\r\n", "\n").Split('\n').ToList();
+        var markerIndex = lines.FindIndex(l => l.StartsWith(MemoryStore.RewrittenPrefix, StringComparison.Ordinal));
+        var firstHeadingIndex = lines.FindIndex(l => l.StartsWith("## ", StringComparison.Ordinal));
+        Assert.Equal(0, lines.FindIndex(l => l.StartsWith("# ", StringComparison.Ordinal) && !l.StartsWith("## ", StringComparison.Ordinal)));
+        Assert.True(markerIndex > 0 && markerIndex < firstHeadingIndex);
+        Assert.DoesNotContain(store.Entries("user"), e => e.Body.Contains(MemoryStore.RewrittenPrefix, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void R23_Rewrite_carries_forward_provenance_for_surviving_entries_only_and_ProvenanceLost_reports_the_rest()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "approved prov-a");
+        store.Append("user", "B", "old b.", "approved prov-b");
+        store.Append("user", "C", "old c.", "approved prov-c");
+        var body = "# user\n## A\nnew a.\n## Renamed\nwas c.\n## New\nbrand new.\n";
+        var lost = store.ProvenanceLost("user", body);
+        Assert.Equal(new[] { "B", "C" }, lost);
+        store.Rewrite("user", body, "new-rewrite-prov", 5);
+        var entries = store.Entries("user");
+        Assert.Equal(new[] { "A", "Renamed", "New" }, entries.Select(e => e.Title));
+        Assert.Equal("approved prov-a", entries.First(e => e.Title == "A").Provenance);
+        Assert.Equal("", entries.First(e => e.Title == "New").Provenance);
+        Assert.Equal("", entries.First(e => e.Title == "Renamed").Provenance);
+        Assert.DoesNotContain("prov-b", File.ReadAllText(Path.Combine(store.TopicsDir, "user.md")));
+    }
+
+    [Fact]
+    public void R23_a_body_quoting_the_rewritten_marker_inside_an_entry_body_keeps_it()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var body = "# user\n## A\nThe marker looks like this:\n" + MemoryStore.RewrittenPrefix + "quoted -->\nand means nothing here.\n";
+        store.Rewrite("user", body, "prov", 9);
+        var entry = store.Entries("user").Single(e => e.Title == "A");
+        Assert.Contains(MemoryStore.RewrittenPrefix, entry.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void R23_replay_with_the_same_dedup_key_leaves_file_and_backup_byte_identical()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var body = "# user\n## A\nnew a.\n";
+        store.Rewrite("user", body, "approved rewrite proposal 11 by opus", 11, "proposal 11 by opus");
+        var path = Path.Combine(store.TopicsDir, "user.md");
+        var backupPath = path + ".rewrite-11.bak";
+        var fileAfterFirst = File.ReadAllText(path);
+        var backupAfterFirst = File.ReadAllText(backupPath);
+        store.Rewrite("user", body, "approved rewrite proposal 11 by opus", 11, "proposal 11 by opus");
+        Assert.Equal(fileAfterFirst, File.ReadAllText(path));
+        Assert.Equal(backupAfterFirst, File.ReadAllText(backupPath));
+    }
+
+    [Fact]
+    public void R23_Rewrite_on_an_unknown_topic_throws_and_writes_nothing()
+    {
+        var store = Store;
+        store.EnsureLayout();
+        Assert.Throws<KeyNotFoundException>(() => store.Rewrite("nope", "# nope\n## A\nb.\n", "prov", 1));
+        Assert.False(File.Exists(Path.Combine(store.TopicsDir, "nope.md")));
+    }
+
+    [Fact]
+    public void R23_Rewrite_propagates_a_non_already_exists_backup_failure_and_writes_nothing()
+    {
+        // Review finding: Rewrite must swallow ONLY an already-exists IOException on the backup copy.
+        // A directory at the backup path makes File.Copy throw IOException while File.Exists(bak) is
+        // false (File.Exists is false for a directory) - the old unconditional `catch (IOException)`
+        // swallowed this too and went on to destroy the topic file with no backup.
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var path = Path.Combine(store.TopicsDir, "user.md");
+        var before = File.ReadAllText(path);
+        Directory.CreateDirectory(path + ".rewrite-99.bak");
+        Assert.Throws<IOException>(() => store.Rewrite("user", "# user\n## A\nnew a.\n", "prov", 99));
+        Assert.Equal(before, File.ReadAllText(path));
+    }
+
+    [Fact]
+    public void R23_ValidateRewrite_rejects_empty_no_heading_duplicate_and_overlong_heading_but_accepts_case_difference()
+    {
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", ""));
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", "# user\nno heading at all.\n"));
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", "# user\n## Same\na.\n## Same\nb.\n"));
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("user", "# user\n## " + new string('t', 121) + "\nbody.\n"));
+        MemoryStore.ValidateRewrite("user", "# user\n## Same\na.\n## same\nb.\n");   // differs only in case: accepted
+    }
+
+    [Fact]
+    public void R23_ValidateRewrite_does_not_overcharge_new_or_renamed_headings_and_still_refuses_a_genuinely_over_cap_body()
+    {
+        // Review finding: ComposeRewrite only carries a provenance line forward for a SURVIVING live
+        // entry - never for a new or renamed heading - so charging MaxProvenanceChars per heading makes
+        // the floor an over-estimate. Many new headings, comfortably under the real cap, must not be
+        // refused just because the old arithmetic multiplied a per-heading charge that never applies.
+        var titles = Enumerable.Range(0, 200).Select(i => $"H{i}").ToArray();
+        var sb = new System.Text.StringBuilder("# manyheadings\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append("b.\n");
+        var body = sb.ToString();
+
+        MemoryStore.ValidateRewrite("manyheadings", body);   // must NOT throw: every heading here is new
+
+        // The floor must still refuse a body that is genuinely over cap on raw text alone.
+        var overCapBody = "# big\n## Only\n" + new string('x', MemoryStore.TopicChars) + "\n";
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("big", overCapBody));
+    }
+
+    [Fact]
+    public void R23_ProjectedRewriteChars_exceeds_the_cap_at_a_non_core_topic_with_20_surviving_entries_whose_raw_body_is_under_the_floor()
+    {
+        var store = Store;
+        store.EnsureLayout();
+        var longProvenance = new string('p', 300);
+        var titles = Enumerable.Range(0, 20).Select(i => $"Entry{i}").ToArray();
+        foreach (var t in titles) store.Append("big", t, "old.", longProvenance);
+
+        var bodyPad = new string('x', 950);
+        var sb = new System.Text.StringBuilder("# big\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append(bodyPad).Append('\n');
+        var body = sb.ToString();
+
+        MemoryStore.ValidateRewrite("big", body);   // the cheap floor passes: raw text alone stays under the topic cap
+        Assert.True(store.ProjectedRewriteChars("big", body, "new prov") > MemoryStore.TopicChars);   // the composed file, with real carried-forward provenance, does not
+    }
+
+    [Fact]
+    public void R23_ProjectedRewriteChars_equals_the_length_Rewrite_actually_writes()
+    {
+        var store = Store;
+        store.Append("user", "A", "old a.", "p1");
+        var body = "# user\n## A\nnew a.\n## B\nb.\n";
+        var projected = store.ProjectedRewriteChars("user", body, "prov");
+        store.Rewrite("user", body, "prov", 2);
+        Assert.Equal(File.ReadAllText(Path.Combine(store.TopicsDir, "user.md")).Length, projected);
+    }
 }

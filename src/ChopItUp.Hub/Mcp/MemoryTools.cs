@@ -15,9 +15,13 @@ namespace ChopItUp.Hub.Mcp;
 /// <summary>The memory half of the contract (M10, D15). <c>recall</c> is how a spawn gets what its
 /// prompt did not carry and how an interactive host gets memory at all; <c>propose_memory</c> writes a
 /// proposal, never the store — the owner approves in the room. The proposer is the authenticated
-/// participant, stamped like a message author.</summary>
+/// participant, stamped like a message author. Row 23 (item 3): <paramref name="participants"/> is the
+/// roster <c>propose_rewrite</c>'s caller boundary reads — a singleton already registered in
+/// <c>HubHost</c>, but a dependency this tool did not have before. <see cref="ParticipantStore.List"/>
+/// opens a connection and reads the table on every call, so a class or host change to a participant row
+/// takes effect immediately at the boundary — no hub restart needed.</summary>
 [McpServerToolType]
-public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, IHttpContextAccessor http)
+public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, IHttpContextAccessor http, ParticipantStore participants)
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -101,6 +105,73 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         catch (ArgumentException e) { throw new McpException(e.Message); }
         // The row is the proposal; the note is its announcement. A note that fails must not turn into a
         // tool error that invites a retry and a duplicate row (critique pass 2, P2-8).
+        try { HubNotes.Post(store, signal, room_id, HubNotes.Proposed(proposal)); }
+        catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"memory: proposal #{proposal.Id} note not posted ({e.GetType().Name}: {e.Message})"); }
+        return JsonSerializer.Serialize(new { proposal.Id, proposal.RoomId, proposal.AuthorId, proposal.Topic, proposal.Title, proposal.Status, proposal.Kind, proposal.Replaces, Flags = flags is null ? null : ProposalFlags.Parse(flags) }, JsonOptions);
+    }
+
+    [McpServerTool(Name = "propose_rewrite", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false),
+     Description("Propose a consolidated version of ONE memory topic: the whole file, rewritten. Read the topic with recall first. Fold duplicates and contradictions, keep every distinct fact, invent nothing, keep one '## ' heading per entry, and keep a surviving entry's heading exactly as it was. The owner sees it as a diff against the current file, with the entries it would remove named, and approves or rejects it; nothing changes until then. Use propose_memory for a single new fact — this replaces everything in the topic.")]
+    public string ProposeRewrite(
+        [Description("Room id the proposal belongs to, e.g. \"general\".")] string room_id,
+        [Description("Topic slug: lowercase letters, digits, hyphens (e.g. \"user\"); the topic must already have a file.")] string topic,
+        [Description("The whole replacement file text: an H1, then one '## ' heading per surviving entry, markdown, up to the topic's cap.")] string body)
+    {
+        var me = Caller;   // 1. Caller required — same McpException as its siblings.
+
+        // 2. Caller boundary, server-side. Permitted set, named explicitly: model rows hosted by
+        // claude, plus every human row (owner and owner-remote hold bearer tokens and call tools like
+        // anyone else; a naive Host == "claude" predicate would silently exclude the owner's own
+        // ability to file a consolidation). This is defence in depth over an already-approval-gated
+        // write (claim 14: --allowedTools shapes a spawn's prompt, it is not a server-side boundary —
+        // every roster bearer can already reach every memory tool), not the boundary the argv allowlist
+        // appears to promise.
+        var caller = participants.List().FirstOrDefault(p => p.Id == me);
+        var permitted = caller is not null && (caller.Kind == "human" || (caller.Kind == "model" && caller.Host == "claude"));
+        if (!permitted)
+            throw new McpException($"propose_rewrite is not available to {caller?.Host ?? "unknown"} participants.");
+
+        // 3. Room must exist — reuse the existing literal.
+        if (!store.RoomExists(room_id)) throw new McpException($"Unknown room '{room_id}'. Call list_rooms.");
+
+        // 4. RequireSlug; the topic must have a file — reuse recall's literal.
+        var slug = (topic ?? "").Trim();
+        if (!MemoryStore.TopicSlug.IsMatch(slug))
+            throw new McpException("topic must be a slug: lowercase letters, digits and hyphens.");
+        var entryBody = body ?? "";
+        var current = memory.ReadTopic(slug)
+            ?? throw new McpException($"No topic '{slug}'. Topics: {Names()}.");
+
+        // 5. Refuse a truncated read: a proposer that folded only what it saw would propose deleting
+        // the tail it never read.
+        if (current.Truncated)
+            throw new McpException($"Topic '{slug}' is {current.FullChars} characters, past the {MemoryStore.TopicChars} a proposer can read. Split it by hand before consolidating.");
+
+        // 6. ValidateRewrite is a cheap floor only; ProjectedRewriteChars is the authoritative cap check
+        // (pass 2 finding A) — it is the only one that can see the carried-forward provenance. The
+        // provenance string here mirrors the shape MemoryApi.Approve composes at approval time; the
+        // real proposal id is not known until Create returns, but approval re-checks the real string
+        // regardless (T4), so this is a preliminary refusal, not the final word.
+        try { MemoryStore.ValidateRewrite(slug, entryBody); }
+        catch (ArgumentException e) { throw new McpException(e.Message); }
+        var provisionalProvenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal 0 by {me} in room {room_id}";
+        var cap = slug == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+        var projected = memory.ProjectedRewriteChars(slug, entryBody, provisionalProvenance);
+        if (projected > cap)
+            throw new McpException($"body would produce a {projected}-character file for topic '{slug}', over the {cap}-character cap.");
+
+        // 7. Refuse a second pending rewrite rather than deduplicating it (pass 2 finding C): the
+        // generated title is invariant for this kind, so title-dedup would hand back proposal #1's body
+        // as a "duplicate" of a second, better one, and the owner would approve the wrong text.
+        var title = $"Consolidate {slug}";
+        if (proposals.FindPending(slug, title) is { } pending)
+            throw new McpException($"A rewrite of '{slug}' is already pending (#{pending.Id}); reject it before proposing another.");
+
+        // 8. Flags, create, announce, return the shape propose_memory returns.
+        var flags = ProposalFlags.Compute(entryBody, store.GetRoom(room_id)?.Directory is not null);
+        MemoryProposal proposal;
+        try { proposal = proposals.Create(room_id, me, slug, title, entryBody, null, null, flags, MemoryProposalStore.KindRewrite); }
+        catch (ArgumentException e) { throw new McpException(e.Message); }
         try { HubNotes.Post(store, signal, room_id, HubNotes.Proposed(proposal)); }
         catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"memory: proposal #{proposal.Id} note not posted ({e.GetType().Name}: {e.Message})"); }
         return JsonSerializer.Serialize(new { proposal.Id, proposal.RoomId, proposal.AuthorId, proposal.Topic, proposal.Title, proposal.Status, proposal.Kind, proposal.Replaces, Flags = flags is null ? null : ProposalFlags.Parse(flags) }, JsonOptions);

@@ -292,5 +292,193 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Assert.False(File.Exists(Path.Combine(Memory.TopicsDir, "user.md")));
     }
 
+    [Fact]
+    public async Task R23_approving_a_rewrite_replaces_the_file_leaves_the_backup_and_names_the_removed_entries()
+    {
+        Memory.Append("user", "Editor", "Vim.", "seed 1");
+        Memory.Append("user", "Shell", "pwsh.", "seed 2");
+        var before = File.ReadAllText(Path.Combine(Memory.TopicsDir, "user.md"));
+        var body = "# user\n\n## Editor\nVS Code now.\n\n## New Fact\nSomething new.\n";
+        Proposals.Create("general", "opus", "user", "Consolidate user", body, null, kind: MemoryProposalStore.KindRewrite);
+
+        var approved = await Post("api/memory/proposals/1/approve");
+        Assert.Equal(("approved", "topics/user.md", "rewrite"), (approved.GetProperty("status").GetString(), approved.GetProperty("writtenTo").GetString(), approved.GetProperty("kind").GetString()));
+        Assert.Matches("^[0-9a-f]{7,}$", approved.GetProperty("commitHash").GetString());
+        Assert.NotEqual(JsonValueKind.Null, approved.GetProperty("decidedAt").ValueKind);
+
+        var path = Path.Combine(Memory.TopicsDir, "user.md");
+        var text = File.ReadAllText(path);
+        Assert.Contains("## Editor", text);
+        Assert.Contains("VS Code now.", text);
+        Assert.DoesNotContain("Vim.", text);
+        Assert.DoesNotContain("pwsh.", text);   // "Shell" was dropped by the rewrite
+        Assert.Equal(new[] { "Editor", "New Fact" }, Memory.Titles("user"));
+
+        var backup = Path.Combine(Memory.TopicsDir, "user.md.rewrite-1.bak");
+        Assert.Equal(before, File.ReadAllText(backup));
+
+        var note = (await Messages()).Last();
+        Assert.Equal(ChopDb.HubParticipantId, note.Author);
+        Assert.Matches(@"^Memory proposal #1 approved: consolidated memory/topics/user\.md, removing 'Shell' \(commit [0-9a-f]{7,}\)\.$", note.Body);
+    }
+
+    [Fact]
+    public async Task R23_a_rewrite_approval_that_died_after_marking_is_finished_by_the_retry_and_a_further_repeat_writes_nothing_more()
+    {
+        Memory.Append("user", "Editor", "Vim.", "seed");
+        Proposals.Create("general", "opus", "user", "Consolidate user", "## Editor\nVS Code.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
+
+        var first = await Post("api/memory/proposals/1/approve");
+        Assert.Equal("topics/user.md", first.GetProperty("writtenTo").GetString());
+        var path = Path.Combine(Memory.TopicsDir, "user.md");
+        var backup = path + ".rewrite-1.bak";
+        Assert.True(File.Exists(backup));
+        var textAfterFirst = File.ReadAllText(path);
+        var backupAfterFirst = File.ReadAllText(backup);
+
+        Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/memory/proposals/1/approve", null)).StatusCode);
+        Assert.Equal(textAfterFirst, File.ReadAllText(path));
+        Assert.Equal(backupAfterFirst, File.ReadAllText(backup));
+    }
+
+    [Fact]
+    public async Task R23_a_rewrite_over_a_non_core_topics_cap_is_409_with_the_sizes_and_changes_no_file()
+    {
+        var longProvenance = new string('p', 300);
+        var titles = Enumerable.Range(0, 20).Select(i => $"Entry{i}").ToArray();
+        foreach (var t in titles) Memory.Append("big", t, "old.", longProvenance);
+        var before = File.ReadAllText(Path.Combine(Memory.TopicsDir, "big.md"));
+
+        var bodyPad = new string('x', 950);
+        var sb = new System.Text.StringBuilder("# big\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append(bodyPad).Append('\n');
+        var body = sb.ToString();
+        Proposals.Create("general", "opus", "big", "Consolidate big", body, null, kind: MemoryProposalStore.KindRewrite);   // the cheap floor passes at Create too
+
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        var json = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
+        var chars = json.GetProperty("chars").GetInt64();
+        Assert.True(chars > MemoryStore.TopicChars);
+        Assert.Equal((long)MemoryStore.TopicChars, json.GetProperty("cap").GetInt64());
+        Assert.Equal($"Memory proposal #1 refused: the rewrite of topic 'big' would be {chars} characters, over the {MemoryStore.TopicChars} cap. Trim it and propose the rewrite again.", json.GetProperty("error").GetString());
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+        Assert.Equal(before, File.ReadAllText(Path.Combine(Memory.TopicsDir, "big.md")));
+        Assert.False(File.Exists(Path.Combine(Memory.TopicsDir, "big.md.rewrite-1.bak")));
+        var note = (await Messages()).Last();
+        Assert.Equal(json.GetProperty("error").GetString(), note.Body);
+    }
+
+    [Fact]
+    public async Task R23_a_rewrite_over_the_core_cap_is_409_at_around_5_990_raw_characters()
+    {
+        File.WriteAllText(Memory.CorePath, "# Memory\n");
+        var longProvenance = new string('p', 300);
+        var titles = Enumerable.Range(0, 8).Select(i => $"C{i}").ToArray();
+        foreach (var t in titles) Memory.Append(MemoryStore.CoreTopic, t, "old.", longProvenance);
+        var before = File.ReadAllText(Memory.CorePath);
+
+        var bodyPad = new string('x', 480);   // ~3,895 raw characters total: under the cheap floor's cap, over it once real provenance is carried
+        var sb = new System.Text.StringBuilder("# core\n");
+        foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append(bodyPad).Append('\n');
+        var body = sb.ToString();
+        MemoryStore.ValidateRewrite("core", body);   // the cheap floor passes: raw text alone stays under the core cap
+        Proposals.Create("general", "opus", "core", "Consolidate core", body, null, kind: MemoryProposalStore.KindRewrite);
+
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        var json = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
+        var chars = json.GetProperty("chars").GetInt64();
+        Assert.True(chars > MemoryStore.CoreChars);
+        Assert.Equal((long)MemoryStore.CoreChars, json.GetProperty("cap").GetInt64());
+        Assert.Equal($"Memory proposal #1 refused: the rewrite of the core would be {chars} characters, over the {MemoryStore.CoreChars} cap. Trim it and propose the rewrite again.", json.GetProperty("error").GetString());
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+        Assert.Equal(before, File.ReadAllText(Memory.CorePath));
+    }
+
+    [Fact]
+    public async Task R23_a_rewrite_whose_topic_was_deleted_after_proposal_is_409_on_the_pending_path()
+    {
+        Memory.Append("user", "A", "old a.", "p1");
+        Proposals.Create("general", "opus", "user", "Consolidate user", "## A\nnew a.\n", null, kind: MemoryProposalStore.KindRewrite);
+        File.Delete(Path.Combine(Memory.TopicsDir, "user.md"));   // the owner deleted the topic by hand
+
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        Assert.Contains("No topic 'user' to rewrite.", await r.Content.ReadAsStringAsync());
+        Assert.Equal("pending", Proposals.Get(1)!.Status);
+    }
+
+    [Fact]
+    public async Task R23_a_rewrite_whose_topic_was_deleted_after_proposal_is_409_on_the_retry_path_too()
+    {
+        Memory.Append("user", "A", "old a.", "p1");
+        Proposals.Create("general", "opus", "user", "Consolidate user", "## A\nnew a.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
+        File.Delete(Path.Combine(Memory.TopicsDir, "user.md"));
+
+        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);   // never a 500
+        Assert.Contains("No topic 'user' to rewrite.", await r.Content.ReadAsStringAsync());
+        var row = Proposals.Get(1)!;
+        Assert.Equal("approved", row.Status);
+        Assert.Null(row.WrittenTo);   // still the retryable state
+    }
+
+    [Fact]
+    public async Task T5_a_pending_rewrite_lists_with_a_diff_removed_titles_provenance_lost_and_empty_related()
+    {
+        Memory.Append("user", "Editor", "Vim.", "p1");
+        Memory.Append("user", "Shell", "pwsh.", "p2");
+        var body = "# user\n\n## Editor V2\nVS Code now.\n\n## New Fact\nSomething new.\n";
+        Proposals.Create("general", "opus", "user", "Consolidate user", body, null, kind: MemoryProposalStore.KindRewrite);
+
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        var diff = row.GetProperty("diff").EnumerateArray().ToList();
+        Assert.NotEmpty(diff);
+        Assert.Contains(diff, l => l.GetProperty("op").GetString() == "del");
+        Assert.Contains(diff, l => l.GetProperty("op").GetString() == "add");
+        Assert.DoesNotContain(diff, l => l.GetProperty("text").GetString()!.Contains("rewritten:", StringComparison.Ordinal));
+
+        Assert.Equal(new[] { "Editor", "Shell" }, row.GetProperty("removedTitles").EnumerateArray().Select(e => e.GetString()).Order());
+        Assert.Equal(new[] { "Editor V2", "New Fact" }, row.GetProperty("addedTitles").EnumerateArray().Select(e => e.GetString()).Order());
+        Assert.Equal(2, row.GetProperty("provenanceLost").GetInt32());   // both "Editor" and "Shell" carried provenance and neither heading survived
+        Assert.Empty(row.GetProperty("related").EnumerateArray());
+        Assert.True(row.GetProperty("gitAvailable").ValueKind is JsonValueKind.True or JsonValueKind.False);
+    }
+
+    [Fact]
+    public async Task T5_an_approved_but_unwritten_rewrite_lists_with_the_same_fields_populated()
+    {
+        Memory.Append("user", "Editor", "Vim.", "p1");
+        Proposals.Create("general", "opus", "user", "Consolidate user", "## Editor V2\nVS Code now.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
+
+        var row = Assert.Single(await Get("api/memory/proposals"));   // default status=undecided includes this row
+        Assert.NotEmpty(row.GetProperty("diff").EnumerateArray());
+        Assert.Equal(new[] { "Editor" }, row.GetProperty("removedTitles").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(new[] { "Editor V2" }, row.GetProperty("addedTitles").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(1, row.GetProperty("provenanceLost").GetInt32());
+        Assert.Empty(row.GetProperty("related").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task T5_an_append_lists_with_a_null_diff_and_related_unchanged()
+    {
+        Memory.Append("user", "Editor of choice", "Vim.", "p");
+        Proposals.Create("general", "opus", "user", "Editor, new choice", "VS Code.", null, replaces: "Editor of choice");
+
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("diff").ValueKind);
+        Assert.Empty(row.GetProperty("removedTitles").EnumerateArray());
+        Assert.Empty(row.GetProperty("addedTitles").EnumerateArray());
+        Assert.Equal(0, row.GetProperty("provenanceLost").GetInt32());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("gitAvailable").ValueKind);
+        var related = row.GetProperty("related").EnumerateArray().ToList();
+        Assert.Equal(new[] { ("Editor of choice", true, "Vim.") },
+            related.Select(x => (x.GetProperty("title").GetString()!, x.GetProperty("replaced").GetBoolean(), x.GetProperty("snippet").GetString()!)));
+    }
+
     private ChopDb Db => _host.Services.GetRequiredService<ChopDb>();
 }

@@ -119,6 +119,12 @@ panel above the composer shows Approve and Reject. Approve appends the entry to 
 `data\memory\` (created on the first approval; one commit per approval, identity `ChopItUp hub`).
 Reject drops it. Both post a hub note.
 
+`propose_rewrite(room_id, topic, body)` is the other way in, and it replaces a whole topic rather than
+adding one entry: the body is the entire file, folded and deduplicated. The panel shows it as a diff
+against the current file, naming every entry it would remove and how many would lose their approval
+record, and nothing is written until the owner approves that. The previous file stays on disk at
+`<file>.rewrite-<id>.bak`, which no later write reuses.
+
 "Import memory" in the room header seeds the store from a vendor's own memory: point it at Claude
 Code's memory folder (one file per memory) or Codex's `~\.codex\memories\` (split on headings). Every
 file or section becomes a pending proposal authored as `claude` or `codex`; re-importing adds nothing.

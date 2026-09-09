@@ -128,6 +128,14 @@ export interface RunSnapshot {
   phaseHistory: Record<string, number>;
 }
 
+/** One line of the hub's line diff (Core/Memory/MemoryDiff.cs). `skip` is not a line of either file:
+ *  it is the label standing in for a run of unchanged lines, or for input the hub cut at its cap. The
+ *  text of every op is spawn-authored file content and is rendered as a text node, never as markup. */
+export interface MemoryDiffLine {
+  op: 'same' | 'add' | 'del' | 'skip';
+  text: string;
+}
+
 /** Mirrors `GET /api/memory/proposals` and the approve/reject responses (Web/MemoryApi.cs). */
 export interface MemoryProposal {
   id: number;
@@ -142,14 +150,33 @@ export interface MemoryProposal {
   decidedAt: string | null;
   writtenTo: string | null;
   commitHash: string | null;
-  kind: 'append' | 'supersede';
+  kind: 'append' | 'supersede' | 'rewrite';
   /** Title of the same-topic entry this proposal retires on approval, or null. */
   replaces: string | null;
   /** Review hints the hub computed at creation: 'instruction-like', 'fence', 'from-directory'. */
   flags: string[];
   /** Up to three live entries of the topic: the replaced one first, then title-word matches. The
-   *  hub computes these for `pending` rows only, so a decided proposal carries an empty list. */
+   *  hub computes these for `pending` rows only, so a decided proposal carries an empty list. Never
+   *  null — a rewrite gets `[]`, and MemoryPanel reads `.length` unguarded. */
   related: { title: string; snippet: string; replaced: boolean }[];
+  /* Row 23 (AC7). The list endpoint always sends the five fields below: populated for a `rewrite` that
+     is pending or approved-but-unwritten, null/empty/0 for every other row. They are optional here
+     because the approve/reject and import responses map the base shape only (MemoryApi.Map), and a
+     type that claimed them on those payloads would be claiming something the hub does not send. */
+  /** The line diff of the topic file as it is against what approval would write, elided runs included;
+   *  null when the row is not a rewrite the owner can still act on. */
+  diff?: MemoryDiffLine[] | null;
+  /** Live entry titles present in the file today and absent from what approval would write. */
+  removedTitles?: string[];
+  /** Entry titles in the proposed file that the topic does not hold today. */
+  addedTitles?: string[];
+  /** Live entries whose approval record would NOT carry forward: the hub matches provenance by exact
+   *  heading, so a renamed entry loses its record and so does a removed one. Not a subset of the
+   *  survivors, and not a restatement of `removedTitles` — the two sets overlap. */
+  provenanceLost?: number;
+  /** Whether the hub can make a commit at all. False means the per-proposal backup is the only copy
+   *  after approval; null when the hub did not compute it for this row. */
+  gitAvailable?: boolean | null;
 }
 
 export type MemorySource = 'claude' | 'codex';

@@ -43,19 +43,41 @@ public static class HubNotes
     public static string Imported(string source, string path, int imported, int skipped) =>
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
 
-    public static string Approved(MemoryProposal p) =>
-        $"{ProposalPrefix}{p.Id} approved: " + (p.Replaces is null ? $"written to memory/{p.WrittenTo}" : $"replaced '{p.Replaces}' in memory/{p.WrittenTo}")
-        + (p.CommitHash is null ? " (not committed: git unavailable or failed; see the hub log)." : $" (commit {p.CommitHash}).");
+    /// <summary>Row 23 (item 4): a rewrite is a whole-file replacement, not an append or a supersede, so
+    /// "written to" / "replaced" are both wrong for it; the note names the topic and the entries the
+    /// consolidation removed instead.</summary>
+    public static string Approved(MemoryProposal p, IReadOnlyList<string>? removedTitles = null)
+    {
+        var commit = p.CommitHash is null ? " (not committed: git unavailable or failed; see the hub log)." : $" (commit {p.CommitHash}).";
+        if (p.Kind == MemoryProposalStore.KindRewrite)
+        {
+            var removed = removedTitles is { Count: > 0 }
+                ? $", removing {string.Join(", ", removedTitles.Select(t => $"'{t}'"))}"
+                : "";
+            return $"{ProposalPrefix}{p.Id} approved: consolidated memory/{p.WrittenTo}{removed}{commit}";
+        }
+        return $"{ProposalPrefix}{p.Id} approved: " + (p.Replaces is null ? $"written to memory/{p.WrittenTo}" : $"replaced '{p.Replaces}' in memory/{p.WrittenTo}") + commit;
+    }
 
     public static string Rejected(MemoryProposal p) => $"{ProposalPrefix}{p.Id} rejected.";
 
     /// <summary>Pass 2 P2-13: a core that is ALREADY over the cap (the L2 defect M10 shipped, or hand-written
-    /// prose with no entries) cannot be shrunk by any approval, so the message says which door opens.</summary>
-    public static string Refused(MemoryProposal p, int chars, int current) =>
-        $"{ProposalPrefix}{p.Id} refused: the core would be {chars} characters, over the {MemoryStore.CoreChars} cap. "
-        + (current > MemoryStore.CoreChars
-            ? $"The core is already {current} characters; edit MEMORY.md by hand before approving anything to it."
-            : "Fold it into a topic, or propose it with replaces to update an entry the core already holds.");
+    /// prose with no entries) cannot be shrunk by any approval, so the message says which door opens. Row 23
+    /// (item 4): a rewrite's refusal names the topic and its real cap instead — "fold it into a topic" makes
+    /// no sense for a rewrite, which already targets a whole topic (or the core) by design.</summary>
+    public static string Refused(MemoryProposal p, int chars, int current)
+    {
+        if (p.Kind == MemoryProposalStore.KindRewrite)
+        {
+            var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+            var where = p.Topic == MemoryStore.CoreTopic ? "the core" : $"topic '{p.Topic}'";
+            return $"{ProposalPrefix}{p.Id} refused: the rewrite of {where} would be {chars} characters, over the {cap} cap. Trim it and propose the rewrite again.";
+        }
+        return $"{ProposalPrefix}{p.Id} refused: the core would be {chars} characters, over the {MemoryStore.CoreChars} cap. "
+            + (current > MemoryStore.CoreChars
+                ? $"The core is already {current} characters; edit MEMORY.md by hand before approving anything to it."
+                : "Fold it into a topic, or propose it with replaces to update an entry the core already holds.");
+    }
 
     /// <summary>The room's record of what the trail did around one spawn (M9 decision 6). One line;
     /// the commit itself is the detail.</summary>

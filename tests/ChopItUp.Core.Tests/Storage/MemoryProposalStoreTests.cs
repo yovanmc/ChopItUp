@@ -136,4 +136,48 @@ public sealed class MemoryProposalStoreTests : IDisposable
         var p = store.Create("general", "opus", "user", "Likes tests", "Yes.", null);
         Assert.Equal((MemoryProposalStore.KindAppend, (string?)null, (string?)null), (store.Get(p.Id)!.Kind, store.Get(p.Id)!.Replaces, store.Get(p.Id)!.Flags));
     }
+
+    [Fact]
+    public void R23_Create_stores_a_rewrite_row_with_its_kind_and_a_null_replaces()
+    {
+        var p = _store.Create("general", "opus", "user", "Consolidate user", "# user\n## A\na.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.Equal((MemoryProposalStore.KindRewrite, (string?)null), (p.Kind, p.Replaces));
+        var fetched = _store.Get(p.Id)!;
+        Assert.Equal((MemoryProposalStore.KindRewrite, (string?)null), (fetched.Kind, fetched.Replaces));
+    }
+
+    [Fact]
+    public void R23_a_body_with_headings_is_accepted_for_rewrite_and_refused_for_append_and_supersede()
+    {
+        var body = "# user\n## A\na.\n";
+        _store.Create("general", "opus", "user", "Consolidate user", body, null, kind: MemoryProposalStore.KindRewrite);
+        Assert.Throws<ArgumentException>(() => _store.Create("general", "opus", "user", "T", body, null));
+        Assert.Throws<ArgumentException>(() => _store.Create("general", "opus", "user", "T", body, null, replaces: "T"));
+    }
+
+    [Fact]
+    public void R23_a_rewrite_with_a_non_null_replaces_throws()
+    {
+        Assert.Throws<ArgumentException>(() => _store.Create("general", "opus", "user", "Consolidate user", "# user\n## A\na.\n", null, replaces: "A", kind: MemoryProposalStore.KindRewrite));
+    }
+
+    [Theory]
+    [InlineData(MemoryProposalStore.KindAppend)]
+    [InlineData(MemoryProposalStore.KindSupersede)]
+    [InlineData(MemoryProposalStore.KindRewrite)]
+    public void R23_a_blank_title_throws_ArgumentException_for_every_kind(string kind)
+    {
+        var body = kind == MemoryProposalStore.KindRewrite ? "# user\n## A\na.\n" : "b";
+        var replaces = kind == MemoryProposalStore.KindSupersede ? "A" : null;
+        Assert.Throws<ArgumentException>(() => _store.Create("general", "opus", "user", "  ", body, null, replaces: replaces, kind: kind));
+    }
+
+    [Fact]
+    public void R23_FindPending_returns_nothing_for_that_topic_once_a_consolidation_is_approved()
+    {
+        var p = _store.Create("general", "opus", "user", "Consolidate user", "# user\n## A\na.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.Equal(p.Id, _store.FindPending("user", "Consolidate user")!.Id);
+        _store.Decide(p.Id, MemoryProposalStore.Approved, "topics/user.md", "abc1234");
+        Assert.Null(_store.FindPending("user", "Consolidate user"));
+    }
 }

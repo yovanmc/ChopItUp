@@ -39,6 +39,10 @@ public sealed class MemoryStore
     public static readonly Regex TopicSlug = new("^[a-z0-9][a-z0-9-]{0,63}$", RegexOptions.Compiled);
 
     public const string SupersededPrefix = "<!-- superseded: ";
+    /// <summary>Row 23 (item 3): the marker a rewrite leaves on the line under the H1. Stripped from
+    /// a submitted body only at that position, never elsewhere — row 18 decision 1 says a marker
+    /// quoted inside an entry body is text and stays text.</summary>
+    public const string RewrittenPrefix = "<!-- rewritten: ";
     public const int SnippetChars = 300;
     public const int RelatedSnippetChars = 160;
     public const int MaxHits = 50;
@@ -170,6 +174,133 @@ public sealed class MemoryStore
         return replaces is null
             ? existing.Length + Separator(existing).Length + Entry(title, body, provenance).Length
             : ComposeSupersede(existing, replaces, title, body, provenance).Length;
+    }
+
+    /// <summary>Row 23 (item 3): replaces the whole topic file with a consolidated version. The previous
+    /// content survives at <c>&lt;file&gt;.rewrite-&lt;proposalId&gt;.bak</c> — a per-proposal name a later
+    /// write never reuses, unlike <see cref="Supersede"/>'s shared <c>.bak</c> slot. Idempotent on
+    /// <paramref name="dedupKey"/> like <see cref="Append"/> and <see cref="Supersede"/>. Throws
+    /// <see cref="KeyNotFoundException"/> when the topic has no file.</summary>
+    public string Rewrite(string topic, string body, string provenance, long proposalId, string? dedupKey = null)
+    {
+        ValidateRewrite(topic, body);
+        EnsureLayout();
+        var path = PathOf(topic);
+        if (!File.Exists(path)) throw new KeyNotFoundException($"No topic '{topic}'.");
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var existing = File.ReadAllText(path, Utf8);
+                if (dedupKey is not null && HasProvenance(existing, dedupKey)) break;
+                var composed = ComposeRewrite(this, topic, body, provenance);   // throws before anything is touched
+                var bak = $"{path}.rewrite-{proposalId}.bak";
+                try { File.Copy(path, bak, overwrite: false); }
+                catch (IOException) when (File.Exists(bak)) { /* the backup already exists: a replay must not overwrite the first attempt's pre-state */ }
+                WriteAtomic(path, composed);
+                break;
+            }
+            catch (IOException) when (attempt == 0) { Thread.Sleep(50); }
+        }
+        return Path.GetRelativePath(Root, path).Replace('\\', '/');
+    }
+
+    /// <summary>What approval would write, for the Hub to render on the approval card: composes with a
+    /// fixed provenance, then removes the marker line — the diff should show the entries, not the
+    /// bookkeeping row a rewrite always inserts.</summary>
+    public static string PreviewRewrite(MemoryStore store, string topic, string body)
+    {
+        var lines = ComposeRewrite(store, topic, body, "preview").Split('\n').ToList();
+        if (lines.Count > 1 && lines[1].StartsWith(RewrittenPrefix, StringComparison.Ordinal)) lines.RemoveAt(1);
+        return string.Join('\n', lines);
+    }
+
+    /// <summary>What the topic would be, in characters, after this rewrite — composed exactly as
+    /// <see cref="Rewrite"/> would write it. This is the authoritative cap check (pass 2 finding A):
+    /// it is the only one that can see the carried-forward provenance lines.</summary>
+    public int ProjectedRewriteChars(string topic, string body, string provenance)
+    {
+        RequireSlug(topic);
+        EnsureLayout();
+        return ComposeRewrite(this, topic, body, provenance).Length;
+    }
+
+    /// <summary>Refuses a replacement body on its own terms — a whole file, not one entry, so
+    /// <see cref="Validate"/> does not apply. Requires at least one non-empty <c>## </c> heading, no
+    /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b> (claim 8:
+    /// <c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its length
+    /// arithmetic — raw text plus an allowance for the H1 and the marker line, and nothing per heading
+    /// (<see cref="ComposeRewrite"/> only ever adds a carried-forward provenance line to a <i>surviving</i>
+    /// live entry, never to a new or renamed heading, so the minimum any heading costs is zero) — is a
+    /// genuine floor: the smallest the composed file could possibly be. It can still under-count a body
+    /// that keeps many surviving titles, whose real carried-forward provenance this floor cannot see, so
+    /// it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
+    public static void ValidateRewrite(string? topic, string? body)
+    {
+        RequireSlug(topic);
+        if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("body is empty.", nameof(body));
+        var normalized = body.Replace("\r\n", "\n");
+        var headings = Regex.Matches(normalized, "(?m)^## (.*)$");
+        if (headings.Count == 0) throw new ArgumentException("body must contain at least one '## ' heading.", nameof(body));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match m in headings)
+        {
+            var title = m.Groups[1].Value.Trim();
+            if (title.Length == 0) throw new ArgumentException("a heading must not be empty.", nameof(body));
+            if (title.Length > MaxTitleChars) throw new ArgumentException($"a heading exceeds {MaxTitleChars} characters.", nameof(body));
+            if (!seen.Add(title)) throw new ArgumentException($"duplicate heading '{title}'.", nameof(body));
+        }
+        var cap = topic == CoreTopic ? CoreChars : TopicChars;
+        var floor = normalized.Trim().Length + topic!.Length + 3 + RewrittenPrefix.Length + CommentClose.Length + 1;
+        if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even at its minimum possible composed size.", nameof(body));
+    }
+
+    /// <summary>Row 23, pass 2 finding I: the live entry titles that carry a provenance comment today and
+    /// would not get one back under <see cref="ComposeRewrite"/> — a rename or a drop, indistinguishable
+    /// from a normal fold on a diff unless something counts it.</summary>
+    public IReadOnlyList<string> ProvenanceLost(string topic, string body)
+    {
+        RequireSlug(topic);
+        var path = PathOf(topic);
+        if (!File.Exists(path)) return [];
+        var bodyHeadings = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in body.Replace("\r\n", "\n").Split('\n'))
+            if (line.StartsWith("## ", StringComparison.Ordinal)) bodyHeadings.Add(line[3..].Trim());
+        return ParseEntries(File.ReadAllText(path, Utf8))
+            .Where(e => !e.Superseded && e.Provenance.Length > 0 && !bodyHeadings.Contains(e.Title))
+            .Select(e => e.Title)
+            .ToList();
+    }
+
+    /// <summary>Row 23: normalises the submitted body into what <see cref="Rewrite"/> writes. Drops a
+    /// leading marker the body may already carry (line index 1, only there), ensures an H1, inserts a
+    /// fresh marker at index 1, then — when <paramref name="store"/> is given — re-inserts each surviving
+    /// live entry's original provenance comment beneath its heading, unless the body already put one
+    /// there. <paramref name="store"/> is null only for callers that do not need the carry-forward (none
+    /// today; kept so a future caller can compose without touching disk).</summary>
+    internal static string ComposeRewrite(MemoryStore? store, string topic, string body, string provenance)
+    {
+        var lines = body.Replace("\r\n", "\n").Trim('\n').Split('\n').ToList();
+        if (lines.Count > 1 && lines[1].StartsWith(RewrittenPrefix, StringComparison.Ordinal)) lines.RemoveAt(1);
+        if (lines.Count == 0 || !lines[0].StartsWith("# ", StringComparison.Ordinal)) lines.Insert(0, "# " + topic);
+        lines.Insert(1, RewrittenPrefix + Sanitize(provenance) + CommentClose);
+        if (store is not null)
+        {
+            var path = store.PathOf(topic);
+            var liveProvenance = File.Exists(path)
+                ? ParseEntries(File.ReadAllText(path, Utf8)).Where(e => !e.Superseded && e.Provenance.Length > 0)
+                    .ToDictionary(e => e.Title, e => e.Provenance, StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+            for (var i = 0; i < lines.Count; i++)
+            {
+                if (!lines[i].StartsWith("## ", StringComparison.Ordinal)) continue;
+                var title = lines[i][3..].Trim();
+                if (!liveProvenance.TryGetValue(title, out var prov)) continue;
+                if (i + 1 < lines.Count && IsComment(lines[i + 1])) continue;
+                lines.Insert(i + 1, CommentOpen + Sanitize(prov) + CommentClose);
+            }
+        }
+        return string.Join('\n', lines).TrimEnd('\n') + "\n";
     }
 
     /// <summary>Case-insensitive substring over titles and bodies of every non-superseded entry, core
