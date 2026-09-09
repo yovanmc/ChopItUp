@@ -104,3 +104,17 @@ an instruction to label unobtainable evidence "unverified" and move on rather th
 unverified finding is useful, a missing verdict is worthless. Background dispatch stays correct for
 work whose result the turn does not need, such as the parallel code-comprehension digests that fed
 this same plan.
+
+### [tests, guard-tests, race, clock, mutation-testing] M24 (2026-09-09, f964ece)
+A guard test that reproduces its hazard only when the clock cooperates can pass without ever touching
+the mechanism it protects. The export's timestamped previous-directory name collided at second
+granularity, and the first test written for the fix drove two real exports back to back and asserted
+both exited 0 with distinct names — which is true either way, because two runs that straddle a second
+boundary get distinct names for free. It bound nothing. The deterministic version calls the dedup
+helper directly, pre-creates the exact name the helper just returned to force a real collision, and
+fails on every machine when the helper is reverted. Generalised: when a test's RED depends on timing,
+coincidence or load, test the deciding function directly instead of racing the real path — and keep
+the real-path test as well, since it is the one that proves the function is actually wired in. The
+cheap way to know which of your tests bind anything is to revert each mechanism one at a time and
+record what fails; four of this row's five named mechanisms produced a specific failure that way, and
+the fifth turned out to have no failing test at all until one was written.

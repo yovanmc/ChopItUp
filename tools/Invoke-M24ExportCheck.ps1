@@ -7,8 +7,8 @@
     later branch could reinterpret as truthy.
 
 .DESCRIPTION
-    See docs/superpowers/plans/m24-memory-v1-1c-export.md, "T6 -- dry run, self-check, docs", and
-    .scratch/m24-memory-v1-1c-export/issues/06-dry-run-and-the-owner-probe.md: "The self-check must
+    See PR #63 (merged f964ece), plan task "T6 -- dry run, self-check, docs" and ticket
+    06-dry-run-and-the-owner-probe.md (deleted at close-out, in that commit): "The self-check must
     be capable of failing. A harness whose rows cannot go red is worse than no harness, and this repo
     has already shipped one that recorded a failure as a pass."
 

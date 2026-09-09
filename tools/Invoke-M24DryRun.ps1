@@ -6,8 +6,8 @@
     could reword (M11).
 
 .DESCRIPTION
-    See docs/superpowers/plans/m24-memory-v1-1c-export.md, "T6 -- dry run, self-check, docs", and
-    .scratch/m24-memory-v1-1c-export/issues/06-dry-run-and-the-owner-probe.md.
+    See PR #63 (merged f964ece), plan task "T6 -- dry run, self-check, docs" and ticket
+    06-dry-run-and-the-owner-probe.md; both were deleted at close-out and live in that commit.
 
     Every path this script touches is rooted under a fresh $env:TEMP scratch directory with a GUID
     nonce -- never a real memory directory, never a real `.claude` directory. `Assert-ScratchOnly`
