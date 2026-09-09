@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
@@ -13,7 +14,12 @@ namespace ChopItUp.Hub.Tests;
 /// <summary>M25 ticket 07 / plan Task 7: <c>/api/skills/proposals</c> — list, approve, reject. Fixture
 /// skills are synthetic (D-g). Proposals are minted through the real <c>propose_skill</c> tool (task 5)
 /// so their recorded <c>tree_sha256</c>/<c>files</c>/<c>bytes</c> are exactly what the hub itself would
-/// compute, not a hand-typed stand-in.</summary>
+/// compute, not a hand-typed stand-in.
+///
+/// Task 6 (D1) gated the two decision POSTs behind an owner credential; this file is about the
+/// decision LOGIC once a caller is already let through, not the gate itself (<see
+/// cref="SkillsApiAuthTests"/> covers 401/403), so <see cref="_host"/>'s client carries the owner's
+/// token by default here.</summary>
 public sealed class SkillsApiProposalsTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skillpropapi_" + Guid.NewGuid().ToString("N"));
@@ -25,6 +31,7 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Directory.CreateDirectory(_roomDir);
         _host = await HubTestHost.StartAsync(_dir);
         _host.Services.GetRequiredService<MessageStore>().CreateRoom("proj", "Proj", _roomDir);
+        _host.Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _host.TokenFor(ChopDb.OwnerParticipantId));
     }
 
     public async Task DisposeAsync()
@@ -347,6 +354,7 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         var roomDir = Path.Combine(Path.GetTempPath(), "chopitup_skillpropapi_guardroom_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(roomDir);
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner);
+        host.Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", host.TokenFor(ChopDb.OwnerParticipantId));
         host.Services.GetRequiredService<MessageStore>().CreateRoom("proj", "Proj", roomDir);
         var sourceDir = Path.Combine(roomDir, "demo");
         Directory.CreateDirectory(sourceDir);

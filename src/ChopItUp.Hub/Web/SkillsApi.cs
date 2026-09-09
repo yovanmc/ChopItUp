@@ -4,6 +4,7 @@ using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Memory;
+using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 
@@ -24,8 +25,12 @@ namespace ChopItUp.Hub.Web;
 /// byte of text the skill would install and a <c>sourceChanged</c>/<c>sourceMissing</c> flag that
 /// suppresses that text rather than trust a second read of a source an owner already reviewed (pass 1's
 /// swap-back attack); the two POSTs decide one. <c>GET</c> stays unauthenticated like the rest of
-/// <c>/api</c> — D1 gates only the two decision POSTs, and that gate is task 6's, not this one's: these
-/// handlers are written so task 6 can wrap them without reshaping them.</summary>
+/// <c>/api</c>. Task 6 gates the two decision POSTs: <see cref="BearerTokenMiddleware"/> now also
+/// guards them (401 on a missing or unresolvable credential), and <see cref="Approve"/>/
+/// <see cref="Reject"/> additionally require the resolved participant to be
+/// <see cref="ChopDb.OwnerParticipantId"/> or <see cref="ChopDb.OwnerRemoteParticipantId"/> (403
+/// otherwise) — checked first, before either handler does anything else, so a non-owner credential
+/// changes nothing.</summary>
 public static class SkillsApi
 {
     public const string SpawnRunning = "A spawn is running; decide skill proposals when the exchange has finished.";
@@ -207,8 +212,10 @@ public static class SkillsApi
     /// well as the copy-time one (D5). The already-finished detection just below (installed tree hashes
     /// to the recorded manifest → <see cref="SkillProposalStore.MarkInstalled"/>, no re-run) still runs
     /// first and is unchanged (AC8).</summary>
-    private static async Task<IResult> Approve(long id, ApproveBody? body, SkillProposalStore proposals, SkillStore skills, ChopDb db, MessageStore store, MessageSignal signal, SpawnerService spawner)
+    private static async Task<IResult> Approve(long id, ApproveBody? body, HttpContext httpContext, SkillProposalStore proposals, SkillStore skills, ChopDb db, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
+        if (!IsOwner(httpContext)) return Forbidden();
+
         await Decisions.WaitAsync();
         try
         {
@@ -285,8 +292,10 @@ public static class SkillsApi
         finally { Decisions.Release(); }
     }
 
-    private static async Task<IResult> Reject(long id, SkillProposalStore proposals, MessageStore store, MessageSignal signal, SpawnerService spawner)
+    private static async Task<IResult> Reject(long id, HttpContext httpContext, SkillProposalStore proposals, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
+        if (!IsOwner(httpContext)) return Forbidden();
+
         await Decisions.WaitAsync();
         try
         {
@@ -315,6 +324,19 @@ public static class SkillsApi
             Console.Error.WriteLine($"skills: could not clean up source for proposal #{p.Id} ({e.GetType().Name}: {e.Message})");
         }
     }
+
+    /// <summary>D1's authorization half (the middleware already did the authentication half): only the
+    /// owner, from either hand, may decide a skill proposal. <see cref="BearerTokenMiddleware"/> stamps
+    /// <see cref="BearerTokenMiddleware.ParticipantKey"/> in <see cref="HttpContext.Items"/> once a
+    /// bearer token resolves; a resolvable-but-non-owner participant reaches here exactly as any other
+    /// authenticated caller would, so this is where the two questions ("is there a credential" vs "is it
+    /// the owner's") are answered separately, per acceptance 5.</summary>
+    private static bool IsOwner(HttpContext context) =>
+        context.Items.TryGetValue(BearerTokenMiddleware.ParticipantKey, out var raw) &&
+        raw is string participant &&
+        (participant == ChopDb.OwnerParticipantId || participant == ChopDb.OwnerRemoteParticipantId);
+
+    private static IResult Forbidden() => Results.Json(new { error = "forbidden" }, statusCode: StatusCodes.Status403Forbidden);
 
     private static bool IsInstalled(string skillsRoot, string name) =>
         Directory.Exists(Path.Combine(skillsRoot, name)) || Directory.Exists(Path.Combine(skillsRoot, name + ".replaced"));
