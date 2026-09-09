@@ -118,3 +118,19 @@ the real-path test as well, since it is the one that proves the function is actu
 cheap way to know which of your tests bind anything is to revert each mechanism one at a time and
 record what fails; four of this row's five named mechanisms produced a specific failure that way, and
 the fifth turned out to have no failing test at all until one was written.
+
+### [ui, state-machine, recovery, caching, windows, review] M25 (2026-09-09, 63e7df3)
+A recovery arm in a state machine is only real if the UI can reach it in every state the arm exists
+for. This row's propose-and-approve panel got that wrong twice from different directions: critique
+pass 2 caught the first plan revision listing four card states and omitting approved-but-not-installed,
+which left the Retry arm unreachable, and after that was fixed the branch review found the same arm
+disabled again — the server computed `approvable` as "source present and unchanged", but the arm's
+whole purpose is finishing an install whose source is already gone, and the reject path only accepts
+pending rows, so such a proposal was stuck undecided forever. Whenever a design adds a recovery
+operation, enumerate the states it must be callable from and check the control that issues it is
+enabled in each; the server-side rule that gates a button is part of the state machine, not
+presentation. Second, unrelated trap from the same row: a listing cache keyed on a tree's newest
+`LastWriteTimeUtc` is not a change detector on Windows, because `Copy-Item` and `robocopy` preserve
+timestamps by default — regenerating a folder by copying over it changes contents without moving that
+maximum, so the card would have shown the owner stale bytes while reporting the source unchanged. Key
+such a cache on a per-file (path, length, write-ticks) fingerprint, which is still stat-only.
