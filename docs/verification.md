@@ -12,10 +12,23 @@ sweeps its own orphan processes in a `finally` block. Each prints PASS/FAIL per 
 Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both orchestrator-run, both spend.
 Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryCheck.ps1`.
 Memory v1.1 check (no model calls, scratch hub, drives /mcp itself): `pwsh tools\Invoke-M18MemoryCheck.ps1`.
+Row 23 consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, drives
+`propose_rewrite` and the approve path itself): `pwsh tools\Invoke-M23DryRun.ps1`.
+Row 23 self-check (skill import + `/health` + `/api/skills`, run against the deployed build after
+`--import-skill`, points at a scratch stand-in otherwise): `pwsh tools\Invoke-M23MemoryCheck.ps1`.
 Consolidation skill (row 23), imported with the hub stopped, into the data directory that hub will
 use: `dotnet run --project src/ChopItUp.Hub -- --data .data --import-skill tools\skills\consolidate-memory`.
 The owner then posts `/consolidate-memory <topic>` in a room, mentioning a model participant the hub
-permits to file one; the proposal it files is approved from the diff on its card, never in the room.
+permits to file one (a `claude`-hosted model row, or the owner's own `human` row); the proposal it
+files is approved from the diff on its card, never in the room — the card names the topic, the
+entries the rewrite removes, and how many surviving entries would lose their approval record, and
+warns when no git trail is available.
+
+Restoring a rewrite: approving a `rewrite` proposal leaves the topic file's pre-consolidation content
+at `<file>.rewrite-<id>.bak`, a name no later write reuses. To undo one, stop the hub, copy that
+backup over the topic file it names, and restart — the approval record on the (now-superseded)
+consolidation stays in `memory_proposals` for the trail, but the file content is exactly what it was
+before that approval.
 
 A Debug hub serves static files from `src\ChopItUp.Hubin\Debug
 et10.0\wwwroot`, not from
