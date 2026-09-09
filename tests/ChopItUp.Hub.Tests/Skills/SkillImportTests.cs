@@ -810,4 +810,84 @@ public sealed class SkillImportTests : IDisposable
             Assert.Equal(installedManifest[key], sourceManifest[key]);
         Assert.Equal(SkillImport.ManifestDigest(installedManifest), SkillImport.ManifestDigest(sourceManifest));
     }
+
+    // --- M25 task 2: SkillImport.Run pins the staged copy (D5) ------------------------------------
+
+    [Fact]
+    public void FindTreeMismatch_names_the_first_differing_path_and_returns_null_when_the_manifests_agree()
+    {
+        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "bbb" };
+        var actualDiffers = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "ccc" };
+
+        Assert.Equal("references/notes.md", SkillImport.FindTreeMismatch(actualDiffers, expected));
+        Assert.Null(SkillImport.FindTreeMismatch(expected, expected));
+    }
+
+    [Fact]
+    public void FindTreeMismatch_names_a_path_present_in_only_one_manifest()
+    {
+        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa" };
+        var actualWithExtra = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["extra.md"] = "zzz" };
+
+        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(actualWithExtra, expected));
+        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(expected, actualWithExtra));
+    }
+
+    [Fact]
+    public void Run_refuses_when_the_staged_copy_disagrees_with_the_expected_tree_before_either_move_and_leaves_no_debris()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var tamperedTree = new Dictionary<string, string>(SkillImport.HashSourceTree(source)) { ["SKILL.md"] = new string('0', 64) };
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, expectedTree: tamperedTree);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("SKILL.md", result.Message);
+        AssertTargetAbsent("demo");
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+        Assert.Null(_hashes.Expected("demo"));
+    }
+
+    [Fact]
+    public void Run_pinned_mismatch_leaves_a_previously_installed_skill_of_that_name_exactly_as_it_was()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(source, _skillsRoot, force: false, _hashes).Outcome);
+        var before = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md"));
+        var beforeHash = _hashes.Expected("demo");
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: v2.\n---\n# v2\n");
+        var tamperedTree = new Dictionary<string, string>(SkillImport.HashSourceTree(source)) { ["SKILL.md"] = new string('0', 64) };
+
+        var result = SkillImport.Run(source, _skillsRoot, force: true, _hashes, expectedTree: tamperedTree);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Equal(before, File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md")));
+        Assert.Equal(beforeHash, _hashes.Expected("demo"));
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.replaced")));
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+    }
+
+    [Fact]
+    public void Run_given_an_expected_tree_that_matches_the_staged_copy_installs_normally()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+        var expectedTree = SkillImport.HashSourceTree(source);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, expectedTree: expectedTree);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.Equal("demo", result.Name);
+        Assert.True(File.Exists(Path.Combine(_skillsRoot, "demo", "references", "notes.md")));
+    }
+
+    [Fact]
+    public void Run_given_no_expected_tree_behaves_exactly_as_it_did_before_this_task()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.Equal("demo", result.Name);
+    }
 }

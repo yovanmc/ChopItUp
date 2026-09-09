@@ -63,8 +63,14 @@ public static class SkillImport
     /// maps to — it never escapes <see cref="Run"/>.</summary>
     private sealed class SkillMoveException(string message) : Exception(message);
 
-    public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir = null) =>
-        PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir));
+    /// <summary><paramref name="expectedTree"/> (task 2, D5): the manifest the caller pinned before
+    /// this call — typically <see cref="ManifestDigest"/>'s input, <see cref="HashSourceTree"/> of the
+    /// source read at propose time. When non-null, the STAGED copy (not the source) is re-hashed and
+    /// compared against it before either <see cref="MoveWithRetry"/> runs, closing the window between
+    /// the read that produced the pin and the read <see cref="CopyTree"/> performs here. The CLI path
+    /// (<see cref="ChopItUp.Hub.Hosting.HostCommands"/>) passes null and is unaffected.</summary>
+    public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir = null, IReadOnlyDictionary<string, string>? expectedTree = null) =>
+        PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir, expectedTree));
 
     /// <summary>Task 1: the whole refusal battery (refusals 1-9), with no side effect — nothing under
     /// <paramref name="skillsRoot"/> changes and no database row is written, whether or not the skills
@@ -88,7 +94,7 @@ public static class SkillImport
         }
     }
 
-    private static SkillImportResult RunCore(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir)
+    private static SkillImportResult RunCore(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir, IReadOnlyDictionary<string, string>? expectedTree = null)
     {
         // m6: nothing before this point may assume a hub, or even this data directory, has ever
         // existed.
@@ -150,6 +156,21 @@ public static class SkillImport
                     Directory.CreateDirectory(stagingScripts);
                     foreach (var file in Directory.EnumerateFiles(overlayScriptsDir))
                         File.Copy(file, Path.Combine(stagingScripts, Path.GetFileName(file)));
+                }
+            }
+
+            // Task 2, D5: the pin is checked against the STAGED copy CopyTree just produced, not a
+            // second read of the source — the two reads (the one that produced expectedTree, and this
+            // one) are the window pass 1 found, and this is where it closes. Runs before either move,
+            // so a mismatch never touches anything already installed.
+            if (expectedTree is not null)
+            {
+                var mismatch = FindTreeMismatch(HashTree(staging), expectedTree);
+                if (mismatch is not null)
+                {
+                    RollBack(target, replaced, staging, replacedTargetMoved: false);
+                    return new SkillImportResult(SkillImportOutcome.BadArgument,
+                        $"'{mismatch}' in the staged copy does not match the tree pinned at propose time; refusing to install.");
                 }
             }
 
@@ -599,6 +620,22 @@ public static class SkillImport
         foreach (var path in manifest.Keys.OrderBy(k => k, StringComparer.Ordinal))
             sb.Append(path).Append('\n').Append(manifest[path]).Append('\n');
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
+    }
+
+    /// <summary>Task 2, D5: the first relative path, in the ordinal order <see cref="ManifestDigest"/>
+    /// itself sorts by, where <paramref name="actual"/> and <paramref name="expected"/> disagree — hashing
+    /// to a different value in each, or present in only one of the two — or null when the manifests are
+    /// identical. Internal (not private) so the RED test required by lesson M24 can exercise the
+    /// comparison directly, before any real staging tree is involved, and a second real-path test can
+    /// then prove it is wired into <see cref="RunCore"/>.</summary>
+    internal static string? FindTreeMismatch(IReadOnlyDictionary<string, string> actual, IReadOnlyDictionary<string, string> expected)
+    {
+        foreach (var path in actual.Keys.Union(expected.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal))
+        {
+            if (!expected.TryGetValue(path, out var expectedHash) || !actual.TryGetValue(path, out var actualHash) || expectedHash != actualHash)
+                return path;
+        }
+        return null;
     }
 
     /// <summary>Copies <paramref name="sourceRoot"/> into <paramref name="destRoot"/> (which must not
