@@ -56,7 +56,31 @@ public static class MemoryApi
             // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
             // to finish it (critique P1-5).
             var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
-            if (p.Status == MemoryProposalStore.Pending)
+
+            // Row 23, pass 2 finding H: a rewrite's pre-write checks run on BOTH the pending path AND the
+            // Retry path (approved, written_to still null) - unlike the append/supersede checks below, which
+            // stay pending-only under P1-5's ruling. Rewrite() itself throws KeyNotFoundException when the
+            // topic vanished in the crash window, and unlike append/supersede that must never reach the
+            // write uncaught: checking here turns it into a 409, not a 500.
+            if (p.Kind == MemoryProposalStore.KindRewrite)
+            {
+                try { MemoryStore.ValidateRewrite(p.Topic, p.Body); }
+                catch (ArgumentException e) { return Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }); }
+                if (memory.ReadTopic(p.Topic) is null)
+                    return Results.Conflict(new { error = $"No topic '{p.Topic}' to rewrite." });
+                var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+                int chars;
+                try { chars = memory.ProjectedRewriteChars(p.Topic, p.Body, provenance); }
+                catch (KeyNotFoundException e) { return Results.Conflict(new { error = e.Message }); }
+                if (chars > cap)
+                {
+                    var current = memory.ReadTopic(p.Topic)!.FullChars;
+                    var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
+                    if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                    return Results.Conflict(new { error = refused, chars, current, cap });
+                }
+            }
+            else if (p.Status == MemoryProposalStore.Pending)
             {
                 // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
                 // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
@@ -80,6 +104,10 @@ public static class MemoryApi
                     return Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." });
             }
 
+            // Row 23 (item 4): captured before the mark/write so the approval note can name what a
+            // rewrite removed - the set difference of live titles before and after the replacement.
+            var beforeTitles = p.Kind == MemoryProposalStore.KindRewrite ? memory.Titles(p.Topic) : null;
+
             // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
             if (p.Status == MemoryProposalStore.Pending && proposals.Decide(id, MemoryProposalStore.Approved, null, null) is null)
                 return Results.Conflict(new { error = $"Memory proposal #{id} was decided concurrently." });
@@ -88,12 +116,16 @@ public static class MemoryApi
             // spawn in flight). Let it surface as a 500 with the row approved-but-unwritten, which the
             // panel's Retry then re-checks.
             var dedupKey = $"proposal {p.Id} by {p.AuthorId}";
-            var written = p.Replaces is null
-                ? memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey)
-                : memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey);
+            var written = p.Kind switch
+            {
+                MemoryProposalStore.KindRewrite => memory.Rewrite(p.Topic, p.Body, provenance, p.Id, dedupKey),
+                _ when p.Replaces is null => memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey),
+                _ => memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey),
+            };
+            var removedTitles = beforeTitles is null ? null : beforeTitles.Except(memory.Titles(p.Topic), StringComparer.Ordinal).ToList();
             var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
             var decided = proposals.RecordWrite(id, written, hash) ?? proposals.Get(id)!;
-            Note(store, signal, decided.RoomId, HubNotes.Approved(decided));
+            Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
             return Results.Json(Map(decided));
         }
         finally { Decisions.Release(); }
