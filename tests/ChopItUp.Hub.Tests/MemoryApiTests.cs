@@ -426,5 +426,59 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Assert.Null(row.WrittenTo);   // still the retryable state
     }
 
+    [Fact]
+    public async Task T5_a_pending_rewrite_lists_with_a_diff_removed_titles_provenance_lost_and_empty_related()
+    {
+        Memory.Append("user", "Editor", "Vim.", "p1");
+        Memory.Append("user", "Shell", "pwsh.", "p2");
+        var body = "# user\n\n## Editor V2\nVS Code now.\n\n## New Fact\nSomething new.\n";
+        Proposals.Create("general", "opus", "user", "Consolidate user", body, null, kind: MemoryProposalStore.KindRewrite);
+
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        var diff = row.GetProperty("diff").EnumerateArray().ToList();
+        Assert.NotEmpty(diff);
+        Assert.Contains(diff, l => l.GetProperty("op").GetString() == "del");
+        Assert.Contains(diff, l => l.GetProperty("op").GetString() == "add");
+        Assert.DoesNotContain(diff, l => l.GetProperty("text").GetString()!.Contains("rewritten:", StringComparison.Ordinal));
+
+        Assert.Equal(new[] { "Editor", "Shell" }, row.GetProperty("removedTitles").EnumerateArray().Select(e => e.GetString()).Order());
+        Assert.Equal(new[] { "Editor V2", "New Fact" }, row.GetProperty("addedTitles").EnumerateArray().Select(e => e.GetString()).Order());
+        Assert.Equal(2, row.GetProperty("provenanceLost").GetInt32());   // both "Editor" and "Shell" carried provenance and neither heading survived
+        Assert.Empty(row.GetProperty("related").EnumerateArray());
+        Assert.True(row.GetProperty("gitAvailable").ValueKind is JsonValueKind.True or JsonValueKind.False);
+    }
+
+    [Fact]
+    public async Task T5_an_approved_but_unwritten_rewrite_lists_with_the_same_fields_populated()
+    {
+        Memory.Append("user", "Editor", "Vim.", "p1");
+        Proposals.Create("general", "opus", "user", "Consolidate user", "## Editor V2\nVS Code now.\n", null, kind: MemoryProposalStore.KindRewrite);
+        Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
+
+        var row = Assert.Single(await Get("api/memory/proposals"));   // default status=undecided includes this row
+        Assert.NotEmpty(row.GetProperty("diff").EnumerateArray());
+        Assert.Equal(new[] { "Editor" }, row.GetProperty("removedTitles").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(new[] { "Editor V2" }, row.GetProperty("addedTitles").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(1, row.GetProperty("provenanceLost").GetInt32());
+        Assert.Empty(row.GetProperty("related").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task T5_an_append_lists_with_a_null_diff_and_related_unchanged()
+    {
+        Memory.Append("user", "Editor of choice", "Vim.", "p");
+        Proposals.Create("general", "opus", "user", "Editor, new choice", "VS Code.", null, replaces: "Editor of choice");
+
+        var row = Assert.Single(await Get("api/memory/proposals?room=general"));
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("diff").ValueKind);
+        Assert.Empty(row.GetProperty("removedTitles").EnumerateArray());
+        Assert.Empty(row.GetProperty("addedTitles").EnumerateArray());
+        Assert.Equal(0, row.GetProperty("provenanceLost").GetInt32());
+        Assert.Equal(JsonValueKind.Null, row.GetProperty("gitAvailable").ValueKind);
+        var related = row.GetProperty("related").EnumerateArray().ToList();
+        Assert.Equal(new[] { ("Editor of choice", true, "Vim.") },
+            related.Select(x => (x.GetProperty("title").GetString()!, x.GetProperty("replaced").GetBoolean(), x.GetProperty("snippet").GetString()!)));
+    }
+
     private ChopDb Db => _host.Services.GetRequiredService<ChopDb>();
 }

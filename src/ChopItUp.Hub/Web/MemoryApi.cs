@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
@@ -31,14 +32,62 @@ public static class MemoryApi
         api.MapDelete("/proposals", Discard);
     }
 
-    private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, string? room = null, string? status = MemoryProposalStore.Undecided)
+    private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, string? room = null, string? status = MemoryProposalStore.Undecided)
     {
         if (status is "all") status = null;
         if (status is not (null or MemoryProposalStore.Undecided or MemoryProposalStore.Pending or MemoryProposalStore.Approved or MemoryProposalStore.Rejected))
             return Results.BadRequest(new { error = "status must be undecided, pending, approved, rejected or all." });
-        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status)
-            .Select(p => Map(p, p.Status == MemoryProposalStore.Pending ? memory.Related(p.Topic, p.Title, p.Replaces) : null)));
+        return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(p => MapForList(p, memory, git)));
     }
+
+    /// <summary>Row 23 (item 5, ticket 05): a <c>rewrite</c> proposal that is pending or approved-but-
+    /// unwritten (the panel's default <c>undecided</c> filter shows both — the second is the Retry state,
+    /// pass 2 finding H) carries a computed line diff against what approval would write, the entry titles
+    /// it removes and adds, how many surviving entries would lose their provenance, and whether a commit
+    /// can be made at all — all before the owner can approve it. Every other row gets the base shape with
+    /// these fields present but empty/null (ticket 05: "always present", never missing), so the client
+    /// never has to guess whether a field applies to a given kind. Cost is accepted, not optimised: one
+    /// bounded <see cref="MemoryDiff"/> LCS per undecided rewrite per list call, for one local client.</summary>
+    private static object MapForList(MemoryProposal p, MemoryStore memory, MemoryGit git)
+    {
+        var isRewrite = p.Kind == MemoryProposalStore.KindRewrite;
+        var inScope = isRewrite && (p.Status == MemoryProposalStore.Pending || (p.Status == MemoryProposalStore.Approved && p.WrittenTo is null));
+
+        IReadOnlyList<RelatedEntry> related = !isRewrite && p.Status == MemoryProposalStore.Pending ? memory.Related(p.Topic, p.Title, p.Replaces) : [];
+        IReadOnlyList<object>? diff = null;
+        IReadOnlyList<string> removedTitles = [];
+        IReadOnlyList<string> addedTitles = [];
+        var provenanceLost = 0;
+        bool? gitAvailable = null;
+
+        if (inScope)
+        {
+            var before = memory.ReadTopic(p.Topic, int.MaxValue)?.Text ?? "";
+            var after = MemoryStore.PreviewRewrite(memory, p.Topic, p.Body);
+            diff = MemoryDiff.Hunks(MemoryDiff.Compute(before, after)).Select(l => (object)new { op = l.Op.ToString().ToLowerInvariant(), text = l.Text }).ToList();
+            var beforeTitles = memory.Titles(p.Topic);
+            var afterTitles = HeadingTitles(after);
+            removedTitles = beforeTitles.Except(afterTitles, StringComparer.Ordinal).ToList();
+            addedTitles = afterTitles.Except(beforeTitles, StringComparer.Ordinal).ToList();
+            provenanceLost = memory.ProvenanceLost(p.Topic, p.Body).Count;
+            gitAvailable = git.IsAvailable();
+        }
+
+        return new
+        {
+            p.Id, p.RoomId, p.AuthorId, p.Topic, p.Title, p.Body, p.Status, p.Source, p.CreatedAt, p.DecidedAt, p.WrittenTo, p.CommitHash,
+            p.Kind, p.Replaces, Flags = ProposalFlags.Parse(p.Flags), Related = related,
+            Diff = diff, RemovedTitles = removedTitles, AddedTitles = addedTitles, ProvenanceLost = provenanceLost, GitAvailable = gitAvailable,
+        };
+    }
+
+    /// <summary>The <c>## </c> heading titles of a composed (not-yet-written) rewrite body, in file order
+    /// — mirrors <see cref="MemoryStore.ValidateRewrite"/>'s own heading extraction, but Core's parser
+    /// (<c>ParseEntries</c>) is internal to Core and unreachable from the Hub (claim 15), and there is no
+    /// on-disk file to call <see cref="MemoryStore.Titles"/> against for text that only exists as a
+    /// preview.</summary>
+    private static IReadOnlyList<string> HeadingTitles(string text) =>
+        Regex.Matches(text.Replace("\r\n", "\n"), "(?m)^## (.*)$").Select(m => m.Groups[1].Value.Trim()).ToList();
 
     private static async Task<IResult> Approve(long id, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
