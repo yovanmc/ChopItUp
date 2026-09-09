@@ -98,7 +98,9 @@ function FileBlock({ file }: { file: SkillFile }) {
  *   - the pinned tree hash is shown, because that is the value the approval sends back and the value
  *     the staged copy is checked against before the swap (D5);
  *   - `sourceChanged`/`sourceMissing` are banners, because in both cases what the card CAN show is no
- *     longer what would install, and the hub suppresses the text rather than showing a second read.
+ *     longer what would install, and the hub suppresses the text rather than showing a second read —
+ *     except on a retry row the hub still marks approvable, where the install is already on disk and
+ *     the source is beside the point (`alreadyInstalled` below).
  *
  *  `approvable` is the hub's flag, not a rule re-derived here (`SkillsApi.IsApprovable`). */
 function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, onToken }: Props) {
@@ -154,6 +156,15 @@ function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, o
         {proposals.map((p) => {
           const busy = busyId === p.id;
           const retry = p.status === 'approved' && p.installedAt === null;
+          /** Branch review, AC8. The hub finishes a retry row by hashing the INSTALLED tree and
+           *  recording it, before it reads the source at all — so it reports such a row approvable even
+           *  with the source gone or changed (`SkillsApi.IsApprovable`), and this is the one state where
+           *  a source banner would be actively misleading. Its "Reject it and propose it again" is a
+           *  dead end here: `Reject` only acts from Pending, which is why the card hides that button on
+           *  a retry row. What is true instead is that the skill is already on disk and Retry only
+           *  finishes recording it, so that is what this state says. Derived from the hub's own flag,
+           *  never re-derived from the tree — the card does not hash anything. */
+          const alreadyInstalled = retry && p.approvable && (p.sourceMissing || p.sourceChanged);
           const canDecide = hasToken && !busy && !locked;
           const refusal = refusals[p.id];
           const files = inAuditOrder(p.entries);
@@ -165,7 +176,11 @@ function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, o
                   {badgeFor(p.authorId)}
                 </span>
                 <span className="skill-author">{displayName(p.authorId)}</span>
-                {retry && <span className="skill-state">approved, not installed yet</span>}
+                {retry && (
+                  <span className="skill-state">
+                    {alreadyInstalled ? 'installed, not recorded yet' : 'approved, not installed yet'}
+                  </span>
+                )}
                 <span className="skill-id">#{p.id}</span>
               </div>
               <h3 className="skill-card-title">
@@ -186,13 +201,22 @@ function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, o
                 <span className="skill-pin-label">Pinned tree</span> <code>{p.treeSha256}</code>
               </p>
 
-              {p.sourceMissing && (
+              {alreadyInstalled && (
+                <p className="banner skill-banner" role="alert">
+                  {p.sourceMissing
+                    ? 'The proposed source is no longer there, so its files cannot be shown — but '
+                    : 'The source has changed since it was proposed, so its files are not shown — but '}
+                  <span className="skill-name">{p.name}</span> is already installed and matches the pinned tree.
+                  Nothing will be copied: Retry only finishes recording the install.
+                </p>
+              )}
+              {p.sourceMissing && !alreadyInstalled && (
                 <p className="banner skill-banner" role="alert">
                   The proposed source is no longer there, so its files cannot be shown and it cannot be approved.
                   Reject it and propose it again.
                 </p>
               )}
-              {p.sourceChanged && (
+              {p.sourceChanged && !alreadyInstalled && (
                 <p className="banner skill-banner" role="alert">
                   The source has changed since it was proposed. Its files are not shown — what this card could
                   display is no longer what would install — and it cannot be approved. Reject it and propose it again.
@@ -203,7 +227,9 @@ function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, o
                   {refusal}
                 </p>
               )}
-              {retry && (
+              {/* Suppressed under `alreadyInstalled`: the banner above already says what Retry will do,
+                  and this paragraph's "the install did not finish" is the half that is no longer true. */}
+              {retry && !alreadyInstalled && (
                 <p className="skill-note">
                   This was approved but the install did not finish — the usual cause is a reader holding the skill
                   store open. Retry finishes it; it re-checks the pinned tree first and never installs twice.

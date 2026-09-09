@@ -222,6 +222,52 @@ describe('SkillPanel: the states the hub can refuse (M25 AC4, AC7, AC8)', () => 
     expect(buttonWith(html, 'Reject')).toBeUndefined();
   });
 
+  /* Branch review, AC8. The hub finishes an approved-but-uninstalled row by hashing the INSTALLED
+     tree, before it reads the source at all, so it marks such a row approvable even when the source
+     has since gone (`SkillsApi.IsApprovable`). The banners the card shows for the two source flags
+     both end "Reject it and propose it again" — and on a retry row the Reject button is hidden,
+     because `Reject` only acts from Pending. That sentence therefore sent the owner nowhere on the
+     one row that could still be finished with a click. */
+  const ALREADY_INSTALLED: SkillProposal = {
+    ...BASE,
+    status: 'approved',
+    installedAt: null,
+    decidedAt: '2026-09-09T10:05:00Z',
+    approvable: true,
+    entries: [],
+    gates: [],
+  };
+
+  test('a retry row whose source is gone but whose install is already on disk says exactly that', () => {
+    const html = render({ ...ALREADY_INSTALLED, sourceMissing: true });
+
+    expect(html).toContain('already installed');
+    expect(html).toContain('Retry only finishes recording the install');
+    expect(html).not.toContain('Reject it and propose it again');
+    expect(html).not.toContain('cannot be approved');
+    expect(buttonWith(html, 'Retry install')).not.toContain('disabled');
+    expect(buttonWith(html, 'Reject')).toBeUndefined();
+  });
+
+  test('the same holds when the leftover source was edited rather than deleted', () => {
+    const html = render({ ...ALREADY_INSTALLED, sourceChanged: true });
+
+    expect(html).toContain('already installed');
+    expect(html).toContain('Retry only finishes recording the install');
+    expect(html).not.toContain('Reject it and propose it again');
+    expect(buttonWith(html, 'Retry install')).not.toContain('disabled');
+  });
+
+  /* The copy that must NOT move: a first decision with a vanished source really is a dead end the
+     owner escapes by rejecting, and the Reject button is there to do it. */
+  test('a pending row with a missing source still says to reject and propose again', () => {
+    const html = render({ ...BASE, sourceMissing: true, approvable: false, entries: [], gates: [] });
+
+    expect(html).toContain('Reject it and propose it again');
+    expect(html).not.toContain('already installed');
+    expect(buttonWith(html, 'Reject')).toBeDefined();
+  });
+
   test("the hub's refusal text lands on the card that produced it", () => {
     const html = render(BASE, { refusals: { 4: 'A spawn is running; decide skill proposals when the exchange has finished.' } });
 
