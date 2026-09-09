@@ -283,6 +283,21 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.True(Directory.Exists(targetDir));
         Assert.Equal(before, File.ReadAllText(exportedFile));   // target byte-identical to before the attempt
         Assert.NotEmpty(err);
+
+        // Findings-ledger item 2 (row 24 pass 2): the target must never hold files its manifest does
+        // not describe after a failed attempt. The writer never got as far as exposing the stage to
+        // the target on this path (it deletes the stage instead - see the comment at the failure site
+        // in MemoryExportWriter.Run), so the target's ORIGINAL manifest, from the first successful
+        // export, must still verify Clean - not Drifted, not Unreadable, not Foreign.
+        var manifestAfterFailure = ExportManifest.TryRead(targetDir);
+        var verdictAfterFailure = ExportManifest.Verify(manifestAfterFailure, targetDir, store);
+        Assert.Equal(TargetState.Clean, verdictAfterFailure.State);
+
+        // No staging directory survives beside the target on this path either - it held only
+        // reproducible bytes never exposed to the target, and was deleted rather than left behind.
+        var parent = Path.GetDirectoryName(targetDir)!;
+        var staleStages = Directory.EnumerateDirectories(parent, Path.GetFileName(targetDir) + ".chopitup-export-tmp-*");
+        Assert.Empty(staleStages);
     }
 
     // ---- 10. the target is mutated between step 2 and step 5, run aborts (pass 2 M6) ---------
