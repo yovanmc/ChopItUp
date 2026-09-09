@@ -20,6 +20,15 @@ public sealed class SkillProposalStore(ChopDb db)
     public const int DefaultLimit = 200;
     public const int MaxLimit = 500;
 
+    /// <summary>Plan Task 4's per-room cap (pass 2 finding 10): dedup is keyed on <c>(name, treeSha)</c>,
+    /// so without a ceiling an agent can mint unbounded distinct proposals, each of which the
+    /// unauthenticated <c>GET</c> re-hashes on every request. Enforced in <see cref="Add"/> — the store
+    /// is the seam every caller (the MCP tool, any future one) goes through, not the tool itself —
+    /// counting the same <see cref="Undecided"/> set the panel lists: pending union
+    /// approved-with-<c>installed_at</c>-NULL. A row leaves that set, freeing a slot, only once it is
+    /// rejected or its install is recorded; approving alone does not, since it is still undecided.</summary>
+    public const int MaxUndecidedPerRoom = 20;
+
     /// <summary>The panel's default: everything that still needs the owner — pending, plus approved
     /// rows whose install never landed. Not a status value; a predicate (mirrors
     /// <see cref="MemoryProposalStore.Undecided"/>).</summary>
@@ -36,6 +45,17 @@ public sealed class SkillProposalStore(ChopDb db)
     {
         var at = DateTimeOffset.UtcNow;
         using var conn = db.Open();
+        using (var countCmd = conn.CreateCommand())
+        {
+            countCmd.CommandText = """
+                SELECT COUNT(*) FROM skill_proposals
+                WHERE room_id = $room AND (status = 'pending' OR (status = 'approved' AND installed_at IS NULL))
+                """;
+            countCmd.Parameters.AddWithValue("$room", roomId);
+            var undecided = Convert.ToInt64(countCmd.ExecuteScalar());
+            if (undecided >= MaxUndecidedPerRoom)
+                throw new ArgumentException($"room already has {MaxUndecidedPerRoom} undecided skill proposals, the per-room cap.", nameof(roomId));
+        }
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO skill_proposals (room_id, author_id, name, source_dir, tree_sha256, replaces_installed, force, files, bytes, status, created_at)

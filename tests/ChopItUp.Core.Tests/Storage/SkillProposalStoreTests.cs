@@ -149,4 +149,54 @@ public sealed class SkillProposalStoreTests : IDisposable
         Assert.Throws<SqliteException>(() => _store.Add("nope", "opus", "demo", @"C:\x", "sha-1", false, false, 1, 10));
         Assert.Throws<SqliteException>(() => _store.Add("general", "nobody", "demo", @"C:\x", "sha-1", false, false, 1, 10));
     }
+
+    [Fact]
+    public void Add_refuses_past_the_per_room_undecided_cap_naming_the_cap_in_its_message()
+    {
+        for (var i = 0; i < SkillProposalStore.MaxUndecidedPerRoom; i++)
+            _store.Add("general", "opus", $"skill-{i}", $@"C:\rooms\general\skill-{i}", $"sha-{i}", false, false, 1, 10);
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            _store.Add("general", "opus", "one-too-many", @"C:\rooms\general\one-too-many", "sha-x", false, false, 1, 10));
+        Assert.Contains(SkillProposalStore.MaxUndecidedPerRoom.ToString(), ex.Message);
+
+        // A different room is unaffected by this room's cap.
+        using (var conn = _db.Open())
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO rooms (id, name, created_at) VALUES ('other-room', 'Other', $at)";
+            cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O"));
+            cmd.ExecuteNonQuery();
+        }
+        var other = _store.Add("other-room", "opus", "one-too-many", @"C:\rooms\other-room\one-too-many", "sha-x", false, false, 1, 10);
+        Assert.Equal("other-room", other.RoomId);
+    }
+
+    [Fact]
+    public void Rejecting_a_proposal_frees_a_slot_but_approving_alone_does_not_until_installed()
+    {
+        var ids = new List<long>();
+        for (var i = 0; i < SkillProposalStore.MaxUndecidedPerRoom; i++)
+            ids.Add(_store.Add("general", "opus", $"skill-{i}", $@"C:\rooms\general\skill-{i}", $"sha-{i}", false, false, 1, 10).Id);
+
+        Assert.Throws<ArgumentException>(() =>
+            _store.Add("general", "opus", "blocked", @"C:\rooms\general\blocked", "sha-blocked", false, false, 1, 10));
+
+        // Approving one row alone does not free a slot - it is still undecided until installed.
+        _store.MarkApproved(ids[0]);
+        Assert.Throws<ArgumentException>(() =>
+            _store.Add("general", "opus", "still-blocked", @"C:\rooms\general\still-blocked", "sha-still-blocked", false, false, 1, 10));
+
+        // Finishing the install frees the slot.
+        _store.MarkInstalled(ids[0]);
+        var freedByInstall = _store.Add("general", "opus", "after-install", @"C:\rooms\general\after-install", "sha-after-install", false, false, 1, 10);
+        Assert.Equal("after-install", freedByInstall.Name);
+
+        // Filling back up to the cap, rejecting a row also frees a slot.
+        Assert.Throws<ArgumentException>(() =>
+            _store.Add("general", "opus", "blocked-again", @"C:\rooms\general\blocked-again", "sha-blocked-again", false, false, 1, 10));
+        _store.MarkRejected(ids[1]);
+        var freedByReject = _store.Add("general", "opus", "after-reject", @"C:\rooms\general\after-reject", "sha-after-reject", false, false, 1, 10);
+        Assert.Equal("after-reject", freedByReject.Name);
+    }
 }
