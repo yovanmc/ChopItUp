@@ -709,6 +709,21 @@ public sealed class SkillImportTests : IDisposable
     }
 
     [Fact]
+    public void Run_does_not_enforce_D7s_reviewable_allowlist_the_CLI_path_stays_open_to_binaries()
+    {
+        // D7 (plan lines 172-183) is a propose-time refusal: "Skills needing a binary stay on the
+        // CLI path, where the owner is already at the keyboard." Same fixture as
+        // A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name above, which
+        // proves Validate still refuses it - this proves Run (the CLI path) does not.
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+    }
+
+    [Fact]
     public void The_reviewable_extension_check_is_case_insensitive()
     {
         var source = NewSourceDir("demo", ValidSkillBody);

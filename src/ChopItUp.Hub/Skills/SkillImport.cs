@@ -80,7 +80,7 @@ public static class SkillImport
     {
         try
         {
-            return PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => ValidateCore(sourceDir, skillsRoot, force, overlayDir));
+            return PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => ValidateCore(sourceDir, skillsRoot, force, overlayDir, enforceReviewAllowlist: true));
         }
         catch (TimeoutException)
         {
@@ -110,7 +110,13 @@ public static class SkillImport
                 Directory.Move(candidateReplaced, candidateTarget);
         }
 
-        var validation = ValidateCore(sourceDir, skillsRoot, force, overlayDir);
+        // D7's reviewable-extension allowlist (refusal 6b) is a propose-time refusal, not an
+        // import-time one (plan lines 172-183): "Skills needing a binary stay on the CLI path, where
+        // the owner is already at the keyboard." RunCore is the CLI path, so it asks ValidateCore for
+        // everything else but leaves that one refusal off; Validate (the propose path, task 5) turns
+        // it on. The root/ancestor link check (refusal 1b) is a security refusal and is NOT gated -
+        // it always runs, inside ValidateCore, regardless of this flag.
+        var validation = ValidateCore(sourceDir, skillsRoot, force, overlayDir, enforceReviewAllowlist: false);
         if (validation.Outcome != SkillImportOutcome.Ok)
             return validation;
 
@@ -187,12 +193,20 @@ public static class SkillImport
         }
     }
 
-    /// <summary>Task 1: refusals 1-9 (plus D7's extension allowlist and per-file character cap, and
-    /// the root/ancestor link check), with no side effect. Assumes nothing about
-    /// <paramref name="skillsRoot"/> having ever existed, and never restores a torn `.replaced` —
-    /// <paramref name="skillsRoot"/> may not even exist on disk. Callers hold the store mutex already
-    /// (<see cref="Validate"/> takes it itself; <see cref="RunCore"/> is already inside <see cref="Run"/>'s).</summary>
-    private static SkillImportResult ValidateCore(string sourceDir, string skillsRoot, bool force, string? overlayDir)
+    /// <summary>Task 1: refusals 1-9 (plus, when <paramref name="enforceReviewAllowlist"/> is set,
+    /// D7's extension allowlist and per-file character cap — and, unconditionally, the root/ancestor
+    /// link check), with no side effect. Assumes nothing about <paramref name="skillsRoot"/> having
+    /// ever existed, and never restores a torn `.replaced` — <paramref name="skillsRoot"/> may not
+    /// even exist on disk. Callers hold the store mutex already (<see cref="Validate"/> takes it
+    /// itself; <see cref="RunCore"/> is already inside <see cref="Run"/>'s).
+    ///
+    /// <paramref name="enforceReviewAllowlist"/>: D7 is a propose-time refusal, not an import-time
+    /// one (plan lines 172-183) — a skill needing a binary stays on the CLI path, where the owner is
+    /// already at the keyboard. <see cref="Validate"/> (the propose path, task 5) passes true;
+    /// <see cref="RunCore"/> (the CLI path) passes false. The root/ancestor link check (refusal 1b) is
+    /// a security refusal, not a disclosure one, and is NOT gated by this flag — it runs for both
+    /// paths.</summary>
+    private static SkillImportResult ValidateCore(string sourceDir, string skillsRoot, bool force, string? overlayDir, bool enforceReviewAllowlist)
     {
         // Refusal 1: source exists.
         if (!Directory.Exists(sourceDir))
@@ -258,10 +272,15 @@ public static class SkillImport
         // show in full — an extension outside the allowlist (matched case-insensitively; a file with
         // no extension counts as outside it) is refused by name, and so is a file over
         // SkillStore.MaxSkillChars, so an oversized file is refused HERE rather than minting a
-        // proposal the owner's card could never show in full (pass 2 finding 4).
-        var reviewIssue = FindReviewIssue(sourceDir);
-        if (reviewIssue is not null)
-            return new SkillImportResult(SkillImportOutcome.BadArgument, reviewIssue);
+        // proposal the owner's card could never show in full (pass 2 finding 4). Propose-time only
+        // (enforceReviewAllowlist) — the CLI path (RunCore) leaves binaries alone; D7 disclosure is
+        // for the room card, not the keyboard the owner is already at (plan lines 172-183).
+        if (enforceReviewAllowlist)
+        {
+            var reviewIssue = FindReviewIssue(sourceDir);
+            if (reviewIssue is not null)
+                return new SkillImportResult(SkillImportOutcome.BadArgument, reviewIssue);
+        }
 
         // Refusal 7b (task 1): an overlay is hub-side and travels only through --overlay; a source
         // that carries its own OVERLAY.md would let a third-party skill claim overlay standing for
