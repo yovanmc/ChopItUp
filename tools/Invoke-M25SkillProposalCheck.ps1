@@ -266,8 +266,9 @@ try {
     $okResult = [ChopItUp.Hub.Skills.SkillImport]::Run($probeSource, $probeSkillsRoot, $false, $probeHashes, [NullString]::Value, $rightTree)
     Add-Check -Name 'f.control-matching-tree-installs' -Passed ($okResult.Outcome -eq [ChopItUp.Hub.Skills.SkillImportOutcome]::Ok) -Detail "outcome=$($okResult.Outcome)"
 
-    # === Leg G: AC8 -- kill the hub between the mark and the install record; restart; re-approve;
-    #     it finishes WITHOUT re-installing =========================================================
+    # === Leg G: AC8 -- kill the hub between the mark and the install record; delete the source too;
+    #     restart; re-approve; the listing still says approvable/sourceMissing and it finishes WITHOUT
+    #     re-installing ================================================================================
     $retryMd = SkillMd 'retry-test'
     $sourceG = New-SkillSource -Root $roomDir -Name 'retry-test' -SkillMd $retryMd
     $proposeG = Invoke-McpTool -Participant 'claude' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceG }
@@ -302,6 +303,15 @@ try {
     [Microsoft.Data.Sqlite.SqliteConnection]::ClearAllPools()
     Add-Check -Name 'g.marked-approved-with-installed-at-still-null' -Passed ($markedRows -eq 1) -Detail "rowsUpdated=$markedRows"
 
+    # Row 25 task 9 correction: leg G as first written reproduced AC8's crash window but never deleted
+    # $sourceG, so the retry it drove always had a live, unchanged source -- IsApprovable's cheap
+    # "!sourceMissing && !sourceChanged" branch was enough on its own, and the fix to the Retry arm's
+    # rule (task 7/8, AC8) could be reverted without this leg noticing. Deleting the source here, before
+    # the restart, forces the retry through the AlreadyInstalled branch instead -- the one AC8 exists to
+    # rescue -- so the leg actually binds the defect it claims to cover.
+    Remove-Item -LiteralPath $sourceG -Recurse -Force
+    Add-Check -Name 'g.source-deleted-before-restart' -Passed (-not (Test-Path -LiteralPath $sourceG)) -Detail "sourceG=$sourceG"
+
     Write-Host "Restarting hub..."
     $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--port', "$Port", '--rooms-root', "`"$roomsRoot`"") -WindowStyle Hidden -PassThru `
         -RedirectStandardError (Join-Path $DataDir 'hub2.stderr.log') -RedirectStandardOutput (Join-Path $DataDir 'hub2.stdout.log')
@@ -310,6 +320,13 @@ try {
         try { $health2 = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'g.hub-restarted' -Passed ($null -ne $health2) -Detail "pid=$($hub.Id)"
+
+    # AC8 with the source gone too: the listing must still mark this row approvable, via the
+    # AlreadyInstalled branch, and say why the source is missing (sourceMissing) rather than trusting a
+    # live read of a directory that is no longer there.
+    $listedG = Get-Proposals -Room $roomId -Status 'all' | Where-Object id -eq $idG
+    Add-Check -Name 'g.listing-approvable-with-source-missing' -Passed ($listedG.approvable -eq $true -and $listedG.sourceMissing -eq $true) `
+        -Detail "approvable=$($listedG.approvable) sourceMissing=$($listedG.sourceMissing)"
 
     $retryResp = Invoke-Decide -Verb 'approve' -Id $idG -Token $ownerToken -Tree $null   # the Retry button resends no body
     $retryBody = $retryResp.Content | ConvertFrom-Json
