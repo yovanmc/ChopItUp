@@ -246,6 +246,85 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.True(Directory.Exists(Path.Combine(Skills.Root, "demo")));
     }
 
+    /// <summary>Branch review, AC8: the row this whole Retry arm exists to rescue was the one the
+    /// listing marked un-approvable. <see cref="SkillsApi"/>'s approve finishes an already-completed
+    /// install by hashing the INSTALLED tree, before it ever looks at the source — so a retry row whose
+    /// source has since vanished is one the hub would in fact finish. <c>IsApprovable</c> nevertheless
+    /// returned false for any <c>sourceMissing</c> row, the card disables Retry on <c>!approvable</c>,
+    /// and it hides Reject on a retry row (correctly — <c>Reject</c> only acts from <c>Pending</c>). The
+    /// row was therefore stuck forever and counted against
+    /// <see cref="SkillProposalStore.MaxUndecidedPerRoom"/> for good.
+    ///
+    /// The sequence is the ordinary one, not an exotic one: approve, the install completes, the hub dies
+    /// before <c>MarkInstalled</c>, and the proposer then cleans up its room directory.</summary>
+    [Fact]
+    public async Task A_retry_row_whose_source_vanished_after_a_completed_install_is_approvable_and_finishes()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var id = (await ProposeAsync(source)).GetProperty("id").GetInt64();
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(Proposals.Get(id)!.SourceDir, Skills.Root, force: false, new SkillHashes(Db)).Outcome);
+        Assert.NotNull(Proposals.MarkApproved(id));   // the crash state: install finished, installed_at never recorded
+        Directory.Delete(source, recursive: true);    // and the proposer has since cleaned its room directory up
+
+        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+        Assert.True(row.GetProperty("sourceMissing").GetBoolean());
+        Assert.True(row.GetProperty("approvable").GetBoolean());
+
+        // The install is already on disk, and a re-run is impossible anyway (refusal 1: the source is
+        // gone), so an OK here is itself the proof that Approve finished the row from the installed
+        // tree rather than by re-entering SkillImport.Run.
+        var installedBytes = File.ReadAllBytes(Path.Combine(Skills.Root, "demo", "SKILL.md"));
+        var r = await PostApprove(id, null);
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        Assert.NotEqual(JsonValueKind.Null, JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.GetProperty("installedAt").ValueKind);
+        Assert.Equal(installedBytes, File.ReadAllBytes(Path.Combine(Skills.Root, "demo", "SKILL.md")));
+        Assert.False(Directory.Exists(Path.Combine(Skills.Root, "demo.importing")));
+    }
+
+    /// <summary>The same rescue, through the other flag: an edit to the leftover source after the
+    /// install completed sets <c>sourceChanged</c>, which disqualified the row just as
+    /// <c>sourceMissing</c> did — and just as wrongly, since approve never reads the source on this
+    /// path.</summary>
+    [Fact]
+    public async Task A_retry_row_whose_source_changed_after_a_completed_install_is_approvable_and_finishes()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var id = (await ProposeAsync(source)).GetProperty("id").GetInt64();
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(Proposals.Get(id)!.SourceDir, Skills.Root, force: false, new SkillHashes(Db)).Outcome);
+        Assert.NotNull(Proposals.MarkApproved(id));
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: edited after the install.\n---\n# Edited\n");
+
+        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+        Assert.True(row.GetProperty("sourceChanged").GetBoolean());
+        Assert.True(row.GetProperty("approvable").GetBoolean());
+
+        Assert.Equal(HttpStatusCode.OK, (await PostApprove(id, null)).StatusCode);
+        Assert.NotNull(Proposals.Get(id)!.InstalledAt);
+        Assert.Equal(ValidSkillBody, File.ReadAllText(Path.Combine(Skills.Root, "demo", "SKILL.md")));   // the edit never installed
+    }
+
+    /// <summary>The rule that must NOT move: the rescue is for a row the owner already approved, never
+    /// for a first decision. A pending row whose source is gone stays un-approvable even when a skill of
+    /// that name is installed and happens to hash to the pinned digest — the owner has not decided this
+    /// proposal, so there is nothing to finish, and approve refuses it.</summary>
+    [Fact]
+    public async Task A_pending_row_with_a_missing_source_stays_unapprovable_even_when_that_tree_is_installed()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var proposed = await ProposeAsync(source);
+        var id = proposed.GetProperty("id").GetInt64();
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(Proposals.Get(id)!.SourceDir, Skills.Root, force: false, new SkillHashes(Db)).Outcome);
+        Directory.Delete(source, recursive: true);
+
+        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+        Assert.Equal("pending", row.GetProperty("status").GetString());
+        Assert.True(row.GetProperty("sourceMissing").GetBoolean());
+        Assert.False(row.GetProperty("approvable").GetBoolean());
+        Assert.Equal(HttpStatusCode.Conflict, (await PostApprove(id, proposed.GetProperty("tree_sha256").GetString())).StatusCode);
+        Assert.Equal("pending", Proposals.Get(id)!.Status);
+    }
+
     [Fact]
     public async Task Reject_leaves_the_store_untouched_and_deletes_the_leftover_source()
     {

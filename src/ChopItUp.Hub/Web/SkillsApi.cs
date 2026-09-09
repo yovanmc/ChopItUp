@@ -76,12 +76,12 @@ public static class SkillsApi
         proposals.MapPost("/{id:long}/reject", Reject);
     }
 
-    private static IResult ListProposals(SkillProposalStore store, string? room = null, string? status = SkillProposalStore.Undecided)
+    private static IResult ListProposals(SkillProposalStore store, SkillStore skills, string? room = null, string? status = SkillProposalStore.Undecided)
     {
         if (status is "all") status = null;
         if (status is not (null or SkillProposalStore.Undecided or SkillProposalStore.Pending or SkillProposalStore.Approved or SkillProposalStore.Rejected))
             return Results.BadRequest(new { error = "status must be undecided, pending, approved, rejected or all." });
-        return Results.Json(store.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(MapForList));
+        return Results.Json(store.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(p => MapForList(p, skills.Root)));
     }
 
     /// <summary>AC4: every relative path, every declared gate and the full text of every file, unless
@@ -89,27 +89,27 @@ public static class SkillsApi
     /// — either way nothing derived from a live read of the source is shown, only the row's own recorded
     /// fields, and the flag that says why. Gates come from <c>SKILL.md</c> alone: v1 proposals carry no
     /// overlay (D6), so there is no second frontmatter to union with.</summary>
-    private static object MapForList(SkillProposal p)
+    private static object MapForList(SkillProposal p, string skillsRoot)
     {
         if (!Directory.Exists(p.SourceDir))
-            return Row(p, sourceMissing: true, sourceChanged: false, entries: null, gates: null);
+            return Row(p, skillsRoot, sourceMissing: true, sourceChanged: false, entries: null, gates: null);
 
         string digest;
         IReadOnlyList<(string Path, string Text)> files;
         try { (digest, files) = TreeFor(p.SourceDir); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException)
         {
-            return Row(p, sourceMissing: true, sourceChanged: false, entries: null, gates: null);
+            return Row(p, skillsRoot, sourceMissing: true, sourceChanged: false, entries: null, gates: null);
         }
 
         if (!string.Equals(digest, p.TreeSha256, StringComparison.Ordinal))
-            return Row(p, sourceMissing: false, sourceChanged: true, entries: null, gates: null);
+            return Row(p, skillsRoot, sourceMissing: false, sourceChanged: true, entries: null, gates: null);
 
         var skillMd = files.FirstOrDefault(f => f.Path == "SKILL.md").Text ?? "";
         var (_, _, _, _, gates) = SkillStore.StripFrontmatter(skillMd.Replace("\r\n", "\n"), p.Name);
         var entries = files.Select(f => (object)new { f.Path, f.Text }).ToList();
         var gateList = gates.Select(g => (object)new { g.Name, g.Arguments }).ToList();
-        return Row(p, sourceMissing: false, sourceChanged: false, entries, gateList);
+        return Row(p, skillsRoot, sourceMissing: false, sourceChanged: false, entries, gateList);
     }
 
     /// <summary>Task 8 correction: the listing carries <see cref="SkillProposal.TreeSha256"/>. D5 makes
@@ -119,12 +119,12 @@ public static class SkillsApi
     /// required to send and every approval from the card would have been refused. Disclosing it to an
     /// unauthenticated <c>GET</c> adds nothing: it is a digest of the file contents this same response
     /// already returns in full.</summary>
-    private static object Row(SkillProposal p, bool sourceMissing, bool sourceChanged, IReadOnlyList<object>? entries, IReadOnlyList<object>? gates) => new
+    private static object Row(SkillProposal p, string skillsRoot, bool sourceMissing, bool sourceChanged, IReadOnlyList<object>? entries, IReadOnlyList<object>? gates) => new
     {
         p.Id, p.RoomId, p.AuthorId, p.Name, p.TreeSha256, p.ReplacesInstalled, p.Force,
         FileCount = p.Files, p.Bytes, p.Status, p.CreatedAt, p.DecidedAt, p.InstalledAt,
         SourceMissing = sourceMissing, SourceChanged = sourceChanged,
-        Approvable = IsApprovable(p, sourceMissing, sourceChanged),
+        Approvable = IsApprovable(p, skillsRoot, sourceMissing, sourceChanged),
         Entries = entries ?? [], Gates = gates ?? [],
     };
 
@@ -137,10 +137,41 @@ public static class SkillsApi
     /// (already rejected, or already approved-and-installed, refuse immediately): only pending, or
     /// approved-but-not-yet-installed (the Retry state, still "undecided" — see
     /// <see cref="SkillProposalStore.Undecided"/>), can still be decided. Computed once here so task
-    /// 8's card reads a single flag instead of re-deriving the rule itself.</summary>
-    private static bool IsApprovable(SkillProposal p, bool sourceMissing, bool sourceChanged) =>
-        !sourceMissing && !sourceChanged &&
-        (p.Status == SkillProposalStore.Pending || (p.Status == SkillProposalStore.Approved && p.InstalledAt is null));
+    /// 8's card reads a single flag instead of re-deriving the rule itself.
+    ///
+    /// Branch review, AC8: the source flags do NOT disqualify a retry row whose install already
+    /// completed. <see cref="Approve"/>'s Retry arm hashes the INSTALLED tree and short-circuits to
+    /// <see cref="SkillProposalStore.MarkInstalled"/> before it reads the source at all, so such a row is
+    /// one the hub would in fact finish — and marking it un-approvable stranded it forever: the card
+    /// disables Retry on <c>!approvable</c>, and <see cref="Reject"/> only acts from
+    /// <see cref="SkillProposalStore.Pending"/> (so the card correctly hides Reject here too). Approve,
+    /// install completes, hub dies before the record, proposer cleans up its room directory — and the
+    /// row could never be decided again while counting against
+    /// <see cref="SkillProposalStore.MaxUndecidedPerRoom"/>. This is exactly the state AC8 exists to
+    /// rescue. A first decision is untouched: a pending row with a missing or changed source stays
+    /// un-approvable, whatever happens to be installed under that name.</summary>
+    private static bool IsApprovable(SkillProposal p, string skillsRoot, bool sourceMissing, bool sourceChanged)
+    {
+        if (p.Status == SkillProposalStore.Pending) return !sourceMissing && !sourceChanged;
+        if (p.Status != SkillProposalStore.Approved || p.InstalledAt is not null) return false;
+        // The retry row. The cheap answer first: with the source present and pinned, Approve's ordinary
+        // path would run, and the installed tree does not need hashing to know that.
+        return (!sourceMissing && !sourceChanged) || AlreadyInstalled(p, skillsRoot);
+    }
+
+    /// <summary>AC8's "detect a completed install by comparing the installed tree to the recorded
+    /// manifest rather than by re-running the install" — the one definition, read by both
+    /// <see cref="IsApprovable"/> and <see cref="Approve"/>, so the listing's flag and the endpoint's
+    /// behaviour cannot drift apart. Reuses <see cref="SkillImport.HashSourceTree"/>, the same walker
+    /// approve already hashes trees with; an unreadable target answers false and falls through to the
+    /// ordinary path, which refuses on its own terms rather than throwing out of a <c>GET</c>.</summary>
+    private static bool AlreadyInstalled(SkillProposal p, string skillsRoot)
+    {
+        var target = Path.Combine(skillsRoot, p.Name);
+        if (!Directory.Exists(target)) return false;
+        try { return SkillImport.ManifestDigest(SkillImport.HashSourceTree(target)) == p.TreeSha256; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException) { return false; }
+    }
 
     /// <summary>The cached (digest, per-file text) pair for <paramref name="sourceFull"/>, recomputed
     /// only when the tree's per-file fingerprint (item B) has moved since the last call — the check
@@ -235,23 +266,21 @@ public static class SkillsApi
                 return Results.Conflict(new { error = $"Skill proposal #{id} is already approved and installed." });
 
             var isRetry = p.Status == SkillProposalStore.Approved;   // InstalledAt is null here, or the check above would have returned
-            var target = Path.Combine(skills.Root, p.Name);
 
             // The Retry arm (plan pass 2 blocker 1): detect a completed install by comparing the
             // INSTALLED tree to the recorded manifest, never by re-running Run — refusal 8 (target
-            // exists, no force) would otherwise refuse a completed install forever (AC8).
-            if (isRetry && Directory.Exists(target))
+            // exists, no force) would otherwise refuse a completed install forever (AC8). This runs
+            // before anything reads the source, which is why the listing marks such a row approvable
+            // even when its source has since vanished or changed (see IsApprovable). On a miss (no
+            // target, or installed content that disagrees with the pin — not the ordinary retry case)
+            // this falls through to a fresh Run, which itself refuses against a stale target when force
+            // is false.
+            if (isRetry && AlreadyInstalled(p, skills.Root))
             {
-                var installedDigest = SkillImport.ManifestDigest(SkillImport.HashSourceTree(target));
-                if (installedDigest == p.TreeSha256)
-                {
-                    var finished = proposals.MarkInstalled(id) ?? proposals.Get(id)!;
-                    CleanupSource(finished);
-                    Note(store, signal, finished.RoomId, Installed(finished));
-                    return Results.Json(Map(finished));
-                }
-                // Installed content disagrees with the pin (not the ordinary retry case) — fall through
-                // to a fresh Run, which will itself refuse against a stale target when force is false.
+                var finished = proposals.MarkInstalled(id) ?? proposals.Get(id)!;
+                CleanupSource(finished);
+                Note(store, signal, finished.RoomId, Installed(finished));
+                return Results.Json(Map(finished));
             }
 
             // AC6/AC7 (task 7 correction, item A): a retry is still an approval, so both of these must
