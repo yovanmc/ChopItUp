@@ -159,7 +159,7 @@ public static class MemoryExportWriter
             // D8, pass 2 B3: the superset test over the two manifests, never `state == Clean` alone.
             var reusable = reVerdict.State == TargetState.Absent
                 || (reVerdict.State == TargetState.Clean && IsSuperset(reManifest, files));
-            var asideDir = reusable ? previousPlain : targetDir + PreviousSuffix + "-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
+            var asideDir = reusable ? previousPlain : UniqueTimestampedPrevious(targetDir);
 
             try
             {
@@ -296,4 +296,21 @@ public static class MemoryExportWriter
     /// export. A <see langword="null"/> previous manifest (nothing recorded) is vacuously a subset.</summary>
     private static bool IsSuperset(ExportManifest? previous, IReadOnlyDictionary<string, string> newFiles) =>
         previous is null || previous.Files.Keys.All(newFiles.ContainsKey);
+
+    /// <summary>The timestamped retention name is only second-granularity, so two independent
+    /// non-reusable replacements of the same target within one UTC second (a <c>--force</c> over
+    /// drift, then an <c>--accept-new-source</c> over a different source, say) would otherwise collide
+    /// and make <c>Directory.Move</c> throw onto an existing destination. Disambiguated with the same
+    /// idiom <see cref="MemoryExport.Render"/> uses for a colliding file name: append <c>-2</c>,
+    /// <c>-3</c>, … after the (still-readable) timestamp until the name is free. D8's timestamped
+    /// previous is never auto-deleted, so the collision cannot be resolved by deleting it — only by
+    /// not colliding in the first place.</summary>
+    private static string UniqueTimestampedPrevious(string targetDir)
+    {
+        var baseName = targetDir + PreviousSuffix + "-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmssZ");
+        var candidate = baseName;
+        for (var n = 2; Directory.Exists(candidate); n++)
+            candidate = $"{baseName}-{n}";
+        return candidate;
+    }
 }

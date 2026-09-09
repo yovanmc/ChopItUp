@@ -354,6 +354,45 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Contains(staleStage, outText);
     }
 
+    // ---- 14. two non-reusable retentions of the same target back to back, same UTC second ----
+    //          get distinct previous dirs instead of colliding (T6 dry run finding)
+
+    [Fact]
+    public void T3_two_non_reusable_retentions_of_the_same_target_back_to_back_get_distinct_previous_dirs()
+    {
+        var storeA = NewStore(NewDir("t14-store-a"));
+        storeA.Append("user", "A", "Body A.", "prov");
+        var storeB = NewStore(NewDir("t14-store-b"));
+        storeB.Append("user", "B", "Body B.", "prov");
+        var targetDir = NewDir("t14-target", create: false);
+
+        var first = Run(storeA, targetDir, false, false, out _, out _);
+        Assert.Equal(0, first.ExitCode);
+
+        // Drift the target so the next retention (below) is non-reusable: force over Drifted.
+        var exportedFile = Directory.EnumerateFiles(targetDir, "*.md").First(f => !f.EndsWith("MEMORY.md", StringComparison.OrdinalIgnoreCase));
+        File.WriteAllText(exportedFile, "tampered content");
+
+        // Two independent non-reusable replacements of the same target, back to back: a --force
+        // over drift, then an --accept-new-source over a different source (D8's own example of the
+        // road that reaches this). Run immediately one after the other so they land in the same
+        // second-granularity timestamp far more often than not, which is exactly the window the
+        // pre-fix code collided in and Directory.Move threw onto an existing destination.
+        var r1 = Run(storeA, targetDir, force: true, acceptNewSource: false, out _, out var e1);
+        var r2 = Run(storeB, targetDir, force: false, acceptNewSource: true, out _, out var e2);
+
+        Assert.Equal(0, r1.ExitCode);
+        Assert.Equal("", e1);
+        Assert.Equal(0, r2.ExitCode);
+        Assert.Equal("", e2);
+
+        Assert.NotNull(r1.PreviousDir);
+        Assert.NotNull(r2.PreviousDir);
+        Assert.NotEqual(r1.PreviousDir, r2.PreviousDir);
+        Assert.True(Directory.Exists(r1.PreviousDir));
+        Assert.True(Directory.Exists(r2.PreviousDir));
+    }
+
     // ---- 13. a target that is a file, not a directory, refuses cleanly -----------------------
 
     [Fact]

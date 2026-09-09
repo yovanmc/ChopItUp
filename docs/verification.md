@@ -152,7 +152,9 @@ hand-delete of `<dir>` itself:
   ONE name a later run reuses: the run about to replace it again deletes it first, before anything else
   is moved.
 - `<dir>.chopitup-export-previous-<yyyyMMddTHHmmssZ>` — a shrinking store, a `--force` over drift, a
-  foreign directory, or an `--accept-new-source` all land here, and this tool never auto-deletes it.
+  foreign directory, or an `--accept-new-source` all land here, and this tool never auto-deletes it. Two
+  such replacements of the same target within one UTC second get a `-2`, `-3`, … suffix appended after
+  the timestamp so they never collide; the timestamp prefix, and this whole enumeration, still match it.
 
 A `<dir>.chopitup-export-tmp-<nonce>` beside the target is a stage an earlier run never finished
 swapping in: it was never exposed to the target, so it holds only reproducible bytes — a re-render of
