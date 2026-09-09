@@ -12,6 +12,7 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 - **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo will be public.
 - **No confidentiality gate here** (owner ruling 2026-09-04): a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
 - Never `Stop-Process -Name` a GUI app (Claude, ChatGPT); kill only PIDs you launched.
+- **No agent writes the deployed hub's data directory** — not via `--import-skill` in any argument form (omitting `--data` defaults there), and its `tokens.json` is never read for a credential; skills reach a deployed hub only through propose-and-approve.
 
 ## Git flow
 `main` is protected: branch → PR → `gh pr checks --watch` → `gh pr merge --squash --delete-branch` → `git pull`. Commit as the repo-configured identity, plain `git commit`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (folder `AGENTS.md`).
