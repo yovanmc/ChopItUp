@@ -281,6 +281,8 @@ public static class MemoryExportWriter
                 if (!force)
                 {
                     error.WriteLine($"refusing: target is {Describe(verdict.State)}. Use --force to override.");
+                    if (verdict.State is TargetState.Foreign or TargetState.Drifted)
+                        error.WriteLine("the export owns its directory (D1): point autoMemoryDirectory at a dedicated export directory nothing else writes to.");
                     error.WriteLine(FormatAffectedPaths(verdict.Paths));
                     refusalExitCode = 6;
                     return false;
