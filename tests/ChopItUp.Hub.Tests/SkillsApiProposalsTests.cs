@@ -235,6 +235,108 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Equal("Skill proposal #1 rejected.", (await Messages()).Last().Body);
     }
 
+    /// <summary>Task 7 correction, item A: <c>Approve</c>'s <c>if (!isRetry)</c> block used to gate BOTH
+    /// the body-hash check and the <c>ReplacesInstalled</c> re-check, so a Retry call skipped them and
+    /// fell straight into <c>SkillImport.Run(..., p.Force, ...)</c>. With <c>force</c> the recorded
+    /// caller flag and nothing installed for this name at propose time (so <c>ReplacesInstalled</c>
+    /// recorded false), an unrelated tree placed at the target between the crash and the retry would
+    /// have been silently overwritten by <c>Run</c> (refusal 8 never fires under force). The
+    /// re-check now runs on the retry path too and must refuse before <c>Run</c> is ever called.</summary>
+    [Fact]
+    public async Task Retry_refuses_when_an_unrelated_tree_now_sits_at_the_target_even_with_force()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var proposed = await ProposeAsync(source, force: true);   // nothing installed yet; force is just the caller's flag
+        var id = proposed.GetProperty("id").GetInt64();
+        Assert.False(proposed.GetProperty("replaces_installed").GetBoolean());
+        Assert.NotNull(Proposals.MarkApproved(id));   // the crash state: approved, nothing installed yet
+
+        // Between the crash and the retry, an unrelated tree lands at the target path — not the skill
+        // this proposal would install, and not what the listing showed (nothing) either.
+        var target = Path.Combine(Skills.Root, "demo");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "SKILL.md"), "---\nname: demo\ndescription: unrelated.\n---\n# Unrelated\n");
+        var unrelatedBytes = File.ReadAllBytes(Path.Combine(target, "SKILL.md"));
+
+        var r = await PostApprove(id, null);   // the Retry button resends no body
+
+        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
+        Assert.Equal(unrelatedBytes, File.ReadAllBytes(Path.Combine(target, "SKILL.md")));   // byte-for-byte untouched
+        var stillPending = Proposals.Get(id)!;
+        Assert.Equal("approved", stillPending.Status);   // still decidable, not stranded
+        Assert.Null(stillPending.InstalledAt);
+    }
+
+    /// <summary>Task 7 correction, item B: the old cache key was the tree's single newest
+    /// <c>LastWriteTimeUtc</c>, so a writer that preserves timestamps (<c>Copy-Item</c>, <c>robocopy</c>
+    /// with default flags) could change a file's content without moving that maximum, and <c>GET</c>
+    /// would keep answering with the stale cached text. Explicitly restoring the file's own write time
+    /// after editing it (with a body of a different length, so a per-file fingerprint — not the old
+    /// tree-wide max — is what has to catch it) reproduces exactly that.</summary>
+    [Fact]
+    public async Task GET_detects_a_content_rewrite_even_when_the_tree_wide_newest_write_time_does_not_move()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var skillMd = Path.Combine(source, "SKILL.md");
+        var originalWriteUtc = File.GetLastWriteTimeUtc(skillMd);
+        await ProposeAsync(source);
+        var warm = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+        Assert.False(warm.GetProperty("sourceChanged").GetBoolean());   // warms the cache with the ORIGINAL content
+
+        File.WriteAllText(skillMd, "---\nname: demo\ndescription: swapped, a much longer body than the original so the byte length differs.\n---\n# Swapped\n");
+        File.SetLastWriteTimeUtc(skillMd, originalWriteUtc);   // simulate a timestamp-preserving writer
+
+        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+
+        Assert.True(row.GetProperty("sourceChanged").GetBoolean());
+        Assert.Empty(row.GetProperty("entries").EnumerateArray());
+    }
+
+    /// <summary>Task 7 correction, item C: the listing's <c>approvable</c> flag must agree, in every
+    /// state, with whether <c>Approve</c> itself would actually succeed — a source-changed row, a
+    /// source-missing row, and an already-decided row are all reported not approvable, and
+    /// <c>Approve</c> refuses each; a plain pending row is reported approvable, and <c>Approve</c>
+    /// succeeds.</summary>
+    [Fact]
+    public async Task Listing_approvable_flag_agrees_with_whether_Approve_would_actually_succeed()
+    {
+        // The frontmatter name must agree with the directory name (SkillImport refusal 5), so each
+        // fixture below gets its own body rather than reusing ValidSkillBody's "demo".
+        static string SkillBody(string name) => $"---\nname: {name}\ndescription: a demo skill for tests.\n---\n# {name}\n\nBody text here.\n";
+        async Task<JsonElement> RowFor(long id) =>
+            (await Get("api/skills/proposals?status=all")).EnumerateArray().Single(r => r.GetProperty("id").GetInt64() == id);
+
+        // Plain pending: approvable, and Approve succeeds.
+        var okProposed = await ProposeAsync(NewRoomSource("ok", SkillBody("ok")));
+        var okId = okProposed.GetProperty("id").GetInt64();
+        Assert.True((await RowFor(okId)).GetProperty("approvable").GetBoolean());
+        Assert.Equal(HttpStatusCode.OK, (await PostApprove(okId, okProposed.GetProperty("tree_sha256").GetString())).StatusCode);
+        Assert.False((await RowFor(okId)).GetProperty("approvable").GetBoolean());   // decided now: no longer approvable
+
+        // sourceChanged: not approvable, and Approve refuses.
+        var changedSource = NewRoomSource("changed", SkillBody("changed"));
+        var changedProposed = await ProposeAsync(changedSource);
+        var changedId = changedProposed.GetProperty("id").GetInt64();
+        File.WriteAllText(Path.Combine(changedSource, "SKILL.md"), "---\nname: changed\ndescription: edited.\n---\n# Edited\n");
+        Assert.False((await RowFor(changedId)).GetProperty("approvable").GetBoolean());
+        Assert.Equal(HttpStatusCode.Conflict, (await PostApprove(changedId, changedProposed.GetProperty("tree_sha256").GetString())).StatusCode);
+
+        // sourceMissing: not approvable, and Approve refuses.
+        var missingSource = NewRoomSource("missing", SkillBody("missing"));
+        var missingProposed = await ProposeAsync(missingSource);
+        var missingId = missingProposed.GetProperty("id").GetInt64();
+        Directory.Delete(missingSource, recursive: true);
+        Assert.False((await RowFor(missingId)).GetProperty("approvable").GetBoolean());
+        Assert.Equal(HttpStatusCode.Conflict, (await PostApprove(missingId, missingProposed.GetProperty("tree_sha256").GetString())).StatusCode);
+
+        // Already rejected: not approvable, and Approve refuses.
+        var rejectedProposed = await ProposeAsync(NewRoomSource("rejected", SkillBody("rejected")));
+        var rejectedId = rejectedProposed.GetProperty("id").GetInt64();
+        Assert.Equal(HttpStatusCode.OK, (await PostReject(rejectedId)).StatusCode);
+        Assert.False((await RowFor(rejectedId)).GetProperty("approvable").GetBoolean());
+        Assert.Equal(HttpStatusCode.Conflict, (await PostApprove(rejectedId, rejectedProposed.GetProperty("tree_sha256").GetString())).StatusCode);
+    }
+
     [Fact]
     public async Task Decisions_are_refused_while_a_spawn_is_in_flight()
     {

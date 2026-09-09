@@ -37,13 +37,28 @@ public static class SkillsApi
 
     /// <summary>Task 7, pass 2 finding 10: what a card re-fetching on every hub note would otherwise
     /// re-hash and re-read from disk on every unauthenticated <c>GET</c>. Keyed on the proposal's
-    /// (already room-confined, already normalised) <see cref="SkillProposal.SourceDir"/>; invalidated by
-    /// the tree's own newest file write time, which is cheap to recompute (a directory walk with no
-    /// content read) next to the hash-and-decode work it lets a request skip. Entries for a decided
-    /// proposal are dropped by <see cref="CleanupSource"/> alongside the source directory itself.</summary>
+    /// (already room-confined, already normalised) <see cref="SkillProposal.SourceDir"/>; invalidated
+    /// by a stat-only fingerprint of every file in the tree (task 7 correction, item B — a single
+    /// tree-wide newest-write-time was too weak: a writer that preserves timestamps, such as
+    /// <c>Copy-Item</c> or <c>robocopy</c> with their default flags, can change a file's content
+    /// without moving that maximum, so a stale cache entry would answer <c>GET</c> with bytes that no
+    /// longer match disk), which is still cheap to recompute (a directory walk reading only length and
+    /// last-write-time, no content) next to the hash-and-decode work it lets a request skip. Bounded at
+    /// <see cref="MaxCacheEntries"/> so it cannot grow without limit. Entries for a decided proposal are
+    /// dropped by <see cref="CleanupSource"/> alongside the source directory itself.</summary>
     private static readonly ConcurrentDictionary<string, TreeCache> TreeCacheByDir = new(StringComparer.OrdinalIgnoreCase);
 
-    private sealed record TreeCache(DateTime NewestWriteUtc, string Digest, IReadOnlyList<(string Path, string Text)> Files);
+    /// <summary>Task 7 correction, item B: no LRU bookkeeping, just a ceiling — <see cref="TreeFor"/>
+    /// drops the whole cache and lets the next <c>GET</c> rebuild it lazily once a NEW key would push
+    /// the count past this. 200 is not derived from a hard limit; it is a round number well above what
+    /// <see cref="SkillProposalStore.MaxUndecidedPerRoom"/> (20) times a realistic number of
+    /// concurrently busy rooms would hold resident at once, cheap to raise later if that guess is
+    /// wrong.</summary>
+    private const int MaxCacheEntries = 200;
+
+    private sealed record FileStat(string Path, long Length, long WriteTicks);
+
+    private sealed record TreeCache(IReadOnlyList<FileStat> Fingerprint, string Digest, IReadOnlyList<(string Path, string Text)> Files);
 
     public static void MapSkillsApi(this WebApplication app)
     {
@@ -97,16 +112,31 @@ public static class SkillsApi
         p.Id, p.RoomId, p.AuthorId, p.Name, p.ReplacesInstalled, p.Force,
         FileCount = p.Files, p.Bytes, p.Status, p.CreatedAt, p.DecidedAt, p.InstalledAt,
         SourceMissing = sourceMissing, SourceChanged = sourceChanged,
+        Approvable = IsApprovable(p, sourceMissing, sourceChanged),
         Entries = entries ?? [], Gates = gates ?? [],
     };
 
+    /// <summary>Task 7 correction, item C (AC4's "marked ⇒ not approvable" made explicit): the same
+    /// conditions <see cref="Approve"/> itself enforces before it will even attempt an install. Source
+    /// present and source unchanged are the two flags <paramref name="sourceMissing"/>/
+    /// <paramref name="sourceChanged"/> already carry; "text shown in full" is implied by both being
+    /// false, since <see cref="MapForList"/> never reaches the per-file read that populates
+    /// <c>Entries</c> otherwise. The status half mirrors <see cref="Approve"/>'s own first checks
+    /// (already rejected, or already approved-and-installed, refuse immediately): only pending, or
+    /// approved-but-not-yet-installed (the Retry state, still "undecided" — see
+    /// <see cref="SkillProposalStore.Undecided"/>), can still be decided. Computed once here so task
+    /// 8's card reads a single flag instead of re-deriving the rule itself.</summary>
+    private static bool IsApprovable(SkillProposal p, bool sourceMissing, bool sourceChanged) =>
+        !sourceMissing && !sourceChanged &&
+        (p.Status == SkillProposalStore.Pending || (p.Status == SkillProposalStore.Approved && p.InstalledAt is null));
+
     /// <summary>The cached (digest, per-file text) pair for <paramref name="sourceFull"/>, recomputed
-    /// only when the tree's newest write time has moved since the last call — the check itself never
-    /// reads a file's content, only its <see cref="File.GetLastWriteTimeUtc(string)"/>.</summary>
+    /// only when the tree's per-file fingerprint (item B) has moved since the last call — the check
+    /// itself never reads a file's content, only its length and last-write-time.</summary>
     private static (string Digest, IReadOnlyList<(string Path, string Text)> Files) TreeFor(string sourceFull)
     {
-        var newest = NewestWriteTimeUtc(sourceFull);
-        if (TreeCacheByDir.TryGetValue(sourceFull, out var cached) && cached.NewestWriteUtc == newest)
+        var fingerprint = Fingerprint(sourceFull);
+        if (TreeCacheByDir.TryGetValue(sourceFull, out var cached) && cached.Fingerprint.SequenceEqual(fingerprint))
             return (cached.Digest, cached.Files);
 
         var manifest = SkillImport.HashSourceTree(sourceFull);
@@ -114,22 +144,35 @@ public static class SkillsApi
         var files = manifest.Keys.OrderBy(k => k, StringComparer.Ordinal)
             .Select(relative => (Path: relative, Text: ReadText(sourceFull, relative)))
             .ToList();
-        TreeCacheByDir[sourceFull] = new TreeCache(newest, digest, files);
+
+        // Item B's bound: only a NEW key risks growing the cache past the ceiling — updating an
+        // already-cached key never changes the count.
+        if (!TreeCacheByDir.ContainsKey(sourceFull) && TreeCacheByDir.Count >= MaxCacheEntries)
+            TreeCacheByDir.Clear();
+
+        TreeCacheByDir[sourceFull] = new TreeCache(fingerprint, digest, files);
         return (digest, files);
     }
 
     private static string ReadText(string sourceFull, string relativePath) =>
         new UTF8Encoding(false).GetString(File.ReadAllBytes(Path.Combine(sourceFull, relativePath.Replace('/', Path.DirectorySeparatorChar))));
 
-    /// <summary>The latest write time of any file under <paramref name="root"/>, skipping a root
-    /// <c>.git</c> directory exactly as <see cref="SkillImport.HashSourceTree"/> does — so a change the
-    /// hash would notice is a change this notices too, and vice versa.</summary>
-    private static DateTime NewestWriteTimeUtc(string root)
+    /// <summary>Item B: every file under <paramref name="root"/> — relative path, length and
+    /// last-write-time ticks — in ordinal path order, skipping a root <c>.git</c> directory exactly as
+    /// <see cref="SkillImport.HashSourceTree"/> does, so a change the hash would notice is a change
+    /// this notices too, and vice versa. Still no content read: only <see cref="FileInfo.Length"/> and
+    /// <see cref="FileInfo.LastWriteTimeUtc"/>.
+    ///
+    /// Residual, documented rather than hidden: a rewrite that preserves BOTH a file's length and its
+    /// last-write time still reads as unchanged here. <see cref="Approve"/>'s own re-hash of the source
+    /// (AC6) and task 2's staged-copy pin (D5) both catch that before anything installs; this
+    /// fingerprint only feeds <c>GET</c>, never <c>Approve</c>.</summary>
+    private static IReadOnlyList<FileStat> Fingerprint(string root)
     {
         var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        var newest = DateTime.MinValue;
+        var stats = new List<FileStat>();
         Walk(rootFull);
-        return newest;
+        return stats.OrderBy(s => s.Path, StringComparer.Ordinal).ToList();
 
         void Walk(string dir)
         {
@@ -142,20 +185,28 @@ public static class SkillsApi
             }
             foreach (var file in Directory.EnumerateFiles(dir))
             {
-                var t = File.GetLastWriteTimeUtc(file);
-                if (t > newest) newest = t;
+                var relative = Path.GetRelativePath(rootFull, file).Replace(Path.DirectorySeparatorChar, '/');
+                var info = new FileInfo(file);
+                stats.Add(new FileStat(relative, info.Length, info.LastWriteTimeUtc.Ticks));
             }
         }
     }
 
-    /// <summary>Task 7: approve. Ordered so a Retry call — the ordinary outcome of a swap that lost to a
-    /// live reader (<c>SkillImport.cs:318-323</c>), not a rare crash — never repeats a check that can
-    /// only be true once (the body hash, the replaces-installed snapshot) and never re-runs an install
-    /// that already finished. <paramref name="body"/>'s hash and <see cref="SkillProposal.ReplacesInstalled"/>
-    /// are checked only on the FIRST decision; every call, first or retried, re-hashes the SOURCE (not
-    /// the recorded digest alone) and passes that manifest to <see cref="SkillImport.Run"/> as
-    /// <c>expectedTree</c>, so task 2's staged-copy pin is checked against bytes this call actually
-    /// read, closing the propose-to-approve window as well as the copy-time one (D5).</summary>
+    /// <summary>Task 7: approve. Task 7 correction, item A: a Retry call is still an approval, so
+    /// AC6/AC7's preconditions hold on it too, not only on the first decision. The
+    /// installed-or-not-changed check (<see cref="SkillProposal.ReplacesInstalled"/> against a live
+    /// re-read) is unconditional on both paths — it is what refuses a retry against a target that now
+    /// holds something other than what the listing showed (an unrelated tree placed at the name
+    /// between a failed first attempt and the retry, say), even when <c>p.Force</c> would otherwise let
+    /// <see cref="SkillImport.Run"/> overwrite it outright. <paramref name="body"/>'s hash is required
+    /// to match on the first decision, same as always; the plan does not settle whether a Retry must
+    /// resend it, so a retry enforces the check only when the body actually carries a hash. Either way,
+    /// every call, first or retried, re-hashes the SOURCE (not the recorded digest alone) and passes
+    /// that manifest to <see cref="SkillImport.Run"/> as <c>expectedTree</c>, so task 2's staged-copy
+    /// pin is checked against bytes this call actually read, closing the propose-to-approve window as
+    /// well as the copy-time one (D5). The already-finished detection just below (installed tree hashes
+    /// to the recorded manifest → <see cref="SkillProposalStore.MarkInstalled"/>, no re-run) still runs
+    /// first and is unchanged (AC8).</summary>
     private static async Task<IResult> Approve(long id, ApproveBody? body, SkillProposalStore proposals, SkillStore skills, ChopDb db, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
         await Decisions.WaitAsync();
@@ -189,20 +240,26 @@ public static class SkillsApi
                 // to a fresh Run, which will itself refuse against a stale target when force is false.
             }
 
-            if (!isRetry)
-            {
-                // AC6: the hash the caller sends must agree with the hash on record — a card that went
-                // stale between fetch and click must not silently approve a different tree.
-                if (!string.Equals(body?.TreeSha256, p.TreeSha256, StringComparison.Ordinal))
-                    return Results.Conflict(new { error = $"Skill proposal #{id}: the tree hash sent does not match the one on record; re-fetch the listing and decide again." });
+            // AC6/AC7 (task 7 correction, item A): a retry is still an approval, so both of these must
+            // hold on the retry path too, not just on the first decision.
+            //
+            // Body hash: the first decision always sends it from the fetched listing and it must match
+            // exactly. The plan does not settle whether a Retry must resend it, so a retry enforces the
+            // check only when the body actually carries a hash, and does not require one when it does
+            // not (existing tests exercise the Retry button resending no body at all).
+            if ((!isRetry || body?.TreeSha256 is not null) &&
+                !string.Equals(body?.TreeSha256, p.TreeSha256, StringComparison.Ordinal))
+                return Results.Conflict(new { error = $"Skill proposal #{id}: the tree hash sent does not match the one on record; re-fetch the listing and decide again." });
 
-                // The force blocker (task 7): a card the owner read as "new" must never silently
-                // overwrite a skill installed since, and a card read as "replaces" must not silently
-                // become a fresh install of a skill removed since.
-                var currentlyInstalled = IsInstalled(skills.Root, p.Name);
-                if (currentlyInstalled != p.ReplacesInstalled)
-                    return Results.Conflict(new { error = $"Skill proposal #{id}: '{p.Name}' {(currentlyInstalled ? "now exists" : "no longer exists")} in the skill store, which does not match what the listing showed; re-fetch it and decide again." });
-            }
+            // The force blocker (task 7): a card the owner read as "new" must never silently overwrite
+            // a skill installed since, and a card read as "replaces" must not silently become a fresh
+            // install of a skill removed since. Unconditional on retry as well as the first attempt —
+            // this is what refuses a retry against a target that now holds something other than what
+            // the proposal recorded, even when p.Force would otherwise let SkillImport.Run overwrite it
+            // outright (the "installed content disagrees with the pin" fall-through just above).
+            var currentlyInstalled = IsInstalled(skills.Root, p.Name);
+            if (currentlyInstalled != p.ReplacesInstalled)
+                return Results.Conflict(new { error = $"Skill proposal #{id}: '{p.Name}' {(currentlyInstalled ? "now exists" : "no longer exists")} in the skill store, which does not match what the listing showed; re-fetch it and decide again." });
 
             Dictionary<string, string> sourceTree;
             try { sourceTree = SkillImport.HashSourceTree(p.SourceDir); }
