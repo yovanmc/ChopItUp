@@ -30,8 +30,7 @@ backup over the topic file it names, and restart — the approval record on the 
 consolidation stays in `memory_proposals` for the trail, but the file content is exactly what it was
 before that approval.
 
-A Debug hub serves static files from `src\ChopItUp.Hubin\Debug
-et10.0\wwwroot`, not from
+A Debug hub serves static files from `src\ChopItUp.Hub\bin\Debug\net10.0\wwwroot`, not from
 `src\ChopItUp.Hub\wwwroot` where `npm run build` writes. Verifying a client change against a hub that
 is already running needs the built assets copied into the served directory (or a `dotnet build`, which
 re-copies them); a client rebuild alone does not reach it.

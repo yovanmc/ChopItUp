@@ -17,9 +17,9 @@ namespace ChopItUp.Hub.Mcp;
 /// proposal, never the store — the owner approves in the room. The proposer is the authenticated
 /// participant, stamped like a message author. Row 23 (item 3): <paramref name="participants"/> is the
 /// roster <c>propose_rewrite</c>'s caller boundary reads — a singleton already registered in
-/// <c>HubHost</c>, but a dependency this tool did not have before. The roster it returns is loaded once
-/// at hub startup, so a class or host change to a participant row needs a hub restart before the
-/// boundary sees it.</summary>
+/// <c>HubHost</c>, but a dependency this tool did not have before. <see cref="ParticipantStore.List"/>
+/// opens a connection and reads the table on every call, so a class or host change to a participant row
+/// takes effect immediately at the boundary — no hub restart needed.</summary>
 [McpServerToolType]
 public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, IHttpContextAccessor http, ParticipantStore participants)
 {
