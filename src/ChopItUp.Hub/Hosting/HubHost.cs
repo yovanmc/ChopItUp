@@ -106,13 +106,14 @@ public static class HubHost
             builder.Services.AddSingleton(memory);
             builder.Services.AddSingleton(skills);
             builder.Services.AddSingleton(new MemoryProposalStore(db));
+            builder.Services.AddSingleton(new SkillProposalStore(db));
             builder.Services.AddSingleton((memoryGit ?? (root => new MemoryGit(root)))(memory.Root));
             builder.Services.AddSingleton(new RoomTrails(roomGit ?? (dir => new GitTrail(dir))));
             builder.Services.AddSingleton(sp => new RoomDirectories(
                 sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir), options.RoomsRootPath));
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
-                .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>();
+                .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>().WithTools<SkillTools>();
             builder.Services.AddSignalR();
 
             var app = builder.Build();

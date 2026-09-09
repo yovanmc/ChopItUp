@@ -586,4 +586,308 @@ public sealed class SkillImportTests : IDisposable
         Assert.Contains(SkillStore.MaxOverlayChars.ToString(), result.Message);
         AssertTargetAbsent("demo");
     }
+
+    // --- M25 task 1: SkillImport.Validate - the refusal battery with no side effects -------------
+
+    [Fact]
+    public void Validate_refuses_when_the_target_already_exists_and_writes_nothing_even_when_the_skills_root_never_existed()
+    {
+        // The skills root's own directory never gets created by this test - only the `.replaced`
+        // fixture's own nested-directory creation brings it into being, never Validate itself. A
+        // torn store left holding ONLY `demo.replaced` (no `demo`) must still be judged "installed"
+        // by Validate, without Validate restoring it (task 1, pass 1 finding).
+        var freshRoot = Path.Combine(_root, "fresh-skills");
+        var replacedDir = Path.Combine(freshRoot, "demo.replaced");
+        Directory.CreateDirectory(replacedDir);
+        File.WriteAllBytes(Path.Combine(replacedDir, "SKILL.md"), new UTF8Encoding(false).GetBytes(ValidSkillBody));
+        var source = NewSourceDir("demo", "---\nname: demo\ndescription: v2.\n---\n# v2\n");
+
+        var result = SkillImport.Validate(source, freshRoot, force: false);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("already exists", result.Message);
+        Assert.False(Directory.Exists(Path.Combine(freshRoot, "demo.importing")));
+        Assert.False(Directory.Exists(Path.Combine(freshRoot, "demo")));   // Validate never restores .replaced
+        Assert.True(Directory.Exists(replacedDir));                       // .replaced left exactly as found
+        Assert.Null(_hashes.Expected("demo"));                            // no database row written
+    }
+
+    [Fact]
+    public void Validate_of_a_good_source_writes_nothing_under_a_skills_root_that_has_never_existed_and_reports_files_bytes_and_replaces_installed()
+    {
+        var freshRoot = Path.Combine(_root, "another-fresh-skills");
+        Assert.False(Directory.Exists(freshRoot));
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+
+        var result = SkillImport.Validate(source, freshRoot, force: false);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.Equal("demo", result.Name);
+        Assert.Equal(2, result.Files);
+        Assert.True(result.Bytes > 0);
+        Assert.False(result.ReplacesInstalled);
+        Assert.False(Directory.Exists(freshRoot));   // Validate never creates the skills root
+        Assert.Null(_hashes.Expected("demo"));       // no database row written
+    }
+
+    [Fact]
+    public void Validate_reports_ReplacesInstalled_true_for_a_torn_replaced_only_store_and_allows_it_with_force_without_restoring()
+    {
+        var freshRoot = Path.Combine(_root, "torn-skills");
+        var replacedDir = Path.Combine(freshRoot, "demo.replaced");
+        Directory.CreateDirectory(replacedDir);
+        File.WriteAllBytes(Path.Combine(replacedDir, "SKILL.md"), new UTF8Encoding(false).GetBytes(ValidSkillBody));
+        var source = NewSourceDir("demo", "---\nname: demo\ndescription: v2.\n---\n# v2\n");
+
+        var result = SkillImport.Validate(source, freshRoot, force: true);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.True(result.ReplacesInstalled);
+        Assert.False(Directory.Exists(Path.Combine(freshRoot, "demo")));   // Validate never restores .replaced
+    }
+
+    [Fact]
+    public void Validate_returns_the_same_refusal_message_Run_would_for_an_invalid_name()
+    {
+        var source = NewSourceDir("Invalid_Name", ValidSkillBody);
+
+        var validated = SkillImport.Validate(source, _skillsRoot, force: false);
+        var run = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(run.Outcome, validated.Outcome);
+        Assert.Equal(run.Message, validated.Message);
+        AssertTargetAbsent("Invalid_Name");
+    }
+
+    [Fact]
+    public void Validate_returns_the_same_refusal_message_Run_would_for_a_missing_SKILL_md()
+    {
+        var dir = Path.Combine(_root, "sources", "empty");
+        Directory.CreateDirectory(dir);
+
+        var validated = SkillImport.Validate(dir, _skillsRoot, force: false);
+        var run = SkillImport.Run(dir, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(run.Outcome, validated.Outcome);
+        Assert.Equal(run.Message, validated.Message);
+    }
+
+    [Fact]
+    public void A_source_directory_that_is_itself_a_junction_is_refused_by_Validate()
+    {
+        var realDir = Path.Combine(_root, "real-demo");
+        Directory.CreateDirectory(realDir);
+        File.WriteAllText(Path.Combine(realDir, "SKILL.md"), ValidSkillBody);
+        Directory.CreateDirectory(Path.Combine(_root, "sources"));
+        var linkedSource = Path.Combine(_root, "sources", "demo");
+        CreateJunction(linkedSource, realDir);
+        try
+        {
+            var result = SkillImport.Validate(linkedSource, _skillsRoot, force: false);
+
+            Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+            Assert.Contains("link", result.Message, StringComparison.OrdinalIgnoreCase);
+            AssertTargetAbsent("demo");
+        }
+        finally
+        {
+            Directory.Delete(linkedSource, recursive: false);
+        }
+    }
+
+    [Fact]
+    public void A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
+
+        var result = SkillImport.Validate(source, _skillsRoot, force: false);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("helper.exe", result.Message);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
+    public void Run_does_not_enforce_D7s_reviewable_allowlist_the_CLI_path_stays_open_to_binaries()
+    {
+        // D7 (plan lines 172-183) is a propose-time refusal: "Skills needing a binary stay on the
+        // CLI path, where the owner is already at the keyboard." Same fixture as
+        // A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name above, which
+        // proves Validate still refuses it - this proves Run (the CLI path) does not.
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+    }
+
+    [Fact]
+    public void The_reviewable_extension_check_is_case_insensitive()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllText(Path.Combine(source, "notes.TXT"), "fine");
+        File.WriteAllText(Path.Combine(source, "readme.YML"), "fine: too");
+
+        var result = SkillImport.Validate(source, _skillsRoot, force: false);
+
+        Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
+    }
+
+    [Fact]
+    public void A_file_with_no_extension_is_refused()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        File.WriteAllText(Path.Combine(source, "LICENSE"), "MIT");
+
+        var result = SkillImport.Validate(source, _skillsRoot, force: false);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("LICENSE", result.Message);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
+    public void A_non_SKILL_md_file_over_MaxSkillChars_is_refused_at_validate_time()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+        File.WriteAllText(Path.Combine(source, "references", "notes.md"), new string('A', SkillStore.MaxSkillChars + 1));
+
+        var result = SkillImport.Validate(source, _skillsRoot, force: false);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains(SkillStore.MaxSkillChars.ToString(), result.Message);
+        AssertTargetAbsent("demo");
+    }
+
+    [Fact]
+    public void Validate_refuses_with_IoFailure_when_the_store_mutex_is_held_by_another_import()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        // Same literal prefix SkillImport and SkillStore both key their mutex on (M-4) - duplicated
+        // here on purpose, the way SkillStore.cs already duplicates it rather than exposing it.
+        var mutexName = PathMutex.Name("Global\\ChopItUp.Skills.", _skillsRoot);
+        // A named Mutex is reentrant for the THREAD that owns it (measured this session: calling
+        // Validate on the SAME thread that holds `external` sails straight through, no contention at
+        // all), so the holder must be a genuinely different OS thread - a plain Thread, not
+        // Task.Run/await, which can also resume a continuation on a different pool thread than the
+        // one that started it and make ReleaseMutex throw "unsynchronized block of code" (also
+        // measured this session).
+        using var external = new Mutex(initiallyOwned: true, mutexName);
+        SkillImportResult? result = null;
+        Exception? workerException = null;
+        var sw = Stopwatch.StartNew();
+        var worker = new Thread(() =>
+        {
+            try { result = SkillImport.Validate(source, _skillsRoot, force: false); }
+            catch (Exception e) { workerException = e; }
+        });
+        worker.Start();
+        worker.Join();
+        sw.Stop();
+        external.ReleaseMutex();
+
+        Assert.Null(workerException);
+        Assert.NotNull(result);
+        Assert.Equal(SkillImportOutcome.IoFailure, result!.Outcome);
+        Assert.Contains("busy", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(9), $"Elapsed {sw.Elapsed} - Validate should have waited out the same 10s mutex timeout Run uses.");
+    }
+
+    [Fact]
+    public void HashSourceTree_matches_the_manifest_Run_records_and_folds_to_the_same_ManifestDigest()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+        var sourceManifest = SkillImport.HashSourceTree(source);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        var installedManifest = _hashes.ExpectedTree("demo");
+        Assert.Equal(installedManifest.Keys.OrderBy(k => k), sourceManifest.Keys.OrderBy(k => k));
+        foreach (var key in sourceManifest.Keys)
+            Assert.Equal(installedManifest[key], sourceManifest[key]);
+        Assert.Equal(SkillImport.ManifestDigest(installedManifest), SkillImport.ManifestDigest(sourceManifest));
+    }
+
+    // --- M25 task 2: SkillImport.Run pins the staged copy (D5) ------------------------------------
+
+    [Fact]
+    public void FindTreeMismatch_names_the_first_differing_path_and_returns_null_when_the_manifests_agree()
+    {
+        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "bbb" };
+        var actualDiffers = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "ccc" };
+
+        Assert.Equal("references/notes.md", SkillImport.FindTreeMismatch(actualDiffers, expected));
+        Assert.Null(SkillImport.FindTreeMismatch(expected, expected));
+    }
+
+    [Fact]
+    public void FindTreeMismatch_names_a_path_present_in_only_one_manifest()
+    {
+        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa" };
+        var actualWithExtra = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["extra.md"] = "zzz" };
+
+        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(actualWithExtra, expected));
+        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(expected, actualWithExtra));
+    }
+
+    [Fact]
+    public void Run_refuses_when_the_staged_copy_disagrees_with_the_expected_tree_before_either_move_and_leaves_no_debris()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        var tamperedTree = new Dictionary<string, string>(SkillImport.HashSourceTree(source)) { ["SKILL.md"] = new string('0', 64) };
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, expectedTree: tamperedTree);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("SKILL.md", result.Message);
+        AssertTargetAbsent("demo");
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+        Assert.Null(_hashes.Expected("demo"));
+    }
+
+    [Fact]
+    public void Run_pinned_mismatch_leaves_a_previously_installed_skill_of_that_name_exactly_as_it_was()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(source, _skillsRoot, force: false, _hashes).Outcome);
+        var before = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md"));
+        var beforeHash = _hashes.Expected("demo");
+        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: v2.\n---\n# v2\n");
+        var tamperedTree = new Dictionary<string, string>(SkillImport.HashSourceTree(source)) { ["SKILL.md"] = new string('0', 64) };
+
+        var result = SkillImport.Run(source, _skillsRoot, force: true, _hashes, expectedTree: tamperedTree);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Equal(before, File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", "SKILL.md")));
+        Assert.Equal(beforeHash, _hashes.Expected("demo"));
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.replaced")));
+        Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+    }
+
+    [Fact]
+    public void Run_given_an_expected_tree_that_matches_the_staged_copy_installs_normally()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
+        var expectedTree = SkillImport.HashSourceTree(source);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes, expectedTree: expectedTree);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.Equal("demo", result.Name);
+        Assert.True(File.Exists(Path.Combine(_skillsRoot, "demo", "references", "notes.md")));
+    }
+
+    [Fact]
+    public void Run_given_no_expected_tree_behaves_exactly_as_it_did_before_this_task()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
+        Assert.Equal("demo", result.Name);
+    }
 }

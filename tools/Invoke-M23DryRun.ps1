@@ -176,7 +176,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-9' -Passed ($health.schema -eq 9) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-10' -Passed ($health.schema -eq 10) -Detail "schema=$($health.schema)"
 
     $script:Tokens = Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json
 

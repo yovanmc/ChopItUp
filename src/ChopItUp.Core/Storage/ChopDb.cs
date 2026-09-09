@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 9;
+    public const int LatestSchemaVersion = 10;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -118,6 +118,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 7) ApplyV7(conn);
             if (GetUserVersion(conn) < 8) ApplyV8(conn);
             if (GetUserVersion(conn) < 9) ApplyV9(conn);
+            if (GetUserVersion(conn) < 10) ApplyV10(conn);
             return 0;
         });
     }
@@ -571,6 +572,51 @@ public sealed class ChopDb
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = ddl + "PRAGMA user_version = 9;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>v10 (row 25, task 3): <c>skill_proposals</c> — the same "agent proposes, owner
+    /// approves" shape row 18's <c>memory_proposals</c> already carries, repeated for skill imports
+    /// over the hub's own MCP/API surface rather than the CLI. <c>tree_sha256</c> is
+    /// <c>SkillImport.ManifestDigest(SkillImport.HashSourceTree(sourceDir))</c> — one value binding the
+    /// proposal to the exact bytes shown to the owner, re-checked against the staged copy before the
+    /// swap (D5, task 2). <c>replaces_installed</c> and <c>files</c>/<c>bytes</c> are what the listing
+    /// shows without re-walking the tree on every unauthenticated GET. <c>force</c> is persisted at
+    /// propose time rather than derived at approve time: deriving it from <c>replaces_installed</c>
+    /// would let a stale value decide a destructive replace, and hard-coding it true would let a card
+    /// the owner read as "new" silently overwrite a skill installed since (pass 2 blocker 2) — approve
+    /// (task 7) re-checks the installed state against it rather than trusting either extreme.
+    /// <c>installed_at</c> stays NULL between "marked approved" and "the install finished", which is
+    /// what lets a repeat approval detect and complete an install that was already applied (task 7's
+    /// Retry arm) instead of re-running one. A brand-new table, so IF NOT EXISTS is enough — no
+    /// per-column ALTER probe is needed the way v6/v7/v9's added columns need one. Index mirrors
+    /// <c>ix_memory_proposals_status</c>. Stamp last (LESSONS, M1).</summary>
+    private static void ApplyV10(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS skill_proposals (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id            TEXT NOT NULL REFERENCES rooms(id),
+                author_id          TEXT NOT NULL REFERENCES participants(id),
+                name               TEXT NOT NULL,
+                source_dir         TEXT NOT NULL,
+                tree_sha256        TEXT NOT NULL,
+                replaces_installed INTEGER NOT NULL,
+                force              INTEGER NOT NULL,
+                files              INTEGER NOT NULL,
+                bytes              INTEGER NOT NULL,
+                status             TEXT NOT NULL DEFAULT 'pending',
+                created_at         TEXT NOT NULL,
+                decided_at         TEXT,
+                installed_at       TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_skill_proposals_status ON skill_proposals(status, room_id, id);
+            PRAGMA user_version = 10;
+            """;
         cmd.ExecuteNonQuery();
         tx.Commit();
     }
