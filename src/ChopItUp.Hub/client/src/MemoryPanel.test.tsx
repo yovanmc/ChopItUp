@@ -79,3 +79,85 @@ describe('MemoryPanel (row 18, AC5)', () => {
     expect(html).toContain('Vim.');
   });
 });
+
+/** Row 23, task 6 (AC7, ticket 06). A consolidation's body is the WHOLE topic file, so the card that
+ *  showed a body showed the owner nothing about what is changing. These cases pin the four things the
+ *  ticket says decide the answer — the comparison itself, the entries it removes, the entries losing
+ *  their approval record, and (while the proposal is still rejectable) the absence of a commit trail —
+ *  plus the two ways this card can go wrong: markup smuggled in through a spawn-authored diff line, and
+ *  a rewrite that arrives without a diff rendering as an empty box. */
+const REWRITE: MemoryProposal = {
+  ...BASE,
+  id: 9,
+  kind: 'rewrite',
+  title: 'Consolidate user',
+  body: '# user\n\n## Editor\n\nVS Code.\n',
+  diff: [
+    { op: 'same', text: '# user' },
+    { op: 'skip', text: '… 12 unchanged lines …' },
+    { op: 'del', text: '## Editor of choice' },
+    { op: 'add', text: '## Editor' },
+  ],
+  removedTitles: ['Editor of choice', 'Shell'],
+  addedTitles: ['Editor'],
+  provenanceLost: 2,
+  gitAvailable: true,
+};
+
+describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
+  test('a rewrite card renders the diff with per-op classes and not the plain body', () => {
+    const html = render(REWRITE);
+
+    expect(html).toContain('memory-diff');
+    expect(html).toContain('memory-diff-same');
+    expect(html).toContain('memory-diff-add');
+    expect(html).toContain('memory-diff-del');
+    expect(html).toContain('memory-diff-skip');
+    expect(html).toContain('… 12 unchanged lines …');
+    expect(html).not.toContain('memory-body');
+  });
+
+  test('a diff line is a text node, never markup', () => {
+    const html = render({
+      ...REWRITE,
+      diff: [{ op: 'add', text: '## <script>alert(1)</script>' }],
+    });
+
+    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('<script>');
+  });
+
+  test('the card names the entries it removes and how many lose their approval record', () => {
+    const html = render(REWRITE);
+
+    expect(html).toContain('Removes 2 entries');
+    expect(html).toContain('Editor of choice');
+    expect(html).toContain('Shell');
+    expect(html).toContain('2 surviving entries lose their approval record');
+  });
+
+  test('a pending rewrite with no git trail says so and names the backup that will be the only copy', () => {
+    const html = render({ ...REWRITE, gitAvailable: false });
+
+    expect(html).toContain('memory-diff-nogit');
+    expect(html).toContain('topics/user.md.rewrite-9.bak');
+  });
+
+  test('the no-git warning is absent when a commit can be made', () => {
+    expect(render(REWRITE)).not.toContain('memory-diff-nogit');
+  });
+
+  test('a rewrite with a null diff falls back to the body rather than an empty box', () => {
+    const html = render({ ...REWRITE, diff: null });
+
+    expect(html).not.toContain('memory-diff');
+    expect(html).toContain('memory-body');
+    expect(html).toContain('VS Code.');
+  });
+
+  /* The ticket's height clause — a 24 KB diff must scroll inside the card rather than push Reject and
+     Approve off screen — is `max-height` + `overflow-y` on `.memory-diff` in styles.css. It is not
+     asserted here: vitest stubs every CSS import to an empty string, and reading the file instead
+     would need @types/node, which this row is not allowed to add. Its gate is T9's interactive check
+     against the live UI. */
+});

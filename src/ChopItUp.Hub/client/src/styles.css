@@ -1410,6 +1410,108 @@ input {
   color: var(--text);
 }
 
+/* ---- Row 23 (AC7): a consolidation replaces the whole topic file, so its card shows the change
+   rather than the body. The three lines above the diff are the ones that decide the answer, and they
+   stay in the fixed part of the card; only the comparison scrolls. */
+.memory-rewrite-head {
+  display: grid;
+  gap: 3px;
+  margin: 2px 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--line);
+  font-size: 12px;
+}
+.memory-rewrite-head p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.memory-diff-removes {
+  color: var(--dim);
+}
+/* The titles themselves are the sentence's payload — the entries that stop existing on approval. */
+.memory-diff-removed {
+  color: var(--text);
+  font-weight: 600;
+}
+/* Both borrow the banner's tone for the same reason the two content flags do: they are the facts that
+   should change a decision, not provenance the owner merely notes. */
+.memory-diff-lost,
+.memory-diff-nogit {
+  color: var(--danger-ink);
+}
+.memory-diff-nogit code {
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+/* The cap is the whole point: a 24,000-character topic renders ~600 lines, and a card that grows with
+   it pushes Reject and Approve past the panel's own scroll (.memory, min(55vh, 400px)) — the owner
+   would be deciding without seeing the buttons. 220px keeps ~12 lines in view inside a card that still
+   fits the panel, and the rest scrolls here. */
+.memory-diff {
+  max-height: min(30vh, 220px);
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dim) 8%, var(--bg));
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  scrollbar-color: var(--line) transparent;
+  /* Red and green are the diff idiom, taken from the palette (both tuned for light and dark) rather
+     than from --accent, which is the participant's colour: the same removal must not be orange from
+     claude and green from codex. Colour is never the only signal — the gutter mark below carries it
+     too, for a reader who cannot separate the two. */
+  --diff-add: var(--accent-codex);
+  --diff-del: var(--danger);
+}
+.memory-diff-line {
+  padding: 0 8px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.memory-diff-line::before {
+  display: inline-block;
+  width: 1.4em;
+  padding-left: 4px;
+  color: var(--faint);
+  content: "\00a0";
+}
+.memory-diff-same {
+  color: var(--dim);
+}
+.memory-diff-add {
+  color: var(--text);
+  background: color-mix(in srgb, var(--diff-add) 16%, transparent);
+}
+.memory-diff-add::before {
+  color: var(--diff-add);
+  content: "+";
+}
+.memory-diff-del {
+  color: var(--text);
+  background: color-mix(in srgb, var(--diff-del) 16%, transparent);
+}
+.memory-diff-del::before {
+  color: var(--diff-del);
+  content: "\2212";
+}
+/* Not a line of either file: the hub's label for a run it elided, or for input it cut at its cap. */
+.memory-diff-skip {
+  margin: 2px 0;
+  color: var(--faint);
+  font-family: var(--font);
+  font-size: 11px;
+  font-style: italic;
+  text-align: center;
+}
+.memory-diff-skip::before {
+  content: none;
+}
+
 .memory-actions {
   display: flex;
   justify-content: flex-end;

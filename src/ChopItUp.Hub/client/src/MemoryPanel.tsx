@@ -19,6 +19,13 @@ const FLAG_TEXT: Record<string, string> = {
   'from-directory': 'proposed from a room with files and network',
 };
 
+/** Row 23 (AC7): the name the pre-consolidation copy takes on approval, mirroring `MemoryStore.PathOf`
+ *  plus `Rewrite`'s `<file>.rewrite-<id>.bak`. Built here because a still-pending proposal has no
+ *  `writtenTo` to read it from, and a warning that cannot name the file is not a warning. */
+function backupPath(topic: string, id: number): string {
+  return `${topic === 'core' ? 'MEMORY.md' : `topics/${topic}.md`}.rewrite-${id}.bak`;
+}
+
 /** The owner's approval surface (D15: agents propose, the owner approves in the room). Every undecided
  *  proposal of the open room, oldest first — pending ones with Reject and Approve, and the rare
  *  approved-but-unwritten one (the hub died between marking and writing) with Retry. Renders nothing
@@ -48,6 +55,15 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
         {proposals.map((p) => {
           const busy = busyId === p.id;
           const unwritten = p.status === 'approved';
+          // Row 23 (AC7, ticket 06): a consolidation's body is the whole topic file, so the card shows
+          // the change instead. An empty or missing diff falls back to the body — the hub sends null
+          // for every other kind, and an empty box would tell the owner less than the raw text does.
+          const diff = p.kind === 'rewrite' && p.diff && p.diff.length > 0 ? p.diff : null;
+          const removed = p.removedTitles ?? [];
+          const lost = p.provenanceLost ?? 0;
+          // Finding J: availability is knowable now, and this is the last moment the owner can reject.
+          // The Retry card cannot be rejected any more, so the warning would only be noise there.
+          const noGit = diff !== null && !unwritten && p.gitAvailable === false;
           return (
             <li key={p.id} className={`memory-card ${accentClass(p.authorId)}`}>
               <div className="memory-meta">
@@ -83,7 +99,47 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                   </ul>
                 </div>
               )}
-              <div className="body memory-body" dangerouslySetInnerHTML={{ __html: renderBody(p.body) }} />
+              {diff ? (
+                <>
+                  {/* What decides the answer sits above the diff, in the part of the card that never
+                      scrolls: the entries this destroys, the approval records it drops, and whether
+                      anything but the backup would survive it. */}
+                  <div className="memory-rewrite-head">
+                    <p className="memory-diff-removes">
+                      {removed.length === 0
+                        ? 'Removes no entries'
+                        : removed.length === 1
+                          ? 'Removes 1 entry: '
+                          : `Removes ${removed.length} entries: `}
+                      {removed.length > 0 && <span className="memory-diff-removed">{removed.join(', ')}</span>}
+                    </p>
+                    {lost > 0 && (
+                      <p className="memory-diff-lost">
+                        {lost === 1
+                          ? '1 surviving entry loses its approval record'
+                          : `${lost} surviving entries lose their approval record`}
+                      </p>
+                    )}
+                    {noGit && (
+                      <p className="memory-diff-nogit">
+                        No git trail here: after approval <code>{backupPath(p.topic, p.id)}</code> is the only
+                        copy of the current file.
+                      </p>
+                    )}
+                  </div>
+                  {/* Every line is spawn-authored file content, so every line is a text node. The op is
+                      a class, never markup the diff itself could close. */}
+                  <ul className="memory-diff" aria-label={`Changes to ${p.topic}`}>
+                    {diff.map((line, i) => (
+                      <li key={i} className={`memory-diff-line memory-diff-${line.op}`}>
+                        {line.text}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                <div className="body memory-body" dangerouslySetInnerHTML={{ __html: renderBody(p.body) }} />
+              )}
               {p.related.length > 0 && (
                 <section className="memory-related" aria-label={`Existing entries in ${p.topic}`}>
                   <span className="memory-related-title">Closest entries already in {p.topic}</span>
