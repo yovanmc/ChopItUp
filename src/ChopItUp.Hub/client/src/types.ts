@@ -179,6 +179,59 @@ export interface MemoryProposal {
   gitAvailable?: boolean | null;
 }
 
+/** One gate a proposed skill declares in its `SKILL.md` frontmatter. `run_gate` resolves it to
+ *  `scripts/<name>.ps1` inside the installed tree and runs it under `pwsh` with `arguments` appended
+ *  (Mcp/RunTools.cs), which is why the card shows both the declaration and the script's own text. */
+export interface SkillGate {
+  name: string;
+  arguments: string[];
+}
+
+/** One file of a proposed skill's source tree: the relative path the install would create, and the
+ *  whole of its text. The hub sends every file (D7 refuses any extension outside the reviewable-text
+ *  allowlist and any file over `SkillStore.MaxSkillChars` at propose time, so nothing that reaches a
+ *  card is un-showable) — or none of them, when `sourceMissing`/`sourceChanged` is set. */
+export interface SkillFile {
+  path: string;
+  text: string;
+}
+
+/** Mirrors `GET /api/skills/proposals` (Web/SkillsApi.cs `Row`). An agent proposes a skill over
+ *  `propose_skill`; only the owner, with a bearer token, may approve or reject it (D1/D2).
+ *
+ *  `approvable` is the hub's own answer (`SkillsApi.IsApprovable`), computed from the same conditions
+ *  `Approve` enforces before it will attempt an install. The card renders that flag; it must never
+ *  re-derive one from `sourceMissing`/`sourceChanged`, or the two drift apart the moment the hub adds
+ *  a condition.
+ *
+ *  `treeSha256` is the manifest digest pinned at propose time — the one value the card, the approve
+ *  body and the staged copy must all three agree on before anything installs (D5), so an approval
+ *  sends back exactly the hash of the tree it displayed. */
+export interface SkillProposal {
+  id: number;
+  roomId: string;
+  authorId: string;
+  name: string;
+  /** Whether a skill of this name was already installed when the proposal was recorded. */
+  replacesInstalled: boolean;
+  /** The `force` the proposer asked for, persisted at propose time rather than derived at approve. */
+  force: boolean;
+  fileCount: number;
+  bytes: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  decidedAt: string | null;
+  /** Null while a row is approved but its install has not finished — the Retry state (AC8). */
+  installedAt: string | null;
+  sourceMissing: boolean;
+  sourceChanged: boolean;
+  approvable: boolean;
+  treeSha256: string;
+  /** Empty when the hub suppressed the tree (`sourceMissing` or `sourceChanged`), never truncated. */
+  entries: SkillFile[];
+  gates: SkillGate[];
+}
+
 export type MemorySource = 'claude' | 'codex';
 
 /** Mirrors `POST /api/memory/import`. */

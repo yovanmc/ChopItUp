@@ -112,9 +112,16 @@ public static class SkillsApi
         return Row(p, sourceMissing: false, sourceChanged: false, entries, gateList);
     }
 
+    /// <summary>Task 8 correction: the listing carries <see cref="SkillProposal.TreeSha256"/>. D5 makes
+    /// the pinned digest "the one value the owner's card, the request body and the staged copy must all
+    /// three agree on", and <see cref="Approve"/> refuses a first decision whose body does not carry it
+    /// — but the row this shape returns omitted it, so the SPA had no way to obtain the hash it is
+    /// required to send and every approval from the card would have been refused. Disclosing it to an
+    /// unauthenticated <c>GET</c> adds nothing: it is a digest of the file contents this same response
+    /// already returns in full.</summary>
     private static object Row(SkillProposal p, bool sourceMissing, bool sourceChanged, IReadOnlyList<object>? entries, IReadOnlyList<object>? gates) => new
     {
-        p.Id, p.RoomId, p.AuthorId, p.Name, p.ReplacesInstalled, p.Force,
+        p.Id, p.RoomId, p.AuthorId, p.Name, p.TreeSha256, p.ReplacesInstalled, p.Force,
         FileCount = p.Files, p.Bytes, p.Status, p.CreatedAt, p.DecidedAt, p.InstalledAt,
         SourceMissing = sourceMissing, SourceChanged = sourceChanged,
         Approvable = IsApprovable(p, sourceMissing, sourceChanged),

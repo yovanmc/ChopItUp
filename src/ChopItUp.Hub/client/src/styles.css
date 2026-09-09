@@ -1519,6 +1519,306 @@ input {
   margin-top: 8px;
 }
 
+/* ---- Skill proposals (M25): the same strip as the memory panel, one row lower, for a decision with
+   a bigger blast radius — an installed skill's scripts/<gate>.ps1 is executed under pwsh by run_gate,
+   so approving one authorises code. The whole control is that the owner reads every byte first, which
+   is why this panel is taller than the memory one and why nothing in it collapses. */
+.skills {
+  flex: none;
+  /* Taller than .memory's min(55vh, 400px): a card here carries the gates, the path list AND the full
+     text of every file, and a panel that shows two lines of a .ps1 at a time is a disclosure in name
+     only. The room still has to be usable underneath, so it stops at 70% of a short window. */
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  border-top: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--danger) 4%, var(--bg));
+  scrollbar-color: var(--line) transparent;
+}
+.skills-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 8px 24px 4px;
+  font-size: 12px;
+}
+.skills-title {
+  font-weight: 600;
+}
+.skills-hint {
+  color: var(--dim);
+}
+.skills-forget {
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+/* D2: a one-time paste, in the panel header rather than a dialog — the owner is already looking here,
+   and a modal between "I want to approve this" and the paste is one more place to lose the token. */
+.skills-token {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin-left: auto;
+}
+.skills-token-label {
+  color: var(--dim);
+}
+/* Specificity, not source order: `.field` (the dialog input, defined further down this file) sets
+   width:100%, which at equal weight would win and push the label and button onto their own rows. */
+.skills-token .skills-token-field {
+  width: 220px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.skills-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 24px 10px;
+  display: grid;
+  gap: 8px;
+}
+.skill-card {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+}
+.skill-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.skill-avatar {
+  width: 20px;
+  height: 20px;
+  font-size: 9px;
+}
+.skill-author {
+  font-weight: 600;
+  color: var(--accent);
+}
+.skill-id {
+  margin-left: auto;
+  color: var(--dim);
+}
+.skill-state {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-owner) 18%, transparent);
+  font-size: 11px;
+}
+.skill-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.skill-name {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+/* New-versus-replaces is the single fact that changes what approval destroys, so it rides beside the
+   name rather than below the fold. Only the destructive half takes the danger tone. */
+.skill-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+.skill-badge-new {
+  background: color-mix(in srgb, var(--dim) 14%, transparent);
+  color: var(--text);
+}
+.skill-badge-replace {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-ink);
+}
+.skill-summary {
+  margin: 2px 0 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+.skill-summary-scripts {
+  color: var(--danger-ink);
+}
+/* The value the approval sends back and the staged copy is checked against before the swap (D5). It
+   is small and dim on purpose: it is here so the owner CAN compare it, not so they must read it. */
+.skill-pin {
+  margin: 2px 0 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.skill-pin code {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.skill-pin-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* The page banner's tone, scoped into a card: several proposals can be on screen and a refusal
+   belongs to the one that produced it. */
+.skill-banner {
+  margin: 6px 0;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-radius: 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+  color: var(--danger-ink);
+}
+.skill-note {
+  margin: 6px 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+.skill-section-title {
+  display: block;
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.skill-gates ul,
+.skill-paths ul,
+.skill-files ul {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.skill-gates li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 8px;
+  font-size: 12px;
+}
+/* A gate is the executable entry point: this is the name a participant passes to run_gate and the
+   script that then runs. Both are stated, in the danger tone, because "declares a gate" is the single
+   line on this card that means "this can execute". */
+.skill-gate-name {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-ink);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.skill-gate-run {
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.skill-gate-run code {
+  font-family: var(--mono);
+  color: var(--text);
+}
+.skill-gates-none {
+  margin: 4px 0 0;
+  color: var(--dim);
+  font-size: 12px;
+}
+.skill-paths li {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+.skill-paths li.skill-path-script code {
+  color: var(--danger-ink);
+  font-weight: 600;
+}
+.skill-file {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--dim) 8%, var(--bg));
+}
+/* The executable files carry the danger rule down their side, the way a retired memory entry does:
+   colour is never the only signal, the "PowerShell — runs on this machine" label says it in words. */
+.skill-file.skill-script {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  border-left: 3px solid var(--danger);
+}
+.skill-file-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+.skill-file-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.skill-file-warn {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger-ink);
+  font-size: 11px;
+}
+/* Every file is shown whole — no truncation, no disclosure widget (D7: the owner is shown every
+   byte). A long file scrolls in its own box so it cannot push the buttons past the panel's scroll,
+   which is the same failure the memory diff's cap exists to prevent. */
+.skill-file-text,
+.skill-file-body {
+  max-height: min(40vh, 320px);
+  overflow: auto;
+  margin: 0;
+  padding: 6px 8px;
+  scrollbar-color: var(--line) transparent;
+}
+.skill-file-text {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.skill-file-body {
+  font-size: 13px;
+}
+/* The rendered document is what the owner READS; these are the bytes the hub actually hands a spawn.
+   Both are on the card because markdown drops HTML comments and link targets outright (measured), and
+   SKILL.md is the one file whose text becomes a model's instructions. */
+.skill-file-raw {
+  border-top: 1px dashed var(--line);
+}
+.skill-file-raw-label {
+  display: block;
+  padding: 4px 8px 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+.skill-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.skill-readonly {
+  margin-right: auto;
+  color: var(--dim);
+  font-size: 12px;
+}
+
 /* ---- Memory import dialog fields */
 .field-group {
   display: flex;

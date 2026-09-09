@@ -11,10 +11,20 @@ import NewRoomDialog from './NewRoomDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import RunBar from './RunBar';
+import SkillPanel from './SkillPanel';
 import Thread from './Thread';
 import TrailDialog from './TrailDialog';
+import { readOwnerToken, writeOwnerToken } from './ownerToken';
 import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
-import type { ExchangeSnapshot, MemoryImportResult, MemoryProposal, Message, Room, RunSnapshot } from './types';
+import type {
+  ExchangeSnapshot,
+  MemoryImportResult,
+  MemoryProposal,
+  Message,
+  Room,
+  RunSnapshot,
+  SkillProposal,
+} from './types';
 
 /** Shared by the fetch paths (GET on room switch/reconnect) and the socket path (`ExchangeChanged`):
  *  `null` accepts anything, a `seq` bump for the room already shown always wins, and a snapshot for a
@@ -43,6 +53,14 @@ export default function App() {
   const [stopping, setStopping] = useState(false);
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
+  const [skillProposals, setSkillProposals] = useState<SkillProposal[]>([]);
+  const [decidingSkill, setDecidingSkill] = useState<number | null>(null);
+  /** The hub's own refusal sentence per skill proposal, shown on the card that produced it rather
+   *  than in the page banner: several cards can be on screen and a decision is per card. */
+  const [skillRefusals, setSkillRefusals] = useState<Record<number, string>>({});
+  /** D2: read once at mount from `localStorage`, replaced by a one-time paste. Held in state as well
+   *  as in storage so a browser that refuses storage still works for the session. */
+  const [ownerToken, setOwnerToken] = useState<string | null>(() => readOwnerToken());
   const [memoryImportOpen, setMemoryImportOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
@@ -104,6 +122,13 @@ export default function App() {
   const loadProposals = useCallback(async (room: string, signal?: AbortSignal) => {
     const list = await api.listProposals(room, signal);
     if (currentRoom.current === room) setProposals(list);
+  }, []);
+
+  /** M25: undecided skill proposals of the open room — pending ones, and the approved-but-uninstalled
+   *  ones the Retry state exists for. Same room guard as `loadProposals`, for the same reason. */
+  const loadSkillProposals = useCallback(async (room: string, signal?: AbortSignal) => {
+    const list = await api.listSkillProposals(room, signal);
+    if (currentRoom.current === room) setSkillProposals(list);
   }, []);
 
   /** Every path into the thread goes through here. Dedup is by id because the owner's own post
@@ -209,6 +234,12 @@ export default function App() {
       if (open && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
         loadProposals(message.roomId).catch(() => undefined);
       }
+      // M25, the same wiring for the same reason: every skill-proposal state change (proposed,
+      // approved-and-installed, rejected) is announced by a hub note starting with "Skill proposal ",
+      // and that note IS the refresh signal — the card appears without the owner reloading anything.
+      if (open && isSystem(message.authorId) && message.body.startsWith('Skill proposal ')) {
+        loadSkillProposals(message.roomId).catch(() => undefined);
+      }
       // Row 19: a run starts, parks and ends by hub note, and no event carries the run itself — so a
       // note from the hub is the cue to re-read it. Cheap, loopback, and only for the open room.
       if (open && isSystem(message.authorId)) refreshRun(message.roomId).catch(() => undefined);
@@ -257,6 +288,7 @@ export default function App() {
             api.getExchange(room).then((snapshot) => setExchange((previous) => applyExchange(previous, snapshot))),
             refreshRun(room),
             loadProposals(room),
+            loadSkillProposals(room),
           ]),
         )
         .catch((failure) => setError(api.describeError(failure)));
@@ -276,7 +308,7 @@ export default function App() {
       joinedGroups.current.clear();
       void connection.stop();
     };
-  }, [merge, loadProposals, refreshRun, scheduleRead, joinGroups, groupIds]);
+  }, [merge, loadProposals, loadSkillProposals, refreshRun, scheduleRead, joinGroups, groupIds]);
 
   // Join before reading, so a post that lands mid-read is broadcast to us and merged rather than
   // dropping into the gap between the read and the subscription. The exchange snapshot is reset here
@@ -287,6 +319,8 @@ export default function App() {
     setExchange(null);
     setRun(null);
     setProposals([]);
+    setSkillProposals([]);
+    setSkillRefusals({});
     if (!roomId) return;
     const abort = new AbortController();
     // Usually already joined (the `rooms` effect subscribes to everything); this covers the room
@@ -310,6 +344,9 @@ export default function App() {
         loadProposals(roomId, abort.signal).catch((failure) => {
           if (!abort.signal.aborted) setError(api.describeError(failure));
         }),
+        loadSkillProposals(roomId, abort.signal).catch((failure) => {
+          if (!abort.signal.aborted) setError(api.describeError(failure));
+        }),
       ]);
     });
     return () => {
@@ -321,7 +358,7 @@ export default function App() {
       // No LeaveRoom: switching away must not unsubscribe us, or the room we left stops reporting
       // its unread badge, count and activity order until the next full refresh.
     };
-  }, [roomId, loadProposals, refreshRun, joinGroups]);
+  }, [roomId, loadProposals, loadSkillProposals, refreshRun, joinGroups]);
 
   useEffect(() => {
     if (!roomId) return;
@@ -394,6 +431,36 @@ export default function App() {
     },
     [roomId, loadProposals],
   );
+
+  /** M25 (D1/D2): the owner's word on a proposed skill, carrying the pasted bearer token and, on an
+   *  approve, the tree hash the card displayed. Refusals — 401/403 from the gate, 409 from a spawn in
+   *  flight, a changed source or a stale installed-or-not state — land on the card that produced them
+   *  and the list is re-read, so what the owner sees next is the hub's current answer rather than the
+   *  stale row that was just refused. */
+  const decideSkill = useCallback(
+    async (proposal: SkillProposal, decision: 'approve' | 'reject') => {
+      if (!roomId || ownerToken === null) return;
+      setDecidingSkill(proposal.id);
+      setSkillRefusals((previous) => {
+        if (!(proposal.id in previous)) return previous;
+        const next = { ...previous };
+        delete next[proposal.id];
+        return next;
+      });
+      try {
+        await api.decideSkillProposal(proposal, decision, ownerToken);
+        setSkillProposals((previous) => previous.filter((p) => p.id !== proposal.id));
+      } catch (failure) {
+        setSkillRefusals((previous) => ({ ...previous, [proposal.id]: api.describeError(failure) }));
+        loadSkillProposals(roomId).catch(() => undefined);
+      } finally {
+        setDecidingSkill(null);
+      }
+    },
+    [roomId, ownerToken, loadSkillProposals],
+  );
+
+  const takeOwnerToken = useCallback((token: string | null) => setOwnerToken(writeOwnerToken(token)), []);
 
   const onMemoryImported = useCallback(
     (_result: MemoryImportResult) => {
@@ -474,6 +541,15 @@ export default function App() {
               busyId={deciding}
               locked={(exchange?.inFlight.length ?? 0) > 0}
               onDecide={decide}
+            />
+            <SkillPanel
+              proposals={skillProposals}
+              busyId={decidingSkill}
+              locked={(exchange?.inFlight.length ?? 0) > 0}
+              hasToken={ownerToken !== null}
+              refusals={skillRefusals}
+              onDecide={decideSkill}
+              onToken={takeOwnerToken}
             />
             <RunBar run={run} />
             <ExchangeBar exchange={exchange} stopping={stopping} onStop={stop} />

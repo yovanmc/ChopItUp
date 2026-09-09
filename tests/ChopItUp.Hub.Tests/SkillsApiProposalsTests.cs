@@ -100,6 +100,26 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Equal("check-it", gate.GetProperty("name").GetString());
     }
 
+    /// <summary>Task 8: the card decides from the LISTING and nothing else — it never calls
+    /// <c>propose_skill</c>, so the only place it can learn the pinned digest is this payload. D5 makes
+    /// that digest the one value the card, the request body and the staged copy must all three agree
+    /// on, and <see cref="SkillsApi"/>'s approve refuses a first decision whose body does not carry it,
+    /// so a listing that omits it makes every approval from the card impossible. This drives the whole
+    /// round trip the SPA performs: read the listing, send back the hash it carried, install.</summary>
+    [Fact]
+    public async Task GET_carries_the_pinned_tree_hash_so_an_approval_driven_only_by_the_listing_succeeds()
+    {
+        var source = NewRoomSource("demo", ValidSkillBody);
+        var proposed = await ProposeAsync(source);
+
+        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
+        var listed = row.GetProperty("treeSha256").GetString();
+
+        Assert.Equal(proposed.GetProperty("tree_sha256").GetString(), listed);
+        Assert.Equal(HttpStatusCode.OK, (await PostApprove(row.GetProperty("id").GetInt64(), listed)).StatusCode);
+        Assert.Contains("demo", Skills.List().Select(s => s.Name));
+    }
+
     [Fact]
     public async Task GET_reports_sourceChanged_and_suppresses_file_contents_once_the_source_has_been_edited()
     {

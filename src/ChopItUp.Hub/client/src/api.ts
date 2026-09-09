@@ -8,6 +8,7 @@ import type {
   Room,
   RunSnapshot,
   Skill,
+  SkillProposal,
   Trail,
 } from './types';
 
@@ -181,6 +182,41 @@ export async function decideProposal(
   signal?: AbortSignal,
 ): Promise<MemoryProposal> {
   return unwrap<MemoryProposal>(await fetch(`/api/memory/proposals/${id}/${decision}`, { method: 'POST', signal }));
+}
+
+/** M25 (D1): reading skill proposals needs no credential — `GET` stays unauthenticated like the rest
+ *  of `/api`, because a proposal discloses only what the proposer already put there. Deciding one does
+ *  need the owner's token; that is `decideSkillProposal` below. */
+export async function listSkillProposals(roomId: string, signal?: AbortSignal): Promise<SkillProposal[]> {
+  return unwrap<SkillProposal[]>(
+    await fetch(`/api/skills/proposals?room=${encodeURIComponent(roomId)}&status=undecided`, { signal }),
+  );
+}
+
+/** D2: the owner's bearer token goes on these two calls and nowhere else. 401 (no or unresolvable
+ *  credential), 403 (a credential that is not the owner's) and every 409 refusal come back through
+ *  `unwrap` as a thrown `Error` carrying the hub's own sentence, which the card shows verbatim.
+ *
+ *  Approve sends back the tree hash the card displayed (D5): the hub compares it to the digest pinned
+ *  at propose time and, when they agree, passes that manifest down to `SkillImport.Run`, which checks
+ *  the STAGED copy against it before the swap. So the bytes the owner read are the bytes that install.
+ *  A Retry sends it too — the hub enforces the check whenever the body carries a hash. */
+export async function decideSkillProposal(
+  proposal: SkillProposal,
+  decision: 'approve' | 'reject',
+  token: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const init: RequestInit =
+    decision === 'approve'
+      ? {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ treeSha256: proposal.treeSha256 }),
+          signal,
+        }
+      : { method: 'POST', headers: { authorization: `Bearer ${token}` }, signal };
+  await unwrap<unknown>(await fetch(`/api/skills/proposals/${proposal.id}/${decision}`, init));
 }
 
 /** Undo for a mis-targeted import: drops every PENDING proposal that import created. */
