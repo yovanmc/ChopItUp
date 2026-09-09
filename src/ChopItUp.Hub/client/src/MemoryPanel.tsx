@@ -20,8 +20,9 @@ const FLAG_TEXT: Record<string, string> = {
 };
 
 /** Row 23 (AC7): the name the pre-consolidation copy takes on approval, mirroring `MemoryStore.PathOf`
- *  plus `Rewrite`'s `<file>.rewrite-<id>.bak`. Built here because a still-pending proposal has no
- *  `writtenTo` to read it from, and a warning that cannot name the file is not a warning. */
+ *  plus `Rewrite`'s `<file>.rewrite-<id>.bak`. Built here because neither card state this warning can
+ *  appear on has written anything yet — `writtenTo` is null on both — and a warning that cannot name
+ *  the file is not a warning. */
 function backupPath(topic: string, id: number): string {
   return `${topic === 'core' ? 'MEMORY.md' : `topics/${topic}.md`}.rewrite-${id}.bak`;
 }
@@ -61,9 +62,12 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
           const diff = p.kind === 'rewrite' && p.diff && p.diff.length > 0 ? p.diff : null;
           const removed = p.removedTitles ?? [];
           const lost = p.provenanceLost ?? 0;
-          // Finding J: availability is knowable now, and this is the last moment the owner can reject.
-          // The Retry card cannot be rejected any more, so the warning would only be noise there.
-          const noGit = diff !== null && !unwritten && p.gitAvailable === false;
+          // Finding J: availability is knowable before the write, which is what makes it worth saying.
+          // Both card states it can appear on are still approvable — Retry is what performs the write —
+          // and on both, nothing has been written yet, so the backup really would be the only copy. AC7
+          // scopes the whole card contract to a rewrite "pending or approved-but-unwritten", and
+          // `MemoryApi.MapForList` computes `gitAvailable` for exactly that pair.
+          const noGit = diff !== null && p.gitAvailable === false;
           return (
             <li key={p.id} className={`memory-card ${accentClass(p.authorId)}`}>
               <div className="memory-meta">
@@ -126,8 +130,8 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                     )}
                     {noGit && (
                       <p className="memory-diff-nogit">
-                        No git trail here: after approval <code>{backupPath(p.topic, p.id)}</code> is the only
-                        copy of the current file.
+                        No git trail here: once this is written <code>{backupPath(p.topic, p.id)}</code> is the
+                        only copy of the current file.
                       </p>
                     )}
                   </div>

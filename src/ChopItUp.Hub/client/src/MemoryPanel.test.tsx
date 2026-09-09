@@ -149,8 +149,22 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(html).toContain('topics/user.md.rewrite-9.bak');
   });
 
-  test('the no-git warning is absent when a commit can be made', () => {
+  /* The Retry card is the one this warning matters most on: it is still approvable — Retry is what
+     performs the write — and nothing has been written yet (`writtenTo` is null), so the file on disk
+     is still the pre-consolidation copy and the backup is still the only thing that would survive.
+     AC7 scopes all four card requirements to a rewrite "that is pending or approved-but-unwritten",
+     and the hub computes `gitAvailable` for exactly that pair (`MemoryApi.MapForList`'s `inScope`). */
+  test('an approved-but-unwritten rewrite with no git trail warns too, and names the same backup', () => {
+    const html = render({ ...REWRITE, status: 'approved', writtenTo: null, gitAvailable: false });
+
+    expect(html).toContain('approved, not written yet');
+    expect(html).toContain('memory-diff-nogit');
+    expect(html).toContain('topics/user.md.rewrite-9.bak');
+  });
+
+  test('the no-git warning is absent when a commit can be made, pending or awaiting a retry', () => {
     expect(render(REWRITE)).not.toContain('memory-diff-nogit');
+    expect(render({ ...REWRITE, status: 'approved', writtenTo: null })).not.toContain('memory-diff-nogit');
   });
 
   test('a rewrite with a null diff falls back to the body rather than an empty box', () => {
