@@ -228,8 +228,10 @@ public sealed class ExportManifestTests : IDisposable
     }
 
     [Fact]
-    public void T2_Verify_is_Unreadable_when_the_manifest_file_is_present_but_corrupt()
+    public void T2_Verify_is_Unreadable_when_the_manifest_file_is_present_but_corrupt_and_alone_reports_an_empty_list()
     {
+        // A directory holding ONLY a corrupt manifest legitimately reports an empty list (carried-over
+        // fix from the T2 review): there is nothing else in there to name.
         var store = NewStore(NewDir("verify-unreadable-store"));
         var targetDir = NewDir("verify-unreadable-target");
         File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "not json at all {{{");
@@ -239,6 +241,30 @@ public sealed class ExportManifestTests : IDisposable
         var verdict = ExportManifest.Verify(manifest, targetDir, store);
 
         Assert.Equal(TargetState.Unreadable, verdict.State);
+        Assert.Empty(verdict.Paths);
+    }
+
+    [Fact]
+    public void T2_Verify_is_Unreadable_and_names_the_real_files_beside_a_corrupt_manifest()
+    {
+        // Carried-over fix from the T2 review: acceptance criterion 6 requires the unparseable-manifest
+        // refusal to list every affected path by recursive relative path. Before this fix, Unreadable
+        // always carried an empty Paths list regardless of what else was in the directory.
+        var store = NewStore(NewDir("verify-unreadable-named-store"));
+        var targetDir = NewDir("verify-unreadable-named-target");
+        Directory.CreateDirectory(Path.Combine(targetDir, "sub"));
+        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "not json at all {{{");
+        File.WriteAllText(Path.Combine(targetDir, "real-file.md"), "real content");
+        File.WriteAllText(Path.Combine(targetDir, "sub", "nested.md"), "nested content");
+        var manifest = ExportManifest.TryRead(targetDir);
+        Assert.Null(manifest);   // sanity: TryRead itself already returned null
+
+        var verdict = ExportManifest.Verify(manifest, targetDir, store);
+
+        Assert.Equal(TargetState.Unreadable, verdict.State);
+        Assert.Contains("real-file.md", verdict.Paths);
+        Assert.Contains("sub/nested.md", verdict.Paths);
+        Assert.DoesNotContain(ExportManifest.FileName, verdict.Paths);
     }
 
     [Fact]

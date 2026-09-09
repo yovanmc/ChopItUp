@@ -150,8 +150,13 @@ public sealed record ExportManifest(
 
         if (manifest is null)
         {
+            // Both Unreadable and Foreign carry the same recursive-relative-path list of whatever else
+            // is in the directory (carried-over fix from the T2 review, acceptance criterion 6): a
+            // corrupt manifest sitting beside real files must name those files, not report an empty
+            // list. A directory holding only the corrupt manifest legitimately has nothing else to
+            // name, so otherPaths is empty there too.
             return manifestFileExists
-                ? new ManifestVerdict(TargetState.Unreadable, Array.Empty<string>(), null)
+                ? new ManifestVerdict(TargetState.Unreadable, otherPaths, null)
                 : new ManifestVerdict(TargetState.Foreign, otherPaths, null);   // D5: populated + no manifest refuses
         }
 
