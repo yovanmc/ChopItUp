@@ -12,6 +12,10 @@ sweeps its own orphan processes in a `finally` block. Each prints PASS/FAIL per 
 Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both orchestrator-run, both spend.
 Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryCheck.ps1`.
 Memory v1.1 check (no model calls, scratch hub, drives /mcp itself): `pwsh tools\Invoke-M18MemoryCheck.ps1`.
+Consolidation skill (row 23), imported with the hub stopped, into the data directory that hub will
+use: `dotnet run --project src/ChopItUp.Hub -- --data .data --import-skill tools\skills\consolidate-memory`.
+The owner then posts `/consolidate-memory <topic>` in a room, mentioning a model participant the hub
+permits to file one; the proposal it files is approved from the diff on its card, never in the room.
 
 A Debug hub serves static files from `src\ChopItUp.Hubin\Debug
 et10.0\wwwroot`, not from
