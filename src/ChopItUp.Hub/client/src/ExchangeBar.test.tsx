@@ -43,4 +43,35 @@ describe('ExchangeBar', () => {
   test('a live run takes the stop over, so the bar renders none', () => {
     expect(render(BASE, true)).not.toContain('Stop exchange');
   });
+
+  /** The yield does not depend on the exchange being open: a run parks with its exchange already
+   *  closed and its spawns already cancelled, and the bar must stay quiet there too. */
+  test('a live run also takes it over from a closed exchange with a spawn still talking', () => {
+    const closed: ExchangeSnapshot = { ...BASE, status: 'superseded', inFlight: ['sonnet'] };
+
+    expect(render(closed)).toContain('>Stop exchange</button>');
+    expect(render(closed, true)).not.toContain('Stop exchange');
+  });
+
+  /** AC4's second half, and the reason it is written down: the yield is for the life of the run, not
+   *  for the life of the room. Once the run has `ended`, App's `runStoppable` is false again and this
+   *  bar is exactly what it was before the row — including for a spawn that outlived its exchange. */
+  test('an ended run gives the stop back, unchanged', () => {
+    const afterRun: ExchangeSnapshot = { ...BASE, status: 'stopped', inFlight: ['sonnet'] };
+
+    expect(render(afterRun, false)).toContain('>Stop exchange</button>');
+  });
+
+  test('with no run the old gate still decides: no spawns and a closed exchange means no button', () => {
+    expect(render({ ...BASE, status: 'concluded', inFlight: [] })).not.toContain('<button');
+  });
+
+  test('a stop already in flight leaves the control disabled', () => {
+    expect(render(BASE, false, true)).toContain('disabled=""');
+  });
+
+  test('an idle room and a room with no exchange still render nothing at all', () => {
+    expect(render({ ...BASE, status: 'idle' })).toBe('');
+    expect(render(null)).toBe('');
+  });
 });
