@@ -51,6 +51,12 @@ off their own screen, not for a script or an agent invoking it and having the va
 whatever logs or forwards that run. Nothing enforces this mechanically; it is a rule for whoever is
 driving the hub, not a gate `HostCommands.RotateToken` itself can check.
 
+**Rotate with the hub stopped, then start it.** `RotateToken` gates on `HubLock.IsHeld` and exits 5
+against a live hub: a loaded `TokenStore` is a startup singleton, so a rotation under a running hub
+writes a file nobody reads and the old token keeps working — refusing is the difference between
+rotation and revocation. On a deploy day the order is stop → deploy → rotate → start, and anything
+rotated after the start waits for the next one.
+
 ## Running /roadmap in a room
 
 Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>
