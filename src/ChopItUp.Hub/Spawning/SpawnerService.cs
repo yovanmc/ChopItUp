@@ -21,10 +21,12 @@ using Microsoft.Extensions.Hosting;
 namespace ChopItUp.Hub.Spawning;
 
 /// <summary>What the UI and the API see. <see cref="Status"/> is <c>idle</c>, <c>open</c>,
-/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>.</summary>
+/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
+/// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
+/// mapped by name so an enum reordering never silently changes the JSON; null until stopped.</summary>
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
-    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0);
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null);
 
 /// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
 /// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
@@ -978,7 +980,8 @@ public sealed class SpawnerService : BackgroundService
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
         var snapshot = (_rooms.TryGetValue(roomId, out var x)
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
-                Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList())
+                Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
+                StoppedBy: x.StopCause?.ToString().ToLowerInvariant())
             : Idle(roomId)) with { Seq = ++_seq };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);
