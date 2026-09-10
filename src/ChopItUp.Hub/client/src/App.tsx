@@ -405,12 +405,17 @@ export default function App() {
       const snapshot = await api.stopExchange(roomId);
       setExchange((previous) => applyExchange(previous, snapshot));
       setError(null);
+      // Row 22: this call ends the RUN when there is one, and the run strip has no socket event of
+      // its own — it rides `ExchangeChanged` and the hub's note. Both are round trips that may not
+      // have landed yet, so refresh the run here rather than betting the strip repaints. Awaited
+      // before `finally`, which keeps the button disabled until the new state is on screen (AC5).
+      await refreshRun(roomId).catch(() => undefined);
     } catch (failure) {
       setError(api.describeError(failure));
     } finally {
       setStopping(false);
     }
-  }, [roomId]);
+  }, [roomId, refreshRun]);
 
   // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
   // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
@@ -506,6 +511,10 @@ export default function App() {
 
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
+  // Row 22: a run that has not ended is what `stop` will actually end, so the run strip owns the
+  // control and `ExchangeBar` stands down for as long as that is true. One stop, one label.
+  const runStoppable = run !== null && run.status !== 'ended';
+
   return (
     <div className="app">
       <RoomRail
@@ -551,8 +560,13 @@ export default function App() {
               onDecide={decideSkill}
               onToken={takeOwnerToken}
             />
-            <RunBar run={run} />
-            <ExchangeBar exchange={exchange} stopping={stopping} onStop={stop} />
+            <RunBar run={run} stopping={stopping} onStop={stop} />
+            <ExchangeBar
+              exchange={exchange}
+              runStoppable={runStoppable}
+              stopping={stopping}
+              onStop={stop}
+            />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
           </>
         ) : (
