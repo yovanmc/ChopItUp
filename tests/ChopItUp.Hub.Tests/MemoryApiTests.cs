@@ -13,7 +13,12 @@ public sealed class MemoryApiTests : IAsyncLifetime
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_memapi_" + Guid.NewGuid().ToString("N"));
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir);
+    public async Task InitializeAsync()
+    {
+        _host = await HubTestHost.StartAsync(_dir);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+    }
+
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     private MemoryStore Memory => _host.Services.GetRequiredService<MemoryStore>();

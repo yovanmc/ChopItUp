@@ -55,7 +55,30 @@ public static class HubHost
             // below (tokens, instructions, tools) sees the same list. Editing rows takes effect at
             // the next hub start.
             var roster = participants.List();
-            var tokens = TokenStore.Load(options.DataDir, roster.Select(p => p.Id).ToArray());
+            var tokens = TokenStore.Load(options.DataDir, roster);
+            var messages = new MessageStore(db);
+            // Row 28 ticket 3: a host-config file generated before this shipped (or hand-edited) may
+            // still carry a real bearer. Never lets a rewrite failure stop the hub (AC4) - a locked
+            // file or a deny-write ACL is reported on stderr and in a room note, and the hub keeps
+            // serving either way.
+            foreach (var outcome in HostConfigs.SweepLiveTokens(options.DataDir, tokens))
+            {
+                if (outcome.Rewritten)
+                {
+                    Console.Error.WriteLine($"Replaced a live token in '{outcome.Path}' with {HostConfigs.TokenPlaceholder}.");
+                    continue;
+                }
+                Console.Error.WriteLine($"Could not remove the live token from '{outcome.Path}' ({outcome.Error}). Run --rotate-token <id> for that row and paste the new value in by hand, then fix the file.");
+                try
+                {
+                    messages.Post("general", ChopDb.HubParticipantId,
+                        $"'{outcome.Path}' still carries a live credential and could not be rewritten automatically. Run `ChopItUp.Hub --rotate-token <id>` and paste the value it prints over the {HostConfigs.TokenPlaceholder} placeholder yourself.");
+                }
+                catch (Exception e)
+                {
+                    Console.Error.WriteLine($"Could not post the host-config warning to 'general': {e.Message}");
+                }
+            }
             // M10: the memory store lives beside the database; the seed core is written once, the git
             // trail is created lazily by the first approval (plan decisions 1, 5).
             var memory = new MemoryStore(Path.Combine(options.DataDir, "memory"));
@@ -66,7 +89,7 @@ public static class HubHost
             skills.EnsureLayout();
 
             builder.Services.AddSingleton(db);
-            builder.Services.AddSingleton(new MessageStore(db));
+            builder.Services.AddSingleton(messages);
             builder.Services.AddSingleton(participants);
             builder.Services.AddSingleton<MessageSignal>();
             builder.Services.AddSingleton(tokens);

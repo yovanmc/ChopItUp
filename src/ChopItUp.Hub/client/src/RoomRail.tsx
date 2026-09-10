@@ -7,9 +7,17 @@ interface Props {
   activeRoomId: string | null;
   liveness: Liveness;
   showArchived: boolean;
+  /** Row 28: true once a `markRead` has been refused for want of an owner credential this session.
+   *  That call is a background write and fails silently by design, so every unread badge in this rail
+   *  is then wrong and stays wrong — this is the flag that stops the rail lying about it. */
+  unreadBlocked: boolean;
   onSelect: (roomId: string) => void;
   onNewRoom: () => void;
   onToggleArchived: () => void;
+  /** Raises the paste prompt. The line has to be reachable, not just readable: the other two places
+   *  that take a token are a skill card that may not be on screen and a refused deliberate write the
+   *  owner has not attempted. */
+  onFixUnread: () => void;
 }
 
 const LIVENESS_LABEL: Record<Liveness, string> = {
@@ -22,7 +30,17 @@ const LIVENESS_LABEL: Record<Liveness, string> = {
  *  after a live bump), an unread badge replaces the count on rooms with unread messages that are not
  *  open, an empty room shows no count at all, a folder mark says the room has a directory, and
  *  archived rooms show only behind the toggle. */
-function RoomRail({ rooms, activeRoomId, liveness, showArchived, onSelect, onNewRoom, onToggleArchived }: Props) {
+function RoomRail({
+  rooms,
+  activeRoomId,
+  liveness,
+  showArchived,
+  unreadBlocked,
+  onSelect,
+  onNewRoom,
+  onToggleArchived,
+  onFixUnread,
+}: Props) {
   return (
     <nav className="rail" aria-label="Rooms">
       <div className="rail-head">
@@ -69,6 +87,14 @@ function RoomRail({ rooms, activeRoomId, liveness, showArchived, onSelect, onNew
         })}
         {rooms.length === 0 && <li className="rail-empty">No rooms yet.</li>}
       </ul>
+      {/* Row 28, AC5's second half. Every badge above this line is a count the hub will not let this
+          browser clear, so the rail says so where the wrong numbers are, and pressing it opens the
+          paste prompt. Not a `role="alert"`: the owner did not do anything to cause it. */}
+      {unreadBlocked && (
+        <button type="button" className="quiet rail-unread-blocked" onClick={onFixUnread}>
+          Unread counts are stuck until you paste the owner token.
+        </button>
+      )}
       <div className="rail-foot">
         <button type="button" className="quiet" onClick={onNewRoom}>
           New room

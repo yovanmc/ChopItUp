@@ -436,8 +436,11 @@ public sealed partial class SpawnerServiceTests
         var roomsRoot = dir + "_rooms";
         var runnerA = new FakeProcessRunner();
         long rootMessageId;
+        string ownerToken;
         await using (var hostA = await HubTestHost.StartAsync(dir, deleteOnDispose: false, processRunner: runnerA, limits: Fast, roomsRoot: roomsRoot))
         {
+            hostA.AuthorizeAs(ChopDb.OwnerParticipantId);
+            ownerToken = hostA.TokenFor(ChopDb.OwnerParticipantId);   // hostB restarts against the SAME (now non-fresh) dir and cannot mint this itself
             var roomDir = Path.Combine(roomsRoot, "lab");
             Assert.True(await new GitTrail(roomDir).InitAsync());
             hostA.Services.GetRequiredService<MessageStore>().CreateRoom("lab", "LAB", roomDir);
@@ -464,6 +467,9 @@ public sealed partial class SpawnerServiceTests
 
         var runnerB = new FakeProcessRunner();
         await using var hostB = await HubTestHost.StartAsync(dir, deleteOnDispose: true, processRunner: runnerB, limits: Fast, roomsRoot: roomsRoot);
+        // Row 28 AC3: hostB restarts against the same, now-hashed dir and cannot mint the owner's
+        // plaintext itself - the value captured from hostA before it stopped is presented directly.
+        hostB.Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ownerToken);
         var runsB = hostB.Services.GetRequiredService<RunStore>();
         Assert.Null(runsB.Active("lab"));                         // AC12: parked before anything was served
         var parked = runsB.Latest("lab");

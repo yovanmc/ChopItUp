@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ChopItUp.Core.Memory;
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
@@ -18,6 +19,10 @@ namespace ChopItUp.Hub.Tests;
 public sealed class HostCommandsTests : IDisposable
 {
     private static readonly string[] Roster = ChopDb.SeedRoster.Select(p => p.Id).ToArray();
+    // Row 28: TokenStore.Load/ReadExisting/MintFor classify by Participant, not by bare id - kept
+    // separate from Roster (still used everywhere a plain id string is what's under test) rather than
+    // retyping every existing string-based assertion in this file.
+    private static readonly IReadOnlyList<Participant> Participants = ChopDb.SeedRoster;
     private readonly List<string> _dirs = new();
 
     private string NewDir()
@@ -38,7 +43,7 @@ public sealed class HostCommandsTests : IDisposable
     private static void StartedOnce(string dir)
     {
         new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
-        TokenStore.Load(dir, Roster);
+        TokenStore.Load(dir, Participants);
     }
 
     /// <summary>v1 shape plus exactly what ApplyV2 adds (M8 Task 1's fixture, duplicated here with a
@@ -83,21 +88,51 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var before = TokenStore.ReadExisting(dir, Roster);
+        var before = TokenStore.ReadExisting(dir, Participants);
 
         var output = new StringWriter();
         var error = new StringWriter();
         var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, error);
 
         Assert.Equal(0, exit);
-        var after = TokenStore.Load(dir, Roster).Tokens;
+        var after = TokenStore.ReadExisting(dir, Participants);
         Assert.NotEqual(before["claude"], after["claude"]);
         Assert.Equal(before["owner"], after["owner"]);
         Assert.Equal(before["codex"], after["codex"]);
 
+        // These are hashes (row 28), never the plaintext rotate now prints - so this stays a
+        // meaningful check that the hash never leaks, distinct from the new plaintext assertion below.
         var stdout = output.ToString();
         foreach (var t in before.Values) Assert.DoesNotContain(t, stdout);
         foreach (var t in after.Values) Assert.DoesNotContain(t, stdout);
+    }
+
+    /// <summary>D-28-d: this reverses critique pass 1's "never print" ruling. --print-config no
+    /// longer embeds a live value (it writes a {{TOKEN}} placeholder - see the print-config tests
+    /// below), so a rotated token has no other way to reach the operator. The bounding clause
+    /// (rotate is owner-typed only, never agent-run) lives in docs/verification.md, not in test
+    /// assertions - this test only proves the mechanism: printed once, resolves to the right
+    /// participant, and lands in no file.</summary>
+    [Fact]
+    public void A6_rotate_prints_the_new_token_once_and_writes_it_to_no_file()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        var stdout = output.ToString();
+        var printed = TokenScan.Candidates(stdout).Distinct().ToList();
+        Assert.Single(printed);
+
+        var store = TokenStore.Load(dir, Participants);
+        Assert.True(store.TryResolve(printed[0], out var resolvedId));
+        Assert.Equal("claude", resolvedId);
+
+        Assert.Contains("will not be shown again", stdout, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(printed[0], File.ReadAllText(Path.Combine(dir, TokenStore.FileName)));
     }
 
     [Fact]
@@ -154,10 +189,11 @@ public sealed class HostCommandsTests : IDisposable
             ownerToken = host1.TokenFor("owner");
         }
 
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), new StringWriter(), new StringWriter());
-        Assert.Equal(0, exit);
-
-        var newToken = TokenStore.Load(dir, Roster).Tokens["claude"];
+        // Row 28, D-28-d: --rotate-token does not print the new value yet (that reversal is a later
+        // task), so the plaintext this test needs to present has to come from the same mint entry
+        // point the CLI verb itself calls - MintFor - rather than from stdout. A6_rotate_replaces_one_
+        // token_and_leaves_the_others_alone already covers the CLI verb's own exit code and isolation.
+        var newToken = TokenStore.Load(dir, Participants).MintFor("claude");
         Assert.NotEqual(old, newToken);
 
         await using var host2 = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
@@ -198,11 +234,11 @@ public sealed class HostCommandsTests : IDisposable
             .ToArray();
 
     [Fact]
-    public void A7_print_config_writes_all_four_files_with_the_live_port_and_tokens()
+    public void A7_print_config_writes_all_four_files_with_the_live_port_and_a_token_placeholder()
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);   // hashes only (row 28); never a credential
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -228,28 +264,27 @@ public sealed class HostCommandsTests : IDisposable
         // form, then the bridge came up on the next launch. Windows is the only platform this app
         // targets, so the shell form is the default, not a documented fallback.
         Assert.Equal("cmd", server.GetProperty("command").GetString());
-        Assert.Equal("Bearer " + tokens["claude"], server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
+        // Row 28 ticket 3: generation never embeds a real value - a {{TOKEN}} placeholder stands in
+        // for it, and --rotate-token <id> is how the operator gets a real one to paste over it.
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
         var args = server.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
         Assert.Equal("/c", args[0]);
         Assert.Equal("npx", args[1]);
         Assert.Contains("--allow-http", args);
         Assert.Contains(url, args);
         Assert.Contains("Authorization:${CHOPITUP_TOKEN}", args);   // header value via env: a space in an arg is mangled on Windows
-        Assert.DoesNotContain(tokens["codex"], File.ReadAllText(Path.Combine(folder, "claude-desktop.json")));
 
         var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
         Assert.Contains("[mcp_servers.chopitup]", codex);
         Assert.Contains($"url = \"{url}\"", codex);
         // Single braces, not the doubled ones the interpolated raw string is written with.
-        Assert.Contains($"http_headers = {{ Authorization = \"Bearer {tokens["codex"]}\" }}", codex);
+        Assert.Contains($"http_headers = {{ Authorization = \"Bearer {HostConfigs.TokenPlaceholder}\" }}", codex);
         Assert.Contains("bearer_token_env_var = \"CHOPITUP_CODEX_TOKEN\"", codex);
         // The commented bridge fallback carries the same cmd /c shape as the Claude Desktop entry,
         // for the same reason: there is no npx.exe to spawn directly on Windows.
         Assert.Contains("# command = \"cmd\"", codex);
         Assert.Contains("# args = [\"/c\", \"npx\", \"-y\", \"mcp-remote@", codex);
         Assert.Contains("\"Authorization:${CHOPITUP_TOKEN}\"", codex);
-        Assert.DoesNotContain(tokens["claude"], codex);
-        Assert.DoesNotContain(tokens["owner"], codex);
 
         // claude-code-owner-remote.json (task 6b): the direct type:"http" + Authorization: Bearer
         // shape every hub-spawned Claude has used since M5 — NOT the mcp-remote bridge above, which
@@ -258,11 +293,17 @@ public sealed class HostCommandsTests : IDisposable
         var proxyServer = proxyDoc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
         Assert.Equal("http", proxyServer.GetProperty("type").GetString());
         Assert.Equal(url, proxyServer.GetProperty("url").GetString());
-        Assert.Equal("Bearer " + tokens["owner-remote"], proxyServer.GetProperty("headers").GetProperty("Authorization").GetString());
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, proxyServer.GetProperty("headers").GetProperty("Authorization").GetString());
         var proxyText = File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json"));
-        foreach (var (id, token) in tokens)
-            if (id != "owner-remote") Assert.DoesNotContain(token, proxyText);
         Assert.EndsWith(Environment.NewLine, proxyText);   // indented + trailing newline, like its neighbours (m-12)
+
+        // No generated file ever carries a real hash or a real token - the only credential-shaped
+        // text anywhere in the folder is the placeholder itself (AC6, extended to generation).
+        foreach (var file in Directory.GetFiles(folder))
+        {
+            var text = File.ReadAllText(file);
+            foreach (var t in tokens.Values) Assert.DoesNotContain(t, text);
+        }
 
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
         Assert.Contains(url, readme);
@@ -293,6 +334,9 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("chopitup.db-wal", readme);
         Assert.Contains("chopitup.db-shm", readme);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, readme);
+        // Row 28 ticket 3: generation must name how to get a real value.
+        Assert.Contains(HostConfigs.TokenPlaceholder, readme);
+        Assert.Contains("--rotate-token", readme);
     }
 
     [Fact]
@@ -323,7 +367,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -332,6 +376,9 @@ public sealed class HostCommandsTests : IDisposable
         var printed = output.ToString() + error.ToString();
         Assert.Contains(ConfigFolder(dir), printed);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, printed);
+        // Row 28 ticket 3: the command must name the placeholder and how to fill it in.
+        Assert.Contains(HostConfigs.TokenPlaceholder, printed);
+        Assert.Contains("--rotate-token", printed);
     }
 
     [Fact]
@@ -368,7 +415,8 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         StartedOnce(dir);
         var path = Path.Combine(dir, TokenStore.FileName);
-        var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))!;
+        // Row 28: entries are now { "sha256": "..." } objects, not raw strings.
+        var tokens = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path))!;
         tokens.Remove("codex");
         File.WriteAllText(path, JsonSerializer.Serialize(tokens, new JsonSerializerOptions { WriteIndented = true }));
         var before = File.ReadAllBytes(path);
@@ -405,7 +453,7 @@ public sealed class HostCommandsTests : IDisposable
     public void M8_A8_print_config_against_a_v2_database_writes_nothing_and_says_start_the_hub()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, ["owner", "claude", "codex"]);
+        TokenStore.Load(dir, Participants.Where(p => p.Id is "owner" or "claude" or "codex").ToArray());
         WriteRawV2(Path.Combine(dir, "chopitup.db"));   // what the previous build left behind
         var names = Snapshot(dir);
         var dbBytes = File.ReadAllBytes(Path.Combine(dir, "chopitup.db"));   // names alone cannot see a header rewrite
@@ -445,7 +493,7 @@ public sealed class HostCommandsTests : IDisposable
     public void M8_A8_rotate_against_a_missing_database_writes_nothing_and_exits_4()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        TokenStore.Load(dir, Participants);
         var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
 
         var error = new StringWriter();
@@ -461,7 +509,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
 
@@ -469,22 +517,28 @@ public sealed class HostCommandsTests : IDisposable
         var claude = File.ReadAllText(Path.Combine(folder, "claude-desktop.json"));
         var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
-        Assert.Contains(tokens["claude"], claude);
-        Assert.Contains(tokens["codex"], codex);
+        // Row 28 ticket 3: every app-backed row's file carries the placeholder, never its real hash.
+        Assert.Contains(HostConfigs.TokenPlaceholder, claude);
+        Assert.Contains(HostConfigs.TokenPlaceholder, codex);
         foreach (var p in ChopDb.SeedRoster)
         {
             Assert.Contains($"`{p.Id}`", readme);
-            Assert.DoesNotContain(tokens[p.Id], readme);   // the README never carries a token
+            // Only a host-file row has an entry to check for at all (row 28); a spawnable/system row
+            // never appears in `tokens`, so there is nothing here to leak into the README.
+            if (tokens.TryGetValue(p.Id, out var t)) Assert.DoesNotContain(t, readme);
         }
         Assert.Contains("usage credits", readme);
         Assert.Contains("no file", readme);
 
-        // Rotating a spawn row's token changes only that key.
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "gpt-5.5"), new StringWriter(), new StringWriter());
+        // Rotating one host-file row's token changes only that key. Rotating a hub-launched model's
+        // token (e.g. "gpt-5.5") no longer applies post-row-28: it is ephemeral and has no entry in
+        // the file to rotate at all - MintFor_replaces_one_host_file_token_and_refuses_a_spawnable_or_
+        // system_id (TokenStoreTests.cs) covers that refusal directly.
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "owner-remote"), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
-        var after = TokenStore.ReadExisting(dir, Roster);
-        Assert.NotEqual(tokens["gpt-5.5"], after["gpt-5.5"]);
-        foreach (var id in Roster.Where(id => id != "gpt-5.5")) Assert.Equal(tokens[id], after[id]);
+        var after = TokenStore.ReadExisting(dir, Participants);
+        Assert.NotEqual(tokens["owner-remote"], after["owner-remote"]);
+        foreach (var id in tokens.Keys.Where(id => id != "owner-remote")) Assert.Equal(tokens[id], after[id]);
     }
 
     [Fact]
@@ -715,7 +769,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -727,11 +781,10 @@ public sealed class HostCommandsTests : IDisposable
         var server = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
         Assert.Equal("http", server.GetProperty("type").GetString());
         Assert.Equal("http://127.0.0.1:9123/mcp", server.GetProperty("url").GetString());
-        Assert.Equal("Bearer " + tokens["owner-remote"], server.GetProperty("headers").GetProperty("Authorization").GetString());
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("headers").GetProperty("Authorization").GetString());
 
         var text = File.ReadAllText(path);
-        foreach (var (id, token) in tokens)
-            if (id != "owner-remote") Assert.DoesNotContain(token, text);
+        foreach (var token in tokens.Values) Assert.DoesNotContain(token, text);
 
         var readme = File.ReadAllText(Path.Combine(ConfigFolder(dir), "README.md"));
         Assert.Contains("claude-code-owner-remote.json", readme);
@@ -749,6 +802,7 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         var runner = new FakeProcessRunner { Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct) };
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: the cleanup stop below is a write and now needs a credential too
         await using var proxy = await host.ClientFor("owner-remote");
 
         var posted = HubTestHost.Json(await proxy.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "@sonnet hello from the phone" }));

@@ -54,6 +54,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 # Gate-script convention (docs/LESSONS.md, task 4 overlay scripts): read native exit codes from
 # $LASTEXITCODE explicitly rather than letting a nonzero dotnet/git exit throw.
 $PSNativeCommandUseErrorActionPreference = $false
@@ -234,6 +235,10 @@ New-Item -ItemType Directory -Path $DataDir | Out-Null
 Add-Content -Path $log -Value ("M20 roadmap-in-room check {0} exe={1} data={2} rooms={3} port={4} conductor={5} worker={6}" `
     -f (Get-Date -Format o), $HubExe, $DataDir, $RoomsRoot, $Port, $Conductor, $Worker)
 
+# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
+# hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
+$ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
+
 # --- Step 1: seed the scratch repo, record its HEAD as the pre-run baseline ------------------------
 $seed = Initialize-ScratchRepo -RepoPath $repoPath
 $seedHash = $seed.SeedHash
@@ -243,7 +248,7 @@ $base = "http://127.0.0.1:$Port"
 $hub = $null
 
 function Invoke-Api([string]$Method, [string]$Path, $Body = $null) {
-    $callArgs = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
+    $callArgs = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30; Headers = (New-ChopBearerHeaders -Token $ownerToken) }
     if ($null -ne $Body) { $callArgs.ContentType = 'application/json'; $callArgs.Body = ($Body | ConvertTo-Json -Compress) }
     Invoke-RestMethod @callArgs
 }

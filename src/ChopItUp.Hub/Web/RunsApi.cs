@@ -5,9 +5,10 @@ using ChopItUp.Hub.Spawning;
 namespace ChopItUp.Hub.Web;
 
 /// <summary>What the room's run strip reads (row 19, task 14). One GET, shaped like
-/// <see cref="ExchangeApi"/>: no auth, loopback is the boundary, and a room the hub does not know is
-/// a 404 rather than an empty answer. A room that has simply never had a run is 204 — "nothing here",
-/// which the strip renders as nothing at all.</summary>
+/// <see cref="ExchangeApi"/>: unauthenticated, since row 28's owner-bearer gate
+/// (<c>BearerTokenMiddleware</c>) only guards non-GET <c>/api</c> requests, and a room the hub does
+/// not know is a 404 rather than an empty answer. A room that has simply never had a run is 204 —
+/// "nothing here", which the strip renders as nothing at all.</summary>
 public static class RunsApi
 {
     public static void MapRunsApi(this WebApplication app)

@@ -53,6 +53,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m25-skillcheck.log"
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -110,8 +111,20 @@ Add-Check -Name 'cli.git-on-path' -Passed ([bool]$git) -Detail ($git.Source ?? '
 
 # LESSONS M10: drives /mcp itself as the participant named. A JSON-RPC error envelope has no result:
 # surfaced as the failure text, never a silent empty success.
+#
+# Row 28 Task 7 (tools-only) residual: 'opus' is a SPAWNABLE participant (ExchangePolicy.IsSpawnable),
+# so TokenStore.Load mints its bearer straight into memory and never persists or otherwise exposes it
+# outside an actual spawn. There is no tools/-only way to obtain a valid 'opus' bearer without the hub
+# really spawning it, which this script's own header says it never does. Leg B's first
+# propose_skill call (line ~207, participant 'opus') therefore cannot be repaired here; it fails
+# cleanly with the reason on the record rather than sending a garbage Authorization header.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
-    $token = $script:Tokens.$Participant
+    if (-not $script:PlaintextTokens.ContainsKey($Participant)) {
+        $msg = "row 28: '$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn (Task 7 residual, tools/Invoke-M25SkillProposalCheck.ps1)"
+        Add-Content -Path $log -Value "mcp $Participant $Tool -> SKIPPED: $msg"
+        return [pscustomobject]@{ IsError = $true; Text = $msg; Json = $null }
+    }
+    $token = $script:PlaintextTokens[$Participant]
     $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json, text/event-stream' }
     $rpc = @{ jsonrpc = '2.0'; id = [guid]::NewGuid().ToString('N'); method = 'tools/call'; params = @{ name = $Tool; arguments = $Arguments } } | ConvertTo-Json -Depth 6 -Compress
     $raw = Invoke-WebRequest -Uri "$base/mcp" -Method Post -Headers $headers -ContentType 'application/json' -Body $rpc -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
@@ -148,6 +161,11 @@ function New-SkillSource([string]$Root, [string]$Name, [string]$SkillMd, [hashta
 
 function SkillMd([string]$Name, [string]$Desc = 'd.') { "---`nname: $Name`ndescription: $Desc`n---`n# $Name`n`nBody text.`n" }
 
+# Row 28: 'owner' (decision routes + POST /api/rooms), 'claude' (Invoke-McpTool, the 403-non-owner
+# leg) and 'codex' (Leg B) are all host-file rows -- seed plaintexts for them into tokens.json BEFORE
+# the hub's first start (ChopTokenHelpers.ps1). Never a real installation's credential.
+$script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner', 'claude', 'codex')
+
 $base = "http://127.0.0.1:$Port"
 $hub = $null
 try {
@@ -160,10 +178,16 @@ try {
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     Add-Check -Name 'health.schema-is-10' -Passed ($health.schema -eq 10) -Detail "schema=$($health.schema)"
 
-    $script:Tokens = Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json
+    # Row 28: $script:PlaintextTokens (seeded before the hub started, above) replaces reading
+    # tokens.json now -- the file holds only host-file rows' SHA-256 after the hub's own startup
+    # migration, never a usable plaintext.
+    $ownerToken = $script:PlaintextTokens.owner
+    $ownerAuth = New-ChopBearerHeaders -Token $ownerToken
 
     # A room bound to a scratch, hub-created directory under --rooms-root -- never the real profile.
-    $room = Invoke-RestMethod -Uri "$base/api/rooms" -Method Post -ContentType 'application/json' -Body (@{ name = 'skill-room' } | ConvertTo-Json) -TimeoutSec $TimeoutSeconds
+    # Row 28: POST /api/rooms is a non-GET /api route too -- it had no credential at all before this
+    # task and would now 401.
+    $room = Invoke-RestMethod -Uri "$base/api/rooms" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ name = 'skill-room' } | ConvertTo-Json) -TimeoutSec $TimeoutSeconds
     $roomId = $room.id
     $roomDir = $room.directory
     Add-Check -Name 'room.created-under-scratch-rooms-root' -Passed ($null -ne $roomDir -and $roomDir.StartsWith($roomsRoot, [StringComparison]::OrdinalIgnoreCase)) -Detail "roomId=$roomId dir=$roomDir"
@@ -188,11 +212,10 @@ try {
     $noToken = Invoke-Decide -Verb 'approve' -Id $idA -Token $null -Tree $treeA
     Add-Check -Name 'decide.401-no-credential' -Passed ($noToken.StatusCode -eq 401) -Detail "status=$($noToken.StatusCode) body=$($noToken.Content)"
 
-    $nonOwnerToken = $script:Tokens.claude
+    $nonOwnerToken = $script:PlaintextTokens.claude
     $nonOwner = Invoke-Decide -Verb 'approve' -Id $idA -Token $nonOwnerToken -Tree $treeA
     Add-Check -Name 'decide.403-non-owner' -Passed ($nonOwner.StatusCode -eq 403) -Detail "status=$($nonOwner.StatusCode) body=$($nonOwner.Content)"
 
-    $ownerToken = $script:Tokens.owner
     $approvedA = Invoke-Decide -Verb 'approve' -Id $idA -Token $ownerToken -Tree $treeA
     $approvedABody = $approvedA.Content | ConvertFrom-Json
     Add-Check -Name 'decide.approve-with-owner-token' -Passed ($approvedA.StatusCode -eq 200 -and $approvedABody.status -eq 'approved' -and $null -ne $approvedABody.installedAt) `

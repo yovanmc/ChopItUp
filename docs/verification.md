@@ -40,6 +40,17 @@ Run check (real CLIs, scratch hub + scratch room dir, spends): a two-phase toy s
 Roadmap-in-room check (real CLIs, scratch hub + scratch .NET repo, spends approx 6 spawns incl. one Codex): `pwsh tools\Invoke-M20RoadmapCheck.ps1`.
 MCP timeout probe (4 Sonnet calls): `pwsh tools\Probe-McpTimeouts.ps1`.
 
+## Rotating a token (row 28)
+
+`--rotate-token <id>` prints the newly minted value once, to stdout, and writes it to no file —
+row 28, D-28-d, reversing an earlier "never print" ruling now that `--print-config` never embeds a
+live value either (it writes a `{{TOKEN}}` placeholder). That reversal is bounded: **rotate is
+owner-typed only, never agent-run.** A printed token lands in a terminal buffer, a shell history and
+often an agent transcript — acceptable for a human typing the command by hand and reading the value
+off their own screen, not for a script or an agent invoking it and having the value pass through
+whatever logs or forwards that run. Nothing enforces this mechanically; it is a rule for whoever is
+driving the hub, not a gate `HostCommands.RotateToken` itself can check.
+
 ## Running /roadmap in a room
 
 Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>

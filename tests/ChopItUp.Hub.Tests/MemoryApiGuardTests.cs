@@ -21,6 +21,7 @@ public sealed class MemoryApiGuardTests
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_memnogit_" + Guid.NewGuid().ToString("N"));
         await using var host = await HubTestHost.StartAsync(dir, memoryGit: root => new MemoryGit(root, () => throw new FileNotFoundException("'git' was not found on PATH")));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
         host.Services.GetRequiredService<MemoryProposalStore>().Create("general", "opus", "user", "Likes tests", "Yes.", null);
 
         var r = await host.Client.PostAsync("api/memory/proposals/1/approve", null);
@@ -42,6 +43,7 @@ public sealed class MemoryApiGuardTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         runner.Handler = async (_, _, ct) => { await release.Task.WaitAsync(ct); return FakeProcessRunner.Ok("""{"result":"done"}"""); };
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
         var proposals = host.Services.GetRequiredService<MemoryProposalStore>();
         proposals.Create("general", "opus", "user", "A", "a", null);
         proposals.Create("general", "opus", "user", "B", "b", null);

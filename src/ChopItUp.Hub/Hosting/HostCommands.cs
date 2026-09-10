@@ -85,14 +85,22 @@ public static class HostCommands
         }
         try
         {
-            if (TryReadRoster(options, error, out _) is not { } ids) return 4;
-            _ = TokenStore.Rotate(options.DataDir, ids, options.RotateParticipant!);
-            // The token itself is deliberately NOT printed (critique pass 1, F7): every run of this
-            // command lands in a terminal buffer, a shell history and often an agent transcript.
-            // --print-config writes it to a file in the gitignored data dir instead.
-            output.WriteLine($"Rotated the token for '{options.RotateParticipant}'. The old one is now dead.");
-            output.WriteLine("Next: run --print-config to regenerate the host files, re-paste that host's config,");
-            output.WriteLine("then start the hub.");
+            if (TryReadRoster(options, error, out var roster) is null) return 4;
+            // Row 28: TokenStore.Rotate is gone - MintFor is the one mint entry point, taken through
+            // a freshly-loaded instance (the same shape --print-config's read-only ReadExisting uses
+            // below has to avoid: Load backfills any participant new to this database, which is
+            // exactly the existing "start the hub once first" contract for those rows).
+            var minted = TokenStore.Load(options.DataDir, roster).MintFor(options.RotateParticipant!);
+            // Row 28, D-28-d: this REVERSES critique pass 1's "never print" ruling (F7). --print-config
+            // no longer embeds a live value anywhere (it writes a {{TOKEN}} placeholder), so a rotated
+            // token has no other way to reach the operator. The exposure F7 named - a terminal buffer,
+            // shell history, an agent transcript - is unchanged; what changed is that it is now
+            // accepted for a command the bounding clause in docs/verification.md restricts to a human
+            // typing it by hand, never something an agent runs on its own.
+            output.WriteLine($"New token for '{options.RotateParticipant}':");
+            output.WriteLine(minted);
+            output.WriteLine("This will not be shown again and is written to no file. Paste it over the");
+            output.WriteLine($"{HostConfigs.TokenPlaceholder} placeholder in that row's host file (see --print-config), then restart the client.");
             return 0;
         }
         catch (ArgumentException e)
@@ -125,12 +133,15 @@ public static class HostCommands
         }
         try
         {
-            if (TryReadRoster(options, error, out var roster) is not { } ids) return 4;
+            if (TryReadRoster(options, error, out var roster) is null) return 4;
 
             // Read WITHOUT back-filling: TokenStore.Load mints any missing participant and rewrites
             // the file, so a hand-edited tokens.json would have a credential silently rotated by a
-            // command that is supposed to only read (pass 2, MINOR-12).
-            var tokens = TokenStore.ReadExisting(options.DataDir, ids);
+            // command that is supposed to only read (pass 2, MINOR-12). Row 28: the values below are
+            // host-file rows' hashes - kept only to validate that every host-file row already has an
+            // entry (ReadExisting still throws by name for one that doesn't); a hash is never a usable
+            // credential, so it is never what gets written into a generated file.
+            var tokens = TokenStore.ReadExisting(options.DataDir, roster);
 
             // Prefer the port the hub actually bound over the one this invocation happened to
             // resolve: a hub started with --port 9000 and a --print-config run without it would
@@ -141,10 +152,15 @@ public static class HostCommands
             if (recorded is { } r && r != options.Port)
                 output.WriteLine($"Note: using port {r} from the last hub start, not the {options.Port} this command resolved.");
 
-            var folder = HostConfigs.Write(options.DataDir, port, tokens, roster);
+            // Row 28 ticket 3: generation never emits a real value. Every host-file row that
+            // ReadExisting validated gets HostConfigs.TokenPlaceholder in its place; --rotate-token
+            // <id> is the one command that ever prints a usable credential.
+            var placeholders = tokens.Keys.ToDictionary(id => id, _ => HostConfigs.TokenPlaceholder, StringComparer.Ordinal);
+            var folder = HostConfigs.Write(options.DataDir, port, placeholders, roster);
             output.WriteLine("Wrote host configurations to:");
             output.WriteLine(folder);
-            output.WriteLine("Each file contains a live token — read them from disk, do not paste them anywhere public.");
+            output.WriteLine($"Each file has a {HostConfigs.TokenPlaceholder} placeholder in place of a real token.");
+            output.WriteLine("Run --rotate-token <id> for each row and paste the value it prints over the placeholder.");
             return 0;
         }
         // Broad on purpose: a torn tokens.json (JsonException), a contended mutex (TimeoutException)

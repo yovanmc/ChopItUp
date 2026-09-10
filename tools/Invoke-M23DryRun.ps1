@@ -27,6 +27,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m23-dryrun.log"
 
@@ -43,7 +44,7 @@ function Add-Check {
 # failure text, never as a silent empty success. A tool-level McpException comes back as
 # result.isError = true with the message in result.content, not as a JSON-RPC-level error.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
-    $token = $script:Tokens.$Participant
+    $token = $script:PlaintextTokens.$Participant
     $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json, text/event-stream' }
     $rpc = @{ jsonrpc = '2.0'; id = [guid]::NewGuid().ToString('N'); method = 'tools/call'; params = @{ name = $Tool; arguments = $Arguments } } | ConvertTo-Json -Depth 6 -Compress
     $raw = Invoke-WebRequest -Uri "$base/mcp" -Method Post -Headers $headers -ContentType 'application/json' -Body $rpc -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
@@ -104,6 +105,11 @@ New-Item -ItemType Directory -Path (Join-Path $DataDir 'memory\topics') -Force |
 Add-Content -Path $log -Value ("M23 dry run {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
 Write-Host "Binary: $HubExe"
 Write-Host "Data dir: $DataDir"
+
+# Row 28: 'claude' (Invoke-McpTool) and 'owner' (the approve calls) are host-file rows -- seed
+# plaintexts for them into tokens.json BEFORE the hub's first start (ChopTokenHelpers.ps1). Never a
+# real installation's credential.
+$script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('claude', 'owner')
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
@@ -178,7 +184,9 @@ try {
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     Add-Check -Name 'health.schema-is-10' -Passed ($health.schema -eq 10) -Detail "schema=$($health.schema)"
 
-    $script:Tokens = Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json
+    # Row 28: 'claude' and 'owner' were seeded into tokens.json BEFORE this Start-Process call
+    # (right after $DataDir was created, below); the file itself now holds only their SHA-256.
+    $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
     # Leg: the seeded corpus is what the hub sees — 12 topics, topic-01's 17 live titles (3 named +
     # 14 surviving fillers; 3 fillers are tombstoned and correctly absent from Titles()).
@@ -228,7 +236,7 @@ try {
 
     # Leg: approve - the file is replaced whole, the backup is written, written_to and a commit hash
     # are recorded.
-    $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$idA/approve" -Method Post -TimeoutSec $TimeoutSeconds
+    $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$idA/approve" -Method Post -Headers $ownerAuth -TimeoutSec $TimeoutSeconds
     Add-Check -Name 'approve.rewrite' -Passed ($approved.status -eq 'approved' -and $approved.kind -eq 'rewrite' -and $null -ne $approved.writtenTo) `
         -Detail "status=$($approved.status) kind=$($approved.kind) writtenTo=$($approved.writtenTo) commitHash=$($approved.commitHash)"
 
@@ -247,7 +255,7 @@ try {
 
     # Leg: re-approval is a no-op - the row is already approved+written, the second call is refused
     # and touches neither the file nor the backup.
-    $reapprove = Invoke-WebRequest -Uri "$base/api/memory/proposals/$idA/approve" -Method Post -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
+    $reapprove = Invoke-WebRequest -Uri "$base/api/memory/proposals/$idA/approve" -Method Post -Headers $ownerAuth -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
     $postBytes2 = [System.IO.File]::ReadAllText($topic01Path, $utf8)
     $backupBytes2 = [System.IO.File]::ReadAllText($backupPath, $utf8)
     Add-Check -Name 'approve.reapprove-noop' -Passed ($reapprove.StatusCode -eq 409 -and $postBytes2 -eq $postBytes -and $backupBytes2 -eq $backupBytes) `

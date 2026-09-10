@@ -696,7 +696,7 @@ public sealed class SpawnerService : BackgroundService
             // Row 19, task 9d: counted before anything below can throw - a spawn that fails even to
             // start (a bad token, a directory that vanished) still used one of the run's spawns.
             if (activeRun is not null) _runs.CountSpawn(activeRun.Id);
-            var token = _tokens.Tokens[participant.Id];
+            var token = _tokens.BearerFor(participant.Id);
             Directory.CreateDirectory(workDir);
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);

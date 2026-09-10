@@ -5,9 +5,10 @@ using ChopItUp.Hub.Spawning;
 namespace ChopItUp.Hub.Web;
 
 /// <summary>Room lifecycle for the web UI (M9): create, archive, bind a directory, mark read, and the
-/// commit trail. Same no-auth loopback boundary as <see cref="ChatApi"/>; directory work is the hub's
-/// alone (D11) — a browser never sends a git command. Room create/bind/archive are refused while a
-/// spawn is in flight (plan decision 11).</summary>
+/// commit trail. Same guard as <see cref="ChatApi"/> since row 28: every non-<c>GET</c> route here
+/// needs an owner-class bearer (<c>BearerTokenMiddleware</c>), superseding the old no-auth loopback
+/// boundary. Directory work is the hub's alone (D11) — a browser never sends a git command. Room
+/// create/bind/archive are refused while a spawn is in flight (plan decision 11).</summary>
 public static class RoomsApi
 {
     public const string SpawnRunning = "A spawn is in flight; change rooms when the exchange has finished.";

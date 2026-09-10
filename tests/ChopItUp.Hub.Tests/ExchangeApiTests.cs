@@ -17,7 +17,12 @@ public sealed class ExchangeApiTests : IAsyncLifetime
     private readonly FakeProcessRunner _runner = new();
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+    public async Task InitializeAsync()
+    {
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+    }
+
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     private async Task<JsonElement> Get(string roomId)

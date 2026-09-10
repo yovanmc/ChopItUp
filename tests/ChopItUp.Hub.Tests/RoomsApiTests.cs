@@ -20,7 +20,12 @@ public sealed class RoomsApiTests : IAsyncLifetime
     private readonly FakeProcessRunner _runner = new();
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+    public async Task InitializeAsync()
+    {
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+    }
+
     public async Task DisposeAsync()
     {
         await _host.DisposeAsync();
@@ -249,6 +254,7 @@ public sealed class RoomsApiTests : IAsyncLifetime
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_roomsnogit_" + Guid.NewGuid().ToString("N"));
         await using var host = await HubTestHost.StartAsync(dir, roomGit: d => new GitTrail(d, () => throw new FileNotFoundException("'git' was not found on PATH")));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
         var r = await host.Client.PostAsJsonAsync("api/rooms", new { name = "No Git" });
         Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
         Assert.Contains("git was not found on PATH", await r.Content.ReadAsStringAsync());

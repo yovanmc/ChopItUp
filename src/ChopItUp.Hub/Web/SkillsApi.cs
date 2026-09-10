@@ -11,8 +11,10 @@ using ChopItUp.Hub.Spawning;
 namespace ChopItUp.Hub.Web;
 
 /// <summary>What the store can tell the outside world about itself: <c>GET /api/skills</c>, mirroring
-/// <see cref="ChatApi"/>'s shape — a <c>MapGroup("/api")</c>, no auth (loopback is the boundary, per
-/// <see cref="ChatApi"/>'s doc comment). The composer's slash menu (task 7) fetches this on mount.
+/// <see cref="ChatApi"/>'s shape — a <c>MapGroup("/api")</c>. <c>GET</c> stays unauthenticated (row
+/// 28's owner-bearer gate only guards non-GET requests); the old "no auth, loopback is the boundary"
+/// framing this comment used to carry is superseded for every write on this surface. The composer's
+/// slash menu (task 7) fetches this on mount.
 ///
 /// Projects exactly the fields of <see cref="SkillSummary"/> and no others (critique pass 2, M-5: the
 /// first draft had four different shapes across three tasks, including a <c>HasOverlay</c> no record
@@ -25,12 +27,12 @@ namespace ChopItUp.Hub.Web;
 /// byte of text the skill would install and a <c>sourceChanged</c>/<c>sourceMissing</c> flag that
 /// suppresses that text rather than trust a second read of a source an owner already reviewed (pass 1's
 /// swap-back attack); the two POSTs decide one. <c>GET</c> stays unauthenticated like the rest of
-/// <c>/api</c>. Task 6 gates the two decision POSTs: <see cref="BearerTokenMiddleware"/> now also
-/// guards them (401 on a missing or unresolvable credential), and <see cref="Approve"/>/
-/// <see cref="Reject"/> additionally require the resolved participant to be
-/// <see cref="ChopDb.OwnerParticipantId"/> or <see cref="ChopDb.OwnerRemoteParticipantId"/> (403
-/// otherwise) — checked first, before either handler does anything else, so a non-owner credential
-/// changes nothing.</summary>
+/// <c>/api</c>. M25 task 6 first gated just these two decision POSTs; row 28 widens the same gate to
+/// every non-GET <c>/api</c> route, so <see cref="BearerTokenMiddleware"/> now also enforces the
+/// owner-or-owner-remote check inline (403 on a resolved non-owner) rather than leaving it solely to
+/// <see cref="Approve"/>/<see cref="Reject"/>'s own <see cref="IsOwner"/> check below — that check
+/// stays as defence in depth, since the middleware already refuses a non-owner credential before
+/// either handler runs.</summary>
 public static class SkillsApi
 {
     public const string SpawnRunning = "A spawn is running; decide skill proposals when the exchange has finished.";

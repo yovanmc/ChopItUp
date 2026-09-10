@@ -1,41 +1,36 @@
 using System.Text.Json;
+using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Security;
 
-/// <summary>Guards <c>/mcp</c>, plus — as of D1 (M25 task 6) — exactly
-/// <c>POST /api/skills/proposals/{id}/approve|reject</c>: a valid bearer token sets
+/// <summary>Guards <c>/mcp</c> (any resolvable participant) and, as of row 28 Task 4, every
+/// <c>/api</c> request whose method is not GET/HEAD/OPTIONS: a valid bearer token sets
 /// <see cref="ParticipantKey"/> in <see cref="HttpContext.Items"/>; anything else is 401 before any
-/// MCP or decision-endpoint code runs. <c>GET /api/skills/proposals</c> and every other <c>/api</c>
-/// route stay unauthenticated — widening auth to the whole surface is roadmap row 13's work, not
-/// this milestone's. Authorization (owner-or-owner-remote, 403 otherwise) is the decision handlers'
-/// own job in <c>SkillsApi</c>; this middleware only answers "is there a credential and does it
-/// resolve".</summary>
+/// MCP or handler code runs. This supersedes M25 task 6's narrower rule (exactly
+/// <c>POST /api/skills/proposals/{id}/approve|reject</c>, everything else on <c>/api</c> left open) —
+/// that was itself the intended scope for THAT milestone, not a permanent boundary; row 28 widens it
+/// because an owner-attributed write must not be forgeable by anything that can merely reach the
+/// loopback address. <c>GET</c>/<c>HEAD</c>/<c>OPTIONS</c> on <c>/api</c> stay unauthenticated (AC2).
+/// Authorization is split by surface: on <c>/mcp</c> any resolved participant may proceed (a model
+/// participant authenticates its own tool calls); on a guarded <c>/api</c> write, only a participant
+/// resolving to <see cref="ChopDb.OwnerParticipantId"/> or <see cref="ChopDb.OwnerRemoteParticipantId"/>
+/// is let through — anything else that resolves is 403, not 401 (acceptance 1's "own hand" clause).</summary>
 public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore tokens)
 {
     public const string ParticipantKey = "chopitup.participant";
     private static readonly byte[] Unauthorized = JsonSerializer.SerializeToUtf8Bytes(new { error = "unauthorized" });
+    private static readonly byte[] Forbidden = JsonSerializer.SerializeToUtf8Bytes(new { error = "forbidden" });
 
-    /// <summary>Whether <paramref name="request"/> falls on the guarded surface. Matched on the
-    /// request's own path segments and method, never a string prefix or suffix: <c>/mcp</c> keeps its
-    /// existing prefix match (an MCP session may legitimately request any sub-path under it), while
-    /// the two decision routes require an exact five-segment shape — <c>api / skills / proposals /
-    /// &lt;numeric id&gt; / approve-or-reject</c> — on a POST. That means a sibling path that merely
-    /// starts with "/api/skills/proposals" (extra segments, a different verb, a non-numeric id, or a
-    /// same-prefixed neighbour directory) is never swept in, and <c>GET /api/skills/proposals</c> — the
-    /// unauthenticated listing — is excluded by the method check alone.</summary>
+    /// <summary>Whether <paramref name="request"/> falls on the guarded surface. <c>/mcp</c> keeps its
+    /// existing prefix match (an MCP session may legitimately request any sub-path under it); every
+    /// other <c>/api</c> request needs a credential unless its method is GET, HEAD or OPTIONS — a
+    /// blanket rule by method, not a route list, so a new write endpoint is guarded by construction
+    /// rather than by someone remembering to add it here (row 28 D-28-a).</summary>
     internal static bool RequiresAuth(HttpRequest request)
     {
         if (request.Path.StartsWithSegments("/mcp")) return true;
-        if (!HttpMethods.IsPost(request.Method)) return false;
-
-        var segments = request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (segments is not { Length: 5 }) return false;
-        return string.Equals(segments[0], "api", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[1], "skills", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(segments[2], "proposals", StringComparison.OrdinalIgnoreCase)
-            && long.TryParse(segments[3], out _)
-            && (string.Equals(segments[4], "approve", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(segments[4], "reject", StringComparison.OrdinalIgnoreCase));
+        if (!request.Path.StartsWithSegments("/api")) return false;
+        return !HttpMethods.IsGet(request.Method) && !HttpMethods.IsHead(request.Method) && !HttpMethods.IsOptions(request.Method);
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -51,6 +46,17 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
         if (header is not null && header.StartsWith(prefix, StringComparison.Ordinal)
             && tokens.TryResolve(header[prefix.Length..].Trim(), out var participant))
         {
+            // /mcp lets any resolved participant through (a model authenticates its own tool calls);
+            // every guarded /api write needs the owner's own hand, from either device.
+            bool isOwnerOnly = !context.Request.Path.StartsWithSegments("/mcp");
+            if (isOwnerOnly && participant is not (ChopDb.OwnerParticipantId or ChopDb.OwnerRemoteParticipantId))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json";
+                await context.Response.Body.WriteAsync(Forbidden, context.RequestAborted);
+                return;
+            }
+
             context.Items[ParticipantKey] = participant;
             await next(context);
             return;

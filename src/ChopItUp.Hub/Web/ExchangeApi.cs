@@ -4,9 +4,10 @@ using ChopItUp.Hub.Spawning;
 namespace ChopItUp.Hub.Web;
 
 /// <summary>The exchange state for the web UI (row 16 renders it; the tests are its first client).
-/// No auth here, like the rest of <c>/api</c>: loopback is the boundary. The stop is the owner's "step in
-/// and end it" (D17): the hub kills the in-flight spawns and closes the exchange; the owner's next
-/// message opens a fresh one.</summary>
+/// <c>GET</c> stays unauthenticated like the rest of <c>/api</c>; <c>POST .../stop</c> needs an
+/// owner-class bearer since row 28 (<c>BearerTokenMiddleware</c>), superseding the old no-auth
+/// loopback boundary. The stop is the owner's "step in and end it" (D17): the hub kills the in-flight
+/// spawns and closes the exchange; the owner's next message opens a fresh one.</summary>
 public static class ExchangeApi
 {
     public static void MapExchangeApi(this WebApplication app)

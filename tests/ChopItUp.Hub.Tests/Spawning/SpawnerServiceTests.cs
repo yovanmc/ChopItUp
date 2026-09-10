@@ -19,7 +19,12 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
     private readonly FakeProcessRunner _runner = new();
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+    public async Task InitializeAsync()
+    {
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+    }
+
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     private SpawnerService Spawner => _host.Services.GetRequiredService<SpawnerService>();
@@ -464,6 +469,7 @@ public sealed partial class SpawnerServiceTests
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_spawner_locator_" + Guid.NewGuid().ToString("N"));
         var runner = new FakeProcessRunner();
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast, cliLocator: locator);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
 
         var r = await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus what do you think?" });
         Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
@@ -498,6 +504,7 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
         }
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Timed);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
     }
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
