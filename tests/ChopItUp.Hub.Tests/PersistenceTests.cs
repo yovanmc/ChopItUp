@@ -32,12 +32,18 @@ public sealed class PersistenceTests
         try
         {
             await using var second = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
-            Assert.Equal(claudeToken, second.TokenFor("claude"));
-            Assert.Equal(codexToken, second.TokenFor("codex"));
-            await using var claude = await second.ClientFor("claude");
+            // Row 28 AC3: a host-file token pasted before the restart still authenticates. It cannot
+            // be looked back up through `second` (hashed at rest - the whole point of the fix), so
+            // the plaintext captured before the restart is presented directly.
+            await using (var codex = await second.ClientFor("codex", codexToken))
+            {
+                var r = await codex.CallToolAsync("list_rooms", new Dictionary<string, object?>());
+                Assert.NotEqual(true, r.IsError);
+            }
+            await using var claude = await second.ClientFor("claude", claudeToken);
 
             // The owner never read anything: unread must be the true total, not the 200 page cap.
-            await using var owner = await second.ClientFor("owner");
+            await using var owner = await second.ClientFor("owner", ownerToken);
             var general = HubTestHost.Json(await owner.CallToolAsync("list_rooms", new Dictionary<string, object?>()))
                 .GetProperty("rooms")[0];
             Assert.Equal(corpus, general.GetProperty("message_count").GetInt32());

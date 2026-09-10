@@ -85,8 +85,12 @@ public static class HostCommands
         }
         try
         {
-            if (TryReadRoster(options, error, out _) is not { } ids) return 4;
-            _ = TokenStore.Rotate(options.DataDir, ids, options.RotateParticipant!);
+            if (TryReadRoster(options, error, out var roster) is null) return 4;
+            // Row 28: TokenStore.Rotate is gone - MintFor is the one mint entry point, taken through
+            // a freshly-loaded instance (the same shape --print-config's read-only ReadExisting uses
+            // below has to avoid: Load backfills any participant new to this database, which is
+            // exactly the existing "start the hub once first" contract for those rows).
+            _ = TokenStore.Load(options.DataDir, roster).MintFor(options.RotateParticipant!);
             // The token itself is deliberately NOT printed (critique pass 1, F7): every run of this
             // command lands in a terminal buffer, a shell history and often an agent transcript.
             // --print-config writes it to a file in the gitignored data dir instead.
@@ -125,12 +129,13 @@ public static class HostCommands
         }
         try
         {
-            if (TryReadRoster(options, error, out var roster) is not { } ids) return 4;
+            if (TryReadRoster(options, error, out var roster) is null) return 4;
 
             // Read WITHOUT back-filling: TokenStore.Load mints any missing participant and rewrites
             // the file, so a hand-edited tokens.json would have a credential silently rotated by a
-            // command that is supposed to only read (pass 2, MINOR-12).
-            var tokens = TokenStore.ReadExisting(options.DataDir, ids);
+            // command that is supposed to only read (pass 2, MINOR-12). Row 28: the values below are
+            // host-file rows' hashes, not plaintext - ReadExisting never returns a usable credential.
+            var tokens = TokenStore.ReadExisting(options.DataDir, roster);
 
             // Prefer the port the hub actually bound over the one this invocation happened to
             // resolve: a hub started with --port 9000 and a --print-config run without it would

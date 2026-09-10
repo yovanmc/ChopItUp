@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ChopItUp.Core.Memory;
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
@@ -18,6 +19,10 @@ namespace ChopItUp.Hub.Tests;
 public sealed class HostCommandsTests : IDisposable
 {
     private static readonly string[] Roster = ChopDb.SeedRoster.Select(p => p.Id).ToArray();
+    // Row 28: TokenStore.Load/ReadExisting/MintFor classify by Participant, not by bare id - kept
+    // separate from Roster (still used everywhere a plain id string is what's under test) rather than
+    // retyping every existing string-based assertion in this file.
+    private static readonly IReadOnlyList<Participant> Participants = ChopDb.SeedRoster;
     private readonly List<string> _dirs = new();
 
     private string NewDir()
@@ -38,7 +43,7 @@ public sealed class HostCommandsTests : IDisposable
     private static void StartedOnce(string dir)
     {
         new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
-        TokenStore.Load(dir, Roster);
+        TokenStore.Load(dir, Participants);
     }
 
     /// <summary>v1 shape plus exactly what ApplyV2 adds (M8 Task 1's fixture, duplicated here with a
@@ -83,14 +88,14 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var before = TokenStore.ReadExisting(dir, Roster);
+        var before = TokenStore.ReadExisting(dir, Participants);
 
         var output = new StringWriter();
         var error = new StringWriter();
         var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, error);
 
         Assert.Equal(0, exit);
-        var after = TokenStore.Load(dir, Roster).Tokens;
+        var after = TokenStore.ReadExisting(dir, Participants);
         Assert.NotEqual(before["claude"], after["claude"]);
         Assert.Equal(before["owner"], after["owner"]);
         Assert.Equal(before["codex"], after["codex"]);
@@ -154,10 +159,11 @@ public sealed class HostCommandsTests : IDisposable
             ownerToken = host1.TokenFor("owner");
         }
 
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), new StringWriter(), new StringWriter());
-        Assert.Equal(0, exit);
-
-        var newToken = TokenStore.Load(dir, Roster).Tokens["claude"];
+        // Row 28, D-28-d: --rotate-token does not print the new value yet (that reversal is a later
+        // task), so the plaintext this test needs to present has to come from the same mint entry
+        // point the CLI verb itself calls - MintFor - rather than from stdout. A6_rotate_replaces_one_
+        // token_and_leaves_the_others_alone already covers the CLI verb's own exit code and isolation.
+        var newToken = TokenStore.Load(dir, Participants).MintFor("claude");
         Assert.NotEqual(old, newToken);
 
         await using var host2 = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
@@ -202,7 +208,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -323,7 +329,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -368,7 +374,8 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         StartedOnce(dir);
         var path = Path.Combine(dir, TokenStore.FileName);
-        var tokens = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path))!;
+        // Row 28: entries are now { "sha256": "..." } objects, not raw strings.
+        var tokens = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path))!;
         tokens.Remove("codex");
         File.WriteAllText(path, JsonSerializer.Serialize(tokens, new JsonSerializerOptions { WriteIndented = true }));
         var before = File.ReadAllBytes(path);
@@ -405,7 +412,7 @@ public sealed class HostCommandsTests : IDisposable
     public void M8_A8_print_config_against_a_v2_database_writes_nothing_and_says_start_the_hub()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, ["owner", "claude", "codex"]);
+        TokenStore.Load(dir, Participants.Where(p => p.Id is "owner" or "claude" or "codex").ToArray());
         WriteRawV2(Path.Combine(dir, "chopitup.db"));   // what the previous build left behind
         var names = Snapshot(dir);
         var dbBytes = File.ReadAllBytes(Path.Combine(dir, "chopitup.db"));   // names alone cannot see a header rewrite
@@ -445,7 +452,7 @@ public sealed class HostCommandsTests : IDisposable
     public void M8_A8_rotate_against_a_missing_database_writes_nothing_and_exits_4()
     {
         var dir = NewDir();
-        TokenStore.Load(dir, Roster);
+        TokenStore.Load(dir, Participants);
         var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
 
         var error = new StringWriter();
@@ -461,7 +468,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         Assert.Equal(0, HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter()));
 
@@ -474,17 +481,22 @@ public sealed class HostCommandsTests : IDisposable
         foreach (var p in ChopDb.SeedRoster)
         {
             Assert.Contains($"`{p.Id}`", readme);
-            Assert.DoesNotContain(tokens[p.Id], readme);   // the README never carries a token
+            // Only a host-file row has an entry to check for at all (row 28); a spawnable/system row
+            // never appears in `tokens`, so there is nothing here to leak into the README.
+            if (tokens.TryGetValue(p.Id, out var t)) Assert.DoesNotContain(t, readme);
         }
         Assert.Contains("usage credits", readme);
         Assert.Contains("no file", readme);
 
-        // Rotating a spawn row's token changes only that key.
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "gpt-5.5"), new StringWriter(), new StringWriter());
+        // Rotating one host-file row's token changes only that key. Rotating a hub-launched model's
+        // token (e.g. "gpt-5.5") no longer applies post-row-28: it is ephemeral and has no entry in
+        // the file to rotate at all - MintFor_replaces_one_host_file_token_and_refuses_a_spawnable_or_
+        // system_id (TokenStoreTests.cs) covers that refusal directly.
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "owner-remote"), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
-        var after = TokenStore.ReadExisting(dir, Roster);
-        Assert.NotEqual(tokens["gpt-5.5"], after["gpt-5.5"]);
-        foreach (var id in Roster.Where(id => id != "gpt-5.5")) Assert.Equal(tokens[id], after[id]);
+        var after = TokenStore.ReadExisting(dir, Participants);
+        Assert.NotEqual(tokens["owner-remote"], after["owner-remote"]);
+        foreach (var id in tokens.Keys.Where(id => id != "owner-remote")) Assert.Equal(tokens[id], after[id]);
     }
 
     [Fact]
@@ -715,7 +727,7 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Roster);
+        var tokens = TokenStore.ReadExisting(dir, Participants);
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);

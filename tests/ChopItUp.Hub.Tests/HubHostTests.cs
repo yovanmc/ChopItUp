@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Spawning;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
@@ -21,10 +22,45 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.True(File.Exists(Path.Combine(_dir, "chopitup.db")));
         Assert.True(File.Exists(Path.Combine(_dir, "tokens.json")));
         Assert.Equal("127.0.0.1", _host.BaseAddress.Host);
-        var tokens = TokenStore.Load(_dir, ChopDb.SeedRoster.Select(p => p.Id).ToArray());
-        Assert.Equal(ChopDb.SeedRoster.Count, tokens.Count);
-        Assert.Equal(ChopDb.SeedRoster.Count, tokens.Tokens.Values.Distinct().Count());
-        Assert.All(tokens.Tokens.Values, t => Assert.True(t.Length >= 32));
+
+        // Row 28: 'hub' (system) holds no credential at all; a host-file row's persisted value is a
+        // sha256 hex hash, never a plaintext; a spawnable row's plaintext lives only in memory.
+        var hostFile = TokenStore.ReadExisting(_dir, ChopDb.SeedRoster);
+        var expectedHostFile = ChopDb.SeedRoster.Count(p => p.Kind != "system" && !ExchangePolicy.IsSpawnable(p));
+        Assert.Equal(expectedHostFile, hostFile.Count);
+        Assert.All(hostFile.Values, hash => Assert.Equal(64, hash.Length));
+        Assert.Equal(hostFile.Count, hostFile.Values.Distinct().Count());
+
+        var ephemeral = ChopDb.SeedRoster.Where(ExchangePolicy.IsSpawnable).Select(p => _host.TokenFor(p.Id)).ToList();
+        Assert.Equal(ephemeral.Count, ephemeral.Distinct().Count());
+        Assert.All(ephemeral, t => Assert.True(t.Length >= 32));
+    }
+
+    /// <summary>AC7: a minted spawn credential authenticates <c>/mcp</c>, stops authenticating at the
+    /// next hub start, and appears in no persisted store — never as a tautology (the value it mints
+    /// is only ever compared to itself); a REAL restart and a REAL 401 are both exercised.</summary>
+    [Fact]
+    public async Task AC7_a_minted_spawn_credential_authenticates_mcp_then_dies_at_restart_and_is_never_persisted()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_ac7_" + Guid.NewGuid().ToString("N"));
+        string bearer;
+        await using (var host1 = await HubTestHost.StartAsync(dir, deleteOnDispose: false))
+        {
+            bearer = host1.TokenFor("opus");
+            await using var client = await host1.ClientFor("opus");
+            var r = await client.CallToolAsync("list_rooms", new Dictionary<string, object?>());
+            Assert.NotEqual(true, r.IsError);
+        }
+
+        Assert.DoesNotContain(bearer, File.ReadAllText(Path.Combine(dir, "tokens.json")));
+
+        await using var host2 = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
+        using var req = new HttpRequestMessage(HttpMethod.Post, new Uri(host2.BaseAddress, "mcp"))
+        { Content = new StringContent("{}", new MediaTypeHeaderValue("application/json")) };
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        var res = await host2.Client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.Unauthorized, res.StatusCode);
+        Assert.DoesNotContain(bearer, File.ReadAllText(Path.Combine(dir, "tokens.json")));
     }
 
     [Fact]

@@ -55,7 +55,7 @@ public static class HubHost
             // below (tokens, instructions, tools) sees the same list. Editing rows takes effect at
             // the next hub start.
             var roster = participants.List();
-            var tokens = TokenStore.Load(options.DataDir, roster.Select(p => p.Id).ToArray());
+            var tokens = TokenStore.Load(options.DataDir, roster);
             // M10: the memory store lives beside the database; the seed core is written once, the git
             // trail is created lazily by the first approval (plan decisions 1, 5).
             var memory = new MemoryStore(Path.Combine(options.DataDir, "memory"));
