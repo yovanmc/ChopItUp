@@ -143,3 +143,15 @@ presentation. Second, unrelated trap from the same row: a listing cache keyed on
 timestamps by default — regenerating a folder by copying over it changes contents without moving that
 maximum, so the card would have shown the owner stale bytes while reporting the source unchanged. Key
 such a cache on a per-file (path, length, write-ticks) fingerprint, which is still stat-only.
+
+### [notes, attribution, static-helpers, review] M27 (2026-09-09, ff6aa43)
+A note-builder that names an actor in its text but does not take that actor as a parameter is a lie
+waiting for its second caller. `ExchangePolicy.Stop` was written for the owner's stop button and
+hardcoded "stopped by the owner"; runs later reused it for every cap-driven park and for a run the
+conductor ended itself, so the hub told the owner he had stopped a run he was asleep for, and the
+exchange bar's `stopped` label repeated it. No test caught it because every existing assertion on that
+string was on an owner-driven path, which was correct. This hub's whole UX is posted notes, so the
+review lens is: when a note names WHO did something, the function that builds it takes who, with no
+default, and every call site is read. The fix shape is the same one P7 already demands - the policy
+decides the cause and passes it, the service only carries it out; inferring the actor from the reason
+string would have re-created the defect one layer up.
