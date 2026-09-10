@@ -185,3 +185,20 @@ before the row leaves the board, or mark the sequence unverified in the same wor
 any other unrun claim. The second half is cheaper than it sounds: the ordering here was derivable from
 a gate the repo already tested, so "does this runbook contradict a gate the product enforces" is a
 grep, not an experiment.
+
+### [spawns, sandbox, credentials, codex, measurement] M29 scoping (2026-09-10, c971b58)
+Neither spawn CLI can be given a read fence, so no amount of deny-list work confines a credential
+file from a spawn. Claude's side was already measured (`SpawnCommands.cs:130`: read fences ineffective
+on 2.1.220, and `Bash` bypasses `Read()` rules anyway because those bind the tool, not the shell). The
+Codex side was assumed worse and measured better-sounding, then measured honestly: on codex-cli
+0.153.3, `codex sandbox` reads a file OUTSIDE the workspace under the default, under
+`sandbox_permissions=[]`, and under `sandbox_mode="read-only"` — the Windows restricted-token sandbox
+confines writes, and "read-only" names what the model may do to the disk, not what it may see.
+`--sandbox-state-readable-root` looks like the missing knob and is not reachable: it requires
+`--sandbox-state-json` from an internal `codex/sandbox-state-meta` surface that `codex exec` never
+passes. The trap worth remembering is the reasoning error, not the flag list — a flag named
+`readable-root` and a mode named `read-only` both read as read confinement and neither is. Design
+consequence for M29: defence has to shrink the prize (expire or rotate `owner-remote`, cap what a
+post from it may do, alert when a human row posts during a spawn window), because guarding the file
+is not on the table. Probes were `codex sandbox -- cmd /c type <path outside workspace>`; they cost no
+model call, which is why an assumption like this should never survive a planning session unmeasured.
