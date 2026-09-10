@@ -802,6 +802,7 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         var runner = new FakeProcessRunner { Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct) };
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: the cleanup stop below is a write and now needs a credential too
         await using var proxy = await host.ClientFor("owner-remote");
 
         var posted = HubTestHost.Json(await proxy.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "@sonnet hello from the phone" }));

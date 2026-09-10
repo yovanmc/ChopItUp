@@ -35,6 +35,7 @@ internal static class RunHostFixture
             seedClasses(new ParticipantStore(seedDb));
         }
         var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: spawnLimits, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call this fixture's callers make now needs a credential
         const string room = "lab";
         var roomDir = Path.Combine(roomsRoot, room);
         Assert.True(await new GitTrail(roomDir).InitAsync());

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
@@ -14,7 +15,12 @@ public sealed class ChatApiTests : IAsyncLifetime
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_api_" + Guid.NewGuid().ToString("N"));
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir);
+    public async Task InitializeAsync()
+    {
+        _host = await HubTestHost.StartAsync(_dir);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+    }
+
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     [Fact]
@@ -70,6 +76,64 @@ public sealed class ChatApiTests : IAsyncLifetime
         var page = await _host.Client.GetFromJsonAsync<JsonElement>("api/rooms/general/messages");
         var msg = page.GetProperty("messages").EnumerateArray().Single();
         Assert.Equal("owner", msg.GetProperty("authorId").GetString());
+    }
+
+    /// <summary>Row 28 Task 4, AC1/AC2: an unauthenticated write is refused before it touches the
+    /// store (the message list stays empty), and GET stays open with no credential at all.</summary>
+    [Fact]
+    public async Task Posting_with_no_credential_is_401_and_the_message_list_is_unchanged()
+    {
+        using var anon = new HttpClient { BaseAddress = _host.BaseAddress };
+        var response = await anon.PostAsJsonAsync("api/rooms/general/messages", new { body = "should not land" });
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+
+        var getResponse = await anon.GetAsync("api/rooms/general/messages");   // GET is unaffected, no credential needed
+        Assert.Equal(HttpStatusCode.OK, getResponse.StatusCode);
+        var page = await getResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Empty(page.GetProperty("messages").EnumerateArray());
+    }
+
+    /// <summary>Row 28 Task 4, AC1: a credential that resolves to a non-owner participant is 403
+    /// (forbidden), not 401 (unauthenticated), and the write still does not happen.</summary>
+    [Fact]
+    public async Task Posting_with_a_model_participants_token_is_403()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/rooms/general/messages")
+        {
+            Content = JsonContent.Create(new { body = "not the owner" }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _host.TokenFor("opus"));
+        var response = await _host.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+        var page = await _host.Client.GetFromJsonAsync<JsonElement>("api/rooms/general/messages");
+        Assert.Empty(page.GetProperty("messages").EnumerateArray());
+    }
+
+    /// <summary>Row 28 Task 4: widening auth to every non-GET /api route must not touch /mcp's own
+    /// gate — a model participant still authenticates there with its own (ephemeral) bearer.</summary>
+    [Fact]
+    public async Task Mcp_still_works_for_a_model_participant()
+    {
+        await using var opus = await _host.ClientFor("opus");
+        var r = await opus.CallToolAsync("list_rooms", new Dictionary<string, object?>());
+        Assert.NotEqual(true, r.IsError);
+    }
+
+    /// <summary>Row 28 Task 4, pass 2 finding 13: the write must be attributed to the credential that
+    /// resolved, not hard-coded to the owner id — otherwise an owner-remote write is stamped owner.</summary>
+    [Fact]
+    public async Task Posting_with_the_owner_remote_token_is_authored_owner_remote()
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "api/rooms/general/messages")
+        {
+            Content = JsonContent.Create(new { body = "from the phone" }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _host.TokenFor(ChopDb.OwnerRemoteParticipantId));
+        var response = await _host.Client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        var posted = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("owner-remote", posted.GetProperty("authorId").GetString());
     }
 
     [Fact]

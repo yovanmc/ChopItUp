@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
@@ -74,6 +75,17 @@ public sealed class HubTestHost : IAsyncDisposable
     /// bearer override instead.</summary>
     public string TokenFor(string participant) =>
         _mintedHostFile.TryGetValue(participant, out var minted) ? minted : Tokens.BearerFor(participant);
+
+    /// <summary>Row 28 Task 4: sets <see cref="Client"/>'s default <c>Authorization</c> header to
+    /// <paramref name="participant"/>'s bearer (via <see cref="TokenFor"/>), so every non-GET
+    /// <c>/api</c> call this fixture's own tests already made unauthenticated keeps working now that
+    /// <c>BearerTokenMiddleware</c> guards them. Built on <see cref="TokenFor"/> rather than a second
+    /// lookup path. A request that builds its own <see cref="HttpRequestMessage"/> and sets its own
+    /// <c>Authorization</c> header overrides this default; a test proving the no-credential or a
+    /// non-owner path needs a client that never had this called on it (see
+    /// <c>SkillsApiAuthTests.Send</c>).</summary>
+    public void AuthorizeAs(string participant) =>
+        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", TokenFor(participant));
 
     public async Task<McpClient> ClientFor(string participant, string? bearer = null)
     {

@@ -8,9 +8,10 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>The owner's side of memory (D15: agents propose, the owner approves). No auth, like the
-/// rest of <c>/api</c>: loopback is the boundary — and because a Codex spawn lives inside that boundary
-/// with a shell (F3), decisions are refused while any spawn is in flight (plan decision 13). Approve =
+/// <summary>The owner's side of memory (D15: agents propose, the owner approves). Every non-GET
+/// route here needs an owner-class bearer since row 28 (<c>BearerTokenMiddleware</c>), superseding
+/// the old no-auth loopback boundary — and because a Codex spawn lives inside that boundary with a
+/// shell (F3), decisions are refused while any spawn is in flight (plan decision 13). Approve =
 /// mark + append + record + note, in that order (plan decision 15): the row is the arbiter, the file
 /// write is idempotent on the proposal's key, the note is best-effort.</summary>
 public static class MemoryApi

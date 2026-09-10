@@ -42,6 +42,7 @@ public sealed class RunToolsTests : IAsyncLifetime
         var runLimits = new RunLimits(RunLimits.Default.Spawns, RunLimits.Default.WallClock, RunLimits.Default.SpawnTimeout,
             RunLimits.Default.PhaseEntries, GateProgressInterval: TimeSpan.FromMilliseconds(40));
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, runLimits: runLimits);
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
         _roomDir = Path.Combine(_host.RoomsRoot, "lab");
         Assert.True(await new GitTrail(_roomDir).InitAsync());
         _host.Services.GetRequiredService<MessageStore>().CreateRoom("lab", "LAB", _roomDir);

@@ -6,13 +6,16 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>M25 ticket 06 / plan Task 6, D1: owner-only auth on the two skill-proposal decision
-/// endpoints. <see cref="SkillsApiProposalsTests"/> covers the decision logic once a caller is let
-/// through (its helpers now authenticate as the owner, per this task); this file covers the gate
-/// itself — acceptance 5's contract: no credential or an unresolvable one is 401 and changes nothing,
-/// a credential resolving to a non-owner participant is 403 and changes nothing, and every other
-/// <c>/api</c> route (including <c>GET</c> here, and the sibling <c>/api/memory</c> decision route the
-/// plan calls out by name) stays reachable with no credential.</summary>
+/// <summary>M25 ticket 06 / plan Task 6, D1 first put owner-only auth on the two skill-proposal
+/// decision endpoints; row 28 Task 4 widens the same gate to every non-GET <c>/api</c> route.
+/// <see cref="SkillsApiProposalsTests"/> covers the decision logic once a caller is let through (its
+/// helpers now authenticate as the owner, per M25 task 6); this file covers the gate itself —
+/// acceptance 5's contract: no credential or an unresolvable one is 401 and changes nothing, a
+/// credential resolving to a non-owner participant is 403 and changes nothing, and <c>GET</c> here
+/// stays reachable with no credential. The sibling <c>/api/memory</c> decision route, once the
+/// deliberately-still-unauthenticated example proving M25 task 6's gate had not silently widened, is
+/// now gated the same way as everything else on this surface — see
+/// <see cref="Memory_proposal_approve_a_different_api_route_now_requires_the_owner_credential_too"/>.</summary>
 public sealed class SkillsApiAuthTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skillsauth_" + Guid.NewGuid().ToString("N"));
@@ -177,16 +180,23 @@ public sealed class SkillsApiAuthTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 
-    /// <summary>Plan Task 6, verbatim: "Every existing /api route must remain unauthenticated — a test
-    /// asserts /api/memory/proposals/{id}/approve still works with no header, so this change cannot
-    /// silently widen." A sibling decision endpoint, same shape, deliberately left alone by D1.</summary>
+    /// <summary>Superseded by row 28 Task 4 (D-28-a): M25 task 6's rule was "every existing /api route
+    /// must remain unauthenticated" and this test proved exactly that for the sibling memory-decision
+    /// route, deliberately left alone by that milestone's narrower, route-listed gate. Row 28 replaces
+    /// that gate with "authenticate by method, not by route list" — /api/memory writes the memory
+    /// store, so leaving it unauthenticated would reopen the escalation this row exists to close on
+    /// the one route every other write-gate test in this file already covers. Inverted, not exempted:
+    /// no credential is 401 and changes nothing, the owner token succeeds.</summary>
     [Fact]
-    public async Task Memory_proposal_approve_a_different_api_route_still_works_with_no_credential()
+    public async Task Memory_proposal_approve_a_different_api_route_now_requires_the_owner_credential_too()
     {
         _host.Services.GetRequiredService<MemoryProposalStore>().Create("proj", "opus", "user", "Likes tests", "RED before GREEN.", null);
 
-        var r = await Send(HttpMethod.Post, "api/memory/proposals/1/approve", token: null);
+        var refused = await Send(HttpMethod.Post, "api/memory/proposals/1/approve", token: null);
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        Assert.Equal("pending", _host.Services.GetRequiredService<MemoryProposalStore>().Get(1)!.Status);
 
+        var r = await Send(HttpMethod.Post, "api/memory/proposals/1/approve", token: _host.TokenFor(ChopDb.OwnerParticipantId));
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 }

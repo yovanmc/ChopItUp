@@ -3,13 +3,18 @@ using System.Text.RegularExpressions;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Security;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>JSON endpoints under <c>/api</c> for the web UI (client scaffold is a later task). No
-/// auth here per brief decision D2 — loopback is the boundary, and <c>BearerTokenMiddleware</c> keeps
-/// guarding <c>/mcp</c> only. Every write goes through <see cref="MessageStore.Post(string,string,string)"/>,
-/// the same path the MCP tools use, so the cursor and broadcast rules cannot drift.</summary>
+/// <summary>JSON endpoints under <c>/api</c> for the web UI. Brief decision D2's "no auth, loopback is
+/// the boundary" is superseded by row 28: <c>BearerTokenMiddleware</c> now guards every non-GET
+/// request here too, and a write is authored from whichever participant the bearer resolved to
+/// (<see cref="BearerTokenMiddleware.ParticipantKey"/> in <see cref="HttpContext.Items"/>), falling
+/// back to the owner id only when it is unset (a defensive default; the middleware never lets a
+/// guarded write through without setting it). Every write still goes through
+/// <see cref="MessageStore.Post(string,string,string)"/>, the same path the MCP tools use, so the
+/// cursor and broadcast rules cannot drift.</summary>
 public static class ChatApi
 {
     /// <summary>A line that opens a new speaker's turn during transcript import: a short label
@@ -47,18 +52,29 @@ public static class ChatApi
         });
     }
 
-    /// <summary>B3: authored as the roster's one human row and stored through the same
+    /// <summary>B3, row 28 pass 2 finding 13: authored as whichever participant's bearer resolved the
+    /// request (the owner or owner-remote — <see cref="BearerTokenMiddleware"/> refuses anything
+    /// else), falling back to the owner id only when the key is unset, and stored through the same
     /// <c>MessageStore.Post</c> the MCP tools use, so the cursor and broadcast rules cannot drift. No
     /// client_key on this surface — a browser POST has no story for "was this delivered", unlike an
     /// MCP tool call.</summary>
-    private static IResult PostMessage(string roomId, PostBody body, MessageStore store, MessageSignal signal, ParticipantStore participants)
+    private static IResult PostMessage(string roomId, PostBody body, HttpContext httpContext, MessageStore store, MessageSignal signal, ParticipantStore participants)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Body)) return Results.BadRequest(new { error = "body is empty." });
-        var message = store.Post(roomId, participants.OwnerId(), body.Body);   // 3-arg overload: no client_key, always inserts
+        var authorId = AuthorId(httpContext, participants);
+        var message = store.Post(roomId, authorId, body.Body);   // 3-arg overload: no client_key, always inserts
         signal.Publish(roomId, message);
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }
+
+    /// <summary>The participant <see cref="BearerTokenMiddleware"/> resolved the caller's bearer to,
+    /// or the owner id when the key is unset — a defensive fallback only, since the middleware never
+    /// lets a guarded write reach here without setting it.</summary>
+    private static string AuthorId(HttpContext httpContext, ParticipantStore participants) =>
+        httpContext.Items.TryGetValue(BearerTokenMiddleware.ParticipantKey, out var raw) && raw is string participantId
+            ? participantId
+            : participants.OwnerId();
 
     /// <summary>D1, binding: every imported message is authored as the roster's one human row; the
     /// original speaker label (if any) stays as plain text inside the body. A line matching
