@@ -99,4 +99,86 @@ public sealed class PeerProcessTests
         }
         finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
     }
+
+    /// <summary>Row 29 finding: <c>Scan</c> sized its buffer once and read once, so a table that grew
+    /// between the two <c>GetExtendedTcpTable</c> calls made the read return ERROR_INSUFFICIENT_BUFFER
+    /// and <c>OwningPid</c> null for a connection that was genuinely established - the middleware would
+    /// read that as an unresolvable peer and lock the owner out on ordinary network churn.
+    ///
+    /// Real socket churn was tried first to reproduce this end to end, but the table on a dev box
+    /// already carries hundreds of established rows, so churn from a handful of test sockets tends to
+    /// shrink the net row count between the two calls at least as often as it grows it - not a
+    /// reliable trigger. <see cref="PeerProcess.GetExtendedTcpTable"/> and the new
+    /// <see cref="PeerProcess.TcpTableFn"/> delegate it is exposed through are <c>internal</c> (not
+    /// <c>private</c>) for exactly this: a fake can fall through to the real syscall for the honest
+    /// size query and force ERROR_INSUFFICIENT_BUFFER on the read for a controlled number of attempts,
+    /// which drives <c>Scan</c>'s retry loop deterministically without altering
+    /// <see cref="PeerProcess.OwningPid(PeerProcess.Endpoints)"/>'s production call path (it always
+    /// passes a null <c>tableCall</c> and never reaches this overload).</summary>
+    [Fact]
+    public void OwningPid_retries_past_repeated_ERROR_INSUFFICIENT_BUFFER_and_still_resolves()
+    {
+        const uint ErrorInsufficientBuffer = 122;
+        var (listener, client, accepted) = Connect(IPAddress.Loopback);
+        try
+        {
+            var e = EndpointsFor(accepted);
+            var readAttempts = 0;
+            const int failFirstNReads = 3; // under PeerProcess's MaxScanAttempts cap of 5
+
+            uint FakeTableCall(nint table, ref int size, bool sorted, int family, int tableClass, uint reserved)
+            {
+                if (table == 0)
+                {
+                    // the size query: always answer honestly so the retry loop's own headroom math
+                    // is exercised against real numbers.
+                    return PeerProcess.GetExtendedTcpTable(table, ref size, sorted, family, tableClass, reserved);
+                }
+                readAttempts++;
+                if (readAttempts <= failFirstNReads)
+                {
+                    // simulate the table having grown again since it was last measured, regardless
+                    // of how much headroom the caller already allocated.
+                    return ErrorInsufficientBuffer;
+                }
+                return PeerProcess.GetExtendedTcpTable(table, ref size, sorted, family, tableClass, reserved);
+            }
+
+            var pid = PeerProcess.OwningPid(e, FakeTableCall);
+
+            Assert.Equal(Environment.ProcessId, pid);
+            Assert.True(readAttempts > failFirstNReads,
+                $"expected a real read attempt past the {failFirstNReads} induced failures; only saw {readAttempts} read attempt(s) total");
+        }
+        finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
+    }
+
+    /// <summary>The other half of the same finding: once retries are exhausted (every attempt hits
+    /// ERROR_INSUFFICIENT_BUFFER), <c>OwningPid</c> must give up and return null rather than loop
+    /// forever or throw - the middleware's existing "peer unresolvable" 403 is still the right answer
+    /// when the table genuinely will not hold still.</summary>
+    [Fact]
+    public void OwningPid_returns_null_once_retries_are_exhausted()
+    {
+        const uint ErrorInsufficientBuffer = 122;
+        var (listener, client, accepted) = Connect(IPAddress.Loopback);
+        try
+        {
+            var e = EndpointsFor(accepted);
+            var readAttempts = 0;
+
+            uint AlwaysInsufficient(nint table, ref int size, bool sorted, int family, int tableClass, uint reserved)
+            {
+                if (table == 0) return PeerProcess.GetExtendedTcpTable(table, ref size, sorted, family, tableClass, reserved);
+                readAttempts++;
+                return ErrorInsufficientBuffer;
+            }
+
+            var pid = PeerProcess.OwningPid(e, AlwaysInsufficient);
+
+            Assert.Null(pid);
+            Assert.Equal(5, readAttempts); // PeerProcess.MaxScanAttempts, mirrored here since it is private
+        }
+        finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
+    }
 }

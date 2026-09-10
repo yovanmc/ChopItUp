@@ -40,8 +40,24 @@ public static partial class PeerProcess
         public uint RemoteScopeId, RemotePort, State, OwningPid;
     }
 
+    /// <summary>Internal (not <c>private</c>) and test-callable via <c>InternalsVisibleTo</c>: a test
+    /// can fall through to the real syscall for some calls of a fake <see cref="TcpTableFn"/> while
+    /// forcing others to fail, to prove <see cref="Scan"/>'s retry loop without touching the
+    /// production call path (<see cref="OwningPid(Endpoints)"/> never passes a non-null one).</summary>
     [LibraryImport("iphlpapi.dll", SetLastError = true)]
-    private static partial uint GetExtendedTcpTable(nint table, ref int size, [MarshalAs(UnmanagedType.Bool)] bool sorted, int family, int tableClass, uint reserved);
+    internal static partial uint GetExtendedTcpTable(nint table, ref int size, [MarshalAs(UnmanagedType.Bool)] bool sorted, int family, int tableClass, uint reserved);
+
+    /// <summary>Row 29 finding: the shape of the one Win32 call <see cref="Scan"/> makes twice per
+    /// attempt, so a test can substitute it. Matches <see cref="GetExtendedTcpTable"/>'s signature
+    /// exactly (marshalling attributes are only meaningful at the P/Invoke boundary itself, already
+    /// applied by the generated implementation, so the delegate type omits them).</summary>
+    internal delegate uint TcpTableFn(nint table, ref int size, bool sorted, int family, int tableClass, uint reserved);
+
+    private const int MaxScanAttempts = 5;
+
+    /// <summary>Headroom added on top of the measured size so a small growth in the table between the
+    /// size query and the read that follows does not by itself force a retry.</summary>
+    private const int ScanHeadroomBytes = 4096;
 
     private static int HostPort(uint networkOrderPort) => (int)(((networkOrderPort & 0xFF) << 8) | ((networkOrderPort >> 8) & 0xFF));
 
@@ -52,7 +68,13 @@ public static partial class PeerProcess
 
     /// <summary>Null when the peer is neither IPv4 (or IPv4-mapped) nor IPv6, the table cannot be
     /// read, or no ESTABLISHED row joins that peer address:port to that hub address:port.</summary>
-    public static int? OwningPid(Endpoints e)
+    public static int? OwningPid(Endpoints e) => OwningPid(e, tableCall: null);
+
+    /// <summary>Test-only seam (row 29 finding): <paramref name="tableCall"/> is null on every
+    /// production call site and <see cref="Scan"/> then calls the real
+    /// <see cref="GetExtendedTcpTable"/> exactly as before; a test can pass a fake to force the
+    /// retry path without a real table ever needing to grow mid-scan.</summary>
+    internal static int? OwningPid(Endpoints e, TcpTableFn? tableCall)
     {
         var peer = e.RemoteAddress.IsIPv4MappedToIPv6 ? e.RemoteAddress.MapToIPv4() : e.RemoteAddress;
         var hub = e.LocalAddress.IsIPv4MappedToIPv6 ? e.LocalAddress.MapToIPv4() : e.LocalAddress;
@@ -60,8 +82,8 @@ public static partial class PeerProcess
         var want = new Wanted(peer.GetAddressBytes(), e.RemotePort, hub.GetAddressBytes(), e.LocalPort);
         return peer.AddressFamily switch
         {
-            AddressFamily.InterNetwork => Scan(AfInet, Marshal.SizeOf<MibTcpRowOwnerPid>(), want, MatchV4),
-            AddressFamily.InterNetworkV6 => Scan(AfInet6, Marshal.SizeOf<MibTcp6RowOwnerPid>(), want, MatchV6),
+            AddressFamily.InterNetwork => Scan(AfInet, Marshal.SizeOf<MibTcpRowOwnerPid>(), want, MatchV4, tableCall),
+            AddressFamily.InterNetworkV6 => Scan(AfInet6, Marshal.SizeOf<MibTcp6RowOwnerPid>(), want, MatchV6, tableCall),
             _ => null,
         };
     }
@@ -89,24 +111,44 @@ public static partial class PeerProcess
         return (int)r.OwningPid;
     }
 
-    private static int? Scan(int family, int rowSize, Wanted want, Func<nint, Wanted, int?> match)
+    /// <summary>Row 29 finding: the table can grow between the size query and the read that follows,
+    /// which used to make the read return ERROR_INSUFFICIENT_BUFFER and this whole method null — the
+    /// middleware reads that as an unresolvable peer and locks the owner out on ordinary network
+    /// churn, not an attack. Sizes fresh on every attempt (never reuses a stale size), pads the
+    /// allocation with <see cref="ScanHeadroomBytes"/> so a small growth in the gap does not by
+    /// itself force a retry, and gives up only after <see cref="MaxScanAttempts"/> attempts or a
+    /// failure that is not ERROR_INSUFFICIENT_BUFFER. Frees the buffer on every path, including the
+    /// retry path, via the <c>finally</c>.</summary>
+    private static int? Scan(int family, int rowSize, Wanted want, Func<nint, Wanted, int?> match, TcpTableFn? tableCall = null)
     {
-        int size = 0;
-        var first = GetExtendedTcpTable(0, ref size, false, family, TcpTableOwnerPidAll, 0);
-        if (first != ErrorInsufficientBuffer && first != NoError) return null;
-        var buffer = Marshal.AllocHGlobal(size);
-        try
+        var call = tableCall ?? GetExtendedTcpTable;
+        for (var attempt = 0; attempt < MaxScanAttempts; attempt++)
         {
-            if (GetExtendedTcpTable(buffer, ref size, false, family, TcpTableOwnerPidAll, 0) != NoError) return null;
-            int count = Marshal.ReadInt32(buffer);
-            var rows = buffer + 4;
-            for (int i = 0; i < count; i++)
+            int size = 0;
+            var sizing = call(0, ref size, false, family, TcpTableOwnerPidAll, 0);
+            if (sizing != ErrorInsufficientBuffer && sizing != NoError) return null;
+            var bufferSize = size + ScanHeadroomBytes;
+            var buffer = Marshal.AllocHGlobal(bufferSize);
+            try
             {
-                var pid = match(rows + i * rowSize, want);
-                if (pid is not null) return pid;
+                var read = call(buffer, ref bufferSize, false, family, TcpTableOwnerPidAll, 0);
+                if (read == NoError)
+                {
+                    int count = Marshal.ReadInt32(buffer);
+                    var rows = buffer + 4;
+                    for (int i = 0; i < count; i++)
+                    {
+                        var pid = match(rows + i * rowSize, want);
+                        if (pid is not null) return pid;
+                    }
+                    return null;
+                }
+                if (read != ErrorInsufficientBuffer) return null;
+                // the table outgrew even the headroom in the gap between the size query and this
+                // read: loop around and measure it again fresh rather than trusting the old number.
             }
-            return null;
+            finally { Marshal.FreeHGlobal(buffer); }
         }
-        finally { Marshal.FreeHGlobal(buffer); }
+        return null; // retries exhausted: the table would not hold still long enough to read
     }
 }
