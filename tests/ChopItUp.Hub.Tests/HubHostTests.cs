@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
@@ -185,5 +186,101 @@ public sealed class HubHostTests : IAsyncLifetime
         File.WriteAllText(Path.Combine(stale, "mcp.json"), "{}");
         await using var host = await HubTestHost.StartAsync(dir);
         Assert.False(Directory.Exists(Path.Combine(dir, "spawns")));
+    }
+
+    // --- Row 28 ticket 3: no live token left under data\host-configs\ at hub start -------------
+
+    /// <summary>What a pre-row-28 (or hand-edited) `--print-config` run left behind: a host-config
+    /// file with a REAL live token embedded, in the exact shape <see cref="HostConfigs.Write"/>
+    /// produces. Reused here rather than hand-typed so the fixture matches production, the same
+    /// discipline <c>TokenScanTests</c> follows for <see cref="TokenScan.Candidates"/> itself.</summary>
+    [Fact]
+    public async Task Row28_a_live_token_left_in_a_host_config_file_is_placeholdered_at_start_and_the_path_is_reported()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_hub_sweep_tok_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
+        var roster = ChopDb.SeedRoster;
+        // What `--rotate-token claude` would have printed once, pre-row-28-Task-3 shape: a real
+        // plaintext embedded straight into the host file (never through the new placeholder path).
+        var plaintext = TokenStore.Load(dir, roster).MintFor("claude");
+        var claudeOnly = roster.Where(p => p.Id == "claude").ToList();
+        HostConfigs.Write(dir, 9999, new Dictionary<string, string> { ["claude"] = plaintext }, claudeOnly);
+        var path = Path.Combine(dir, HostConfigs.FolderName, "claude-desktop.json");
+        Assert.Contains(plaintext, File.ReadAllText(path));
+
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        HubTestHost host;
+        try
+        {
+            host = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        await using (host)
+        {
+            var rewritten = File.ReadAllText(path);
+            Assert.DoesNotContain(plaintext, rewritten);
+            Assert.Contains(HostConfigs.TokenPlaceholder, rewritten);
+            Assert.Contains(path, captured.ToString());
+        }
+    }
+
+    /// <summary>AC4's second half: a file the sweep cannot rewrite must not stop the hub. Locked with
+    /// <c>FileShare.None</c> for the whole start (Task 8's own ACL/lock choice, applied here at unit
+    /// scope) so even the read half of the sweep fails, not only the write — the hub must still come
+    /// up, the stderr line must still name the file, and one hub note must land in `general`.</summary>
+    [Fact]
+    public async Task Row28_a_host_config_file_that_cannot_be_rewritten_does_not_stop_the_hub_and_posts_a_room_note()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_hub_sweep_locked_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
+        var roster = ChopDb.SeedRoster;
+        var plaintext = TokenStore.Load(dir, roster).MintFor("claude");
+        var claudeOnly = roster.Where(p => p.Id == "claude").ToList();
+        HostConfigs.Write(dir, 9999, new Dictionary<string, string> { ["claude"] = plaintext }, claudeOnly);
+        var path = Path.Combine(dir, HostConfigs.FolderName, "claude-desktop.json");
+        var before = File.ReadAllBytes(path);
+
+        // FileShare.None blocks EVERY later open of this path, read included, from this process or
+        // any other (measured: a same-process File.ReadAllBytes against a FileShare.None handle
+        // throws IOException here) — so it must be released before this test reads the file back or
+        // lets HubTestHost delete the tree; both would otherwise throw the same sharing violation.
+        var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        HubTestHost host;
+        try
+        {
+            host = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+
+        var health = await host.Client.GetAsync("/health");
+        Assert.Equal(HttpStatusCode.OK, health.StatusCode);
+        Assert.Contains(path, captured.ToString());
+
+        using (var doc = JsonDocument.Parse(await host.Client.GetStringAsync("/api/rooms/general/messages")))
+        {
+            var notes = doc.RootElement.GetProperty("messages").EnumerateArray()
+                .Where(m => m.GetProperty("authorId").GetString() == ChopDb.HubParticipantId)
+                .Select(m => m.GetProperty("body").GetString())
+                .ToList();
+            Assert.Contains(notes, n => n!.Contains(path, StringComparison.Ordinal) && n.Contains("--rotate-token", StringComparison.Ordinal));
+        }
+
+        locked.Dispose();
+        Assert.Equal(before, File.ReadAllBytes(path));   // the sweep's write never landed while it was locked
+        await host.DisposeAsync();
     }
 }

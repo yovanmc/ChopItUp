@@ -100,9 +100,39 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(before["owner"], after["owner"]);
         Assert.Equal(before["codex"], after["codex"]);
 
+        // These are hashes (row 28), never the plaintext rotate now prints - so this stays a
+        // meaningful check that the hash never leaks, distinct from the new plaintext assertion below.
         var stdout = output.ToString();
         foreach (var t in before.Values) Assert.DoesNotContain(t, stdout);
         foreach (var t in after.Values) Assert.DoesNotContain(t, stdout);
+    }
+
+    /// <summary>D-28-d: this reverses critique pass 1's "never print" ruling. --print-config no
+    /// longer embeds a live value (it writes a {{TOKEN}} placeholder - see the print-config tests
+    /// below), so a rotated token has no other way to reach the operator. The bounding clause
+    /// (rotate is owner-typed only, never agent-run) lives in docs/verification.md, not in test
+    /// assertions - this test only proves the mechanism: printed once, resolves to the right
+    /// participant, and lands in no file.</summary>
+    [Fact]
+    public void A6_rotate_prints_the_new_token_once_and_writes_it_to_no_file()
+    {
+        var dir = NewDir();
+        StartedOnce(dir);
+
+        var output = new StringWriter();
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, new StringWriter());
+
+        Assert.Equal(0, exit);
+        var stdout = output.ToString();
+        var printed = TokenScan.Candidates(stdout).Distinct().ToList();
+        Assert.Single(printed);
+
+        var store = TokenStore.Load(dir, Participants);
+        Assert.True(store.TryResolve(printed[0], out var resolvedId));
+        Assert.Equal("claude", resolvedId);
+
+        Assert.Contains("will not be shown again", stdout, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(printed[0], File.ReadAllText(Path.Combine(dir, TokenStore.FileName)));
     }
 
     [Fact]
@@ -204,11 +234,11 @@ public sealed class HostCommandsTests : IDisposable
             .ToArray();
 
     [Fact]
-    public void A7_print_config_writes_all_four_files_with_the_live_port_and_tokens()
+    public void A7_print_config_writes_all_four_files_with_the_live_port_and_a_token_placeholder()
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Participants);
+        var tokens = TokenStore.ReadExisting(dir, Participants);   // hashes only (row 28); never a credential
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
@@ -234,28 +264,27 @@ public sealed class HostCommandsTests : IDisposable
         // form, then the bridge came up on the next launch. Windows is the only platform this app
         // targets, so the shell form is the default, not a documented fallback.
         Assert.Equal("cmd", server.GetProperty("command").GetString());
-        Assert.Equal("Bearer " + tokens["claude"], server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
+        // Row 28 ticket 3: generation never embeds a real value - a {{TOKEN}} placeholder stands in
+        // for it, and --rotate-token <id> is how the operator gets a real one to paste over it.
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
         var args = server.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
         Assert.Equal("/c", args[0]);
         Assert.Equal("npx", args[1]);
         Assert.Contains("--allow-http", args);
         Assert.Contains(url, args);
         Assert.Contains("Authorization:${CHOPITUP_TOKEN}", args);   // header value via env: a space in an arg is mangled on Windows
-        Assert.DoesNotContain(tokens["codex"], File.ReadAllText(Path.Combine(folder, "claude-desktop.json")));
 
         var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
         Assert.Contains("[mcp_servers.chopitup]", codex);
         Assert.Contains($"url = \"{url}\"", codex);
         // Single braces, not the doubled ones the interpolated raw string is written with.
-        Assert.Contains($"http_headers = {{ Authorization = \"Bearer {tokens["codex"]}\" }}", codex);
+        Assert.Contains($"http_headers = {{ Authorization = \"Bearer {HostConfigs.TokenPlaceholder}\" }}", codex);
         Assert.Contains("bearer_token_env_var = \"CHOPITUP_CODEX_TOKEN\"", codex);
         // The commented bridge fallback carries the same cmd /c shape as the Claude Desktop entry,
         // for the same reason: there is no npx.exe to spawn directly on Windows.
         Assert.Contains("# command = \"cmd\"", codex);
         Assert.Contains("# args = [\"/c\", \"npx\", \"-y\", \"mcp-remote@", codex);
         Assert.Contains("\"Authorization:${CHOPITUP_TOKEN}\"", codex);
-        Assert.DoesNotContain(tokens["claude"], codex);
-        Assert.DoesNotContain(tokens["owner"], codex);
 
         // claude-code-owner-remote.json (task 6b): the direct type:"http" + Authorization: Bearer
         // shape every hub-spawned Claude has used since M5 — NOT the mcp-remote bridge above, which
@@ -264,11 +293,17 @@ public sealed class HostCommandsTests : IDisposable
         var proxyServer = proxyDoc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
         Assert.Equal("http", proxyServer.GetProperty("type").GetString());
         Assert.Equal(url, proxyServer.GetProperty("url").GetString());
-        Assert.Equal("Bearer " + tokens["owner-remote"], proxyServer.GetProperty("headers").GetProperty("Authorization").GetString());
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, proxyServer.GetProperty("headers").GetProperty("Authorization").GetString());
         var proxyText = File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json"));
-        foreach (var (id, token) in tokens)
-            if (id != "owner-remote") Assert.DoesNotContain(token, proxyText);
         Assert.EndsWith(Environment.NewLine, proxyText);   // indented + trailing newline, like its neighbours (m-12)
+
+        // No generated file ever carries a real hash or a real token - the only credential-shaped
+        // text anywhere in the folder is the placeholder itself (AC6, extended to generation).
+        foreach (var file in Directory.GetFiles(folder))
+        {
+            var text = File.ReadAllText(file);
+            foreach (var t in tokens.Values) Assert.DoesNotContain(t, text);
+        }
 
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
         Assert.Contains(url, readme);
@@ -299,6 +334,9 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("chopitup.db-wal", readme);
         Assert.Contains("chopitup.db-shm", readme);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, readme);
+        // Row 28 ticket 3: generation must name how to get a real value.
+        Assert.Contains(HostConfigs.TokenPlaceholder, readme);
+        Assert.Contains("--rotate-token", readme);
     }
 
     [Fact]
@@ -338,6 +376,9 @@ public sealed class HostCommandsTests : IDisposable
         var printed = output.ToString() + error.ToString();
         Assert.Contains(ConfigFolder(dir), printed);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, printed);
+        // Row 28 ticket 3: the command must name the placeholder and how to fill it in.
+        Assert.Contains(HostConfigs.TokenPlaceholder, printed);
+        Assert.Contains("--rotate-token", printed);
     }
 
     [Fact]
@@ -476,8 +517,9 @@ public sealed class HostCommandsTests : IDisposable
         var claude = File.ReadAllText(Path.Combine(folder, "claude-desktop.json"));
         var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
-        Assert.Contains(tokens["claude"], claude);
-        Assert.Contains(tokens["codex"], codex);
+        // Row 28 ticket 3: every app-backed row's file carries the placeholder, never its real hash.
+        Assert.Contains(HostConfigs.TokenPlaceholder, claude);
+        Assert.Contains(HostConfigs.TokenPlaceholder, codex);
         foreach (var p in ChopDb.SeedRoster)
         {
             Assert.Contains($"`{p.Id}`", readme);
@@ -739,11 +781,10 @@ public sealed class HostCommandsTests : IDisposable
         var server = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
         Assert.Equal("http", server.GetProperty("type").GetString());
         Assert.Equal("http://127.0.0.1:9123/mcp", server.GetProperty("url").GetString());
-        Assert.Equal("Bearer " + tokens["owner-remote"], server.GetProperty("headers").GetProperty("Authorization").GetString());
+        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("headers").GetProperty("Authorization").GetString());
 
         var text = File.ReadAllText(path);
-        foreach (var (id, token) in tokens)
-            if (id != "owner-remote") Assert.DoesNotContain(token, text);
+        foreach (var token in tokens.Values) Assert.DoesNotContain(token, text);
 
         var readme = File.ReadAllText(Path.Combine(ConfigFolder(dir), "README.md"));
         Assert.Contains("claude-code-owner-remote.json", readme);

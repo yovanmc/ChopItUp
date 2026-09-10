@@ -1,22 +1,83 @@
 using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
+using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Hosting;
 
-/// <summary>Emits ready-to-paste MCP client configurations carrying this hub's port and each
-/// app-backed row's real token. Claude Desktop cannot dial a plain-http loopback remote connector,
-/// so it goes through the mcp-remote stdio bridge; Codex reads the same config.toml from the
-/// ChatGPT desktop app, the CLI and the IDE extension, and accepts an http://127.0.0.1 URL directly.
+/// <summary>Emits ready-to-paste MCP client configurations carrying this hub's port and a
+/// <see cref="TokenPlaceholder"/> in place of each app-backed row's real token (row 28 ticket 3: no
+/// live credential is ever written under the data dir by this path — <c>--rotate-token &lt;id&gt;</c>
+/// mints and prints the real value once, and the operator pastes it over the placeholder by hand).
+/// Claude Desktop cannot dial a plain-http loopback remote connector, so it goes through the
+/// mcp-remote stdio bridge; Codex reads the same config.toml from the ChatGPT desktop app, the CLI
+/// and the IDE extension, and accepts an http://127.0.0.1 URL directly.
 ///
-/// Everything lands under the gitignored data directory. These files hold live tokens, so they are
-/// never written anywhere else, and <b>never</b> into <c>%APPDATA%\Claude\claude_desktop_config.json</c>
+/// Everything lands under the gitignored data directory. A filled-in copy (the placeholder replaced
+/// by hand with a value <c>--rotate-token</c> printed) is never written anywhere else, and
+/// <b>never</b> into <c>%APPDATA%\Claude\claude_desktop_config.json</c>
 /// or <c>~/.codex/config.toml</c>: those are the owner's files and the owner pastes into them.</summary>
 public static class HostConfigs
 {
     public const string FolderName = "host-configs";
     public const string McpRemoteVersion = "0.8.3";
+
+    /// <summary>Stands in for a real token in every generated file (row 28 ticket 3). An operator
+    /// fills it in by hand with the value <c>--rotate-token &lt;id&gt;</c> prints once.</summary>
+    public const string TokenPlaceholder = "{{TOKEN}}";
+
+    /// <summary>One file under <see cref="FolderName"/> after <see cref="SweepLiveTokens"/>: either
+    /// its live token was found and replaced with <see cref="TokenPlaceholder"/>, or the replacement
+    /// failed for <see cref="Error"/> and the file was left exactly as it was.</summary>
+    public readonly record struct SweepOutcome(string Path, bool Rewritten, string? Error);
+
+    /// <summary>Row 28 ticket 3: run at every hub start against <c>&lt;data&gt;\host-configs\</c>. A
+    /// file generated before this task shipped (or hand-edited to carry a live value) still has a
+    /// real bearer embedded; <see cref="TokenScan.Candidates"/> finds every run shaped like a minted
+    /// token and <paramref name="tokens"/> confirms which ones actually resolve to a participant
+    /// before anything is touched, so an unrelated 43-character string is never mistaken for a
+    /// credential. A file that cannot be read or rewritten (a locked handle, a deny-write ACL) is
+    /// reported through <see cref="SweepOutcome.Error"/> rather than thrown — the caller decides how
+    /// loud to be, but this never stops serving on its own (AC4).</summary>
+    public static IReadOnlyList<SweepOutcome> SweepLiveTokens(string dataDir, TokenStore tokens)
+    {
+        var folder = Path.Combine(dataDir, FolderName);
+        var outcomes = new List<SweepOutcome>();
+        if (!Directory.Exists(folder)) return outcomes;
+
+        foreach (var path in Directory.EnumerateFiles(folder))
+        {
+            string text;
+            try { text = File.ReadAllText(path); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                outcomes.Add(new SweepOutcome(path, Rewritten: false, e.Message));
+                continue;
+            }
+
+            var replaced = text;
+            var found = false;
+            foreach (var candidate in TokenScan.Candidates(text).Distinct(StringComparer.Ordinal))
+            {
+                if (!tokens.TryResolve(candidate, out _)) continue;
+                replaced = replaced.Replace(candidate, TokenPlaceholder);
+                found = true;
+            }
+            if (!found) continue;
+
+            try
+            {
+                File.WriteAllText(path, replaced);
+                outcomes.Add(new SweepOutcome(path, Rewritten: true, Error: null));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                outcomes.Add(new SweepOutcome(path, Rewritten: false, e.Message));
+            }
+        }
+        return outcomes;
+    }
 
     public static string Write(string dataDir, int port, IReadOnlyDictionary<string, string> tokens, IReadOnlyList<Participant> roster)
     {
@@ -75,9 +136,10 @@ public static class HostConfigs
             sb.AppendLine($"| `{p.Id}` | {p.Host} | {p.Model ?? "—"} | {classes} | {file} | {p.Note ?? ""} |");
         }
         sb.AppendLine();
-        sb.AppendLine("To rotate any row's token: `ChopItUp.Hub --rotate-token <id>` with the hub stopped, then");
-        sb.AppendLine("`--print-config` again. A row added by hand shows up in the web UI and in list_rooms at once,");
-        sb.AppendLine("but gets its token and its line in the participation prompt at the next hub start.");
+        sb.AppendLine("To rotate any row's token: `ChopItUp.Hub --rotate-token <id>` with the hub stopped. It prints");
+        sb.AppendLine($"the new value once — paste it over that row's `{TokenPlaceholder}` placeholder by hand. A row");
+        sb.AppendLine("added by hand shows up in the web UI and in list_rooms at once, but gets its token and its");
+        sb.AppendLine("line in the participation prompt at the next hub start.");
         return sb.ToString();
     }
 
@@ -145,9 +207,11 @@ public static class HostConfigs
     private static string Readme(string url, int port, IReadOnlyList<Participant> roster) => $"""
         # Host configs for Chop It Up
 
-        Generated by `ChopItUp.Hub --print-config`. Every file here contains a live token: this
-        folder lives under the gitignored data directory and must never be copied into the repo,
-        a chat, or a screenshot.
+        Generated by `ChopItUp.Hub --print-config`. Every credential field here is a
+        `{TokenPlaceholder}` placeholder — replace it with the value `ChopItUp.Hub --rotate-token <id>`
+        prints (once, to the terminal; it is written to no file). Once filled in, treat the file the
+        same as any other credential: this folder lives under the gitignored data directory and must
+        never be copied into the repo, a chat, or a screenshot.
 
         Hub endpoint: {url} (loopback only — nothing outside this machine can reach it).
 
@@ -220,9 +284,10 @@ public static class HostConfigs
         no expiry. If other accounts or unattended processes can read this machine's files, they can
         read these.
 
-        Tokens: `ChopItUp.Hub --rotate-token <id>` mints a new one for any roster id and invalidates
-        the old at the next hub start. It does not print the token — re-run `--print-config` and
-        re-paste that host's file.
+        Tokens: `ChopItUp.Hub --rotate-token <id>` mints a new one for any roster id, prints it once
+        to the terminal (it will not be shown again and is written to no file), and invalidates the
+        old value at the next hub start. `--print-config` never prints a live value — paste the
+        rotated token over the `{TokenPlaceholder}` placeholder in that row's file yourself.
 
         Port {port} is the configured port; if you start the hub with `--port`, regenerate this
         folder so the URLs match.

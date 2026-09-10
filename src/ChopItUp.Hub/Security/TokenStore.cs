@@ -91,7 +91,9 @@ public sealed class TokenStore
                     justMinted[p.Id] = minted;
                     changed = true;
                     if (existed)
-                        Console.Error.WriteLine($"tokens.json had no token for '{p.Id}'; minted one. If that participant has a host file, run --print-config and re-paste it.");
+                        // Row 28: --print-config never reveals a live value any more (it writes a
+                        // {{TOKEN}} placeholder) - --rotate-token is the only route to one now.
+                        Console.Error.WriteLine($"tokens.json had no token for '{p.Id}'; minted one. If that participant has a host file, run --rotate-token {p.Id} to get a value to paste into it.");
                 }
             }
 
