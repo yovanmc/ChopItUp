@@ -86,6 +86,15 @@ check, and it is better evidence than a screenshot), assert the button's box is 
 `innerHeight`, then dispatch `.click()` on the real rendered DOM and verify the server-side effect.
 Set a viewport first — a hidden pane reports `innerHeight` 0, which silently collapsed a
 `max-height: min(30vh, 220px)` to `0px` and made the first layout measurement meaningless.
+Row 22 added two more edges to the same trap. First, `requestAnimationFrame` never fires while the pane
+is hidden, so a gate that samples state on the next frame does not just lose the sample -- it hangs the
+whole `javascript_tool` call until the 45 s timeout and throws away everything after it. Sample with
+`setTimeout(..., 0)` instead, and keep any single injected script short enough that losing it costs one
+assertion rather than the run. Second, the way to reach an expensive state cheaply: run states guarded by
+hard caps (8 h wall clock, 80 spawns, three phase entries) are unreachable inside a build, but a row
+inserted straight into the `runs` table of a throwaway `--data` directory is read back by the real
+`RunsApi`, rendered by the real strip and ended by the real `OnStop` -- everything but run creation is
+the production path, and it costs no model call. Never point that at the deployed `data\`.
 
 ### [subagents, critique-gate, dispatch, background-tasks] M23 (2026-09-08, 98e88a3)
 
