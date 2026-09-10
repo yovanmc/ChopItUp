@@ -72,6 +72,24 @@ public sealed class ProcessRunnerTests
     }
 
     [Fact]
+    public async Task A_running_child_is_inside_a_live_job_until_it_finishes()
+    {
+        var jobs = new SpawnJobs();
+        var runner = new ProcessRunner(jobs);
+        var spec = Spec("", "/d", "/c", "ping -n 40 -w 1000 127.0.0.1");
+        using var cts = new CancellationTokenSource();
+        var runTask = runner.RunAsync(spec, TimeSpan.FromSeconds(30), cts.Token);
+
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        while (jobs.LiveCount == 0 && DateTime.UtcNow < deadline) await Task.Delay(25);
+        Assert.Equal(1, jobs.LiveCount);
+
+        cts.Cancel();
+        await runTask;
+        Assert.Equal(0, jobs.LiveCount);
+    }
+
+    [Fact]
     public async Task Environment_and_working_directory_reach_the_child()
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_pr_" + Guid.NewGuid().ToString("N"));

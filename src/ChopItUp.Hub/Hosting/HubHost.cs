@@ -117,7 +117,11 @@ public static class HubHost
             // note to - AC12 asks for none.
             foreach (var stale in runs.ListActive())
                 runs.Park(stale.Id, "the hub restarted while this run was active", capSpent: false, effectiveClock.GetUtcNow());
-            builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
+            // Row 29: one registry, DI-owned (D8) - every ProcessRunner child lands in it, and the
+            // owner-peer check (a later task) asks it whether a loopback peer's PID is inside a spawn.
+            var jobs = new SpawnJobs();
+            builder.Services.AddSingleton(jobs);
+            builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner(jobs));
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             // Row 19, task 12d: one gate per room at a time. A singleton so the lock survives
             // regardless of RunTools' own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no

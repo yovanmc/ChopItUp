@@ -10,7 +10,9 @@ public sealed record ProcessSpec(
     IReadOnlyDictionary<string, string> Environment,
     string WorkingDirectory,
     string StandardInput,
-    string Label);
+    string Label,
+    string? RoomId = null,
+    string? ParticipantId = null);
 
 /// <summary><see cref="ExitCode"/> is null when the process was killed. Exactly one of
 /// <see cref="TimedOut"/>/<see cref="Cancelled"/> is true for a killed run; both false otherwise.</summary>
@@ -25,9 +27,11 @@ public interface IProcessRunner
 /// cancellation (the Codex shim is <c>cmd.exe</c> with the real exe underneath — killing only the
 /// parent would leave the model running and posting), and drains both output pipes before
 /// returning (LESSONS, M4: a process can exit with its last line still in the pipe).</summary>
-public sealed class ProcessRunner : IProcessRunner
+public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
 {
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(5);
+
+    public ProcessRunner() : this(new SpawnJobs()) { }
 
     public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
     {
@@ -46,6 +50,14 @@ public sealed class ProcessRunner : IProcessRunner
         var clock = Stopwatch.StartNew();
         using var process = new Process { StartInfo = psi };
         process.Start();
+        IDisposable tracked;
+        try { tracked = jobs.Track(process, spec); }   // row 29: the next statement after Start, on purpose
+        catch
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            throw;
+        }
 
         // The timeout is armed BEFORE the stdin write: a child that stalls before reading its prompt
         // (auth prompt, MCP startup hang) leaves the writer blocked on a full pipe, and an un-armed
@@ -78,6 +90,10 @@ public sealed class ProcessRunner : IProcessRunner
             try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(DrainGrace); }
             catch (TimeoutException) { /* reported through ExitCode == null below */ }
         }
+        finally
+        {
+            tracked.Dispose();   // close the job BEFORE the drain: a grandchild that survived the tree
+        }                        // kill dies here, instead of holding the pipes open for DrainGrace
 
         // Drain. After a tree kill the pipes close promptly; the grace only matters for a grandchild
         // that survived (not expected) and would otherwise hold the read open forever.
