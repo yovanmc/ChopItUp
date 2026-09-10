@@ -4,6 +4,11 @@ namespace ChopItUp.Hub.Spawning;
 
 public enum ExchangeStatus { Open, Concluded, Superseded, Stopped }
 
+/// <summary>Who caused a <see cref="ExchangeStatus.Stopped"/> exchange to stop (row 27): decided by
+/// whichever policy raised the stop and passed down to <see cref="ExchangePolicy.Stop"/>, never
+/// inferred from the reason string (P7 - the service never decides).</summary>
+public enum ExchangeStopCause { Owner, Run }
+
 /// <summary>A participant waiting to be launched, with every message that asked for it since the
 /// last launch (one burst = one spawn, D8) and when the last of them arrived (the debounce clock).</summary>
 public sealed class PendingSpawn
@@ -23,6 +28,10 @@ public sealed class Exchange
     public required long RootMessageId { get; init; }
     public required int Budget { get; init; }
     public ExchangeStatus Status { get; set; } = ExchangeStatus.Open;
+
+    /// <summary>Row 27: who caused the stop, set by <see cref="ExchangePolicy.Stop"/> when
+    /// <see cref="Status"/> becomes <see cref="ExchangeStatus.Stopped"/>; null until then.</summary>
+    public ExchangeStopCause? StopCause { get; set; }
     public int TurnsCommitted { get; set; }
     public int TurnsStarted { get; set; }
     public OrderedDictionary<string, PendingSpawn> Pending { get; } = new(StringComparer.Ordinal);

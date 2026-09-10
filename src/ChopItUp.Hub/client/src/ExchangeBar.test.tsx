@@ -23,6 +23,7 @@ const BASE: ExchangeSnapshot = {
   inFlight: ['sonnet'],
   pending: [],
   seq: 9,
+  stoppedBy: null,
 };
 
 const render = (exchange: ExchangeSnapshot | null, runStoppable = false, stopping = false) =>
@@ -68,6 +69,32 @@ describe('ExchangeBar', () => {
 
   test('a stop already in flight leaves the control disabled', () => {
     expect(render(BASE, false, true)).toContain('disabled=""');
+  });
+
+  /** Row 27, AC4. Every `RunPolicy` park is policy-driven and so is a ping-End, and all of them close
+   *  the conductor's exchange — so before the cause rode the wire, a cap the owner never touched still
+   *  told him he had stopped it. The marker has to attribute the stop to whoever actually made it. */
+  test('a run-stopped exchange says the run did it, not the owner', () => {
+    const markup = render({ ...BASE, status: 'stopped', stoppedBy: 'run', inFlight: [] });
+
+    expect(markup).toContain('Stopped by the run');
+    expect(markup).not.toContain('Stopped by you');
+  });
+
+  test('an owner-stopped exchange still reads exactly as it did', () => {
+    expect(render({ ...BASE, status: 'stopped', stoppedBy: 'owner', inFlight: [] })).toContain(
+      'Stopped by you',
+    );
+  });
+
+  /** A snapshot from a hub older than row 27 — and any stop the hub could not attribute — sends no
+   *  cause. Guessing "you" there is the very defect this row closes, so the null case is neutral. */
+  test('a stop with no cause on the wire claims nothing about who caused it', () => {
+    const markup = render({ ...BASE, status: 'stopped', stoppedBy: null, inFlight: [] });
+
+    expect(markup).toContain('Exchange stopped ·');
+    expect(markup).not.toContain('Stopped by you');
+    expect(markup).not.toContain('Stopped by the run');
   });
 
   test('an idle room and a room with no exchange still render nothing at all', () => {

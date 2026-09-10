@@ -80,6 +80,18 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.End>(decision);
     }
 
+    // Row 27: a ping-caused End must carry the Run cause, never Owner - the run ended itself.
+    [Fact]
+    public void Row5_valid_ping_ends_the_run_with_the_run_cause_not_the_owner()
+    {
+        var s = Base();
+        var evt = new RunEvent.ConductorPosted(MessageId: 44, Tag: new PhaseTag("ping", null), Mentioned: [], Refusal: null);
+        var decision = _policy.Decide(s, evt, []);
+
+        var end = Assert.IsType<RunDecision.End>(decision);
+        Assert.Equal(ExchangeStopCause.Run, end.Cause);
+    }
+
     // Row 6: a valid post into a phase already entered the cap number of times parks hard.
     [Fact]
     public void Row6_phase_re_entry_cap_parks_hard()
@@ -250,6 +262,7 @@ public sealed class RunPolicyTests
 
         var end = Assert.IsType<RunDecision.End>(decision);
         Assert.Equal("stopped by the owner", end.Reason);
+        Assert.Equal(ExchangeStopCause.Owner, end.Cause);   // Row 27: the owner's own /stop, never inferred.
     }
 
     // Row 18: a tick on an idle active run with steers pending wakes the conductor.

@@ -21,10 +21,12 @@ using Microsoft.Extensions.Hosting;
 namespace ChopItUp.Hub.Spawning;
 
 /// <summary>What the UI and the API see. <see cref="Status"/> is <c>idle</c>, <c>open</c>,
-/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>.</summary>
+/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
+/// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
+/// mapped by name so an enum reordering never silently changes the JSON; null until stopped.</summary>
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
-    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0);
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null);
 
 /// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
 /// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
@@ -449,7 +451,7 @@ public sealed class SpawnerService : BackgroundService
                 ParkRun(run, park.Reason, park.CapSpent);
                 break;
             case RunDecision.End end:
-                EndRun(run, end.Reason);
+                EndRun(run, end.Reason, end.Cause);
                 break;
             default:
                 throw new NotSupportedException($"RunDecision {decision.GetType().Name} is not wired yet (row19-runs, a later task).");
@@ -544,7 +546,7 @@ public sealed class SpawnerService : BackgroundService
         var now = _clock.GetUtcNow();
         _runs.Park(run.Id, reason, capSpent, now);
         if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
-            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+            PostNote(run.RoomId, ExchangePolicy.Stop(x, ExchangeStopCause.Run));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         PostNote(run.RoomId, $"Run #{run.Id} parked: {reason}. @{_owner.Id}");
@@ -562,12 +564,12 @@ public sealed class SpawnerService : BackgroundService
     /// instant <see cref="RunStore.End"/> stamps, and against the run as it stood before ending (an
     /// ended run is never <see cref="RunStatus.Parked"/>, so it falls to that method's "not parked"
     /// arm: elapsed time since start, minus whatever was already parked).</summary>
-    private void EndRun(Run run, string reason)
+    private void EndRun(Run run, string reason, ExchangeStopCause cause)
     {
         var now = _clock.GetUtcNow();
         var ended = _runs.End(run.Id, reason, now);
         if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
-            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+            PostNote(run.RoomId, ExchangePolicy.Stop(x, cause));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         _steers.Remove(run.RoomId);
@@ -906,7 +908,7 @@ public sealed class SpawnerService : BackgroundService
         var run = _runs.Active(roomId) ?? (_runs.Latest(roomId) is { Status: RunStatus.Parked } parked ? parked : null);
         if (run is not null)
         {
-            EndRun(run, "stopped by the owner");
+            EndRun(run, "stopped by the owner", ExchangeStopCause.Owner);
             return Publish(roomId);
         }
 
@@ -916,7 +918,7 @@ public sealed class SpawnerService : BackgroundService
         if (!open && live.Count == 0) return null;
         foreach (var handle in live) handle.Cancel.Cancel();
         var note = open
-            ? ExchangePolicy.Stop(x!)
+            ? ExchangePolicy.Stop(x!, ExchangeStopCause.Owner)
             : $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.";
         PostNote(roomId, note);
         return Publish(roomId);
@@ -978,7 +980,8 @@ public sealed class SpawnerService : BackgroundService
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
         var snapshot = (_rooms.TryGetValue(roomId, out var x)
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
-                Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList())
+                Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
+                StoppedBy: x.StopCause?.ToString().ToLowerInvariant())
             : Idle(roomId)) with { Seq = ++_seq };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);

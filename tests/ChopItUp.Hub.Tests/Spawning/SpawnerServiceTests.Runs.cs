@@ -7,6 +7,7 @@ using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using Microsoft.Extensions.DependencyInjection;
+using static ChopItUp.Hub.Tests.RunHostFixture;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
@@ -14,8 +15,6 @@ namespace ChopItUp.Hub.Tests.Spawning;
 /// through the real HTTP + MCP surface, same fixture shape as the Skill_04 tests above.</summary>
 public sealed partial class SpawnerServiceTests
 {
-    private const string RunSkillMd = "---\nname: build-thing\nrun: true\n---\n\n# Build Thing\n\nBuild the thing.\n";
-
     private RunStore Runs => _host.Services.GetRequiredService<RunStore>();
 
     [Fact]
@@ -483,13 +482,6 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(RunStatus.Active, runsB.Active("lab")!.Status);
     }
 
-    private static async Task<List<(string Author, string Body)>> AllMessagesFrom(HubTestHost host, string room)
-    {
-        using var doc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
-        return doc.RootElement.GetProperty("messages").EnumerateArray()
-            .Select(m => (m.GetProperty("authorId").GetString()!, m.GetProperty("body").GetString()!)).ToList();
-    }
-
     [Fact]
     public async Task Run06_outside_a_run_an_owner_post_still_supersedes()
     {
@@ -516,55 +508,6 @@ public sealed partial class SpawnerServiceTests
     /// spawn/wall-clock/phase-entry ceiling. Debounce/MinSpacing are zero so a frozen fake clock
     /// never blocks an ordinary launch.</summary>
     private static readonly SpawnLimits Instant = new(Budget: 4, Debounce: TimeSpan.Zero, MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
-
-    /// <summary><paramref name="seedClasses"/> (row 20, task 3) runs BEFORE the hub starts, against a
-    /// freshly-migrated database - the hub reads the roster once at startup (HubHost.Build) and never
-    /// again, so a class needed inside a run (a Codex judge, in particular) has to be set through
-    /// <see cref="ParticipantStore.SetClasses"/> here, the same host-command write path task 2 built,
-    /// not through the API once the hub is already running.</summary>
-    private static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(RunLimits runLimits, TimeProvider? clock = null, Action<ParticipantStore>? seedClasses = null)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "chopitup_run9_" + Guid.NewGuid().ToString("N"));
-        var roomsRoot = dir + "_rooms";
-        var runner = new FakeProcessRunner();
-        if (seedClasses is not null)
-        {
-            var seedDb = new ChopDb(Path.Combine(dir, "chopitup.db"));
-            seedDb.EnsureDatabase();
-            seedClasses(new ParticipantStore(seedDb));
-        }
-        var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Instant, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
-        const string room = "lab";
-        var roomDir = Path.Combine(roomsRoot, room);
-        Assert.True(await new GitTrail(roomDir).InitAsync());
-        host.Services.GetRequiredService<MessageStore>().CreateRoom(room, "LAB", roomDir);
-
-        var skillDir = Path.Combine(dir, "skills", "build-thing");
-        Directory.CreateDirectory(skillDir);
-        var bytes = new System.Text.UTF8Encoding(false).GetBytes(RunSkillMd);
-        File.WriteAllBytes(Path.Combine(skillDir, "SKILL.md"), bytes);
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
-        new SkillHashes(host.Services.GetRequiredService<ChopDb>()).Record("build-thing", hash, "test-fixture");
-        return (host, runner, room);
-    }
-
-    private static async Task PostAsInHost(HubTestHost host, string participant, string room, string body)
-    {
-        await using var client = await host.ClientFor(participant);
-        HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
-    }
-
-    private static async Task<(string Author, string Body)> WaitForNoteContaining(HubTestHost host, string room, string text)
-    {
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hit = (await AllMessagesFrom(host, room)).FirstOrDefault(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains(text));
-            if (hit != default) return hit;
-            await Task.Delay(100);
-        }
-        throw new TimeoutException($"No hub note containing '{text}' in '{room}' within {Wait}");
-    }
 
     [Fact]
     public async Task Run09_9c_a_spawn_inside_an_active_run_gets_the_30_minute_run_timeout_not_the_5_minute_default()
@@ -594,7 +537,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run09_the_spawn_cap_parks_the_run_as_a_hard_cap_and_a_parked_run_launches_nothing_more()
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         runner.Handler = async (spec, _, _) =>
@@ -622,12 +565,72 @@ public sealed partial class SpawnerServiceTests
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // opus never spawned - neither post launched anything
     }
 
+    /// <summary>Row 27: the hard-cap preamble (RunPolicy.cs rows 1/2) parks the run WHILE the
+    /// conductor's own exchange is still open (its spawn is still in flight, mid-Handler), so
+    /// ParkRun's exchange-stop note fires. It must not read as an owner stop - the run parked
+    /// itself.</summary>
+    [Fact]
+    public async Task Run19_M27_a_hard_cap_park_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
+    {
+        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+                await PostAsInHost(host, "sonnet", room, "phase: build @opus - the spawn cap is already spent by the launch");
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        await WaitForNoteContaining(host, room, "parked");
+
+        var messages = await AllMessagesFrom(host, room);
+        var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
+        Assert.DoesNotContain("by the owner", exchangeNote.Body);
+        Assert.DoesNotContain("by you", exchangeNote.Body);
+        Assert.Equal("Exchange stopped by the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
+    }
+
+    /// <summary>Row 27: a valid "phase: ping" ends the run (RunPolicy row 5) while the conductor's own
+    /// exchange is still open, so EndRun's exchange-stop note fires. Same rule as the hard-cap park -
+    /// the run ended itself, so the note must not read as an owner stop.</summary>
+    [Fact]
+    public async Task Run19_M27_a_ping_end_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
+    {
+        var runLimits = RunLimits.Default;
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+                await PostAsInHost(host, "sonnet", room, "phase: ping all done");
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        var ended = await WaitForNoteContaining(host, room, "ended");
+        Assert.Contains("the conductor pinged", ended.Body);
+
+        var messages = await AllMessagesFrom(host, room);
+        var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
+        Assert.DoesNotContain("by the owner", exchangeNote.Body);
+        Assert.DoesNotContain("by you", exchangeNote.Body);
+        Assert.Equal("Exchange stopped by the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
+    }
+
     [Fact]
     public async Task Run09_the_wall_clock_cap_parks_a_run_even_while_its_conductor_is_still_in_flight()
     {
         var fakeClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
         var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromMinutes(1), SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits, fakeClock);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits, fakeClock);
         await using var _ = host;
 
         var holdConductor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -668,7 +671,7 @@ public sealed partial class SpawnerServiceTests
     {
         var fakeClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
         var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromMinutes(1), SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits, fakeClock);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits, fakeClock);
         await using var _ = host;
 
         runner.Handler = async (spec, _, _) =>
@@ -705,7 +708,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run09_a_resume_attempt_against_a_hard_capped_park_is_refused_in_one_line_and_stays_parked()
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
@@ -742,7 +745,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run10_a_persistently_silent_conductor_is_asked_until_the_phase_cap_parks_the_run_never_leaving_it_active()
     {
         var runLimits = new RunLimits(Spawns: 100, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 2);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         var launches = 0;
@@ -774,7 +777,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run12e_an_in_run_claude_conductor_is_launched_with_run_gate_on_its_allowlist()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
 
@@ -796,7 +799,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run12f_an_in_run_codex_conductor_is_launched_with_the_tool_timeout_raised_to_the_run_gate_timeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
 
@@ -817,7 +820,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_gate_timeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
 
@@ -834,7 +837,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run12g_an_in_run_claude_spawn_gets_the_per_server_timeout_and_both_env_vars_at_GateTimeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
 
@@ -856,7 +859,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run12h_an_in_run_codex_spawn_tool_timeout_is_GateTimeout_seconds()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
         var codexWorker = new TaskCompletionSource<ProcessSpec>(TaskCreationOptions.RunContinuationsAsynchronously);
         runner.Handler = async (spec, _, _) =>
@@ -885,7 +888,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run11_AC7_a_codex_hosted_judge_worker_inside_a_run_gets_model_reasoning_effort_high()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(runLimits, seedClasses: p =>
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits, seedClasses: p =>
         {
             Assert.True(p.SetClasses("gpt-6-astra", "judge"));
             Assert.True(p.SetClasses("gpt-5.4-mini", "plumbing"));
@@ -964,7 +967,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run13_stop_ends_a_parked_run_without_resuming_it_first_even_when_a_hard_cap_is_spent()
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
@@ -1028,7 +1031,7 @@ public sealed partial class SpawnerServiceTests
     public async Task Run13_the_stop_control_ends_a_parked_run_even_with_nothing_in_flight()
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));

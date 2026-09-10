@@ -75,6 +75,12 @@ export interface ExchangeSnapshot {
   inFlight: string[];
   pending: string[];
   seq: number;
+  /** Row 27. The wire name of the `ExchangeStopCause` that stopped this exchange
+   *  (Spawning/Exchange.cs), and null whenever nothing has stopped it — an open or concluded
+   *  exchange, or a snapshot from a hub older than this row. The whole of the enum and nothing else:
+   *  ExchangeBar's marker map is keyed on this union, so a cause added to the hub without a label
+   *  here is a compile error rather than a bar that silently blames the owner for it. */
+  stoppedBy: 'owner' | 'run' | null;
 }
 
 /** Who last wrote a path inside a run, read out of the spawn's own git diff (Web/RunsApi.cs). */
