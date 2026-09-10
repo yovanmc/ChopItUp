@@ -22,7 +22,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
@@ -122,6 +122,11 @@ public static class HubHost
             var jobs = new SpawnJobs();
             builder.Services.AddSingleton(jobs);
             builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner(jobs));
+            // Row 29, D3: the switch outranks any injected check, so a test can inject an
+            // InsideSpawn fake AND turn the switch off and observe that the switch wins.
+            builder.Services.AddSingleton<IOwnerPeerCheck>(options.OwnerPeerCheck ? (ownerPeerCheck ?? new OwnerPeerCheck(jobs)) : new DisabledOwnerPeerCheck());
+            if (!options.OwnerPeerCheck)
+                Console.Error.WriteLine("WARNING: --owner-peer-check off: an owner-class credential is accepted from any local process, including a spawn.");
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             // Row 19, task 12d: one gate per room at a time. A singleton so the lock survives
             // regardless of RunTools' own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no

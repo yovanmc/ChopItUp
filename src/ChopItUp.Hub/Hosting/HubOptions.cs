@@ -25,8 +25,12 @@ public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasse
 /// alone preserves a trailing separator, which would put the writer's staging directory inside the
 /// target. A drive root is refused outright. <paramref name="AcceptNewSource"/> is
 /// <c>--accept-new-source</c>, only valid alongside <c>--export-memory</c> (D9): it proceeds past a
-/// target whose manifest names a different store root, which <c>--force</c> must never do.</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false)
+/// target whose manifest names a different store root, which <c>--force</c> must never do.
+/// <paramref name="OwnerPeerCheck"/> (row 29, D3) is <c>--owner-peer-check off</c> (or
+/// <c>CHOPITUP_OWNER_PEER_CHECK=off</c>), default true: false disables the check that refuses an
+/// owner-class bearer presented from inside a spawn, the recovery for a lookup failure that would
+/// otherwise lock the owner out of every write. A missing value throws, same as <c>--rotate-token</c>'s.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false, bool OwnerPeerCheck = true)
 {
     public const int DefaultPort = 8790;
 
@@ -51,6 +55,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         string? setClassesSpec = null;
         string? exportMemoryPath = null;
         var acceptNewSource = false;
+        string? ownerPeerCheck = null;
         for (int i = 0; i < args.Length; i++)
         {
             if (args[i] == "--data")
@@ -124,6 +129,11 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             {
                 acceptNewSource = true;
             }
+            else if (args[i] == "--owner-peer-check")
+            {
+                if (i + 1 >= args.Length) throw new ArgumentException("--owner-peer-check requires a value.");
+                ownerPeerCheck = args[++i];
+            }
         }
         if (overlayPath is not null && command != HubCommand.ImportSkill)
             throw new ArgumentException("--overlay is only valid with --import-skill.");
@@ -132,6 +142,9 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
         rooms ??= getEnv("CHOPITUP_ROOMS");
+        // Row 29, D3: the flag wins over the environment; anything but "off" (case-insensitive) is
+        // on, so a missing or garbled env value never accidentally disables the check.
+        ownerPeerCheck ??= getEnv("CHOPITUP_OWNER_PEER_CHECK");
         return new HubOptions(
             Path.GetFullPath(string.IsNullOrWhiteSpace(data) ? Path.Combine(AppContext.BaseDirectory, "data") : data),
             int.TryParse(port, out var p) ? p : DefaultPort,
@@ -143,6 +156,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             OverlayPath: overlayPath,
             SetClassesSpec: setClassesSpec,
             ExportMemoryPath: exportMemoryPath,
-            AcceptNewSource: acceptNewSource);
+            AcceptNewSource: acceptNewSource,
+            OwnerPeerCheck: !string.Equals(ownerPeerCheck, "off", StringComparison.OrdinalIgnoreCase));
     }
 }

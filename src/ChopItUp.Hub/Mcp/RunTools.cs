@@ -120,7 +120,9 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
             // default), not the spawn's own 30-minute wall clock - the 5-minute gap between the two is
             // what lets the spawn still post a reply after a gate that ran all the way to its ceiling
             // (RunLimits, ledger 24/25).
-            var result = await ReportProgressWhileRunning(runner.RunAsync(spec, limits.EffectiveGateTimeout, cancellationToken), gate, progress, cancellationToken);
+            // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
+            // refusal note can name the spawn if this credential is later stolen and replayed.
+            var result = await ReportProgressWhileRunning(runner.RunAsync(spec with { RoomId = roomId, ParticipantId = caller }, limits.EffectiveGateTimeout, cancellationToken), gate, progress, cancellationToken);
             var outcome = result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}";
             runs.RecordGateRun(runId, roomId, gate, caller, result.ExitCode, outcome, now);
             PostNote(roomId, $"run_gate {gate} by @{caller}: {outcome}");

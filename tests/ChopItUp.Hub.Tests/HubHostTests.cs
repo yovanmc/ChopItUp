@@ -5,6 +5,7 @@ using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
@@ -282,5 +283,56 @@ public sealed class HubHostTests : IAsyncLifetime
         locked.Dispose();
         Assert.Equal(before, File.ReadAllBytes(path));   // the sweep's write never landed while it was locked
         await host.DisposeAsync();
+    }
+
+    // --- Row 29: --owner-peer-check / CHOPITUP_OWNER_PEER_CHECK -------------------------------
+
+    [Fact]
+    public void Owner_peer_check_parses_from_the_flag_then_the_environment_defaulting_on()
+    {
+        Assert.False(HubOptions.Parse(["--owner-peer-check", "off"], _ => null).OwnerPeerCheck);
+        Assert.True(HubOptions.Parse(["--owner-peer-check", "on"], _ => null).OwnerPeerCheck);
+        Assert.False(HubOptions.Parse([], name => name == "CHOPITUP_OWNER_PEER_CHECK" ? "off" : null).OwnerPeerCheck);
+        // The flag wins over the environment.
+        Assert.True(HubOptions.Parse(["--owner-peer-check", "on"], name => name == "CHOPITUP_OWNER_PEER_CHECK" ? "off" : null).OwnerPeerCheck);
+        Assert.True(HubOptions.Parse([], _ => null).OwnerPeerCheck);
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--owner-peer-check"], _ => null));
+    }
+
+    /// <summary>D3: the switch's whole reason to exist is that it prints where the owner can see it —
+    /// a silent bypass would be a second escalation on top of the first.</summary>
+    [Fact]
+    public async Task The_switch_prints_its_warning_at_build()
+    {
+        var offDir = Path.Combine(Path.GetTempPath(), "chopitup_ownerpeer_warn_off_" + Guid.NewGuid().ToString("N"));
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        WebApplication offApp;
+        try
+        {
+            offApp = HubHost.Build(new HubOptions(offDir, Port: 0, OwnerPeerCheck: false));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        Assert.Contains("--owner-peer-check off", captured.ToString());
+        try { await offApp.DisposeAsync(); } catch { /* best-effort cleanup */ }
+
+        var onDir = Path.Combine(Path.GetTempPath(), "chopitup_ownerpeer_warn_on_" + Guid.NewGuid().ToString("N"));
+        captured = new StringWriter();
+        Console.SetError(captured);
+        WebApplication onApp;
+        try
+        {
+            onApp = HubHost.Build(new HubOptions(onDir, Port: 0, OwnerPeerCheck: true));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        Assert.DoesNotContain("--owner-peer-check off", captured.ToString());
+        try { await onApp.DisposeAsync(); } catch { /* best-effort cleanup */ }
     }
 }
