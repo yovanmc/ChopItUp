@@ -336,6 +336,6 @@ public sealed class ExchangePolicy
         x.Pending.Clear();
         return cause == ExchangeStopCause.Owner
             ? $"Exchange stopped by the owner: {x.TurnsStarted} of {x.Budget} turns used."
-            : $"Exchange stopped with the run: {x.TurnsStarted} of {x.Budget} turns used.";
+            : $"Exchange stopped by the run: {x.TurnsStarted} of {x.Budget} turns used.";
     }
 }

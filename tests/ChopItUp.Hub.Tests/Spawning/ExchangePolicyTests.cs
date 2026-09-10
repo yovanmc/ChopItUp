@@ -189,7 +189,7 @@ public sealed class ExchangePolicyTests
         var note = ExchangePolicy.Stop(x!, ExchangeStopCause.Run);
         Assert.Equal(ExchangeStatus.Stopped, x!.Status);
         Assert.Equal(ExchangeStopCause.Run, x.StopCause);
-        Assert.Equal("Exchange stopped with the run: 1 of 4 turns used.", note);
+        Assert.Equal("Exchange stopped by the run: 1 of 4 turns used.", note);
         Assert.DoesNotContain("owner", note);
         Assert.DoesNotContain("you", note);
     }

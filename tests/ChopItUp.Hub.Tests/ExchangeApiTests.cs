@@ -2,12 +2,11 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
-using ChopItUp.Hub.Git;
-using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Tests.Spawning;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using static ChopItUp.Hub.Tests.RunHostFixture;
 
 namespace ChopItUp.Hub.Tests;
 
@@ -112,44 +111,15 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal("owner", (await Get("general")).GetProperty("stoppedBy").GetString());
     }
 
-    private const string RunSkillMd = "---\nname: build-thing\nrun: true\n---\n\n# Build Thing\n\nBuild the thing.\n";
-
-    /// <summary>Same shape as SpawnerServiceTests.Runs.cs's StartRunHostAsync (row 19, task 9) -
-    /// duplicated here rather than shared because that helper is private to its own partial class.</summary>
-    private static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(RunLimits runLimits)
-    {
-        var dir = Path.Combine(Path.GetTempPath(), "chopitup_exapi_run_" + Guid.NewGuid().ToString("N"));
-        var roomsRoot = dir + "_rooms";
-        var runner = new FakeProcessRunner();
-        var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast, roomsRoot: roomsRoot, runLimits: runLimits);
-        const string room = "lab";
-        var roomDir = Path.Combine(roomsRoot, room);
-        Assert.True(await new GitTrail(roomDir).InitAsync());
-        host.Services.GetRequiredService<MessageStore>().CreateRoom(room, "LAB", roomDir);
-
-        var skillDir = Path.Combine(dir, "skills", "build-thing");
-        Directory.CreateDirectory(skillDir);
-        var bytes = new System.Text.UTF8Encoding(false).GetBytes(RunSkillMd);
-        File.WriteAllBytes(Path.Combine(skillDir, "SKILL.md"), bytes);
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
-        new SkillHashes(host.Services.GetRequiredService<ChopDb>()).Record("build-thing", hash, "test-fixture");
-        return (host, runner, room);
-    }
-
-    private static async Task PostAsInHost(HubTestHost host, string participant, string room, string body)
-    {
-        await using var client = await host.ClientFor(participant);
-        HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
-    }
-
     /// <summary>Row 27, task 2: the cause on the wire, run arm. Same hard-cap-park setup as
-    /// SpawnerServiceTests.Runs.cs's Run19_M27_a_hard_cap_park_... test (task 1) - reused here rather
-    /// than invented, per the brief.</summary>
+    /// SpawnerServiceTests.Runs.cs's Run19_M27_a_hard_cap_park_... test (task 1): a run whose spawn
+    /// cap is spent while its conductor's own exchange is still open, so the park's exchange-stop note
+    /// carries the run cause.</summary>
     [Fact]
     public async Task A7_row27_a_run_driven_stop_marks_stoppedBy_run_on_the_wire()
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        var (host, runner, room) = await StartRunHostAsync(Fast, runLimits);
         await using var _ = host;
 
         runner.Handler = async (spec, _, _) =>
@@ -162,14 +132,7 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
         await runner.NextSpecAsync(TimeSpan.FromSeconds(15));
 
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (true)
-        {
-            using var msgs = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
-            if (msgs.RootElement.GetProperty("messages").EnumerateArray().Any(m => m.GetProperty("body").GetString()!.Contains("parked"))) break;
-            if (DateTime.UtcNow > deadline) throw new TimeoutException($"run in '{room}' did not park within 15s");
-            await Task.Delay(100);
-        }
+        await WaitForNoteContaining(host, room, "parked");
 
         using var snapDoc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/exchange"));
         Assert.Equal("run", snapDoc.RootElement.GetProperty("stoppedBy").GetString());
