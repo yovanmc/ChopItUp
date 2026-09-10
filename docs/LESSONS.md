@@ -155,3 +155,19 @@ review lens is: when a note names WHO did something, the function that builds it
 default, and every call site is read. The fix shape is the same one P7 already demands - the policy
 decides the cause and passes it, the service only carries it out; inferring the actor from the reason
 string would have re-created the defect one layer up.
+
+### [credentials, test-harnesses, plan-decomposition, review] M28 (2026-09-10, 6ffad42)
+When you stop a credential store from being readable, your own test harnesses are among the readers.
+Ten of the twelve `tools/` live-check harnesses drove the hub by reading a bearer straight out of
+`tokens.json` — which is precisely the move the attack makes — so hashing the store broke the
+project's own gates while `dotnet test` stayed green, because it cannot see a `.ps1` file. Two of
+those harness legs used a *spawnable* row's token, and there is now no cheap way to get one: that read
+was the vulnerability, so losing it is the fix working. Generalised: a credential change has to
+enumerate every reader, and "the test suite is green" is not evidence about the readers the suite
+cannot see. Second, from the same row: a plan can specify a type's new public surface completely and
+still be unbuildable, because the surface says nothing about whether the constructor's INPUT can
+express the new distinction. `TokenStore.Load` took `IReadOnlyList<string>`, ids carry no kind, and the
+whole design turned on classifying rows by kind — two adversarial critique passes both missed it and a
+builder caught it in one read by refusing to guess. Cheap insurance: name the call sites of any
+signature you are changing in the task that changes it, and let a builder STOP rather than improvise
+into a file no task owns.
