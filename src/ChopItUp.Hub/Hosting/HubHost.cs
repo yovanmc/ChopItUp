@@ -13,6 +13,7 @@ using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Web;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.SignalR;
@@ -28,13 +29,18 @@ public static class HubHost
         try
         {
             var builder = WebApplication.CreateBuilder();
-            builder.Configuration["AllowedHosts"] = "localhost;127.0.0.1;[::1]";
-            // AllowedHosts already permits [::1], but nothing was listening there — and on Windows
-            // `localhost` resolves to ::1 first, so a host configured with a localhost URL never
-            // reached us (pass 2, MINOR-17). Guarded on a non-zero port: with port 0 the two
-            // families get different ephemeral ports and the single-address assumption breaks.
-            // An absent or disabled IPv6 stack is not a reason to fail to start; 127.0.0.1 is the
-            // contract and ::1 is the convenience.
+            // Row 29 commit 1: the built-in AllowedHosts list-matching is disabled ("*" turns off
+            // ASP.NET Core's Host Filtering Middleware) in favour of LoopbackHostFilter below, which
+            // answers "is this loopback" by parsing the address rather than by comparing strings — a
+            // fixed list rejected Windows PowerShell 5.1's fully-expanded IPv6 Host header
+            // ([0000:0000:0000:0000:0000:0000:0000:0001]) even though it names the identical address
+            // as [::1] (finding, ticket 04).
+            builder.Configuration["AllowedHosts"] = "*";
+            // On Windows `localhost` resolves to ::1 first, so a host configured with a localhost URL
+            // never reached us unless ::1 is actually listening (pass 2, MINOR-17). Guarded on a
+            // non-zero port: with port 0 the two families get different ephemeral ports and the
+            // single-address assumption breaks. An absent or disabled IPv6 stack is not a reason to
+            // fail to start; 127.0.0.1 is the contract and ::1 is the convenience.
             builder.WebHost.ConfigureKestrel(k =>
             {
                 k.Listen(IPAddress.Loopback, options.Port);
@@ -164,6 +170,17 @@ public static class HubHost
                 var bound = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
                     ?.Addresses.Select(a => new Uri(a).Port).FirstOrDefault();
                 if (bound is > 0) HubPortFile.Write(options.DataDir, bound.Value);
+            });
+            // Row 29 commit 1: first in the pipeline, ahead of every other check — a caller whose Host
+            // header does not name loopback under any spelling never reaches auth or an endpoint.
+            app.Use(async (context, next) =>
+            {
+                if (!LoopbackHostFilter.IsLoopback(context.Request.Host.Value))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+                }
+                await next();
             });
             app.UseMiddleware<BearerTokenMiddleware>();
             app.UseSpaClient(SpaFiles.ResolveWebRoot(options.WebRoot));
