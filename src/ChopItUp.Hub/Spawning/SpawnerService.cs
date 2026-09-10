@@ -138,8 +138,13 @@ public sealed class SpawnerService : BackgroundService
     /// refused while it is true can never have come from one (M10, plan decision 13).</summary>
     public bool AnySpawnInFlight => Volatile.Read(ref _live) > 0;
 
-    /// <summary>Stops the room's open exchange: kills its in-flight spawns, drops its pending ones,
-    /// posts the note. Returns the new snapshot, or null when the room had no open exchange.</summary>
+    /// <summary>The owner's stop for a room, and since row 19 (task 13) not an exchange stop only:
+    /// when the room has an active or a parked run, this ends the RUN through <see cref="EndRun"/>
+    /// whether or not an exchange is open — see <see cref="OnStop"/>, which decides. With no run it is
+    /// the older behaviour: kill the room's in-flight spawns, drop the pending ones, close the open
+    /// exchange, post the note. Returns the new snapshot, or null when there was nothing to stop at
+    /// all — no run, no open exchange and no spawn still running (the API turns that into a 409) — or
+    /// when the service is shutting down and the event can no longer be queued.</summary>
     public async Task<ExchangeSnapshot?> StopAsync(string roomId)
     {
         var reply = new TaskCompletionSource<ExchangeSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
