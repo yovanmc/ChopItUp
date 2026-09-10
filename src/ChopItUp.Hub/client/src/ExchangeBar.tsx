@@ -16,8 +16,26 @@ const OUTCOME: Record<ExchangeSnapshot['status'], string> = {
   idle: 'Exchange over',
   open: 'Exchange running',
   concluded: 'Exchange concluded',
-  stopped: 'Stopped by you',
+  /** Deliberately neutral: it is what a stop with no cause on the wire reads as, and the only stop
+   *  that has no cause is one this client cannot attribute (a pre-row-27 hub). Attribution lives in
+   *  `STOPPED_BY` below — blaming the owner by default is the defect row 27 closes. */
+  stopped: 'Exchange stopped',
   superseded: 'Superseded',
+};
+
+/** Row 27, AC4: who stopped it. A run parks itself on a cap the owner never touched, and the note in
+ *  the transcript says so, so the marker must not tell him he did it.
+ *
+ *  Total over the cause union on purpose (the `OUTCOME` trick, one type down): a cause added to the
+ *  hub's `ExchangeStopCause` and mirrored into `ExchangeSnapshot['stoppedBy']` without a label here
+ *  fails `npm run typecheck` rather than rendering as `undefined` in the one state nobody tested.
+ *
+ *  The run arm names the run and stops there. `RunBar` sits directly above this strip and already
+ *  leads with "Run parked · <reason>" or "Run finished", so repeating the reason here would say the
+ *  same thing twice in two lines the owner reads as one. */
+const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
+  owner: 'Stopped by you',
+  run: 'Stopped by the run',
 };
 
 /** One compact strip above the composer, and nothing at all when the room is idle: a room that has
@@ -32,8 +50,11 @@ const OUTCOME: Record<ExchangeSnapshot['status'], string> = {
 function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarProps) {
   if (exchange === null || exchange.status === 'idle') return null;
 
-  const { status, inFlight, pending, budget, remaining, turnsUsed } = exchange;
+  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy } = exchange;
   const open = status === 'open';
+  /** The cause only speaks for a `stopped` exchange: a superseded one carries whatever cause its
+   *  last stop left behind, and "Superseded" is still the truer word for it. */
+  const marker = status === 'stopped' && stoppedBy !== null ? STOPPED_BY[stoppedBy] : OUTCOME[status];
   /** Row 22: one control per stop. `onStop` here and the run strip's button hit the same endpoint,
    *  and that endpoint ends the RUN whenever there is a live one — so while a run is `active` or
    *  `parked` this button would be a second, worse-labelled copy of `RunBar`'s. It yields for exactly
@@ -64,7 +85,7 @@ function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarPr
           </>
         ) : (
           <span className="exchange-marker">
-            {OUTCOME[status]} · {turnsUsed} of {budget} turns used
+            {marker} · {turnsUsed} of {budget} turns used
           </span>
         )}
       </div>
