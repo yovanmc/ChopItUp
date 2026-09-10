@@ -1,4 +1,5 @@
-﻿import { renderToStaticMarkup } from 'react-dom/server';
+﻿import { isValidElement, type ReactElement, type ReactNode } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test } from 'vitest';
 import RunBar from './RunBar';
 import { setRoster } from './participants';
@@ -36,7 +37,33 @@ const BASE: RunSnapshot = {
   gateRuns: [],
 };
 
-const render = (run: RunSnapshot | null) => renderToStaticMarkup(<RunBar run={run} />);
+const render = (run: RunSnapshot | null, stopping = false) =>
+  renderToStaticMarkup(<RunBar run={run} stopping={stopping} onStop={() => undefined} />);
+
+interface ButtonProps {
+  children?: ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+}
+
+/** Static markup carries no handlers, and there is still no DOM here to click in. So for the one
+ *  assertion that needs the wiring rather than the picture (row 22 AC2's client half), call the
+ *  memoised component's own function and walk the element tree it returns for the button. */
+function findButton(node: ReactNode): ReactElement<ButtonProps> | null {
+  if (Array.isArray(node)) {
+    for (const child of node as ReactNode[]) {
+      const hit = findButton(child);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (!isValidElement(node)) return null;
+  if (node.type === 'button') return node as ReactElement<ButtonProps>;
+  return findButton((node.props as { children?: ReactNode }).children ?? null);
+}
+
+const button = (run: RunSnapshot, stopping: boolean, onStop: () => void) =>
+  findButton(RunBar.type({ run, stopping, onStop }));
 
 describe('RunBar', () => {
   test('a room that has never had a run renders nothing at all', () => {
@@ -99,5 +126,65 @@ describe('RunBar', () => {
 
   test('a parked run with no recorded reason still says something rather than rendering blank', () => {
     expect(render({ ...BASE, status: 'parked', reason: null })).toContain('no reason recorded');
+  });
+
+  test('an active run offers the stop the owner can reach', () => {
+    expect(render(BASE)).toContain('>Stop run</button>');
+  });
+
+  /** AC1. The strip takes no exchange prop at all, which is what makes "in every such state" true by
+   *  construction: an active run with no open exchange and nothing in flight — the state that had no
+   *  button before this row — renders the same strip as any other. */
+  test('a parked run offers the same stop, which is the state that had none', () => {
+    const html = render({ ...BASE, status: 'parked', reason: 'the 80-spawn cap is spent' });
+
+    expect(html).toContain('>Stop run</button>');
+    expect(html).toContain('class="quiet danger"');
+  });
+
+  test('the control is labelled for the run, not for the exchange', () => {
+    expect(render(BASE)).not.toContain('Stop exchange');
+  });
+
+  /** AC3. Nothing left to end, so nothing to press — and a room that never had a run still renders
+   *  the empty string, so the control cannot appear where there is no strip. */
+  test('an ended run offers no stop', () => {
+    expect(render({ ...BASE, status: 'ended', endedAt: '2026-03-01T12:05:00.0000000+00:00' })).not.toContain(
+      '<button',
+    );
+  });
+
+  test('a room that never had a run has no control either', () => {
+    expect(render(null)).not.toContain('<button');
+  });
+
+  /** AC5. `stopping` is App's in-flight flag for the stop call itself, held until the refreshed run
+   *  lands, so a second press cannot race the first. */
+  test('a stop already in flight leaves the control disabled', () => {
+    expect(render(BASE, true)).toContain('disabled=""');
+    expect(render(BASE, false)).not.toContain('disabled');
+  });
+
+  /** AC2, client half: pressing it runs the caller's stop. That the run then reaches `ended` is the
+   *  server's half and the interactive gate's to prove. */
+  test('pressing the control calls the stop it was handed', () => {
+    let calls = 0;
+    const found = button(BASE, false, () => {
+      calls += 1;
+    });
+
+    expect(found).not.toBeNull();
+    found?.props.onClick?.();
+    expect(calls).toBe(1);
+  });
+
+  test('the parked state is wired to the same stop', () => {
+    let calls = 0;
+    const found = button({ ...BASE, status: 'parked', reason: 'stalled' }, false, () => {
+      calls += 1;
+    });
+
+    found?.props.onClick?.();
+    expect(calls).toBe(1);
   });
 });

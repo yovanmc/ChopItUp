@@ -2,6 +2,12 @@ import { memo } from 'react';
 import { displayName } from './participants';
 import type { RunSnapshot } from './types';
 
+interface RunBarProps {
+  run: RunSnapshot | null;
+  stopping: boolean;
+  onStop: () => void;
+}
+
 /** The word each state leads with. Total over `RunSnapshot['status']` on purpose: a status added to
  *  the hub (Core/Model/Run.cs `RunStatus`) and not to this map is a compile error here rather than a
  *  strip that renders a blank label in the one state nobody tested. */
@@ -28,8 +34,14 @@ function duration(minutes: number): string {
  *
  *  Per-room and per-room only (LESSONS M9, decided in the plan): a park in a room the browser is not
  *  showing surfaces when the owner opens that room. The park note mentions `@owner` and the rail
- *  already badges a room with unread messages, so the signal exists — it is just not run-specific. */
-function RunBar({ run }: { run: RunSnapshot | null }) {
+ *  already badges a room with unread messages, so the signal exists — it is just not run-specific.
+ *
+ *  Row 22: the stop lives here rather than on `ExchangeBar` because a run outlives its exchanges.
+ *  `ParkRun`/`EndRun` close the open exchange and cancel the in-flight spawns, which is exactly what
+ *  `ExchangeBar`'s button gated on — so a parked run, and an active run idling between phases, had no
+ *  reachable stop at all. `active` and `parked` both get it; `ended` gets nothing, because there is
+ *  nothing left to end. */
+function RunBar({ run, stopping, onStop }: RunBarProps) {
   if (run === null) return null;
 
   const { status, phase, reason, conductorId } = run;
@@ -54,6 +66,11 @@ function RunBar({ run }: { run: RunSnapshot | null }) {
           {duration(run.wallClockCapMinutes)}
         </span>
         <span className="run-conductor">{displayName(conductorId)} conducts</span>
+        {!ended && (
+          <button type="button" className="quiet danger" disabled={stopping} onClick={onStop}>
+            Stop run
+          </button>
+        )}
       </div>
     </div>
   );

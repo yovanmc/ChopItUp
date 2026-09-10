@@ -4,6 +4,7 @@ import type { ExchangeSnapshot } from './types';
 
 interface ExchangeBarProps {
   exchange: ExchangeSnapshot | null;
+  runStoppable: boolean;
   stopping: boolean;
   onStop: () => void;
 }
@@ -28,12 +29,17 @@ const OUTCOME: Record<ExchangeSnapshot['status'], string> = {
  *
  *  Idle is the only state that hides the bar outright. It is the zero state (seq 0, nothing has ever
  *  run) and a room never returns to it, so nothing live can be hidden behind that branch. */
-function ExchangeBar({ exchange, stopping, onStop }: ExchangeBarProps) {
+function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarProps) {
   if (exchange === null || exchange.status === 'idle') return null;
 
   const { status, inFlight, pending, budget, remaining, turnsUsed } = exchange;
   const open = status === 'open';
-  const stoppable = open || inFlight.length > 0;
+  /** Row 22: one control per stop. `onStop` here and the run strip's button hit the same endpoint,
+   *  and that endpoint ends the RUN whenever there is a live one — so while a run is `active` or
+   *  `parked` this button would be a second, worse-labelled copy of `RunBar`'s. It yields for exactly
+   *  as long as that run lives; once it has `ended` the gate is the old one again, because an
+   *  exchange with a spawn still talking is still worth stopping on its own. */
+  const stoppable = !runStoppable && (open || inFlight.length > 0);
 
   /** Rendered in the lead while the exchange is open and in the tail after it closed, so a spawn that
    *  outlives its exchange stays visible beside the marker that explains why it is alone. */
