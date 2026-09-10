@@ -1,14 +1,21 @@
-/** D2: the owner's bearer token, from a one-time paste, kept in `localStorage`, and sent on exactly
- *  two calls — `POST /api/skills/proposals/{id}/approve` and `.../reject`. Nothing else in this client
- *  reads it, and no other request carries it: every other `/api` route is unauthenticated by design
- *  (loopback is the boundary), so attaching a credential to them would widen the surface for nothing.
+/** The owner's bearer token, from a one-time paste, kept in `localStorage`, and sent on EVERY non-GET
+ *  `/api` request this client makes (row 28). It used to go on exactly two calls, because every other
+ *  `/api` route was unauthenticated and loopback was treated as the boundary.
  *
- *  An `Authorization` header is also what makes those two requests non-simple, so a cross-origin page
+ *  Loopback stopped being the boundary when the hub started spawning models with shell access INSIDE
+ *  it: a spawn is another process on this machine, so "can reach 127.0.0.1" no longer distinguishes
+ *  the owner's own hand from a participant the owner is merely talking to. An owner-attributed write
+ *  therefore needs a credential the spawn does not have, and this is where the browser keeps its
+ *  copy. `GET` stays open (row 28 AC2) — reads disclose only what a participant could already read
+ *  through its own MCP session — so a credential on a read would buy nothing.
+ *
+ *  An `Authorization` header is also what makes such a request non-simple, so a cross-origin page
  *  cannot forge one and no `Origin` check is needed (D2's CSRF half).
  *
  *  Every access is wrapped: `localStorage` throws outright in a browser with site data blocked, and
  *  does not exist at all under vitest's node environment. A hub the owner has not pasted a token into
- *  reads as "no token", which is the read-only card — never a crash.
+ *  reads as "no token", which is a client that can read everything and write nothing — never a crash,
+ *  and never a request carrying the literal string "Bearer null".
  *
  *  Deliberately NOT here: any path that goes looking for a token on disk. The milestone's standing
  *  prohibition is that no agent reads the hub's `tokens.json` to obtain an owner credential; this

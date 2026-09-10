@@ -40,6 +40,64 @@ function byActivity(rooms: Room[]): Room[] {
   return [...rooms].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0));
 }
 
+/** Row 28, AC5's first half: the paste prompt a refused DELIBERATE action raises. `notice` names what
+ *  did not happen, because a Send that silently ate the message is the failure this row closes rather
+ *  than a smaller version of it — the owner must not have to infer from an empty thread that his
+ *  message is gone.
+ *
+ *  Deliberately not raised by a refused `markRead`: that one fires on every room open, so a prompt
+ *  there would reopen itself forever. The rail carries that case instead.
+ *
+ *  Exported for its test: this client has no jsdom, so rendering it IS the only proof it renders. */
+export function TokenGate({
+  notice,
+  onToken,
+  onDismiss,
+}: {
+  notice: string;
+  onToken: (token: string) => void;
+  onDismiss: () => void;
+}) {
+  const [paste, setPaste] = useState('');
+  return (
+    <div className="token-gate" role="alert">
+      <p className="token-gate-notice">{notice}</p>
+      <form
+        className="token-gate-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const value = paste.trim();
+          if (value.length === 0) return;
+          setPaste('');
+          onToken(value);
+        }}
+      >
+        {/* Its own id: the skill card's field owns `owner-token`, both can be on screen at once, and
+            two live fields with one id is a label pointing at the wrong box. */}
+        <label className="token-gate-label" htmlFor="write-token">
+          Paste the owner token and try again
+        </label>
+        <input
+          id="write-token"
+          className="field token-gate-field"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="owner token"
+          value={paste}
+          onChange={(event) => setPaste(event.target.value)}
+        />
+        <button type="submit" className="send">
+          Use this token
+        </button>
+        <button type="button" className="quiet" onClick={onDismiss}>
+          Not now
+        </button>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
@@ -61,6 +119,13 @@ export default function App() {
   /** D2: read once at mount from `localStorage`, replaced by a one-time paste. Held in state as well
    *  as in storage so a browser that refuses storage still works for the session. */
   const [ownerToken, setOwnerToken] = useState<string | null>(() => readOwnerToken());
+  /** Row 28: what a deliberate write did NOT do, because the hub refused it for want of a credential.
+   *  Set means the paste prompt is on screen; the sentence is built where the failure happened, since
+   *  only that call site knows what the owner was trying to do. */
+  const [tokenNotice, setTokenNotice] = useState<string | null>(null);
+  /** The hub's reason the read cursor would not move, kept rather than a bare boolean so the rail's
+   *  prompt can state the same cause as any other refusal instead of a second guess at it. */
+  const [unreadRefusal, setUnreadRefusal] = useState<string | null>(null);
   const [memoryImportOpen, setMemoryImportOpen] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
@@ -178,15 +243,39 @@ export default function App() {
     refreshRooms().catch((failure) => setError(api.describeError(failure)));
   }, [refreshRooms]);
 
+  /** Row 28: the credential branch every DELIBERATE write shares. Returns whether the failure was a
+   *  refusal a pasted token can fix — the caller then leaves the error banner alone, because the
+   *  prompt this raises says both what failed and what to do about it, and the banner would only
+   *  repeat half of that. `didNotHappen` is the caller's, since only it knows what was attempted. */
+  const refused = useCallback((failure: unknown, didNotHappen: string): boolean => {
+    if (!api.isCredentialRefusal(failure)) return false;
+    setError(null); // whatever the banner held is older than this, and two red blocks read as two faults
+    setTokenNotice(`${didNotHappen} ${api.describeError(failure)}`);
+    return true;
+  }, []);
+
+  /** Row 28, the quiet half of AC5. `markRead` is a background write on every room open, so its
+   *  refusal must NOT raise the prompt — that would pop the moment the owner opened a room and again
+   *  every time he closed it. It is not free to ignore either: every unread badge in the rail is then
+   *  a number the hub will not let this browser clear, so the reason goes to the rail. */
+  const readRoom = useCallback((room: string) => {
+    api.markRead(room).catch((failure) => {
+      if (api.isCredentialRefusal(failure)) setUnreadRefusal(api.describeError(failure));
+    });
+  }, []);
+
   /** M9: the owner's read cursor moves while the room is open. Debounced, so a burst of messages is
    *  one call; dropped if the room changed before it fired. */
-  const scheduleRead = useCallback((room: string) => {
-    if (readTimer.current !== null) window.clearTimeout(readTimer.current);
-    readTimer.current = window.setTimeout(() => {
-      readTimer.current = null;
-      if (currentRoom.current === room) api.markRead(room).catch(() => undefined);
-    }, 750);
-  }, []);
+  const scheduleRead = useCallback(
+    (room: string) => {
+      if (readTimer.current !== null) window.clearTimeout(readTimer.current);
+      readTimer.current = window.setTimeout(() => {
+        readTimer.current = null;
+        if (currentRoom.current === room) readRoom(room);
+      }, 750);
+    },
+    [readRoom],
+  );
 
   // The roster loads BEFORE the first room is selected, so no message ever renders without it.
   useEffect(() => {
@@ -371,7 +460,7 @@ export default function App() {
         if (abort.signal.aborted) return;
         setError(null);
         merge(loaded);
-        if (loaded.length > 0) api.markRead(roomId).catch(() => undefined); // opening a room reads it
+        if (loaded.length > 0) readRoom(roomId); // opening a room reads it
       })
       .catch((failure) => {
         if (!abort.signal.aborted) setError(api.describeError(failure));
@@ -380,7 +469,7 @@ export default function App() {
         if (!abort.signal.aborted) setLoading(false);
       });
     return () => abort.abort();
-  }, [roomId, merge]);
+  }, [roomId, merge, readRoom]);
 
   const send = useCallback(
     async (body: string) => {
@@ -389,11 +478,11 @@ export default function App() {
         merge([await api.postMessage(roomId, body)]);
         setError(null);
       } catch (failure) {
-        setError(api.describeError(failure));
+        if (!refused(failure, 'Your message was not posted.')) setError(api.describeError(failure));
         throw failure;
       }
     },
-    [roomId, merge],
+    [roomId, merge, refused],
   );
 
   // D17: Stop is "step in and end it" — the owner's next message opens a fresh exchange, this call
@@ -411,11 +500,11 @@ export default function App() {
       // before `finally`, which keeps the button disabled until the new state is on screen (AC5).
       await refreshRun(roomId).catch(() => undefined);
     } catch (failure) {
-      setError(api.describeError(failure));
+      if (!refused(failure, 'The exchange was not stopped.')) setError(api.describeError(failure));
     } finally {
       setStopping(false);
     }
-  }, [roomId, refreshRun]);
+  }, [roomId, refreshRun, refused]);
 
   // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
   // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
@@ -428,13 +517,13 @@ export default function App() {
         setProposals((previous) => previous.filter((p) => p.id !== id));
         setError(null);
       } catch (failure) {
-        setError(api.describeError(failure));
+        if (!refused(failure, 'That memory proposal was not decided.')) setError(api.describeError(failure));
         loadProposals(roomId).catch(() => undefined);
       } finally {
         setDeciding(null);
       }
     },
-    [roomId, loadProposals],
+    [roomId, loadProposals, refused],
   );
 
   /** M25 (D1/D2): the owner's word on a proposed skill, carrying the pasted bearer token and, on an
@@ -465,7 +554,23 @@ export default function App() {
     [roomId, ownerToken, loadSkillProposals],
   );
 
-  const takeOwnerToken = useCallback((token: string | null) => setOwnerToken(writeOwnerToken(token)), []);
+  /** Row 28: a token arriving clears both credential surfaces optimistically. Optimistic on purpose —
+   *  the next write decides whether the new token actually works, and re-raising the prompt from a
+   *  fresh refusal is honest, while leaving it up beside a token that works is not. */
+  const takeOwnerToken = useCallback((token: string | null) => {
+    const stored = writeOwnerToken(token);
+    setOwnerToken(stored);
+    if (stored !== null) {
+      setTokenNotice(null);
+      setUnreadRefusal(null);
+    }
+  }, []);
+
+  /** The rail's line is a control, so this is where it leads: the same prompt a refused deliberate
+   *  write raises, carrying the cause the refused `markRead` already reported. */
+  const fixUnread = useCallback(() => {
+    if (unreadRefusal !== null) setTokenNotice(`Unread counts are not clearing. ${unreadRefusal}`);
+  }, [unreadRefusal]);
 
   const onMemoryImported = useCallback(
     (_result: MemoryImportResult) => {
@@ -503,11 +608,12 @@ export default function App() {
       setError(null);
       await refreshRooms();
     } catch (failure) {
-      setError(api.describeError(failure));
+      const didNotHappen = room.archivedAt !== null ? 'The room was not unarchived.' : 'The room was not archived.';
+      if (!refused(failure, didNotHappen)) setError(api.describeError(failure));
     } finally {
       setRoomBusy(false);
     }
-  }, [roomId, rooms, refreshRooms]);
+  }, [roomId, rooms, refreshRooms, refused]);
 
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
@@ -522,9 +628,11 @@ export default function App() {
         activeRoomId={roomId}
         liveness={liveness}
         showArchived={showArchived}
+        unreadBlocked={unreadRefusal !== null}
         onSelect={selectRoom}
         onNewRoom={() => setRoomDialog({ mode: 'create' })}
         onToggleArchived={toggleArchived}
+        onFixUnread={fixUnread}
       />
       <main className="room">
         {activeRoom ? (
@@ -543,6 +651,9 @@ export default function App() {
               <p className="banner" role="alert">
                 {error}
               </p>
+            )}
+            {tokenNotice !== null && (
+              <TokenGate notice={tokenNotice} onToken={takeOwnerToken} onDismiss={() => setTokenNotice(null)} />
             )}
             <Thread messages={messages} loading={loading} />
             <MemoryPanel
