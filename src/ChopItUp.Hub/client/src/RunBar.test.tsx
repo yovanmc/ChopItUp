@@ -36,7 +36,8 @@ const BASE: RunSnapshot = {
   gateRuns: [],
 };
 
-const render = (run: RunSnapshot | null) => renderToStaticMarkup(<RunBar run={run} />);
+const render = (run: RunSnapshot | null, stopping = false) =>
+  renderToStaticMarkup(<RunBar run={run} stopping={stopping} onStop={() => undefined} />);
 
 describe('RunBar', () => {
   test('a room that has never had a run renders nothing at all', () => {
@@ -99,5 +100,9 @@ describe('RunBar', () => {
 
   test('a parked run with no recorded reason still says something rather than rendering blank', () => {
     expect(render({ ...BASE, status: 'parked', reason: null })).toContain('no reason recorded');
+  });
+
+  test('an active run offers the stop the owner can reach', () => {
+    expect(render(BASE)).toContain('>Stop run</button>');
   });
 });
