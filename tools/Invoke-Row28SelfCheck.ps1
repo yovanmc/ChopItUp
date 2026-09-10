@@ -7,10 +7,17 @@
     DEPLOY-DAY ORDER (D-28-c/D-28-d; row 28 ships deliberately undeployed until this runs):
       1. Stop the hub (owner-verified PID, never `Stop-Process -Name`).
       2. Deploy the new build (`Deploy-ChopItUp.ps1` or equivalent) to -InstallDir.
-      3. Start the hub.
-      4. `ChopItUp.Hub.exe --data <install>\data --rotate-token owner` -- OWNER-TYPED ONLY, NEVER
+      3. `ChopItUp.Hub.exe --data <install>\data --rotate-token owner` -- OWNER-TYPED ONLY, NEVER
          AGENT-RUN (D-28-d, docs/verification.md "Rotating a token"). It prints the new owner bearer
          once, to the owner's own terminal.
+         ROTATE BEFORE THE HUB IS STARTED, NOT AFTER: HostCommands.RotateToken gates on
+         HubLock.IsHeld and exits 5 against a live hub ("Stop it first -- rotating while it runs
+         writes a new token that the running hub ignores, and the old token keeps working"), because
+         a loaded TokenStore is a startup singleton (TokenStore.Load's remarks). An earlier revision
+         of this list put the start before the rotate; following it deploy-day cost a stop/start
+         cycle and produced an exit 5, so the order below is the product's, not a preference.
+      4. Start the hub. It loads the rotated tokens.json at startup; nothing rotated after this point
+         takes effect until the next start.
       5. The owner pastes that value into the browser's token prompt.
       6. Run THIS script, passing the same value as -OwnerToken.
     Steps 1-5 are all owner-only (a terminal the owner may not have had overnight is exactly why row

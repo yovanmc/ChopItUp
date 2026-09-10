@@ -171,3 +171,17 @@ whole design turned on classifying rows by kind — two adversarial critique pas
 builder caught it in one read by refusing to guess. Cheap insurance: name the call sites of any
 signature you are changing in the task that changes it, and let a builder STOP rather than improvise
 into a file no task owns.
+
+### [runbooks, deploy, verification, claim-discipline] M28 deploy day (2026-09-10, 32847a8)
+A runbook nobody has executed is a LEAD, not a verified artifact, and shipping it inside the very
+script that gates the deploy hides that. `Invoke-Row28SelfCheck.ps1`'s DEPLOY-DAY ORDER read stop →
+deploy → start → rotate; `HostCommands.RotateToken` gates on `HubLock.IsHeld` and exits 5 against a
+live hub, and `HostCommandsTests.A6b_rotate_is_refused_while_a_hub_owns_the_data_dir` had asserted
+exactly that since the row was built. So the product was right, the test was right, and the prose in
+between contradicted both — a test can pin behaviour but cannot reach an operator's ordering written
+in a comment. Following the header deploy day cost a stop/start cycle and produced the exit 5 the test
+predicts. Generalised: when a row ships with an owner-run sequence, either execute that sequence once
+before the row leaves the board, or mark the sequence unverified in the same words the board uses for
+any other unrun claim. The second half is cheaper than it sounds: the ordering here was derivable from
+a gate the repo already tested, so "does this runbook contradict a gate the product enforces" is a
+grep, not an experiment.
