@@ -41,6 +41,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 if (-not $RoomsRoot) { $RoomsRoot = "$DataDir.rooms" }   # a sibling: never under the data dir a deny rule protects
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m19-check.log"
@@ -94,10 +95,14 @@ $skillName = Split-Path -Leaf (([string]$SkillSource).TrimEnd('\', '/'))
 Add-Content -Path $log -Value ("M19 run check {0} exe={1} data={2} rooms={3} port={4} skill={5} conductor={6} worker={7}" `
     -f (Get-Date -Format o), $HubExe, $DataDir, $RoomsRoot, $Port, $skillName, $Conductor, $Worker)
 
+# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
+# hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
+$ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
+
 $base = "http://127.0.0.1:$Port"
 $hub = $null
 function Invoke-Api([string]$Method, [string]$Path, $Body = $null) {
-    $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
+    $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30; Headers = (New-ChopBearerHeaders -Token $ownerToken) }
     if ($null -ne $Body) { $args.ContentType = 'application/json'; $args.Body = ($Body | ConvertTo-Json -Compress) }
     Invoke-RestMethod @args
 }

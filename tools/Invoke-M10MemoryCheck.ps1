@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m10-check.log"
 
@@ -44,6 +45,13 @@ if (Test-Path -LiteralPath $DataDir) {
 }
 New-Item -ItemType Directory -Path (Join-Path $DataDir 'memory') | Out-Null
 Add-Content -Path $log -Value ("M10 memory check {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
+
+# Row 28: /api/rooms/{id}/messages and /api/memory/proposals/{id}/approve are non-GET /api routes
+# now guarded by BearerTokenMiddleware -- seed the owner's bearer into this scratch hub's own
+# tokens.json BEFORE it ever starts (see ChopTokenHelpers.ps1: the plaintext keeps authenticating
+# after the hub's first-start migration hashes the file). Never a real installation's credential.
+$ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
+$ownerAuth = New-ChopBearerHeaders -Token $ownerToken
 
 # The codeword exists nowhere but this file: a reply that carries it read memory from the prompt.
 $codeword = 'PELICAN-' + (Get-Random -Minimum 100 -Maximum 999)
@@ -89,7 +97,7 @@ try {
     }
 
     $body = "@sonnet Two things, then stop: (1) post one line that repeats the owner's deploy codeword from your memory, exactly; (2) call propose_memory once with room_id 'general', topic 'check', title 'Live check ran', body 'The M10 live check ran and sonnet could read the codeword.' Do not mention anyone."
-    $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -ContentType 'application/json' -Body (@{ body = $body } | ConvertTo-Json)
+    $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ body = $body } | ConvertTo-Json)
     Add-Check -Name 'post.owner-message' -Passed ($posted.id -ge 1) -Detail "id=$($posted.id)"
     $state = Wait-Exchange -Until 'concluded,stopped' -Seconds $TimeoutSeconds
     $messages = Read-Room
@@ -112,7 +120,7 @@ try {
 
     if ($mine.Count -ge 1) {
         $p = $mine[0]
-        $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$($p.id)/approve" -Method Post -TimeoutSec 60
+        $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$($p.id)/approve" -Method Post -Headers $ownerAuth -TimeoutSec 60
         Add-Check -Name 'approve.status' -Passed ($approved.status -eq 'approved') -Detail "status=$($approved.status)"
         Add-Check -Name 'approve.commit-hash' -Passed ($approved.commitHash -match '^[0-9a-f]{7,}$') -Detail "hash=$($approved.commitHash)"
         $topicFile = Join-Path $DataDir ('memory\' + ($approved.writtenTo -replace '/', '\'))
@@ -123,7 +131,7 @@ try {
         $after = Read-Room
         Add-Check -Name 'approve.note' -Passed ([bool]($after | Where-Object { $_.authorId -eq 'hub' -and $_.body -like "Memory proposal #$($p.id) approved:*" })) -Detail 'hub note announces the approval'
         $again = $null
-        try { Invoke-RestMethod -Uri "$base/api/memory/proposals/$($p.id)/approve" -Method Post -TimeoutSec 10 } catch { $again = $_.Exception.Response.StatusCode.value__ }
+        try { Invoke-RestMethod -Uri "$base/api/memory/proposals/$($p.id)/approve" -Method Post -Headers $ownerAuth -TimeoutSec 10 } catch { $again = $_.Exception.Response.StatusCode.value__ }
         Add-Check -Name 'approve.second-is-409' -Passed ($again -eq 409) -Detail "status=$again"
     }
 }

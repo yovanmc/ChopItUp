@@ -24,6 +24,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m18-check.log"
 
@@ -37,8 +38,21 @@ function Add-Check {
 
 # LESSONS M10: drives /mcp itself as the participant named. A JSON-RPC error envelope has no
 # result (pass 2 P2-8a): surfaced as the failure text, never as a silent empty success.
+#
+# Row 28 Task 7 (tools-only) residual: 'opus' is a SPAWNABLE participant (ExchangePolicy.IsSpawnable),
+# so TokenStore.Load mints its bearer straight into memory and never persists or otherwise exposes it
+# outside an actual spawn (SpawnerService.Launch is the only caller of TokenStore.BearerFor). There is
+# no tools/-only way to obtain a valid 'opus' bearer without the hub really spawning it, which this
+# script's own doc comment says it must never do ("no model is ever spawned"). Every call for a
+# participant not in $script:PlaintextTokens fails cleanly here, with the reason on the record, rather
+# than sending an empty/garbage Authorization header and leaving a 401 to be puzzled out later.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
-    $token = $script:Tokens.$Participant
+    if (-not $script:PlaintextTokens.ContainsKey($Participant)) {
+        $msg = "row 28: '$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn (Task 7 residual, tools/Invoke-M18MemoryCheck.ps1)"
+        Add-Content -Path $log -Value "mcp $Participant $Tool -> SKIPPED: $msg"
+        return [pscustomobject]@{ IsError = $true; Text = $msg; Json = $null }
+    }
+    $token = $script:PlaintextTokens[$Participant]
     $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json, text/event-stream' }
     $rpc = @{ jsonrpc = '2.0'; id = [guid]::NewGuid().ToString('N'); method = 'tools/call'; params = @{ name = $Tool; arguments = $Arguments } } | ConvertTo-Json -Depth 6 -Compress
     $raw = Invoke-WebRequest -Uri "$base/mcp" -Method Post -Headers $headers -ContentType 'application/json' -Body $rpc -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
@@ -79,6 +93,11 @@ $coreText = "# Memory`n`n$filler`n"
 $topicText = "## Editor`n<!-- seed -->`nVim.`n"
 [System.IO.File]::WriteAllText((Join-Path $DataDir 'memory\topics\user.md'), $topicText, (New-Object System.Text.UTF8Encoding($false)))
 
+# Row 28: 'claude', 'codex' (both driven via /mcp below) and 'owner' (needed for the approve calls)
+# are host-file rows -- seed plaintexts for them into tokens.json BEFORE the hub's first start
+# (ChopTokenHelpers.ps1). Never a real installation's credential.
+$script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('claude', 'codex', 'owner')
+
 $base = "http://127.0.0.1:$Port"
 $hub = $null
 try {
@@ -91,8 +110,11 @@ try {
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     Add-Check -Name 'health.schema-is-10' -Passed ($health.schema -eq 10) -Detail "schema=$($health.schema)"
 
-    # tokens.json is minted in HubHost.Build before the server listens; read it only after hub.started.
-    $script:Tokens = Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json
+    # Row 28: 'claude', 'codex' and 'owner' were seeded into tokens.json BEFORE the hub ever started
+    # (below the param block); the file itself now holds only their SHA-256 after the hub's own
+    # startup migration, so $script:PlaintextTokens (not a re-read of the file) is what Invoke-McpTool
+    # and the approve calls use. 'opus' is deliberately absent -- see Invoke-McpTool's doc comment.
+    $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
     # Leg 3: recall.titles - the seeded topic and its entry show up with no arguments.
     $recall = Invoke-McpTool -Participant 'claude' -Tool 'recall' -Arguments @{}
@@ -133,7 +155,7 @@ try {
     # Leg 7: approve.core-409 - the over-cap core approval is refused, the row stays pending, and the
     # hub posts a refusal note. -SkipHttpErrorCheck so a non-2xx response still hands back its body
     # (LESSONS M10 pass 2 P2-8b: the $_.Exception idiom drops it).
-    $coreApprove = Invoke-WebRequest -Uri "$base/api/memory/proposals/$coreId/approve" -Method Post -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
+    $coreApprove = Invoke-WebRequest -Uri "$base/api/memory/proposals/$coreId/approve" -Method Post -Headers $ownerAuth -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
     $coreApproveBody = $coreApprove.Content | ConvertFrom-Json
     Add-Check -Name 'approve.core-409' -Passed ($coreApprove.StatusCode -eq 409 -and $coreApproveBody.cap -eq 6000) `
         -Detail "status=$($coreApprove.StatusCode) cap=$($coreApproveBody.cap) chars=$($coreApproveBody.chars)"
@@ -148,7 +170,7 @@ try {
         -Detail ($refusalNote.body.Split("`n")[0])
 
     # Leg 8: approve.supersede - the accepted row rewrites the topic file, posts its note, and commits once.
-    $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$supersedeId/approve" -Method Post -TimeoutSec $TimeoutSeconds
+    $approved = Invoke-RestMethod -Uri "$base/api/memory/proposals/$supersedeId/approve" -Method Post -Headers $ownerAuth -TimeoutSec $TimeoutSeconds
     Add-Check -Name 'approve.supersede' -Passed ($approved.status -eq 'approved' -and $approved.kind -eq 'supersede') -Detail "status=$($approved.status) kind=$($approved.kind)"
 
     $topicFile = Join-Path $DataDir 'memory\topics\user.md'

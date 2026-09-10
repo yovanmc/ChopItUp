@@ -25,6 +25,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $slnPath = Join-Path $repoRoot 'ChopItUp.slnx'
@@ -196,16 +197,18 @@ try {
     # real MCP transport; list_rooms reflects the new total.
     $tokensPath = Join-Path $dataDir 'tokens.json'
     $tokensBeforeRotate = Get-Content $tokensPath -Raw
-    $tokens = $tokensBeforeRotate | ConvertFrom-Json
-    $knownTokens.Add($tokens.owner)
-    $knownTokens.Add($tokens.claude)
-    $knownTokens.Add($tokens.codex)
 
+    # Row 28: tokens.json now holds only each host-file row's SHA-256 (TokenStore.Load hashes the
+    # plaintext $preTokens seeded above IN PLACE on this very first start -- never re-minting, never
+    # writing the plaintext back). The plaintext this script already generated in $preTokens is what
+    # keeps authenticating; re-reading it off disk after the migration would hand back a hash, not a
+    # usable bearer. $knownTokens already holds $preTokens' values (added when they were generated,
+    # above) -- nothing new to capture here.
     $mcpOutPath = Join-Path $scratch 'mcp-check.json'
     $mcpOutLog = Join-Path $scratch 'mcp-check.out.log'
     $mcpErrLog = Join-Path $scratch 'mcp-check.err.log'
     $mcpClientKey = [guid]::NewGuid().ToString('N')
-    $env:CHOPITUP_MCP_TOKEN = $tokens.claude
+    $env:CHOPITUP_MCP_TOKEN = $preTokens.claude
     try {
         $mcpProc = Start-Process -FilePath $corpusExe -ArgumentList @(
             '--mcp-check',
@@ -245,12 +248,22 @@ try {
     Add-Check -Name 'readme.roster' -Passed (($readme -match '\| `gpt-6-astra` \|') -and ($readme -match '\| `fable` \|')) -Detail 'README lists the spawn rows'
     $postTokens = Get-Content -LiteralPath (Join-Path $dataDir 'tokens.json') -Raw | ConvertFrom-Json
     $tokenKeys = @($postTokens.PSObject.Properties).Count
-    # 14, not 13: row 11's owner-remote (SeedRoster) mints its own token alongside the other 13.
-    Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 14) -Detail "tokens.json keys=$tokenKeys"
+    # Row 28: only HOST-FILE rows persist at all now (owner, owner-remote, claude, codex) -- a
+    # spawnable row (opus, sonnet, fable, every gpt-* row) is minted straight into memory and never
+    # written, so it was never one of the 14 keys this file used to carry pre-row-28.
+    Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 4) -Detail "tokens.json keys=$tokenKeys"
+    # Row 28: each entry is now {"sha256": "<hex>"}, not the plaintext itself -- "preserved" means the
+    # migration hashed the SAME plaintext this script seeded, not that the stored value still equals
+    # it byte-for-byte (it never will again). Compare against TokenStore's own digest instead.
     $preserved = $true
-    foreach ($id in $preTokens.Keys) { if ($postTokens.$id -cne $preTokens[$id]) { $preserved = $false } }
-    Add-Check -Name 'tokens.preserved' -Passed $preserved -Detail 'owner/claude/codex values unchanged across the upgrade'
-    foreach ($p in $postTokens.PSObject.Properties) { if (-not $knownTokens.Contains($p.Value)) { $knownTokens.Add($p.Value) } }
+    $preservedDetail = New-Object System.Collections.Generic.List[string]
+    foreach ($id in $preTokens.Keys) {
+        $expectedHash = Get-ChopTokenSha256 -Plaintext $preTokens[$id]
+        $actualHash = $postTokens.$id.sha256
+        if ($actualHash -cne $expectedHash) { $preserved = $false }
+        $preservedDetail.Add("$id=$($actualHash -ceq $expectedHash)")
+    }
+    Add-Check -Name 'tokens.preserved' -Passed $preserved -Detail ('owner/claude/codex hash to their pre-migration plaintext: ' + ($preservedDetail -join ', '))
 
     $expectedUrl = "http://127.0.0.1:$port/mcp"
     $urlMatches = $true

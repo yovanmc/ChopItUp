@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m5-check.log"
 
@@ -43,6 +44,14 @@ if (Test-Path -LiteralPath $DataDir) {
 }
 New-Item -ItemType Directory -Path $DataDir | Out-Null
 Add-Content -Path $log -Value ("M5 spawn check {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
+
+# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
+# hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Added to $knownTokens below so
+# the privacy leak-check at the end also guards the credential THIS script introduces.
+$ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
+$ownerAuth = New-ChopBearerHeaders -Token $ownerToken
+$knownTokens = New-Object System.Collections.Generic.List[string]
+$knownTokens.Add($ownerToken)
 
 $claude = Get-Command claude -ErrorAction SilentlyContinue
 $codex = Get-Command codex -ErrorAction SilentlyContinue
@@ -88,7 +97,7 @@ try {
     $attempts = 0; $state = $null; $messages = @(); $mini = @()
     do {
         $attempts++
-        $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -ContentType 'application/json' -Body (@{ body = $body } | ConvertTo-Json)
+        $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ body = $body } | ConvertTo-Json)
         Add-Check -Name "post.owner-message-$attempts" -Passed ($posted.id -ge 1) -Detail "id=$($posted.id)"
         $state = Wait-Exchange -Until 'concluded,stopped' -Seconds $TimeoutSeconds
         $messages = Read-Room
@@ -109,7 +118,7 @@ try {
 
     # --- Leg 2: the owner's stop kills a real CLI tree. Ask for a slow reply, stop it mid-flight, then
     #     assert nothing that carries our data dir on its command line is still running.
-    $slow = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -ContentType 'application/json' -Body (@{ body = '@sonnet write twelve numbered lines, one per line, each a different deploy-script check, then post them.' } | ConvertTo-Json)
+    $slow = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ body = '@sonnet write twelve numbered lines, one per line, each a different deploy-script check, then post them.' } | ConvertTo-Json)
     $inFlight = $null
     foreach ($i in 1..20) {
         try { $inFlight = Invoke-RestMethod -Uri "$base/api/rooms/general/exchange" -TimeoutSec 10 } catch { Add-Content -Path $log -Value "poll exchange failed: $($_.Exception.Message)" }
@@ -120,7 +129,7 @@ try {
     $live = Our-Processes
     Add-Check -Name 'stop.real-process-running' -Passed ($live.Count -gt 0) -Detail ("pids=" + (($live | ForEach-Object ProcessId) -join ','))
     $stopReply = $null
-    try { $stopReply = Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post } catch { }
+    try { $stopReply = Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -Headers $ownerAuth } catch { }
     $stopped = Wait-Exchange -Until 'stopped' -Seconds 30
     Start-Sleep -Seconds 3
     $orphans = Our-Processes
@@ -129,15 +138,21 @@ try {
     $messages = Read-Room
     Add-Check -Name 'stop.note-posted' -Passed ([bool]($messages | Where-Object { $_.authorId -eq 'hub' -and $_.body -like 'Exchange stopped by the owner:*' })) -Detail ''
 
-    $tokens = (Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json).PSObject.Properties.Value
-    $leak = $messages | Where-Object { $b = $_.body; $tokens | Where-Object { $b.Contains($_) } }
+    # Row 28: tokens.json now holds only host-file rows' SHA-256 hashes, never a plaintext -- it can no
+    # longer be scanned for a live secret the way it could pre-row-28. $knownTokens (seeded with the
+    # owner bearer this script minted, above) is what stands in for it now. This does NOT cover a
+    # spawned participant's own ephemeral bearer (sonnet's, gpt-5.4-mini's): those live only in memory
+    # and in data\spawns\<id>\mcp.json for the life of the spawn, are never written to tokens.json even
+    # pre-row-28's successor, and this script does not currently capture them -- see the Task 7 report
+    # for why that gap is not closed here.
+    $leak = $messages | Where-Object { $b = $_.body; $knownTokens | Where-Object { $b.Contains($_) } }
     Add-Check -Name 'privacy.no-token-in-any-message' -Passed (-not $leak) -Detail "messages=$($messages.Count)"
     $spawnDirs = @(Get-ChildItem -LiteralPath (Join-Path $DataDir 'spawns') -Directory -ErrorAction SilentlyContinue)
     Add-Check -Name 'spawns.workdirs-cleaned' -Passed ($spawnDirs.Count -eq 0) -Detail "leftover=$($spawnDirs.Count)"
 }
 finally {
     # Stop through the hub first so it kills its own children; only then the hub by PID.
-    try { Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -TimeoutSec 10 | Out-Null } catch { }
+    try { Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -Headers $ownerAuth -TimeoutSec 10 | Out-Null } catch { }
     if ($hub -and -not $hub.HasExited) { Stop-Process -Id $hub.Id -Force -ErrorAction SilentlyContinue }
     $left = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($DataDir) -and $_.ProcessId -ne $PID })
     foreach ($p in $left) { Write-Host "orphan from this check, stopping pid $($p.ProcessId)"; Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }

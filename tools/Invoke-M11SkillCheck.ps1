@@ -38,6 +38,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 if (-not $RoomsRoot) { $RoomsRoot = "$DataDir.rooms" }   # a sibling: never under the data dir a deny rule protects
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $script:Reports = New-Object System.Collections.Generic.List[object]
@@ -112,10 +113,18 @@ Add-Check -Name 'skill.import.second-refused' -Passed ($import2.ExitCode -eq 2) 
 $hashAfterSecondAttempt = if (Test-Path -LiteralPath $installedSkillMd) { Get-Sha256 $installedSkillMd } else { '' }
 Add-Check -Name 'skill.import.second-refusal-wrote-nothing' -Passed ($hashAfterFirstImport -ne '' -and $hashAfterFirstImport -eq $hashAfterSecondAttempt) -Detail 'SKILL.md unchanged'
 
+# Row 28: every non-GET /api route now needs an owner-class bearer, and owner-remote's own MCP call
+# (check 7) needs a bearer too -- seed both into this scratch hub's own tokens.json BEFORE it ever
+# starts (ChopTokenHelpers.ps1: the plaintext keeps authenticating after the hub's first-start
+# migration hashes the file). Never a real installation's credential.
+$chopSeeded = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner', 'owner-remote')
+$ownerToken = $chopSeeded.owner
+$ownerRemoteToken = $chopSeeded.'owner-remote'
+
 $base = "http://127.0.0.1:$Port"
 $hub = $null
 function Invoke-Api([string]$Method, [string]$Path, $Body = $null) {
-    $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
+    $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30; Headers = (New-ChopBearerHeaders -Token $ownerToken) }
     if ($null -ne $Body) { $args.ContentType = 'application/json'; $args.Body = ($Body | ConvertTo-Json -Compress) }
     Invoke-RestMethod @args
 }
@@ -221,9 +230,10 @@ try {
     Add-Check -Name 'unknown.no-spawn' -Passed ($unknownSpawned.Count -eq 0) -Detail "status-before=$($beforeUnknown.status) status-after=$($afterUnknown.status)"
 
     # --- Check 7: owner-remote can post and open an exchange over /mcp -----------------------------
-    $tokens = Get-Content -LiteralPath (Join-Path $DataDir 'tokens.json') -Raw | ConvertFrom-Json
-    $ownerRemoteToken = $tokens.'owner-remote'
-    Add-Check -Name 'owner-remote.token-minted' -Passed (-not [string]::IsNullOrWhiteSpace($ownerRemoteToken)) -Detail 'tokens.json carries owner-remote'
+    # Row 28: $ownerRemoteToken was seeded into tokens.json before the hub ever started (above); it
+    # is a host-file row, so the file now holds only its SHA-256 -- the plaintext this script chose
+    # is the only usable copy, and it is what still authenticates.
+    Add-Check -Name 'owner-remote.token-minted' -Passed (-not [string]::IsNullOrWhiteSpace($ownerRemoteToken)) -Detail 'seeded into tokens.json before the hub started'
     $remoteOutPath = Join-Path $DataDir 'owner-remote-mcp.json'
     $remoteOutLog = Join-Path $DataDir 'owner-remote-mcp.out.log'
     $remoteErrLog = Join-Path $DataDir 'owner-remote-mcp.err.log'
@@ -260,7 +270,10 @@ try {
     $remoteStopped = Wait-Exchange -RoomId 'general' -Until 'stopped,concluded' -Seconds 30
     Add-Check -Name 'owner-remote.stopped-cleanly' -Passed ($remoteStopped.status -in @('stopped', 'concluded')) -Detail "status=$($remoteStopped.status)"
 
-    # --- Check 8: --print-config wrote the owner-remote host config with its token -----------------
+    # --- Check 8: --print-config wrote the owner-remote host config with the {{TOKEN}} placeholder --
+    # Row 28 D-28-d: --print-config never emits a live value any more (HostConfigs.TokenPlaceholder);
+    # --rotate-token is the only command that ever prints one. This check used to assert the file
+    # carried $ownerRemoteToken itself -- that is no longer true for ANY host-file row by design.
     $printOut = Join-Path $DataDir 'print-config.out.log'
     $printErr = Join-Path $DataDir 'print-config.err.log'
     $printProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--print-config') -PassThru -Wait -NoNewWindow `
@@ -271,9 +284,9 @@ try {
     if (Test-Path -LiteralPath $remoteConfigPath) {
         $cfg = Get-Content -LiteralPath $remoteConfigPath -Raw | ConvertFrom-Json
         $auth = $cfg.mcpServers.chopitup.headers.Authorization
-        $remoteConfigOk = ($auth -eq "Bearer $ownerRemoteToken")
+        $remoteConfigOk = ($auth -eq 'Bearer {{TOKEN}}')
     }
-    Add-Check -Name 'print-config.owner-remote-config-carries-token' -Passed $remoteConfigOk -Detail $remoteConfigPath
+    Add-Check -Name 'print-config.owner-remote-config-carries-placeholder' -Passed $remoteConfigOk -Detail $remoteConfigPath
 
     # --- Check 10: tamper leg - an edited SKILL.md refuses until re-imported -----------------------
     [System.IO.File]::AppendAllText($installedSkillMd, 'X')
@@ -336,7 +349,7 @@ try {
         -Detail "refused=$probeRefused target=$probeTargetWindows; FAIL here means the absolute-path deny form does not bind on this CLI version (row 13's finding, not a row-11 blocker - the hash pin is the real control)"
 }
 finally {
-    try { Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -TimeoutSec 10 | Out-Null } catch { }
+    try { Invoke-RestMethod -Uri "$base/api/rooms/general/exchange/stop" -Method Post -Headers (New-ChopBearerHeaders -Token $ownerToken) -TimeoutSec 10 | Out-Null } catch { }
     if ($hub -and -not $hub.HasExited) { Stop-Process -Id $hub.Id -Force -ErrorAction SilentlyContinue }
     $orphans = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($DataDir) -and $_.ProcessId -ne $PID })
     foreach ($p in $orphans) { Write-Host "orphan from this check, stopping pid $($p.ProcessId)"; Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }

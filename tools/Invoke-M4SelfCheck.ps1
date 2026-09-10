@@ -66,6 +66,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 if ([string]::IsNullOrWhiteSpace($PublishDir)) {
     Write-Error "-PublishDir is required (the staging/publish directory to check)."
@@ -287,6 +288,16 @@ try {
     $hubPortFile = Join-Path $dataDir 'hub.port'
     if (Test-Path -LiteralPath $hubPortFile) { Remove-Item -LiteralPath $hubPortFile -Force } # never trust a stale/last-running port
 
+    # Row 28: /mcp always required a bearer, but tokens.json now hashes host-file rows at rest
+    # instead of storing them as plaintext -- seeding 'claude' here BEFORE the hub's first launch
+    # means the exact plaintext seeded keeps authenticating after the hub's own startup migration
+    # hashes the file in place (ChopTokenHelpers.ps1's doc comment; AC3's schema-evolution guarantee).
+    # $dataDir does not exist yet at this point (robocopy's /XD data and the "no pre-existing data\"
+    # guard above both hold), so this is also what CREATES it -- the C2 checks below still verify
+    # chopitup.db itself is created fresh by the hub's own first start, which is the thing they exist
+    # to prove; only tokens.json is pre-seeded.
+    $claudeToken = (Initialize-ChopScratchTokens -DataDir $dataDir -ParticipantIds @('claude')).claude
+
     $hub1OutLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_hub1.out.log"
     $hub1ErrLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_hub1.err.log"
     $hubExeFull = (Resolve-Path -LiteralPath $exePath).Path
@@ -320,15 +331,14 @@ try {
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
     Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 10) -Detail "schema=$($health.schema)"
 
-    $tokensPath = Join-Path $dataDir 'tokens.json'
-    Wait-ForHubFile -Path $tokensPath -HubProcess $hubProcess -What 'tokens.json'
-    $tokens = Get-Content -LiteralPath $tokensPath -Raw | ConvertFrom-Json
-
+    # Row 28: tokens.json (which the hub's own start-up migration already rewrote to the hashed
+    # shape by now -- /health above only answers once startup finishes) no longer holds a plaintext
+    # to read back; $claudeToken (seeded above, before the hub ever started) is the bearer.
     $clientKey = [guid]::NewGuid().ToString('N')
     $mcpOutPath = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp1.json"
     $mcpOutLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp1.out.log"
     $mcpErrLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp1.err.log"
-    $mcpResult = Invoke-McpCheck -Port $port -Token $tokens.claude -ClientKey $clientKey -OutPath $mcpOutPath -OutLog $mcpOutLog -ErrLog $mcpErrLog
+    $mcpResult = Invoke-McpCheck -Port $port -Token $claudeToken -ClientKey $clientKey -OutPath $mcpOutPath -OutLog $mcpOutLog -ErrLog $mcpErrLog
 
     Add-Check -Name 'c3.post-message-lands' -Passed ($mcpResult.first_id -ge 1 -and -not $mcpResult.first_deduplicated) `
         -Detail "first_id=$($mcpResult.first_id) first_deduplicated=$($mcpResult.first_deduplicated)"
@@ -412,8 +422,10 @@ try {
     $mcpOutPath2 = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp2.json"
     $mcpOutLog2 = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp2.out.log"
     $mcpErrLog2 = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp2.err.log"
-    $tokens2 = Get-Content -LiteralPath $tokensPath -Raw | ConvertFrom-Json # re-read: same file, but be explicit that it's post-restart
-    $mcpResult2 = Invoke-McpCheck -Port $port2 -Token $tokens2.claude -ClientKey $clientKey -OutPath $mcpOutPath2 -OutLog $mcpOutLog2 -ErrLog $mcpErrLog2
+    # Same $claudeToken as before the restart: tokens.json is untouched by a restart (only a hub
+    # START migrates it, and it was already hashed by the first one), and the plaintext this script
+    # seeded keeps authenticating regardless of how many times the hub restarts against this file.
+    $mcpResult2 = Invoke-McpCheck -Port $port2 -Token $claudeToken -ClientKey $clientKey -OutPath $mcpOutPath2 -OutLog $mcpOutLog2 -ErrLog $mcpErrLog2
     Add-Check -Name 'restart.original-message-persisted' -Passed ($mcpResult2.first_id -eq $mcpResult.first_id -and $mcpResult2.first_deduplicated) `
         -Detail "before_id=$($mcpResult.first_id) after_id=$($mcpResult2.first_id) after_deduplicated=$($mcpResult2.first_deduplicated)"
 
