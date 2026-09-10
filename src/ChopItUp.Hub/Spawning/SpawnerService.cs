@@ -449,7 +449,7 @@ public sealed class SpawnerService : BackgroundService
                 ParkRun(run, park.Reason, park.CapSpent);
                 break;
             case RunDecision.End end:
-                EndRun(run, end.Reason);
+                EndRun(run, end.Reason, end.Cause);
                 break;
             default:
                 throw new NotSupportedException($"RunDecision {decision.GetType().Name} is not wired yet (row19-runs, a later task).");
@@ -544,7 +544,7 @@ public sealed class SpawnerService : BackgroundService
         var now = _clock.GetUtcNow();
         _runs.Park(run.Id, reason, capSpent, now);
         if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
-            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+            PostNote(run.RoomId, ExchangePolicy.Stop(x, ExchangeStopCause.Run));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         PostNote(run.RoomId, $"Run #{run.Id} parked: {reason}. @{_owner.Id}");
@@ -562,12 +562,12 @@ public sealed class SpawnerService : BackgroundService
     /// instant <see cref="RunStore.End"/> stamps, and against the run as it stood before ending (an
     /// ended run is never <see cref="RunStatus.Parked"/>, so it falls to that method's "not parked"
     /// arm: elapsed time since start, minus whatever was already parked).</summary>
-    private void EndRun(Run run, string reason)
+    private void EndRun(Run run, string reason, ExchangeStopCause cause)
     {
         var now = _clock.GetUtcNow();
         var ended = _runs.End(run.Id, reason, now);
         if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
-            PostNote(run.RoomId, ExchangePolicy.Stop(x));
+            PostNote(run.RoomId, ExchangePolicy.Stop(x, cause));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         _steers.Remove(run.RoomId);
@@ -906,7 +906,7 @@ public sealed class SpawnerService : BackgroundService
         var run = _runs.Active(roomId) ?? (_runs.Latest(roomId) is { Status: RunStatus.Parked } parked ? parked : null);
         if (run is not null)
         {
-            EndRun(run, "stopped by the owner");
+            EndRun(run, "stopped by the owner", ExchangeStopCause.Owner);
             return Publish(roomId);
         }
 
@@ -916,7 +916,7 @@ public sealed class SpawnerService : BackgroundService
         if (!open && live.Count == 0) return null;
         foreach (var handle in live) handle.Cancel.Cancel();
         var note = open
-            ? ExchangePolicy.Stop(x!)
+            ? ExchangePolicy.Stop(x!, ExchangeStopCause.Owner)
             : $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.";
         PostNote(roomId, note);
         return Publish(roomId);

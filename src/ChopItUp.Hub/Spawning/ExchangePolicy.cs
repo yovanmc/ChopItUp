@@ -325,10 +325,17 @@ public sealed class ExchangePolicy
         return $"Exchange concluded: {x.TurnsStarted} of {x.Budget} turns used.";
     }
 
-    public static string Stop(Exchange x)
+    /// <summary>Row 27: <paramref name="cause"/> is never defaulted - every call site must say who
+    /// stopped the exchange (P7). <see cref="ExchangeStopCause.Owner"/> keeps the original text;
+    /// <see cref="ExchangeStopCause.Run"/> is the same shape without attributing the stop to the
+    /// owner, since the run itself parked or ended with this exchange still open.</summary>
+    public static string Stop(Exchange x, ExchangeStopCause cause)
     {
         x.Status = ExchangeStatus.Stopped;
+        x.StopCause = cause;
         x.Pending.Clear();
-        return $"Exchange stopped by the owner: {x.TurnsStarted} of {x.Budget} turns used.";
+        return cause == ExchangeStopCause.Owner
+            ? $"Exchange stopped by the owner: {x.TurnsStarted} of {x.Budget} turns used."
+            : $"Exchange stopped with the run: {x.TurnsStarted} of {x.Budget} turns used.";
     }
 }

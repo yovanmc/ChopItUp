@@ -622,6 +622,66 @@ public sealed partial class SpawnerServiceTests
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // opus never spawned - neither post launched anything
     }
 
+    /// <summary>Row 27: the hard-cap preamble (RunPolicy.cs rows 1/2) parks the run WHILE the
+    /// conductor's own exchange is still open (its spawn is still in flight, mid-Handler), so
+    /// ParkRun's exchange-stop note fires. It must not read as an owner stop - the run parked
+    /// itself.</summary>
+    [Fact]
+    public async Task Run19_M27_a_hard_cap_park_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
+    {
+        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+                await PostAsInHost(host, "sonnet", room, "phase: build @opus - the spawn cap is already spent by the launch");
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        await WaitForNoteContaining(host, room, "parked");
+
+        var messages = await AllMessagesFrom(host, room);
+        var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
+        Assert.DoesNotContain("by the owner", exchangeNote.Body);
+        Assert.DoesNotContain("by you", exchangeNote.Body);
+        Assert.Equal("Exchange stopped with the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
+    }
+
+    /// <summary>Row 27: a valid "phase: ping" ends the run (RunPolicy row 5) while the conductor's own
+    /// exchange is still open, so EndRun's exchange-stop note fires. Same rule as the hard-cap park -
+    /// the run ended itself, so the note must not read as an owner stop.</summary>
+    [Fact]
+    public async Task Run19_M27_a_ping_end_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
+    {
+        var runLimits = RunLimits.Default;
+        var (host, runner, room) = await StartRunHostAsync(runLimits);
+        await using var _ = host;
+
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+                await PostAsInHost(host, "sonnet", room, "phase: ping all done");
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
+        await runner.NextSpecAsync(Wait);
+
+        var ended = await WaitForNoteContaining(host, room, "ended");
+        Assert.Contains("the conductor pinged", ended.Body);
+
+        var messages = await AllMessagesFrom(host, room);
+        var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
+        Assert.DoesNotContain("by the owner", exchangeNote.Body);
+        Assert.DoesNotContain("by you", exchangeNote.Body);
+        Assert.Equal("Exchange stopped with the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
+    }
+
     [Fact]
     public async Task Run09_the_wall_clock_cap_parks_a_run_even_while_its_conductor_is_still_in_flight()
     {

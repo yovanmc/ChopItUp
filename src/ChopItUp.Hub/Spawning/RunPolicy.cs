@@ -64,7 +64,9 @@ public abstract record RunDecision
 
     public sealed record Park(string Reason, bool CapSpent) : RunDecision;
 
-    public sealed record End(string Reason) : RunDecision;
+    /// <summary>Row 27: <paramref name="Cause"/> says who ended the run, decided here (P7) rather
+    /// than inferred by <c>SpawnerService</c> from <paramref name="Reason"/>'s text.</summary>
+    public sealed record End(string Reason, ExchangeStopCause Cause) : RunDecision;
 }
 
 /// <summary>The run loop as one pure state machine (P7). Takes what the hub knows about a run
@@ -112,7 +114,7 @@ public sealed class RunPolicy(RunLimits limits)
             RunEvent.ExchangeConcluded x => DecideExchangeConcluded(s, x, pendingSteers),
             RunEvent.SpawnSilent sp => DecideSpawnSilent(s, sp),
             RunEvent.HumanPosted h => DecideHumanPosted(s, h),
-            RunEvent.StopRequested => new RunDecision.End("stopped by the owner"), // Row 17.
+            RunEvent.StopRequested => new RunDecision.End("stopped by the owner", ExchangeStopCause.Owner), // Row 17.
             RunEvent.Tick => DecideTick(s, pendingSteers),
             _ => throw new ArgumentOutOfRangeException(nameof(e), e, "unknown RunEvent"),
         };
@@ -132,7 +134,7 @@ public sealed class RunPolicy(RunLimits limits)
             "a ConductorPosted with no Refusal must carry a phase Tag", nameof(p));
 
         // Row 5.
-        if (tag.Kind == "ping") return new RunDecision.End("the conductor pinged");
+        if (tag.Kind == "ping") return new RunDecision.End("the conductor pinged", ExchangeStopCause.Run);
 
         var key = tag.ToString();
         var entries = s.PhaseEntries.GetValueOrDefault(key);

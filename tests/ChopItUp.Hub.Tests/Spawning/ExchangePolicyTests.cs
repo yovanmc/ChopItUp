@@ -113,7 +113,7 @@ public sealed class ExchangePolicyTests
         var recent = new Dictionary<string, DateTimeOffset> { ["opus"] = T0.AddSeconds(-1), ["sonnet"] = T0.AddSeconds(-3) };
         Assert.Equal(T0.AddSeconds(7), p.NextWake(x!, T0, recent, Nobody));                            // sonnet: 10 s after its last start
         Assert.Null(p.NextWake(x!, T0, NoStarts, new HashSet<string> { "opus", "sonnet" }));            // both in flight: woken by completion
-        ExchangePolicy.Stop(x!);
+        ExchangePolicy.Stop(x!, ExchangeStopCause.Owner);
         Assert.Null(p.NextWake(x!, T0, NoStarts, Nobody));
     }
 
@@ -171,11 +171,27 @@ public sealed class ExchangePolicyTests
         var p = Policy();
         var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
         ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody)[0]);
-        var note = ExchangePolicy.Stop(x!);
+        var note = ExchangePolicy.Stop(x!, ExchangeStopCause.Owner);
         Assert.Equal(ExchangeStatus.Stopped, x!.Status);
         Assert.Empty(x.Pending);
+        Assert.Equal(ExchangeStopCause.Owner, x.StopCause);
         Assert.Equal("Exchange stopped by the owner: 1 of 4 turns used.", note);
         Assert.Null(ExchangePolicy.Finished(x, "opus"));
+    }
+
+    // Row 27: the run-caused stop must not read as an owner stop, and StopCause must record why.
+    [Fact]
+    public void Stop_with_run_cause_does_not_attribute_the_stop_to_the_owner_and_sets_StopCause()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody)[0]);
+        var note = ExchangePolicy.Stop(x!, ExchangeStopCause.Run);
+        Assert.Equal(ExchangeStatus.Stopped, x!.Status);
+        Assert.Equal(ExchangeStopCause.Run, x.StopCause);
+        Assert.Equal("Exchange stopped with the run: 1 of 4 turns used.", note);
+        Assert.DoesNotContain("owner", note);
+        Assert.DoesNotContain("you", note);
     }
 
     [Fact]
