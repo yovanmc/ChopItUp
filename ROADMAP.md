@@ -1,4 +1,4 @@
-﻿# Chop It Up — ROADMAP
+# Chop It Up — ROADMAP
 <!-- roadmap-schema: whitelist-v3 -->
 
 ## Definition
@@ -7,7 +7,8 @@ Local Windows hub where Yovan, Claude (Claude Desktop) and GPT (Codex UI inside 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 22 | Run strip: Stop-run button (D2's fourth stop; only `/stop` exists) | [ ] | BACKLOG | — | Gap found by the row 20 digest (plan R4). |
+| 22 | Run strip: the stop the owner can actually reach (D2's fourth stop) | 📝 | READY | [brief](.scratch/m22-stop-run/brief.md) | Rescoped 2026-09-09 (LOW, lite path): `OnStop` already ends an active-or-parked run [V 2026-09-09 8737f1b]. The gap is reachability — `ExchangeBar` hides its button once nothing is open or in flight, which is every parked run. |
+| 27 | A cap-driven park tells the owner they stopped it | [ ] | READY | — | `ExchangePolicy.Stop` hardcodes "stopped by the owner" but `ParkRun` calls it on the wall-clock/spawn/phase caps; `OUTCOME.stopped` then renders "Stopped by you" [V 2026-09-09 8737f1b]. Split out of row 22 to keep that row UI-only. |
 | 25 | Skills reach a deployed hub without the CLI: agents propose, the owner approves | ✅ | DONE | — | Merged `63e7df3` (PR #66); deployed 09-09, **schema 10. Rollback: `C:\Self Apps\ChopItUp.backup-20260909-194055`** (`Deploy-ChopItUp.ps1 -RestoreFrom`). 867 green (was 787); dry run 34/34, live check 37/37, self-check 27/27; eleven mechanisms mutation-tested. Residual: the approval credential stays Bash-reachable until row 13. |
 | 26 | Owner probe: does a running Claude Code session actually read an exported memory directory | [ ] | OWNER: point `autoMemoryDirectory` at an exported scratch dir in a throwaway project, start a session, ask it — fixture per `docs/verification.md` "Owner probe" | — | Carried out of row 24 (`f964ece`, PR #63) when that row closed. Physically owner-only; not a merge gate. |
 | 12 | Desktop shell: WebView2 window that starts the hub, hosts the room UI, sits in the tray | [ ] | BACKLOG | — | Grill D18. After the autonomy rows. |
