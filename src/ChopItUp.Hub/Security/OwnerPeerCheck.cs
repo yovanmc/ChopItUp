@@ -25,6 +25,10 @@ public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
         if (!OperatingSystem.IsWindows()) return new OwnerPeerVerdict.Unresolvable("not windows");
         if (connection.RemoteIpAddress is null) return new OwnerPeerVerdict.Unresolvable("no remote address");
         if (connection.LocalIpAddress is null) return new OwnerPeerVerdict.Unresolvable("no local address");
+        // Nothing is spawned for this check to be guarding against: with zero live jobs
+        // SpawnJobs.Membership can only ever answer Outside, so skip the peer lookup rather than let
+        // a lookup failure in this state turn into a lockout the check exists to prevent, not cause.
+        if (jobs.LiveCount == 0) return new OwnerPeerVerdict.Allowed();
         var pid = PeerProcess.OwningPid(new PeerProcess.Endpoints(connection.RemoteIpAddress, connection.RemotePort, connection.LocalIpAddress, connection.LocalPort));
         if (pid is null) return new OwnerPeerVerdict.Unresolvable($"no established row for {connection.RemoteIpAddress}:{connection.RemotePort} -> {connection.LocalIpAddress}:{connection.LocalPort}");
         return jobs.Membership(pid.Value, out var entry) switch
