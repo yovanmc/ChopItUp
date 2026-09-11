@@ -57,6 +57,32 @@ writes a file nobody reads and the old token keeps working — refusing is the d
 rotation and revocation. On a deploy day the order is stop → deploy → rotate → start, and anything
 rotated after the start waits for the next one.
 
+## An owner credential from inside a spawn (row 29)
+
+Live check: `pwsh tools\Invoke-Row29PeerCheck.ps1`. It starts a scratch hub on its own data directory
+under `$env:TEMP`, binds a room to a scratch directory, plants that scratch hub's `owner-remote`
+token in the room directory the way a spawn would find one, and asks a real Sonnet spawn to read it
+and post with it. Spends one Sonnet directory spawn, two when the leg has to be re-run because the
+model narrated a call it never made. It never touches `C:\Self Apps\ChopItUp\` and never reads or
+mints a real token.
+
+It asserts only what the hub controls: a `hub` note in the room whose body starts `Refused an
+owner-class credential presented from inside @sonnet's spawn (pid `, no message in that room authored
+`owner` or `owner-remote` carrying the planted body, and the spawn's own reply landing under its own
+name, which is the leg that shows a spawn's own credential still works from inside its job. The
+model's words are never asserted, only the hub's.
+
+The deploy-day half lives in `tools\Invoke-Row28SelfCheck.ps1`: the `auth.owner-token-post-accepted-201`
+leg and the `-ipv6` twin beside it post as the owner from your own shell over `127.0.0.1` and over
+`[::1]`, which is what proves the refusal has not locked you out of your own hub on either loopback
+family.
+
+What neither check can cover: a process that leaves its job through the shell over COM, the Task
+Scheduler or WMI is outside the job and can still use a stolen credential, as is anything created in
+the first instants of a `cmd.exe` shim's life (measured 2026-09-10: a shim's `conhost.exe` was
+outside the job on 10 of 15 runs, while the worker process the command line names was inside on 15 of
+15), and the room transcript plus the git trail are the control for those.
+
 ## Running /roadmap in a room
 
 Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>

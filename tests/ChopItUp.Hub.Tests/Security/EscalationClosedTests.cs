@@ -14,9 +14,13 @@ namespace ChopItUp.Hub.Tests;
 /// ONE test: a suite of narrow unit facts could each pass while the combination the escalation lives
 /// in still works.
 ///
-/// What this does NOT prove (plan Residual, unchanged by this task): <c>owner-remote</c>'s token
-/// pasted outside the data dir, and whether Claude's own file-tool deny rules bind the data dir at
-/// all — both need a real spawn and are out of scope for a .NET test.</summary>
+/// What this does NOT prove: whether Claude's own file-tool deny rules bind the data dir at all,
+/// which needs a real spawn and is out of scope for a .NET test.
+///
+/// The other half of that residual, <c>owner-remote</c>'s token used from somewhere the data dir
+/// never held it, is covered since row 29 by <see cref="Security.OwnerPeerCheckEndToEndTests"/>: a
+/// real child process inside a hub-owned job, holding a live <c>owner-remote</c> bearer, is refused
+/// over both loopback families, while the same command run outside every job is accepted.</summary>
 public sealed class EscalationClosedTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_escalation_" + Guid.NewGuid().ToString("N"));

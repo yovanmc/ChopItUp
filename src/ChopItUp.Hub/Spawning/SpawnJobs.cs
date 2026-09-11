@@ -16,7 +16,11 @@ public enum JobMembership { Inside, Outside, Unknown }
 /// close Job Object and recorded here for the life of the run. <see cref="Membership"/> is the
 /// question <c>BearerTokenMiddleware</c> asks about the peer of a loopback connection: is this PID
 /// inside any job the hub currently owns? Membership is inherited by every descendant the child
-/// creates after assignment, so the answer covers a shim's grandchildren too (measured 2026-09-10).
+/// creates AFTER the assignment lands, which is the descendant that can hold a stolen credential and
+/// make a request with it. It is NOT inherited by one created inside the assignment window: measured
+/// 2026-09-10 over 15 isolated runs, a `cmd.exe` shim's `conhost.exe` reported outside the job on 10
+/// of them, while the PING.EXE worker the shim's command line names was inside on all 15
+/// (<c>SpawnJobsTests.FindPingChildOf</c> carries the same measurement from the test's side).
 /// Off Windows there are no jobs: <see cref="Track"/> records the root PID only and the query
 /// matches that PID alone — good enough for a dev box, and the middleware fails closed there anyway.</summary>
 public sealed class SpawnJobs
