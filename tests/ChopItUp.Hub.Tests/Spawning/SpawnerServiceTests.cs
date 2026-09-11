@@ -74,6 +74,18 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         throw new TimeoutException($"Exchange never reached '{status}'; last was '{Spawner.Snapshot("general").Status}'.");
     }
 
+    private async Task<ExchangeSnapshot> WaitForPending(string participant)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            var s = Spawner.Snapshot("general");
+            if (s.Pending.Contains(participant)) return s;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException($"'{participant}' never appeared in Pending; last snapshot had {string.Join(",", Spawner.Snapshot("general").Pending)}.");
+    }
+
     private string ClaudeTokenIn(ProcessSpec spec)
     {
         // From the fake's launch-time snapshot, never the file: the work dir may already be gone.
@@ -283,8 +295,8 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         var first = await _runner.NextSpecAsync(Wait);
         var second = await _runner.NextSpecAsync(Wait);
         Assert.Equal(new[] { "opus", "sonnet" }.Order(), new[] { FakeProcessRunner.ParticipantOf(first), FakeProcessRunner.ParticipantOf(second) }.Order());
+        await WaitForPending("opus");                                              // sonnet's @opus was accepted before we assert nothing else spawns
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // sonnet's @opus waits: opus is in flight
-        Assert.Contains("opus", Spawner.Snapshot("general").Pending);
         release.SetResult();
         var third = await _runner.NextSpecAsync(Wait);                              // now it runs
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(third));
