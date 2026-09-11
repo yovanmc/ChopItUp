@@ -291,6 +291,30 @@ Invoke-Check -Name 'auth.owner-token-post-accepted-201' -Body {
     @{ Passed = ($resp.StatusCode -eq 201); Detail = "status=$($resp.StatusCode)" }
 }
 
+# Row 29 (G-4): the same accepted-write proof, over the browser's own loopback family. `localhost`
+# resolves to ::1 first on Windows, so this is what actually proves the peer check has not locked the
+# owner out of their own hub when posting from the browser. HubHost only adds the [::1] listener when
+# the port is fixed (never for Port 0), which every deployed hub is -- but the probe below still checks
+# live rather than assuming, and skips with a reason when it finds nothing listening (the hub itself
+# logs "Not listening on [::1]" in exactly that case).
+$ipv6SkipReason = $null
+try {
+    $ipv6Probe = Invoke-WebRequest -Uri "http://[::1]:$Port/health" -TimeoutSec 3 -SkipHttpErrorCheck
+    if ($ipv6Probe.StatusCode -ne 200) { $ipv6SkipReason = "http://[::1]:$Port/health answered $($ipv6Probe.StatusCode), not 200" }
+}
+catch {
+    $ipv6SkipReason = "http://[::1]:$Port is not reachable ($($_.Exception.Message)); the hub logs 'Not listening on [::1]' when IPv6 is unavailable"
+}
+
+Invoke-Check -Name 'auth.owner-token-post-accepted-201-ipv6' -SkipReason $ipv6SkipReason -Body {
+    $headers = @{ Authorization = "Bearer $OwnerToken" }
+    $marker = "[Row 28 deploy self-check] $stamp -- verifying the pasted owner token authenticates writes over [::1]."
+    $resp = Invoke-WebRequest -Uri "http://[::1]:$Port/api/rooms/$RoomId/messages" -Method Post -Headers $headers -ContentType 'application/json' `
+        -Body (@{ body = $marker } | ConvertTo-Json) -TimeoutSec 10 -SkipHttpErrorCheck
+    # Detail never carries $OwnerToken -- only the status code.
+    @{ Passed = ($resp.StatusCode -eq 201); Detail = "status=$($resp.StatusCode)" }
+}
+
 Invoke-Check -Name 'bundle.exe-sha256-matches-publish' -Body {
     $stagingExe = Join-Path $PublishDir 'ChopItUp.Hub.exe'
     if (-not (Test-Path -LiteralPath $stagingExe -PathType Leaf)) {

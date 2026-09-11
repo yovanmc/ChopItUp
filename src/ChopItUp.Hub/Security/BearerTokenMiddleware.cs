@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Security;
@@ -15,11 +16,21 @@ namespace ChopItUp.Hub.Security;
 /// participant authenticates its own tool calls); on a guarded <c>/api</c> write, only a participant
 /// resolving to <see cref="ChopDb.OwnerParticipantId"/> or <see cref="ChopDb.OwnerRemoteParticipantId"/>
 /// is let through — anything else that resolves is 403, not 401 (acceptance 1's "own hand" clause).</summary>
-public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore tokens)
+public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore tokens, IOwnerPeerCheck peers, MessageStore store, MessageSignal signal)
 {
     public const string ParticipantKey = "chopitup.participant";
     private static readonly byte[] Unauthorized = JsonSerializer.SerializeToUtf8Bytes(new { error = "unauthorized" });
-    private static readonly byte[] Forbidden = JsonSerializer.SerializeToUtf8Bytes(new { error = "forbidden" });
+
+    /// <summary>Row 29 AC1's fixed body.</summary>
+    public const string InsideSpawnError = "owner credential refused: presented from inside a spawn";
+
+    /// <summary>Row 29 AC5's fixed prefix; the reason is appended in parentheses.</summary>
+    public const string UnresolvableErrorPrefix = "owner credential refused: peer process unresolvable";
+
+    /// <summary>D2: the pair the pre-row-29 owner-only branch already named, factored out so the new
+    /// check and that branch agree on what "owner-class" means.</summary>
+    internal static bool IsOwnerClass(string participant) =>
+        participant is ChopDb.OwnerParticipantId or ChopDb.OwnerRemoteParticipantId;
 
     /// <summary>Whether <paramref name="request"/> falls on the guarded surface. <c>/mcp</c> keeps its
     /// existing prefix match (an MCP session may legitimately request any sub-path under it); every
@@ -46,14 +57,32 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
         if (header is not null && header.StartsWith(prefix, StringComparison.Ordinal)
             && tokens.TryResolve(header[prefix.Length..].Trim(), out var participant))
         {
+            // Row 29, D4: the owner-peer check runs right after a bearer resolves and before the
+            // existing /api-only branch below, on /mcp as well as /api — the phone session's
+            // owner-remote bearer posts through /mcp, so the check must run there too.
+            if (IsOwnerClass(participant))
+            {
+                switch (peers.Check(context.Connection))
+                {
+                    case OwnerPeerVerdict.InsideSpawn inside:
+                        Console.Error.WriteLine($"auth: refused owner-class '{participant}' from pid {inside.Pid} inside spawn '{inside.Entry.Label}'");
+                        if (inside.NoteDue && inside.Entry.RoomId is { } room)
+                            PostNote(room, $"Refused an owner-class credential presented from inside @{inside.Entry.ParticipantId ?? "?"}'s spawn (pid {inside.Pid}).");
+                        await Refuse(context, InsideSpawnError);
+                        return;
+                    case OwnerPeerVerdict.Unresolvable u:
+                        Console.Error.WriteLine($"auth: refused owner-class '{participant}': peer unresolvable ({u.Reason})");
+                        await Refuse(context, $"{UnresolvableErrorPrefix} ({u.Reason})");
+                        return;
+                }
+            }
+
             // /mcp lets any resolved participant through (a model authenticates its own tool calls);
             // every guarded /api write needs the owner's own hand, from either device.
             bool isOwnerOnly = !context.Request.Path.StartsWithSegments("/mcp");
-            if (isOwnerOnly && participant is not (ChopDb.OwnerParticipantId or ChopDb.OwnerRemoteParticipantId))
+            if (isOwnerOnly && !IsOwnerClass(participant))
             {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                context.Response.ContentType = "application/json";
-                await context.Response.Body.WriteAsync(Forbidden, context.RequestAborted);
+                await Refuse(context, "forbidden");
                 return;
             }
 
@@ -66,5 +95,29 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
         context.Response.Headers.WWWAuthenticate = "Bearer realm=\"chopitup\"";
         context.Response.ContentType = "application/json";
         await context.Response.Body.WriteAsync(Unauthorized, context.RequestAborted);
+    }
+
+    private static Task Refuse(HttpContext context, string error)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        return context.Response.Body.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(new { error }), context.RequestAborted).AsTask();
+    }
+
+    /// <summary>D6: hub-owned text, posted through the same <c>MessageStore.Post</c> +
+    /// <c>MessageSignal.Publish</c> pair <c>RunTools.PostNote</c> uses, as <see cref="ChopDb.HubParticipantId"/>.
+    /// A posting failure never blocks the refusal itself — it is logged and swallowed, the same rule
+    /// every other hub note in this codebase follows.</summary>
+    private void PostNote(string roomId, string text)
+    {
+        try
+        {
+            var message = store.Post(roomId, ChopDb.HubParticipantId, text);
+            signal.Publish(roomId, message);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            Console.Error.WriteLine($"auth: refusal note to '{roomId}' not posted ({e.GetType().Name}: {e.Message}): {text.Split('\n')[0]}");
+        }
     }
 }

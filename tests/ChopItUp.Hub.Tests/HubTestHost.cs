@@ -55,13 +55,20 @@ public sealed class HubTestHost : IAsyncDisposable
                 _mintedHostFile[p.Id] = Tokens.MintFor(p.Id);
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0)
     {
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
-        var options = new HubOptions(dir, Port: 0, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms");
-        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits);
+        // Row 29 Task 4: port 0 (the default) never gets the [::1] listener (HubHost.cs:41, ledger
+        // 23) - a caller that needs to prove anything over IPv6 passes a fixed free port instead.
+        var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled);
+        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits, ownerPeerCheck);
         await app.StartAsync();
-        var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        // With a fixed port and an IPv6 stack, HubHost binds BOTH 127.0.0.1 and [::1] (HubHost.cs:
+        // 38-49), so Addresses can hold two entries here - Single() would throw. BaseAddress stays
+        // the IPv4 one, matching every existing test's expectations of this fixture; a caller that
+        // needs the IPv6 side (Row 29 Task 4) builds that URI itself from the same port.
+        var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses;
+        var address = addresses.FirstOrDefault(a => new Uri(a).Host == "127.0.0.1") ?? addresses.Single();
         return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose, options.RoomsRootPath, freshDataDir);
     }
 

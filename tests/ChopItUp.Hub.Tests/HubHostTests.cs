@@ -5,6 +5,7 @@ using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
 using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
@@ -282,5 +283,87 @@ public sealed class HubHostTests : IAsyncLifetime
         locked.Dispose();
         Assert.Equal(before, File.ReadAllBytes(path));   // the sweep's write never landed while it was locked
         await host.DisposeAsync();
+    }
+
+    // --- Row 29: --owner-peer-check / CHOPITUP_OWNER_PEER_CHECK -------------------------------
+
+    [Fact]
+    public void Owner_peer_check_parses_from_the_flag_then_the_environment_defaulting_on()
+    {
+        Assert.False(HubOptions.Parse(["--owner-peer-check", "off"], _ => null).OwnerPeerCheck);
+        Assert.True(HubOptions.Parse(["--owner-peer-check", "on"], _ => null).OwnerPeerCheck);
+        Assert.False(HubOptions.Parse([], name => name == "CHOPITUP_OWNER_PEER_CHECK" ? "off" : null).OwnerPeerCheck);
+        // The flag wins over the environment.
+        Assert.True(HubOptions.Parse(["--owner-peer-check", "on"], name => name == "CHOPITUP_OWNER_PEER_CHECK" ? "off" : null).OwnerPeerCheck);
+        Assert.True(HubOptions.Parse([], _ => null).OwnerPeerCheck);
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--owner-peer-check"], _ => null));
+    }
+
+    /// <summary>D3: the switch's whole reason to exist is that it prints where the owner can see it —
+    /// a silent bypass would be a second escalation on top of the first.</summary>
+    [Fact]
+    public async Task The_switch_prints_its_warning_at_build()
+    {
+        var offDir = Path.Combine(Path.GetTempPath(), "chopitup_ownerpeer_warn_off_" + Guid.NewGuid().ToString("N"));
+        var originalError = Console.Error;
+        var captured = new StringWriter();
+        Console.SetError(captured);
+        WebApplication offApp;
+        try
+        {
+            offApp = HubHost.Build(new HubOptions(offDir, Port: 0, OwnerPeerCheck: false));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        Assert.Contains("--owner-peer-check off", captured.ToString());
+        try { await offApp.DisposeAsync(); } catch { /* best-effort cleanup */ }
+
+        var onDir = Path.Combine(Path.GetTempPath(), "chopitup_ownerpeer_warn_on_" + Guid.NewGuid().ToString("N"));
+        captured = new StringWriter();
+        Console.SetError(captured);
+        WebApplication onApp;
+        try
+        {
+            onApp = HubHost.Build(new HubOptions(onDir, Port: 0, OwnerPeerCheck: true));
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+        Assert.DoesNotContain("--owner-peer-check off", captured.ToString());
+        try { await onApp.DisposeAsync(); } catch { /* best-effort cleanup */ }
+    }
+
+    // --- Row 29 commit 1: the Host-header gate accepts loopback under any spelling ------------
+
+    /// <summary>Ticket 04's finding: Windows PowerShell 5.1's Invoke-WebRequest (.NET Framework's
+    /// HttpWebRequest) sends the IPv6 loopback address fully expanded, never RFC 5952-canonical
+    /// [::1] - the same address, spelled differently, and a real child hit a real 400 for it.</summary>
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("localhost")]
+    [InlineData("[::1]")]
+    [InlineData("[0000:0000:0000:0000:0000:0000:0000:0001]")]
+    public async Task Health_accepts_every_loopback_spelling_of_the_Host_header(string host)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/health") { Headers = { Host = $"{host}:{_host.BaseAddress.Port}" } };
+        var res = await _host.Client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+    }
+
+    /// <summary>The reason the filter exists: accepting every spelling of loopback is not the same as
+    /// accepting everything. A Host header naming an address or name that is not loopback still gets
+    /// refused, at 400, before auth or any endpoint runs.</summary>
+    [Theory]
+    [InlineData("evil.example.com")]
+    [InlineData("10.0.0.5")]
+    [InlineData("[::2]")]
+    public async Task Health_refuses_a_Host_header_that_does_not_name_loopback(string host)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, "/health") { Headers = { Host = $"{host}:{_host.BaseAddress.Port}" } };
+        var res = await _host.Client.SendAsync(req);
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 }

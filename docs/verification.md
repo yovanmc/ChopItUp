@@ -57,6 +57,43 @@ writes a file nobody reads and the old token keeps working — refusing is the d
 rotation and revocation. On a deploy day the order is stop → deploy → rotate → start, and anything
 rotated after the start waits for the next one.
 
+## An owner credential from inside a spawn (row 29)
+
+Live check: `pwsh tools\Invoke-Row29PeerCheck.ps1`. It starts a scratch hub on its own data directory
+under `$env:TEMP`, binds a room to a scratch directory, and plants that scratch hub's `owner-remote`
+token in the room directory the way a spawn would find one. It never touches `C:\Self Apps\ChopItUp\`
+and never reads or mints a real token.
+
+An early version of this check asked a real Sonnet spawn to compose the HTTP call that presents the
+planted credential. Measured 2026-09-10: the model refused, on both attempts, in its own words, to
+use a credential from a file to forge a request with a raw Authorization header. That refusal is a
+real finding about the model, worth recording, but it is defense in depth only. The hub does not
+require it, and nothing here asks a model to touch the credential anymore.
+
+Instead the check imports a small skill, `tools\skills\peer-check-vehicle`, whose one gate is run
+through `run_gate`, the same `IProcessRunner`/`SpawnJobs` path a model spawn goes through. The gate
+script, not a model, reads the planted file and presents the header. A real Sonnet spawn is still
+spent, but only to call `run_gate` by name, an ordinary action for a run's own conductor, and then to
+post its own reply. Spends one Sonnet directory spawn, two when the run has to be started again
+because the conductor narrated the gate call without making it.
+
+It asserts only what the hub controls: a `hub` note in the room whose body starts `Refused an
+owner-class credential presented from inside @sonnet's spawn (pid `, no message in that room authored
+`owner` or `owner-remote` carrying the planted body, and the spawn's own reply landing under its own
+name, which is the leg that shows a spawn's own credential still works from inside its job. Neither
+the model's words nor the gate script's own output are ever asserted, only the hub's state.
+
+The deploy-day half lives in `tools\Invoke-Row28SelfCheck.ps1`: the `auth.owner-token-post-accepted-201`
+leg and the `-ipv6` twin beside it post as the owner from your own shell over `127.0.0.1` and over
+`[::1]`, which is what proves the refusal has not locked you out of your own hub on either loopback
+family.
+
+What neither check can cover: a process that leaves its job through the shell over COM, the Task
+Scheduler or WMI is outside the job and can still use a stolen credential, as is anything created in
+the first instants of a `cmd.exe` shim's life (measured 2026-09-10: a shim's `conhost.exe` was
+outside the job on 10 of 15 runs, while the worker process the command line names was inside on 15 of
+15), and the room transcript plus the git trail are the control for those.
+
 ## Running /roadmap in a room
 
 Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>

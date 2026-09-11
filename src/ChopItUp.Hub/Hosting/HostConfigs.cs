@@ -270,6 +270,54 @@ public static class HostConfigs
         not something the phone did, so attributing them to the remote row would be a worse lie than
         the one it fixes.
 
+        ## An owner credential from inside a spawn
+
+        Every process the hub starts goes into a Windows job of its own: a model spawn, a gate
+        script, a git command the trail runs. The hub can also tell which process is on the other end
+        of a loopback connection. Put those two together and it refuses an `owner` or `owner-remote`
+        token that arrives from inside one of those jobs. The answer is 403, on `/api` and on `/mcp`
+        alike, with the body text `owner credential refused: presented from inside a spawn`, and
+        nothing is written. The post that credential was making does not exist afterwards.
+
+        You see it in two places. The room the spawn is running for gets one `hub` note reading
+        `Refused an owner-class credential presented from inside @<participant>'s spawn (pid <n>).`,
+        posted on the first refusal from that spawn and never again for it, so a spawn that retries
+        in a loop cannot fill the room with them. Every refusal, the first one and all the later
+        ones, also writes a line to the hub's error output.
+
+        Everything you drive yourself is untouched. The web UI, a Claude Code session you started,
+        the phone session holding `owner-remote`, your own shell: none of them is in a job of the
+        hub's, so they behave exactly as they did before. A spawn's own token is not affected either,
+        because the check binds the two human rows only, so `opus` posting as `opus` from inside its
+        job is the ordinary case and still works. And while nothing is spawned at all the hub skips
+        the lookup, so a refusal can only ever happen with a spawn live.
+
+        If the check ever refuses you, start the hub with `--owner-peer-check off` (or set
+        `CHOPITUP_OWNER_PEER_CHECK=off`) and it is skipped for that run. The hub prints a warning
+        line at start when you do, because with the check off an owner credential is accepted from
+        any local process, a spawn included. The switch is there so a lookup that fails on your own
+        machine costs you a restart rather than every write you wanted to make. Turn it back on.
+
+        The limit, plainly. The job holds the process that carries the credential and can make the
+        request, and it holds everything that process starts afterwards. It does not hold something
+        created in the first instants of a shim's life: when the hub starts `cmd.exe` to run a shim,
+        that shim's own `conhost.exe` reported outside the job on 10 of 15 runs measured 2026-09-10,
+        because it is created before the hub can finish assigning the shim. The worker process the
+        command line actually names was inside on 15 of 15, and that is the process a stolen
+        credential has to travel through to reach the hub. A process can also leave the job on
+        purpose: ask the shell over COM, the Task Scheduler or WMI to start it and it becomes their
+        child rather than the spawn's, and this check has nothing to say about it. For that case the
+        control is the one you already had, the room transcript and the git trail showing what ran
+        and what it asked for.
+
+        The front door changed with it. The `Host` header of every request is checked before anything
+        else, and now by parsing the address rather than by matching a list of spellings, so
+        `localhost`, `127.0.0.1`, `[::1]` and the fully expanded
+        `[0000:0000:0000:0000:0000:0000:0000:0001]` that Windows PowerShell 5.1 sends all count as
+        loopback, and anything that is not loopback is still refused with 400. One case got stricter:
+        a request carrying no `Host` header at all is now refused, where the filter this replaced let
+        it through.
+
         ## Roster classes
 
         `classes` is a set drawn from `plumbing`, `visible` and `judge`, stored comma-separated. A

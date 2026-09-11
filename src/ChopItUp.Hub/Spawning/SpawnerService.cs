@@ -789,7 +789,9 @@ public sealed class SpawnerService : BackgroundService
                             owner = await git.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
                         headBefore = await git.HeadAsync(CancellationToken.None);
                     }
-                    try { result = await _runner.RunAsync(spec, timeout, handle.Cancel.Token); }
+                    // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
+                    // refusal note can name the spawn if this credential is later stolen and replayed.
+                    try { result = await _runner.RunAsync(spec with { RoomId = roomId, ParticipantId = participant.Id }, timeout, handle.Cancel.Token); }
                     catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
                     if (git is not null)
                     {

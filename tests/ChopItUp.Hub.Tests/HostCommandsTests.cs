@@ -326,6 +326,11 @@ public sealed class HostCommandsTests : IDisposable
         // Ticket 06: the readme must state which alternative connection form is untested (the
         // mcp-remote bridge, for this identity).
         Assert.Contains("untested", readme);
+        // Row 29: the readme must say that an owner-class credential presented from inside a spawn
+        // is refused, and must name the switch that turns that off - a refusal the owner meets with
+        // no explanation anywhere is the failure mode this assertion exists to prevent.
+        Assert.Contains("inside a spawn", readme);
+        Assert.Contains("--owner-peer-check off", readme);
         Assert.Contains("## Roster classes", readme);
         Assert.Contains("| Classes |", readme);
         Assert.Contains("only as private as", readme);

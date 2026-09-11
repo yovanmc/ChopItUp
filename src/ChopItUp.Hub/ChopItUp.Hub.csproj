@@ -5,6 +5,9 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <ClientDir>$(MSBuildProjectDirectory)\client</ClientDir>
     <ClientOutDir>$(MSBuildProjectDirectory)\wwwroot</ClientOutDir>
+    <!-- Row 29: the LibraryImport source generator needs this for the Job Object / peer-process Win32
+         interop. Hub only, never Directory.Build.props, which would flip Core and the test projects. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />

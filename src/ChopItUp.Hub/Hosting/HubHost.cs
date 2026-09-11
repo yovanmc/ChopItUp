@@ -13,6 +13,7 @@ using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using ChopItUp.Hub.Web;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.SignalR;
@@ -22,19 +23,24 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         try
         {
             var builder = WebApplication.CreateBuilder();
-            builder.Configuration["AllowedHosts"] = "localhost;127.0.0.1;[::1]";
-            // AllowedHosts already permits [::1], but nothing was listening there — and on Windows
-            // `localhost` resolves to ::1 first, so a host configured with a localhost URL never
-            // reached us (pass 2, MINOR-17). Guarded on a non-zero port: with port 0 the two
-            // families get different ephemeral ports and the single-address assumption breaks.
-            // An absent or disabled IPv6 stack is not a reason to fail to start; 127.0.0.1 is the
-            // contract and ::1 is the convenience.
+            // Row 29 commit 1: the built-in AllowedHosts list-matching is disabled ("*" turns off
+            // ASP.NET Core's Host Filtering Middleware) in favour of LoopbackHostFilter below, which
+            // answers "is this loopback" by parsing the address rather than by comparing strings — a
+            // fixed list rejected Windows PowerShell 5.1's fully-expanded IPv6 Host header
+            // ([0000:0000:0000:0000:0000:0000:0000:0001]) even though it names the identical address
+            // as [::1] (finding, ticket 04).
+            builder.Configuration["AllowedHosts"] = "*";
+            // On Windows `localhost` resolves to ::1 first, so a host configured with a localhost URL
+            // never reached us unless ::1 is actually listening (pass 2, MINOR-17). Guarded on a
+            // non-zero port: with port 0 the two families get different ephemeral ports and the
+            // single-address assumption breaks. An absent or disabled IPv6 stack is not a reason to
+            // fail to start; 127.0.0.1 is the contract and ::1 is the convenience.
             builder.WebHost.ConfigureKestrel(k =>
             {
                 k.Listen(IPAddress.Loopback, options.Port);
@@ -117,7 +123,16 @@ public static class HubHost
             // note to - AC12 asks for none.
             foreach (var stale in runs.ListActive())
                 runs.Park(stale.Id, "the hub restarted while this run was active", capSpent: false, effectiveClock.GetUtcNow());
-            builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner());
+            // Row 29: one registry, DI-owned (D8) - every ProcessRunner child lands in it, and the
+            // owner-peer check (a later task) asks it whether a loopback peer's PID is inside a spawn.
+            var jobs = new SpawnJobs();
+            builder.Services.AddSingleton(jobs);
+            builder.Services.AddSingleton<IProcessRunner>(processRunner ?? new ProcessRunner(jobs));
+            // Row 29, D3: the switch outranks any injected check, so a test can inject an
+            // InsideSpawn fake AND turn the switch off and observe that the switch wins.
+            builder.Services.AddSingleton<IOwnerPeerCheck>(options.OwnerPeerCheck ? (ownerPeerCheck ?? new OwnerPeerCheck(jobs)) : new DisabledOwnerPeerCheck());
+            if (!options.OwnerPeerCheck)
+                Console.Error.WriteLine("WARNING: --owner-peer-check off: an owner-class credential is accepted from any local process, including a spawn.");
             builder.Services.AddSingleton<CliLocator>(cliLocator ?? (name => CliResolver.Resolve(name)));
             // Row 19, task 12d: one gate per room at a time. A singleton so the lock survives
             // regardless of RunTools' own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no
@@ -155,6 +170,17 @@ public static class HubHost
                 var bound = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()
                     ?.Addresses.Select(a => new Uri(a).Port).FirstOrDefault();
                 if (bound is > 0) HubPortFile.Write(options.DataDir, bound.Value);
+            });
+            // Row 29 commit 1: first in the pipeline, ahead of every other check — a caller whose Host
+            // header does not name loopback under any spelling never reaches auth or an endpoint.
+            app.Use(async (context, next) =>
+            {
+                if (!LoopbackHostFilter.IsLoopback(context.Request.Host.Value))
+                {
+                    context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                    return;
+                }
+                await next();
             });
             app.UseMiddleware<BearerTokenMiddleware>();
             app.UseSpaClient(SpaFiles.ResolveWebRoot(options.WebRoot));
