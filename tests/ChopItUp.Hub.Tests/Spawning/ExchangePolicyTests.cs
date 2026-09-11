@@ -137,6 +137,26 @@ public sealed class ExchangePolicyTests
     }
 
     [Fact]
+    public void A_mention_of_a_participant_already_in_flight_is_recorded_pending_but_excluded_from_Due_until_it_finishes()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
+        var opusReq = p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus");
+        ExchangePolicy.Started(x!, opusReq);
+        Assert.DoesNotContain("opus", x!.Pending.Keys);
+        Assert.Equal(["opus"], x.InFlight);
+
+        p.OnMessage(x, Msg(2, "sonnet", "@opus back to you"), T0.AddSeconds(3));
+        Assert.Contains("opus", x.Pending.Keys);                                                       // recorded pending while still in flight
+
+        var opusInFlight = new HashSet<string> { "opus" };
+        Assert.DoesNotContain(p.Due(x, T0.AddSeconds(5), NoStarts, opusInFlight), d => d.ParticipantId == "opus");   // left out of Due while in flight
+
+        ExchangePolicy.Finished(x, "opus");
+        Assert.Contains(p.Due(x, T0.AddSeconds(5), NoStarts, Nobody), d => d.ParticipantId == "opus");   // included after Finished
+    }
+
+    [Fact]
     public void An_owner_message_mid_exchange_supersedes_it_and_roots_a_new_one()
     {
         var p = Policy();
