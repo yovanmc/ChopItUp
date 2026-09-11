@@ -202,3 +202,19 @@ consequence for M29: defence has to shrink the prize (expire or rotate `owner-re
 post from it may do, alert when a human row posts during a spawn window), because guarding the file
 is not on the table. Probes were `codex sandbox -- cmd /c type <path outside workspace>`; they cost no
 model call, which is why an assumption like this should never survive a planning session unmeasured.
+
+### [security, fail-closed, live-checks, models, host-headers] M29 (2026-09-10, 5ad8c57)
+A fail-closed check needs a "nothing to guard" arm or it becomes the outage it was meant to prevent.
+The peer check refuses an owner-class bearer it cannot place, which is right while a spawn is live and
+absurd when none is: with zero live jobs the answer is always Outside, so any lookup failure was a
+pure lockout of the owner. Two of the four review findings on this row were that same shape once
+(`GetExtendedTcpTable` sized then read in two calls, so a table that grew between them refused the
+owner), so when a design says "refuse on doubt", enumerate the states where doubt cannot mean danger
+and short-circuit them first. Second, a live check must not depend on a model agreeing to misbehave.
+Asked directly to read a planted `owner-remote` credential and forge a post with it, a real Sonnet
+spawn refused on both attempts, coherently, citing the MCP boundary. That is defence in depth, it is
+not enforced by the hub, and nothing should be built on it — the check now drives the escalation
+through a hub-started gate script, a real spawn in a real job with no model asked to cross a line.
+Third, a Host-header allowlist that matches strings refuses addresses it means to allow: Windows
+PowerShell 5.1 sends `[0000:0000:0000:0000:0000:0000:0000:0001]`, never `[::1]`, and got 400 before
+auth ran. Parse the address, do not compare spellings.
