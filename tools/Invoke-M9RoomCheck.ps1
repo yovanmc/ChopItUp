@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 if (-not $RoomsRoot) { $RoomsRoot = "$DataDir.rooms" }   # a sibling: anything under the data dir is refused by design
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m9-check.log"
@@ -52,10 +53,17 @@ Add-Check -Name 'cli.claude-on-path' -Passed ([bool]$claude) -Detail ($claude.So
 $git = Get-Command git -ErrorAction SilentlyContinue
 Add-Check -Name 'cli.git-on-path' -Passed ([bool]$git) -Detail ($git.Source ?? 'not found')
 
+# The data dir already exists at this point (New-Item above); Initialize-ChopScratchTokens only
+# creates $DataDir when it is missing, and only refuses on an existing tokens.json -- so seeding
+# 'owner' here, before Start-Process ever launches the scratch hub, works alongside the New-Item
+# above rather than racing it.
+$script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
+
 $base = "http://127.0.0.1:$Port"
 $hub = $null
 function Invoke-Api([string]$Method, [string]$Path, $Body = $null) {
     $args = @{ Uri = "$base$Path"; Method = $Method; TimeoutSec = 30 }
+    if ($Method -ne 'GET') { $args.Headers = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner }
     if ($null -ne $Body) { $args.ContentType = 'application/json'; $args.Body = ($Body | ConvertTo-Json -Compress) }
     Invoke-RestMethod @args
 }
