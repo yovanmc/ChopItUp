@@ -36,10 +36,7 @@
     says about that id, so a pre-seeded entry for a spawnable row is silently ignored. There is no
     supported way to learn a spawnable participant's bearer without the hub actually spawning it
     (SpawnerService.Launch calls TokenStore.BearerFor only at the moment of a real spawn, and writes it
-    only into that spawn's own data\spawns\<id>\mcp.json for the life of the spawned process). A
-    harness that drives /mcp AS a spawnable participant's own id (Invoke-M18MemoryCheck.ps1's and
-    Invoke-M25SkillProposalCheck.ps1's use of 'opus') cannot be repaired by this helper, or by any
-    tools/-only change; see this task's report for the specific legs affected.
+    only into that spawn's own data\spawns\<id>\mcp.json for the life of the spawned process).
 #>
 
 function New-ChopPlaintextToken {

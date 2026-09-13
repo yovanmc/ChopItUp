@@ -39,9 +39,6 @@
         unheld) database and skills root, the row is marked approved by a direct SQL UPDATE with
         installed_at left NULL (the exact crash state), and the hub is actually restarted before the
         Retry call -- no in-memory shortcut, no timing race.
-
-.PARAMETER KeepBuild
-    Skip the `dotnet build` step (assumes the hub exe is already current). Off by default.
 #>
 [CmdletBinding()]
 param(
@@ -111,16 +108,9 @@ Add-Check -Name 'cli.git-on-path' -Passed ([bool]$git) -Detail ($git.Source ?? '
 
 # LESSONS M10: drives /mcp itself as the participant named. A JSON-RPC error envelope has no result:
 # surfaced as the failure text, never a silent empty success.
-#
-# Row 28 Task 7 (tools-only) residual: 'opus' is a SPAWNABLE participant (ExchangePolicy.IsSpawnable),
-# so TokenStore.Load mints its bearer straight into memory and never persists or otherwise exposes it
-# outside an actual spawn. There is no tools/-only way to obtain a valid 'opus' bearer without the hub
-# really spawning it, which this script's own header says it never does. Leg B's first
-# propose_skill call (line ~207, participant 'opus') therefore cannot be repaired here; it fails
-# cleanly with the reason on the record rather than sending a garbage Authorization header.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
     if (-not $script:PlaintextTokens.ContainsKey($Participant)) {
-        $msg = "row 28: '$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn (Task 7 residual, tools/Invoke-M25SkillProposalCheck.ps1)"
+        $msg = "'$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn"
         Add-Content -Path $log -Value "mcp $Participant $Tool -> SKIPPED: $msg"
         return [pscustomobject]@{ IsError = $true; Text = $msg; Json = $null }
     }
@@ -227,12 +217,12 @@ try {
     # === Leg B: AC3 dedup -- a repeat offer of the same (name, tree) returns the first proposal ====
     $dupMd = SkillMd 'dup-test'
     $sourceB = New-SkillSource -Root $roomDir -Name 'dup-test' -SkillMd $dupMd
-    $first = Invoke-McpTool -Participant 'opus' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceB }
+    $first = Invoke-McpTool -Participant 'claude' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceB }
     $second = Invoke-McpTool -Participant 'codex' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceB }
     Add-Check -Name 'ac3.repeat-offer-returns-first-proposal' -Passed (-not $first.IsError -and -not $second.IsError -and $second.Json.duplicate -eq $true -and $second.Json.id -eq $first.Json.id) `
         -Detail "firstId=$($first.Json.id) secondId=$($second.Json.id) duplicate=$($second.Json.duplicate)"
     $dupRows = @(Get-Proposals -Room $roomId -Status 'all' | Where-Object name -eq 'dup-test')
-    Add-Check -Name 'ac3.no-second-card' -Passed ($dupRows.Count -eq 1) -Detail "rows=$($dupRows.Count)"
+    Add-Check -Name 'ac3.no-second-card' -Passed (-not $first.IsError -and $dupRows.Count -eq 1) -Detail "rows=$($dupRows.Count)"
     Invoke-Decide -Verb 'reject' -Id $first.Json.id -Token $ownerToken -Tree $null | Out-Null
 
     # === Leg C: AC2 refusal -- a file type off D7's allowlist =======================================
