@@ -29,8 +29,9 @@ public abstract record SkillResolution
 /// F-9).</summary>
 public sealed record RunContext(long RunId, string ConductorId, string CurrentPhase);
 
-/// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange,
-/// and an owner message always closes the one that was open. D8: a mention is the only trigger,
+/// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange. An
+/// owner prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
+/// running beside the new one. D8: a mention is the only trigger,
 /// never one's own message, never a row that is not spawnable. D5: four turns, whoever holds the
 /// last one is told so. D7: debounce, one in flight per (participant, room), minimum spacing per
 /// participant. Returns notes for the caller to post as the hub; never posts itself.</summary>
@@ -51,114 +52,121 @@ public sealed class ExchangePolicy
     /// windows some program opens on the room, not something the hub starts.</summary>
     public static bool IsSpawnable(Participant p) => p.Kind == "model" && p.Model is not null;
 
-    /// <summary>The room's exchange after this message, and the notes to post. The returned object is
-    /// <paramref name="current"/> itself unless an owner message opened a new one.
-    /// <paramref name="run"/>, <paramref name="startsRun"/>, <paramref name="hasDirectory"/> and
-    /// <paramref name="artifactAuthor"/> are row 19 (task 4): every existing call site compiles
-    /// unchanged because all four default. <paramref name="artifactAuthor"/> is unused before task 8
-    /// (the model branch's phase-tag rules) - accepted here now so that branch's signature never has
-    /// to change again.</summary>
-    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true, SkillResolution? skill = null,
-        RunContext? run = null, bool startsRun = false, bool hasDirectory = false, Func<string, string?>? artifactAuthor = null)
+    /// <summary>The room's exchanges after this message, and the notes to post. Returns the exchange
+    /// this message opened, or null. <paramref name="room"/> is every exchange the service still holds
+    /// for the room, open or not; only open ones are considered. <paramref name="target"/> is where a
+    /// model's mentions go and is ignored for a human post: the service picks it (a spawn's own
+    /// exchange, else the open exchange involving a model it mentions, else the newest open one).
+    /// A human prompt supersedes each open exchange it shares a mentioned participant with before any
+    /// refusal is decided, since the owner spoke to that model either way; a run-start that passes
+    /// every check supersedes all of them.</summary>
+    public (Exchange? Opened, IReadOnlyList<string> Notes) OnRoomMessage(IReadOnlyList<Exchange> room, Exchange? target, Message message, DateTimeOffset now,
+        bool acceptMentions = true, SkillResolution? skill = null, RunContext? run = null, bool startsRun = false, bool hasDirectory = false)
     {
         var notes = new List<string>();
-        if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (current, notes);
+        if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (null, notes);
 
-        // acceptMentions = false: the author is a spawn of an exchange that is no longer the room's
-        // current one (superseded by the owner, D5/A6); its post lands, its mentions do not.
+        // acceptMentions = false: the author is a spawn of an exchange that is closed, or (inside a run)
+        // no longer the room's newest one; its post lands, its mentions do not.
         var mentioned = acceptMentions
             ? _mentions.Find(message.Body)
                 .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p))
                 .ToList()
             : new List<string>();
 
-        if (author.Kind == "human")
+        if (author.Kind != "human")
         {
-            // Row 19, task 4 (pass 2's F-9), step 3 of the ordered human branch: a post inside an
-            // active run that is not itself a valid run-start (SpawnerService guarantees startsRun
-            // is never true while run is not null - its own step 2, an impure RunStore check, already
-            // refused that combination before this method was ever called) leaves EVERYTHING
-            // untouched - no supersede, no skill switch, nothing. AC5: the service records it as a
-            // steer for the conductor's next trigger set (task 6); this pure method only has to not
-            // get in the way.
-            if (run is not null) return (current, notes);
-
-            if (current is { Status: ExchangeStatus.Open } && run is null)
-            {
-                // D5: the running spawn finishes (its completion lands on this object, which is no
-                // longer open, so it cannot conclude or spawn); everything queued is dropped.
-                // `run is null` is always true here (the early return above already caught the other
-                // case) - a second line of defence, not the first (task 6's note).
-                current.Status = ExchangeStatus.Superseded;
-                current.Pending.Clear();
-            }
-
-            // Step 4: a run-start invocation needs a directory to bind the run to (AC2).
-            if (startsRun && !hasDirectory)
-            {
-                var name = (skill as SkillResolution.Found)?.Skill.Name
-                    ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
-                notes.Add($"/{name} starts a run, which needs a room bound to a directory; this room has none.");
-                return (current, notes);
-            }
-
-            // Step 5: a skill the hub cannot hand over intact spends nothing: the owner asked for an
-            // instruction, and spawning without it would burn real model calls on the wrong ask
-            // (D-c). The supersede above still stands - the owner spoke (M5-D5).
-            switch (skill)
-            {
-                case SkillResolution.Unknown u:
-                    notes.Add(u.Known.Count == 0
-                        ? $"No skill named '/{u.Name}'; this hub has no skills installed. Import one with --import-skill."
-                        : $"No skill named '/{u.Name}'. Installed: {string.Join(", ", u.Known.Select(k => "/" + k))}.");
-                    return (current, notes);
-                case SkillResolution.Tampered t:
-                    notes.Add($"Skill /{t.Name} does not match what was imported; nothing was spawned. Re-import it with --import-skill before using it.");
-                    return (current, notes);
-                case SkillResolution.Unavailable a:
-                    notes.Add($"Could not read skill /{a.Name}: {a.Reason}. Nothing was spawned.");
-                    return (current, notes);
-            }
-
-            // Step 6: a run needs exactly one conductor - zero or many are both refused (AC2).
-            if (startsRun && mentioned.Count != 1)
-            {
-                var name = (skill as SkillResolution.Found)?.Skill.Name
-                    ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
-                notes.Add(mentioned.Count == 0
-                    ? $"/{name} starts a run and needs exactly one conductor mentioned; none was."
-                    : $"/{name} starts a run and needs exactly one conductor mentioned; {mentioned.Count} were: {string.Join(", ", mentioned.Select(m => "@" + m))}.");
-                return (current, notes);
-            }
-
-            // Step 7: otherwise, the pre-row-19 behaviour - unaffected whether or not this is a
-            // run-start invocation, since a run-start invocation that reached here already has a
-            // directory and exactly one mention.
-            if (mentioned.Count == 0)
-            {
-                // A skill with nobody to run it: say so, or the owner watches an invocation do
-                // nothing at all and cannot tell it from a hub that ignored them.
-                if (skill is SkillResolution.Found idle)
-                    notes.Add($"/{idle.Skill.Name} needs a mention to run: nobody was addressed, so no exchange started.");
-                return (current, notes);
-            }
-            var found = skill as SkillResolution.Found;
-            var next = new Exchange
-            {
-                RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget,
-                Skill = found?.Skill,
-            };
-            if (found is not null)
-                notes.Add($"Skill /{found.Skill.Name} is in force for this exchange; every turn of it is rendered the same instruction."
-                    + (found.Skill.Truncated ? $" Its text was cut to {SkillStore.MaxSkillChars} characters." : ""));
-            Accept(next, mentioned, message.Id, now, notes);
-            return (next, notes);
+            // A model, spawn row or app-backed window, never opens an exchange.
+            if (target is not { Status: ExchangeStatus.Open }) return (null, notes);
+            Accept(target, mentioned, message.Id, now, notes);
+            return (null, notes);
         }
 
-        // A model — spawn row or app-backed window — never opens an exchange (D2).
-        if (current is not { Status: ExchangeStatus.Open }) return (current, notes);
-        Accept(current, mentioned, message.Id, now, notes);
-        return (current, notes);
+        // A post inside an active run that is not itself a valid run-start leaves everything untouched:
+        // the service records it as a steer for the conductor's next trigger set.
+        if (run is not null) return (null, notes);
+
+        var open = room.Where(x => x.Status == ExchangeStatus.Open).ToList();
+        foreach (var x in open.Where(x => mentioned.Any(x.Participants.Contains))) Supersede(x);
+
+        // A run-start invocation needs a directory to bind the run to.
+        if (startsRun && !hasDirectory)
+        {
+            var name = (skill as SkillResolution.Found)?.Skill.Name
+                ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
+            notes.Add($"/{name} starts a run, which needs a room bound to a directory; this room has none.");
+            return (null, notes);
+        }
+
+        // A skill the hub cannot hand over intact spends nothing. Any overlap supersede above
+        // still stands.
+        switch (skill)
+        {
+            case SkillResolution.Unknown u:
+                notes.Add(u.Known.Count == 0
+                    ? $"No skill named '/{u.Name}'; this hub has no skills installed. Import one with --import-skill."
+                    : $"No skill named '/{u.Name}'. Installed: {string.Join(", ", u.Known.Select(k => "/" + k))}.");
+                return (null, notes);
+            case SkillResolution.Tampered t:
+                notes.Add($"Skill /{t.Name} does not match what was imported; nothing was spawned. Re-import it with --import-skill before using it.");
+                return (null, notes);
+            case SkillResolution.Unavailable a:
+                notes.Add($"Could not read skill /{a.Name}: {a.Reason}. Nothing was spawned.");
+                return (null, notes);
+        }
+
+        // A run needs exactly one conductor; zero or many are both refused.
+        if (startsRun && mentioned.Count != 1)
+        {
+            var name = (skill as SkillResolution.Found)?.Skill.Name
+                ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
+            notes.Add(mentioned.Count == 0
+                ? $"/{name} starts a run and needs exactly one conductor mentioned; none was."
+                : $"/{name} starts a run and needs exactly one conductor mentioned; {mentioned.Count} were: {string.Join(", ", mentioned.Select(m => "@" + m))}.");
+            return (null, notes);
+        }
+
+        if (mentioned.Count == 0)
+        {
+            // A skill with nobody to run it: say so, or the owner watches an invocation do nothing.
+            if (skill is SkillResolution.Found idle)
+                notes.Add($"/{idle.Skill.Name} needs a mention to run: nobody was addressed, so no exchange started.");
+            return (null, notes);
+        }
+
+        // A run takes the whole room: nothing started before it keeps spawning beside the conductor.
+        if (startsRun)
+            foreach (var x in open.Where(x => x.Status == ExchangeStatus.Open)) Supersede(x);
+
+        var found = skill as SkillResolution.Found;
+        var next = new Exchange
+        {
+            RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget,
+            Skill = found?.Skill,
+        };
+        if (found is not null)
+            notes.Add($"Skill /{found.Skill.Name} is in force for this exchange; every turn of it is rendered the same instruction."
+                + (found.Skill.Truncated ? $" Its text was cut to {SkillStore.MaxSkillChars} characters." : ""));
+        Accept(next, mentioned, message.Id, now, notes);
+        return (next, notes);
+    }
+
+    /// <summary>The one-exchange view of <see cref="OnRoomMessage"/>: <paramref name="current"/> is both
+    /// the room's only exchange and a model post's target. Returns <paramref name="current"/> itself
+    /// unless the message opened a new exchange.</summary>
+    public (Exchange? Next, IReadOnlyList<string> Notes) OnMessage(Exchange? current, Message message, DateTimeOffset now, bool acceptMentions = true, SkillResolution? skill = null,
+        RunContext? run = null, bool startsRun = false, bool hasDirectory = false)
+    {
+        var (opened, notes) = OnRoomMessage(current is null ? [] : [current], current, message, now, acceptMentions, skill, run, startsRun, hasDirectory);
+        return (opened ?? current, notes);
+    }
+
+    /// <summary>The running spawn finishes (its completion lands on this object, which
+    /// is no longer open, so it cannot conclude or spawn); everything queued is dropped.</summary>
+    private static void Supersede(Exchange x)
+    {
+        x.Status = ExchangeStatus.Superseded;
+        x.Pending.Clear();
     }
 
     private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes)
@@ -176,10 +184,11 @@ public sealed class ExchangePolicy
             var fresh = new PendingSpawn { LastTriggerAt = now };
             fresh.TriggerIds.Add(messageId);
             x.Pending[id] = fresh;
+            x.Participants.Add(id);
             x.TurnsCommitted++;
         }
         if (refused.Count > 0)
-            notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. A new owner message starts a fresh exchange.");
+            notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. An owner message that mentions one of them starts a fresh exchange.");
     }
 
     /// <summary>Row 19, task 8: every id a conductor's post @-mentions that is spawnable - UNLIKE the
@@ -266,6 +275,7 @@ public sealed class ExchangePolicy
         var pending = new PendingSpawn { LastTriggerAt = now };
         foreach (var id in triggerIds) pending.TriggerIds.Add(id);
         x.Pending[conductorId] = pending;
+        x.Participants.Add(conductorId);
         x.TurnsCommitted = 1;
         return x;
     }

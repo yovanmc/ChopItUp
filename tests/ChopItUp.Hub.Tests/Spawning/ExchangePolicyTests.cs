@@ -157,32 +157,139 @@ public sealed class ExchangePolicyTests
     }
 
     [Fact]
-    public void An_owner_message_mid_exchange_supersedes_it_and_roots_a_new_one()
+    public void A_disjoint_owner_prompt_opens_a_second_exchange_and_leaves_the_first_running()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+
+        var (b, notes) = p.OnRoomMessage([a!], null, Msg(2, "owner", "@gpt-6-astra task B"), T0.AddSeconds(3));
+
+        Assert.Equal(ExchangeStatus.Open, a!.Status);
+        Assert.Equal(["opus"], a.InFlight);
+        Assert.NotNull(b);
+        Assert.Equal(2, b!.RootMessageId);
+        Assert.Equal(["gpt-6-astra"], b.Pending.Keys);
+        Assert.Equal(4, b.Budget);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void An_overlapping_owner_prompt_supersedes_only_the_exchange_it_overlaps()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus @sonnet task A"), T0);
+        var (b, _) = p.OnRoomMessage([a!], null, Msg(2, "owner", "@gpt-6-astra task B"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus"));
+
+        var (c, _) = p.OnRoomMessage([a!, b!], null, Msg(3, "owner", "@opus redo A"), T0.AddSeconds(3));
+
+        Assert.Equal(ExchangeStatus.Superseded, a!.Status);
+        Assert.Empty(a.Pending);                     // sonnet's queued turn dropped
+        Assert.Equal(["opus"], a.InFlight);          // still finishing
+        Assert.Equal(ExchangeStatus.Open, b!.Status);
+        Assert.Equal(["gpt-6-astra"], b.Pending.Keys);
+        Assert.Equal(3, c!.RootMessageId);
+        Assert.Equal(1, c.TurnsCommitted);           // fresh budget
+    }
+
+    [Fact]
+    public void An_owner_post_with_no_spawnable_mention_supersedes_nothing()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
+        var (none, notes) = p.OnRoomMessage([a!], null, Msg(2, "owner", "thanks @claude, carry on"), T0);
+        Assert.Null(none);
+        Assert.Empty(notes);
+        Assert.Equal(ExchangeStatus.Open, a!.Status);
+        Assert.Equal(["opus"], a.Pending.Keys);
+    }
+
+    [Fact]
+    public void A_model_post_is_accepted_into_its_target_only_and_ignored_once_the_target_closed()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
+        var (b, _) = p.OnRoomMessage([a!], null, Msg(2, "owner", "@gpt-6-astra"), T0);
+
+        var (opened, _) = p.OnRoomMessage([a!, b!], a, Msg(3, "opus", "@sonnet your view?"), T0);
+        Assert.Null(opened);
+        Assert.Equal(["opus", "sonnet"], a!.Pending.Keys);
+        Assert.Equal(["gpt-6-astra"], b!.Pending.Keys);
+
+        ExchangePolicy.Stop(a, ExchangeStopCause.Owner);
+        p.OnRoomMessage([a, b], a, Msg(4, "opus", "@fable too"), T0);
+        Assert.Empty(a.Pending);
+        Assert.Equal(["gpt-6-astra"], b.Pending.Keys);
+    }
+
+    [Fact]
+    public void A_run_start_supersedes_every_open_exchange_in_the_room()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
+        var (b, _) = p.OnRoomMessage([a!], null, Msg(2, "owner", "@gpt-6-astra"), T0);
+        var (conductor, _) = p.OnRoomMessage([a!, b!], null, Msg(3, "owner", "/build-thing @sonnet"), T0,
+            skill: new SkillResolution.Found(RunSkill, ""), startsRun: true, hasDirectory: true);
+        Assert.NotNull(conductor);
+        Assert.Equal(ExchangeStatus.Superseded, a!.Status);
+        Assert.Equal(ExchangeStatus.Superseded, b!.Status);
+    }
+
+    [Fact]
+    public void A_refused_run_start_supersedes_only_what_it_overlaps()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
+        var (none, notes) = p.OnRoomMessage([a!], null, Msg(2, "owner", "/build-thing @sonnet"), T0,
+            skill: new SkillResolution.Found(RunSkill, ""), startsRun: true, hasDirectory: false);
+        Assert.Null(none);
+        Assert.Single(notes);
+        Assert.Equal(ExchangeStatus.Open, a!.Status);
+    }
+
+    [Fact]
+    public void Participants_records_every_accepted_mention_including_a_launched_one()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        p.OnRoomMessage([a!], a, Msg(2, "opus", "@sonnet"), T0);
+        Assert.Equal(new HashSet<string> { "opus", "sonnet" }, a!.Participants);
+        Assert.Equal(new HashSet<string> { "conductor-x" }, ExchangePolicy.OpenForConductor("general", "conductor-x", 1, [1], T0, RunSkill).Participants);
+    }
+
+    [Fact]
+    public void An_overlapping_owner_message_mid_exchange_supersedes_it_and_a_disjoint_or_empty_one_does_not()
     {
         var p = Policy();
         var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus @sonnet"), T0);
         var opus = p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus");
         ExchangePolicy.Started(x!, opus);
 
-        var (y, _) = p.OnMessage(x, Msg(5, "owner", "@gpt-6-astra instead"), T0.AddSeconds(3));
+        var (y, _) = p.OnMessage(x, Msg(5, "owner", "@opus @gpt-6-astra instead"), T0.AddSeconds(3));
         Assert.Equal(ExchangeStatus.Superseded, x!.Status);
         Assert.Empty(x.Pending);                                                                       // sonnet dropped
         Assert.Equal(["opus"], x.InFlight);                                                            // still finishing
         Assert.NotSame(x, y);
         Assert.Equal(5, y!.RootMessageId);
-        Assert.Equal(["gpt-6-astra"], y.Pending.Keys);
+        Assert.Equal(["opus", "gpt-6-astra"], y.Pending.Keys);
 
         p.OnMessage(x, Msg(6, "opus", "@sonnet late mention"), T0.AddSeconds(4));                       // its exchange is closed: ignored
         Assert.Empty(x.Pending);
         p.OnMessage(y, Msg(6, "opus", "@sonnet late mention"), T0.AddSeconds(4), acceptMentions: false);  // what the service passes for a stale spawn
-        Assert.Equal(["gpt-6-astra"], y.Pending.Keys);
-        Assert.Equal(1, y.TurnsCommitted);
+        Assert.Equal(["opus", "gpt-6-astra"], y.Pending.Keys);
+        Assert.Equal(2, y.TurnsCommitted);
         Assert.Null(ExchangePolicy.Finished(x, "opus"));                                                // no conclusion note for a superseded exchange
         Assert.Equal(ExchangeStatus.Superseded, x.Status);
 
         var (z, _) = p.OnMessage(y, Msg(7, "owner", "thanks, that is all"), T0.AddSeconds(5));
-        Assert.Equal(ExchangeStatus.Superseded, y.Status);
-        Assert.Same(y, z);                                                                             // no mention: nothing new opens
+        Assert.Equal(ExchangeStatus.Open, y.Status);                                                   // no mention: nothing superseded
+        Assert.Same(y, z);
+
+        var (w, _) = p.OnMessage(y, Msg(8, "owner", "@fable something else"), T0.AddSeconds(6));
+        Assert.Equal(ExchangeStatus.Open, y.Status);                                                   // disjoint: runs beside it
+        Assert.NotSame(y, w);
     }
 
     [Fact]
@@ -282,10 +389,10 @@ public sealed class ExchangePolicyTests
             var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
             Assert.Equal(ExchangeStatus.Open, open!.Status);
 
-            var (next, notes) = p.OnMessage(open, Msg(2, "owner", "/x @sonnet"), T0.AddSeconds(1), skill: refusal);
+            var (next, notes) = p.OnMessage(open, Msg(2, "owner", "/x @opus"), T0.AddSeconds(1), skill: refusal);
             Assert.Same(open, next);                                    // no NEW exchange opened
             Assert.Equal(ExchangeStatus.Superseded, open.Status);       // but the owner still spoke (D5)
-            Assert.Empty(open.Pending);                                 // sonnet was never accepted
+            Assert.Empty(open.Pending);                                 // the overlap supersede cleared opus's queued turn
             var note = Assert.Single(notes);
             switch (refusal)
             {
@@ -299,6 +406,10 @@ public sealed class ExchangePolicyTests
                     Assert.Equal("Could not read skill /demo: disk went away. Nothing was spawned.", note);
                     break;
             }
+
+            var (other, _) = p.OnMessage(null, Msg(3, "owner", "@opus"), T0);
+            p.OnMessage(other, Msg(4, "owner", "/x @sonnet"), T0.AddSeconds(1), skill: refusal);
+            Assert.Equal(ExchangeStatus.Open, other!.Status);                   // a disjoint refusal supersedes nothing
         }
     }
 
