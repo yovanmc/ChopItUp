@@ -218,3 +218,6 @@ through a hub-started gate script, a real spawn in a real job with no model aske
 Third, a Host-header allowlist that matches strings refuses addresses it means to allow: Windows
 PowerShell 5.1 sends `[0000:0000:0000:0000:0000:0000:0000:0001]`, never `[::1]`, and got 400 before
 auth ran. Parse the address, do not compare spellings.
+
+### [ui-gate, spawns, stub-cli, credentials] Row 34 (2026-09-15, 095e9c7)
+A UI gate that needs exchanges held open costs no model call: put a stub `codex.cmd` (a `ping -n 600 127.0.0.1` and `exit /b 0`) first on the scratch hub's PATH through a launch entry, post owner messages mentioning different GPT participants, and each opens its own exchange with a live in-flight spawn for ten minutes. It only works for Codex rows: `CliResolver` takes `name.exe` anywhere on PATH before any shim, and Claude Code is a real `claude.exe`. The owner bearer is the other wall: writing a scratch hub's token into the page's localStorage was denied by the auto-mode classifier as credential materialization, so the in-page click reaches the right endpoint (a 401 in the network log proves the URL) but not the authenticated effect. Drive that effect over the API from a script reading the token file and confirm the page re-renders over SignalR.
