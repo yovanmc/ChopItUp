@@ -721,4 +721,219 @@ public sealed class ExchangePolicyTests
             .OrderBy(t => t.Name).ToList();
         Assert.Equal(expected, arms);
     }
+
+    // --- Row 36: the policy joins a reply to its exchange -------------------------------------------
+
+    private static Message Reply(long id, string author, string body, long replyTo) => new(id, "general", author, body, T0, replyTo);
+
+    [Fact]
+    public void R36_a_reply_to_an_open_exchange_joins_it_against_its_budget_and_supersedes_nothing()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "@opus and also this @sonnet", 1), T0.AddSeconds(3), joins: a);
+
+        Assert.Null(opened);
+        Assert.Empty(notes);
+        Assert.Equal(ExchangeStatus.Open, a!.Status);                 // row 32 would have superseded it (opus overlaps)
+        Assert.Equal(["opus", "sonnet"], a.Pending.Keys);
+        Assert.Equal(3, a.TurnsCommitted);
+        Assert.Contains(2L, a.MessageIds);
+    }
+
+    [Fact]
+    public void R36_a_reply_with_a_mention_reopens_a_concluded_exchange_with_its_turns_and_skill()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "/build-thing @opus go"), T0, skill: new SkillResolution.Found(RunSkill, "go"));
+        var launch = p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single();
+        ExchangePolicy.Started(a!, launch);
+        Assert.NotNull(ExchangePolicy.Finished(a!, "opus"));
+        Assert.Equal(ExchangeStatus.Concluded, a!.Status);
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(5, "owner", "@opus keep going", 1), T0.AddSeconds(9), joins: a);
+
+        Assert.Null(opened);
+        Assert.Empty(notes);
+        Assert.Equal(ExchangeStatus.Open, a.Status);
+        Assert.Same(RunSkill, a.Skill);
+        var next = p.Due(a, T0.AddSeconds(12), NoStarts, Nobody).Single();
+        Assert.Equal((1L, 2, 2), (next.RootMessageId, next.TurnNumber, next.RemainingAfter));
+    }
+
+    [Fact]
+    public void R36_a_reply_reopens_a_stopped_or_superseded_exchange_and_clears_the_stop_cause()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Stop(a!, ExchangeStopCause.Owner);
+
+        p.OnRoomMessage([a!], null, Reply(2, "owner", "@opus resume", 1), T0.AddSeconds(1), joins: a);
+
+        Assert.Equal(ExchangeStatus.Open, a!.Status);
+        Assert.Null(a.StopCause);
+        Assert.Equal(["opus"], a.Pending.Keys);
+    }
+
+    [Fact]
+    public void R36_a_reopen_spends_only_the_turns_that_ran_not_the_ones_a_stop_dropped()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus @sonnet @fable task"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus"));
+        ExchangePolicy.Stop(a!, ExchangeStopCause.Owner);
+        ExchangePolicy.Finished(a!, "opus");
+        Assert.Equal((3, 1), (a!.TurnsCommitted, a.TurnsStarted));
+
+        p.OnRoomMessage([a], null, Reply(2, "owner", "@sonnet go on", 1), T0.AddSeconds(5), joins: a);
+
+        var next = p.Due(a, T0.AddSeconds(8), NoStarts, Nobody).Single();
+        Assert.Equal((2, 2), (next.TurnNumber, next.RemainingAfter));
+    }
+
+    [Fact]
+    public void R36_a_reply_to_a_closed_exchange_still_finishing_a_spawn_notes_it_and_accepts_nothing()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        p.OnRoomMessage([a!], null, Msg(2, "owner", "@opus redo"), T0.AddSeconds(3));   // supersedes a, opus still running
+        Assert.Equal(ExchangeStatus.Superseded, a!.Status);
+
+        var (opened, notes) = p.OnRoomMessage([a], null, Reply(3, "owner", "@sonnet help", 1), T0.AddSeconds(4), joins: a);
+
+        Assert.Null(opened);
+        Assert.Equal(["Exchange #1 is still finishing @opus; reply again once it has."], notes);
+        Assert.Equal(ExchangeStatus.Superseded, a.Status);
+        Assert.Empty(a.Pending);
+    }
+
+    [Fact]
+    public void R36_a_reply_with_no_mention_changes_no_state()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        ExchangePolicy.Finished(a!, "opus");
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "thanks", 1), T0.AddSeconds(3), joins: a);
+
+        Assert.Null(opened);
+        Assert.Empty(notes);
+        Assert.Equal((ExchangeStatus.Concluded, 1, 0), (a!.Status, a.TurnsCommitted, a.Pending.Count));
+        Assert.Contains(2L, a.MessageIds);
+    }
+
+    [Fact]
+    public void R36_a_reply_whose_mentions_are_all_over_budget_does_not_reopen()
+    {
+        var p = new ExchangePolicy(ChopDb.SeedRoster, Limits with { Budget = 1 });
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        ExchangePolicy.Finished(a!, "opus");
+
+        var (_, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "@sonnet more", 1), T0.AddSeconds(3), joins: a);
+
+        Assert.Equal(ExchangeStatus.Concluded, a!.Status);
+        Assert.Single(notes, n => n.StartsWith("Budget of 1 turns is used up for the exchange started at #1"));
+    }
+
+    [Fact]
+    public void R36_an_unresolved_reply_with_a_mention_is_a_new_prompt_with_a_note()
+    {
+        var p = Policy();
+        var (opened, notes) = p.OnRoomMessage([], null, Reply(4, "owner", "@opus go", 2), T0, joins: null);
+
+        Assert.Equal(4, opened!.RootMessageId);
+        Assert.Equal(["Reply to #2: that message is in no exchange this hub still holds, so this post was handled as a new prompt."], notes);
+    }
+
+    [Fact]
+    public void R36_an_unresolved_reply_with_no_mention_posts_nothing()
+    {
+        var (opened, notes) = Policy().OnRoomMessage([], null, Reply(4, "owner", "just a thought", 2), T0, joins: null);
+        Assert.Null(opened);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void R36_a_reply_that_invokes_a_skill_is_a_new_prompt_with_a_note_even_when_its_exchange_is_held()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "/build-thing @sonnet go", 1), T0.AddSeconds(1),
+            skill: new SkillResolution.Found(RunSkill, "go"), joins: a);
+
+        Assert.Equal(2, opened!.RootMessageId);
+        Assert.Equal("A reply that invokes /" + RunSkill.Name + " does not join an exchange; it was handled as a new prompt.", notes[0]);
+        Assert.Equal(["opus"], a!.Pending.Keys);                        // disjoint: row 32's rule, untouched
+    }
+
+    [Fact]
+    public void R36_a_reply_with_a_refused_skill_is_handled_as_the_same_post_without_reply_to()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "/typo @opus go", 1), T0.AddSeconds(1),
+            skill: new SkillResolution.Unknown("typo", []), joins: a);
+
+        Assert.Null(opened);
+        Assert.Equal(ExchangeStatus.Superseded, a!.Status);           // row 32's overlap rule, as without reply-to
+        Assert.Single(notes);
+        Assert.StartsWith("No skill named '/typo'", notes[0]);
+    }
+
+    [Fact]
+    public void R36_a_reply_to_a_run_exchange_is_an_unresolved_reply()
+    {
+        var p = Policy();
+        var conductor = ExchangePolicy.OpenForConductor("general", "opus", 1, [1], T0, RunSkill);
+        ExchangePolicy.Started(conductor, p.Due(conductor, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        ExchangePolicy.Finished(conductor, "opus");
+        conductor.MessageIds.Add(2);                                     // the conductor's own post, as the service records it
+
+        var (opened, notes) = p.OnRoomMessage([conductor], null, Reply(3, "owner", "@sonnet pick this up", 2), T0.AddSeconds(5), joins: conductor);
+
+        Assert.False(conductor.Joinable);
+        Assert.Equal(ExchangeStatus.Concluded, conductor.Status);
+        Assert.Equal(3, opened!.RootMessageId);
+        Assert.True(opened.Joinable);
+        Assert.Equal(["Reply to #2: that message is in no exchange this hub still holds, so this post was handled as a new prompt."], notes);
+    }
+
+    [Fact]
+    public void R36_a_run_start_exchange_is_not_joinable()
+    {
+        var (opened, _) = Policy().OnRoomMessage([], null, Msg(1, "owner", "/build-thing @opus go"), T0,
+            skill: new SkillResolution.Found(RunSkill, "go"), startsRun: true, hasDirectory: true);
+        Assert.False(opened!.Joinable);
+    }
+
+    [Fact]
+    public void R36_inside_a_run_a_reply_is_left_to_the_run()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "@sonnet go", 1), T0.AddSeconds(1),
+            run: new RunContext(7, "opus", "plan"), joins: a);
+
+        Assert.Null(opened);
+        Assert.Empty(notes);
+        Assert.Equal(["opus"], a!.Pending.Keys);
+    }
+
+    [Fact]
+    public void R36_an_exchange_counts_its_root_and_the_model_posts_routed_to_it_as_members()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+        p.OnRoomMessage([a!], a, Msg(2, "claude", "noted"), T0.AddSeconds(1));
+
+        Assert.Equal([1L, 2L], a!.MessageIds.Order());
+    }
 }

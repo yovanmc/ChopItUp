@@ -42,6 +42,15 @@ public sealed class Exchange
     /// them runs beside it.</summary>
     public HashSet<string> Participants { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Row 36: the messages that belong to this exchange, so an owner reply to any of them joins
+    /// it. Its root, every owner reply that joined it, every post of its own spawns and every app-backed
+    /// model post routed to it while open. Hub notes are never members.</summary>
+    public HashSet<long> MessageIds { get; } = new();
+
+    /// <summary>Row 36: opened by an owner prompt that was not a run-start. Only such an exchange can be
+    /// joined by a reply; a run's own exchanges never can.</summary>
+    public bool Joinable { get; init; }
+
     /// <summary>The skill in force for every spawn of this exchange (row 11, D-b): set once when the
     /// exchange opens and never changed, so turn 4 answers the same instruction as turn 1.</summary>
     public ResolvedSkill? Skill { get; init; }
