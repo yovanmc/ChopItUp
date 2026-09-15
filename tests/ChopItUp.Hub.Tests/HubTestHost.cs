@@ -55,12 +55,12 @@ public sealed class HubTestHost : IAsyncDisposable
                 _mintedHostFile[p.Id] = Tokens.MintFor(p.Id);
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null)
     {
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
         // Row 29 Task 4: port 0 (the default) never gets the [::1] listener (HubHost.cs:41, ledger
         // 23) - a caller that needs to prove anything over IPv6 passes a fixed free port instead.
-        var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled);
+        var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled, ShellToken: shellToken);
         var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits, ownerPeerCheck);
         await app.StartAsync();
         // With a fixed port and an IPv6 stack, HubHost binds BOTH 127.0.0.1 and [::1] (HubHost.cs:

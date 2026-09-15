@@ -29,10 +29,18 @@ public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasse
 /// <paramref name="OwnerPeerCheck"/> (row 29, D3) is <c>--owner-peer-check off</c> (or
 /// <c>CHOPITUP_OWNER_PEER_CHECK=off</c>), default true: false disables the check that refuses an
 /// owner-class bearer presented from inside a spawn, the recovery for a lookup failure that would
-/// otherwise lock the owner out of every write. A missing value throws, same as <c>--rotate-token</c>'s.</summary>
-public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false, bool OwnerPeerCheck = true)
+/// otherwise lock the owner out of every write. A missing value throws, same as <c>--rotate-token</c>'s.
+/// <paramref name="ShellToken"/> (row 12) is the desktop shell's launch-scoped owner bearer, read from
+/// <see cref="ShellTokenEnvVar"/> only.</summary>
+public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false, bool OwnerPeerCheck = true, string? ShellToken = null)
 {
     public const int DefaultPort = 8790;
+
+    /// <summary>Row 12: a launch-scoped owner bearer the desktop shell hands its child hub. Read from
+    /// the environment only (never an argument, so it is not in any process listing), held in memory
+    /// by <see cref="Security.TokenStore"/>, never written, and deleted from this process's
+    /// environment by <c>HubHost.Build</c> before anything can inherit it.</summary>
+    public const string ShellTokenEnvVar = "CHOPITUP_SHELL_TOKEN";
 
     /// <summary>Where hub-created room directories go (M9 decision 2): `--rooms-root`, then
     /// `CHOPITUP_ROOMS`, then `%USERPROFILE%\ChopItUp\rooms` — a folder inside the profile, which D12
@@ -145,6 +153,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         // Row 29, D3: the flag wins over the environment; anything but "off" (case-insensitive) is
         // on, so a missing or garbled env value never accidentally disables the check.
         ownerPeerCheck ??= getEnv("CHOPITUP_OWNER_PEER_CHECK");
+        var shellToken = getEnv(ShellTokenEnvVar);
         return new HubOptions(
             Path.GetFullPath(string.IsNullOrWhiteSpace(data) ? Path.Combine(AppContext.BaseDirectory, "data") : data),
             int.TryParse(port, out var p) ? p : DefaultPort,
@@ -157,6 +166,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             SetClassesSpec: setClassesSpec,
             ExportMemoryPath: exportMemoryPath,
             AcceptNewSource: acceptNewSource,
-            OwnerPeerCheck: !string.Equals(ownerPeerCheck, "off", StringComparison.OrdinalIgnoreCase));
+            OwnerPeerCheck: !string.Equals(ownerPeerCheck, "off", StringComparison.OrdinalIgnoreCase),
+            ShellToken: string.IsNullOrEmpty(shellToken) ? null : shellToken);
     }
 }

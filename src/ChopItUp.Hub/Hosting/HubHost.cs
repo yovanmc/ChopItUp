@@ -26,6 +26,11 @@ public static class HubHost
     public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
+        // Pass 2, finding 5: a port file that exists while the lock is held must always belong to the
+        // hub that holds the lock, never a previous run's. Deleted immediately after the lock is taken;
+        // ApplicationStarted below writes the real bound port once it is known.
+        try { File.Delete(Path.Combine(options.DataDir, HubPortFile.FileName)); }
+        catch (IOException) { /* best-effort: a missing or momentarily-locked file is not fatal here */ }
         try
         {
             var builder = WebApplication.CreateBuilder();
@@ -61,7 +66,10 @@ public static class HubHost
             // below (tokens, instructions, tools) sees the same list. Editing rows takes effect at
             // the next hub start.
             var roster = participants.List();
-            var tokens = TokenStore.Load(options.DataDir, roster);
+            var tokens = TokenStore.Load(options.DataDir, roster, options.ShellToken);
+            // Row 12: ProcessRunner inherits this process's environment into every spawn; the shell's
+            // owner bearer must not ride along. Scrubbed here, before any spawn can exist.
+            Environment.SetEnvironmentVariable(HubOptions.ShellTokenEnvVar, null);
             var messages = new MessageStore(db);
             // Row 28 ticket 3: a host-config file generated before this shipped (or hand-edited) may
             // still carry a real bearer. Never lets a rewrite failure stop the hub (AC4) - a locked

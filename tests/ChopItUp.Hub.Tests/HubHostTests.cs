@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Hosting;
@@ -167,6 +168,17 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Equal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "ChopItUp", "rooms"), defaults.RoomsRootPath);
 
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rooms-root"], _ => null));
+    }
+
+    /// <summary>Row 12: the shell's owner bearer is read from the environment only — never a CLI
+    /// argument, so it never shows up in a process listing.</summary>
+    [Fact]
+    public void Parse_reads_the_shell_token_from_the_environment_only()
+    {
+        var env = new Dictionary<string, string?> { ["CHOPITUP_SHELL_TOKEN"] = "abc" };
+        var o = HubOptions.Parse(["--data", "x"], k => env.GetValueOrDefault(k));
+        Assert.Equal("abc", o.ShellToken);
+        Assert.Null(HubOptions.Parse(["--data", "x"], _ => null).ShellToken);
     }
 
     [Fact]
@@ -365,5 +377,53 @@ public sealed class HubHostTests : IAsyncLifetime
         using var req = new HttpRequestMessage(HttpMethod.Get, "/health") { Headers = { Host = $"{host}:{_host.BaseAddress.Port}" } };
         var res = await _host.Client.SendAsync(req);
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    // --- Row 12: CHOPITUP_SHELL_TOKEN, the desktop shell's launch-scoped owner bearer ----------
+
+    /// <summary>B2: ProcessRunner inherits this process's environment into every spawn, so the shell's
+    /// owner bearer must not ride along — HubHost.Build scrubs it from the process environment before
+    /// anything can spawn.</summary>
+    [Fact]
+    public async Task Build_scrubs_the_shell_token_from_the_process_environment()
+    {
+        Environment.SetEnvironmentVariable(HubOptions.ShellTokenEnvVar, "scrub-me");
+        try
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "chopitup_scrub_" + Guid.NewGuid().ToString("N"));
+            await using var host = await HubTestHost.StartAsync(dir);
+            Assert.Null(Environment.GetEnvironmentVariable(HubOptions.ShellTokenEnvVar));
+        }
+        finally { Environment.SetEnvironmentVariable(HubOptions.ShellTokenEnvVar, null); }
+    }
+
+    [Fact]
+    public async Task A_shell_token_authenticates_an_owner_write()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_shelltok_" + Guid.NewGuid().ToString("N"));
+        await using var host = await HubTestHost.StartAsync(dir, shellToken: "launch-token");
+        var client = host.Client;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "launch-token");
+        var res = await client.PostAsJsonAsync("api/rooms/general/messages", new { body = "hello from the shell" });
+        Assert.Equal(HttpStatusCode.Created, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(ChopDb.OwnerParticipantId, body.GetProperty("authorId").GetString());
+    }
+
+    /// <summary>Pass 2, finding 5: a port file that exists while the lock is held must always belong
+    /// to the current hub, never a previous run's. HubHost.Build deletes it right after taking the
+    /// lock; ApplicationStarted then writes the real bound port.</summary>
+    [Fact]
+    public async Task Hub_port_file_is_deleted_at_lock_acquire_so_a_stale_value_never_survives_start()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_port_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, HubPortFile.FileName), "1");
+
+        await using var host = await HubTestHost.StartAsync(dir);
+
+        var bound = HubPortFile.Read(dir);
+        Assert.NotEqual(1, bound);
+        Assert.Equal(host.BaseAddress.Port, bound);
     }
 }

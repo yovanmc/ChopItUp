@@ -117,6 +117,33 @@ public sealed class TokenStoreTests : IDisposable
         Assert.DoesNotContain(ChopDb.HubParticipantId, missing);  // system: never has a token
     }
 
+    /// <summary>Row 12 B2: the desktop shell's launch-scoped owner bearer resolves to the owner
+    /// participant, is never written to tokens.json, and is not counted as a credential (it is not a
+    /// participant's own token).</summary>
+    [Fact]
+    public void Load_with_shell_owner_token_resolves_it_to_owner_and_writes_nothing()
+    {
+        var roster = ChopDb.SeedRoster;
+        var first = TokenStore.Load(_dir, roster);   // mints and writes tokens.json
+        var before = File.ReadAllBytes(Path.Combine(_dir, TokenStore.FileName));
+
+        var store = TokenStore.Load(_dir, roster, shellOwnerToken: "shell-launch-token");
+        var after = File.ReadAllBytes(Path.Combine(_dir, TokenStore.FileName));
+
+        Assert.True(store.TryResolve("shell-launch-token", out var who));
+        Assert.Equal(ChopDb.OwnerParticipantId, who);
+        Assert.Equal(before, after);
+        Assert.Equal(first.Count, store.Count);   // the shell token is not a participant credential
+        Assert.False(first.TryResolve("shell-launch-token", out _));
+    }
+
+    [Fact]
+    public void Load_without_shell_owner_token_refuses_it()
+    {
+        var store = TokenStore.Load(_dir, ChopDb.SeedRoster, shellOwnerToken: null);
+        Assert.False(store.TryResolve("shell-launch-token", out _));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
