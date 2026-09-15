@@ -37,6 +37,11 @@ public sealed class Exchange
     public OrderedDictionary<string, PendingSpawn> Pending { get; } = new(StringComparer.Ordinal);
     public HashSet<string> InFlight { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Every participant this exchange ever accepted a turn for, launched or still pending.
+    /// An owner prompt that mentions one of them supersedes the exchange; a prompt that mentions none of
+    /// them runs beside it.</summary>
+    public HashSet<string> Participants { get; } = new(StringComparer.Ordinal);
+
     /// <summary>The skill in force for every spawn of this exchange (row 11, D-b): set once when the
     /// exchange opens and never changed, so turn 4 answers the same instruction as turn 1.</summary>
     public ResolvedSkill? Skill { get; init; }

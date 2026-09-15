@@ -132,6 +132,26 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
+    public async Task R32_a_directory_room_runs_one_spawn_at_a_time_across_two_exchanges()
+    {
+        await MakeRoom("lab");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "opus") await release.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"type":"result","result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab", "@opus task A");
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        await PostAsOwnerIn("lab", "@gpt-6-astra task B");
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));                    // B waits for A's spawn
+        Assert.Equal(["open", "open"], Spawner.Snapshot("lab").Exchanges!.Select(e => e.Status));
+        release.SetResult();
+        Assert.Equal("gpt-6-astra", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+    }
+
+    [Fact]
     public async Task M9_A6_a_codex_spawn_in_a_directory_room_gets_the_room_as_its_workspace_and_json_output()
     {
         var dir = await MakeRoom("lab");

@@ -95,6 +95,10 @@ There's no stop button yet (that's row 16). Until then, stop an open exchange wi
 
     Invoke-RestMethod -Method Post http://127.0.0.1:8790/api/rooms/general/exchange/stop
 
+That stop ends every exchange in the room. To stop one exchange and leave the others in the room
+running, POST to `/api/rooms/<room>/exchanges/<root message id>/stop` (the id is in the `exchanges`
+list of `GET /api/rooms/<room>/exchange`).
+
 A `claude` spawn runs `claude.exe -p` with the prompt on stdin and its token in a per-spawn
 `mcp.json`, never `--bare`, which switches auth to an API key. A `codex` spawn runs `codex.cmd exec`
 (a PATH shim, not an `.exe`) with the prompt on stdin and its token in `CHOPITUP_TOKEN`.

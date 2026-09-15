@@ -489,7 +489,7 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
-    public async Task Run06_outside_a_run_an_owner_post_still_supersedes()
+    public async Task Run06_outside_a_run_an_overlapping_owner_post_still_supersedes()
     {
         // The regression F-23 asks to keep: task 4's step 3 already returns for a run; this room
         // never has one, so the pre-row-19 supersede path is exactly what runs.
@@ -501,10 +501,43 @@ public sealed partial class SpawnerServiceTests
         };
         await PostAsOwner("@opus think slowly");
         await _runner.NextSpecAsync(Wait);
-        await PostAsOwner("never mind");
-        await Task.Delay(300);
-        Assert.Equal("superseded", Spawner.Snapshot("general").Status);
+        await PostAsOwner("/nope @opus");
+        await WaitForStatus("superseded");
         release.SetResult();
+    }
+
+    [Fact]
+    public async Task R32_a_run_room_never_launches_a_turn_left_queued_in_an_older_run_exchange()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-r32-orphan");
+        int sonnetRuns = 0, opusRuns = 0;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "sonnet" when Interlocked.Increment(ref sonnetRuns) == 1:
+                    await PostAsIn("sonnet", "lab-r32-orphan", "phase: build @opus write it");
+                    break;
+                case "sonnet":
+                    await PostAsIn("sonnet", "lab-r32-orphan", "phase: build @opus again");
+                    break;
+                case "opus" when Interlocked.Increment(ref opusRuns) == 1:
+                    await PostAsIn("opus", "lab-r32-orphan", "@sonnet @fable done");
+                    break;
+                case "opus":
+                    try { await Task.Delay(Timeout.Infinite, ct); } catch (OperationCanceledException) { }
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+        await PostAsOwnerIn("lab-r32-orphan", "/build-thing @sonnet begin");
+        foreach (var who in new[] { "sonnet", "opus", "sonnet", "opus" })
+            Assert.Equal(who, FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // fable never launches while the run is active
+        await PostAsOwnerIn("lab-r32-orphan", "/stop");
+        await WaitForMessageIn("lab-r32-orphan", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("ended"));
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));          // nor after it ends
     }
 
     // --- Task 9 (row 19): caps, park semantics, the stall wake, restart and resume (ticket 09) ----
@@ -1106,5 +1139,33 @@ public sealed partial class SpawnerServiceTests
 
         Assert.Equal(["--effort", "high"], (await fable.Task.WaitAsync(Wait)).TakeLast(2));
         Assert.DoesNotContain("--effort", await sonnet.Task.WaitAsync(Wait));
+    }
+
+    [Fact]
+    public async Task R32_the_per_exchange_stop_refuses_while_a_run_is_active_or_parked()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-r32-stop");
+        var misbehave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await misbehave.Task.WaitAsync(ct);   // the in-run timeout is RunLimits' 30 min, not the fixture's 1 s
+                await PostAsIn("sonnet", "lab-r32-stop", "no phase tag at all, first bad post");
+                await PostAsIn("sonnet", "lab-r32-stop", "still no phase tag, second bad post");
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+        await PostAsOwnerIn("lab-r32-stop", "/build-thing @sonnet begin");
+        await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab-r32-stop").RootMessageId!.Value;
+        Assert.Equal(RunStatus.Active, Runs.Active("lab-r32-stop")!.Status);
+        Assert.Equal(ExchangeStopOutcome.RunOwnsRoom, (await Spawner.StopExchangeAsync("lab-r32-stop", root)).Outcome);
+
+        misbehave.SetResult();
+        await WaitForMessageIn("lab-r32-stop", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("parked"));
+        Assert.Equal(RunStatus.Parked, Runs.Latest("lab-r32-stop")!.Status);
+        Assert.Equal(ExchangeStopOutcome.RunOwnsRoom, (await Spawner.StopExchangeAsync("lab-r32-stop", root)).Outcome);
     }
 }

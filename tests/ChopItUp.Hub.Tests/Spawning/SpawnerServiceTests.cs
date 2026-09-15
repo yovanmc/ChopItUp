@@ -234,20 +234,24 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A6_an_owner_message_mid_exchange_lets_the_running_spawn_finish_ignores_its_mentions_and_re_roots()
+    public async Task A6_an_overlapping_owner_message_mid_exchange_lets_the_running_spawn_finish_ignores_its_mentions_and_re_roots()
     {
         var releaseOpus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseGpt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var opusRuns = 0;
         _runner.Handler = async (spec, _, ct) =>
         {
             switch (FakeProcessRunner.ParticipantOf(spec))
             {
-                case "opus":
+                case "opus" when Interlocked.Increment(ref opusRuns) == 1:
                     await releaseOpus.Task.WaitAsync(ct);
                     await PostAs("opus", "late: @sonnet @fable please");
                     break;
+                case "opus":
+                    await PostAs("opus", "second take, done");
+                    break;
                 case "gpt-5.5":
-                    await releaseGpt.Task.WaitAsync(ct);   // keeps the NEW exchange open while opus posts late
+                    await releaseGpt.Task.WaitAsync(ct);   // keeps the NEW exchange open while the old opus posts late
                     await PostAs("gpt-5.5", "taken, done");
                     break;
             }
@@ -256,27 +260,27 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
 
         await PostAsOwner("@opus think slowly");
         await _runner.NextSpecAsync(Wait);
-        await PostAsOwner("@gpt-5.5 actually, you take it");
+        await PostAsOwner("@opus @gpt-5.5 actually, both of you");
         var gpt = await _runner.NextSpecAsync(Wait);
-        Assert.Equal("gpt-5.5", FakeProcessRunner.ParticipantOf(gpt));
+        Assert.Equal("gpt-5.5", FakeProcessRunner.ParticipantOf(gpt));                // the new opus waits for the old one
         var snap = Spawner.Snapshot("general");
         Assert.Equal("open", snap.Status);
         Assert.Equal(2, snap.RootMessageId);
-        Assert.Equal(1, snap.TurnsCommitted);
+        Assert.Equal(2, snap.TurnsCommitted);
+        Assert.Equal("superseded", snap.Exchanges![0].Status);
 
         releaseOpus.SetResult();
-        await WaitForMessage(m => m.Author == "opus");
-        await Task.Delay(300);                                                        // let the loop process the post
+        var opus2 = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(opus2));                 // exchange 2's own opus turn
+        await Task.Delay(300);
         var after = Spawner.Snapshot("general");
-        Assert.Equal("open", after.Status);                                           // gpt-5.5 still in flight
-        Assert.Equal(1, after.TurnsCommitted);                                        // opus's @sonnet @fable bought nothing (B2)
-        Assert.Empty(after.Pending);
+        Assert.Equal(2, after.TurnsCommitted);                                        // the old opus's @sonnet @fable bought nothing (B2)
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
 
         releaseGpt.SetResult();
         var final = await WaitForStatus("concluded");
         Assert.Equal(2, final.RootMessageId);
-        Assert.Equal(1, final.TurnsUsed);
+        Assert.Equal(2, final.TurnsUsed);
         Assert.Single(await Messages(), m => m.Body.StartsWith("Exchange concluded"));
     }
 
@@ -432,8 +436,9 @@ public sealed partial class SpawnerServiceTests
     [Fact]
     public async Task A6_stop_reaches_a_spawn_whose_exchange_was_superseded_and_the_room_shows_it_until_then()
     {
-        // Owner: "@opus …" (opus runs long) then "never mind" (no mention): the exchange is superseded,
-        // nothing new opens, opus is still a live process. GET must show it; stop must kill it (M1).
+        // Owner: "@opus …" (opus runs long) then "/nope @opus" (an unknown skill naming opus): the
+        // exchange is superseded, nothing new opens, opus is still a live process. GET must show it;
+        // stop must kill it (M1).
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken seen = default;
         _runner.Handler = async (spec, _, ct) =>
@@ -449,10 +454,8 @@ public sealed partial class SpawnerServiceTests
         await PostAsOwner("@opus think slowly");
         await _runner.NextSpecAsync(Wait);
         await started.Task.WaitAsync(Wait);
-        await PostAsOwner("never mind");
-        await Task.Delay(300);
-        var snap = Spawner.Snapshot("general");
-        Assert.Equal("superseded", snap.Status);
+        await PostAsOwner("/nope @opus");
+        var snap = await WaitForStatus("superseded");
         Assert.Equal(["opus"], snap.InFlight);
 
         var stopped = await Spawner.StopAsync("general");
@@ -489,6 +492,144 @@ public sealed partial class SpawnerServiceTests
         var spec = await runner.NextSpecAsync(Wait);
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(spec));
         lock (recorded) Assert.Contains("claude", recorded);
+    }
+
+    [Fact]
+    public async Task R32_two_disjoint_owner_prompts_run_side_by_side_and_each_spawn_feeds_its_own_exchange()
+    {
+        var releaseOpus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseGpt = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus":
+                    await releaseOpus.Task.WaitAsync(ct);
+                    await PostAs("opus", "@sonnet check my work");
+                    break;
+                case "gpt-5.5":
+                    await releaseGpt.Task.WaitAsync(ct);
+                    await PostAs("gpt-5.5", "done");
+                    break;
+                default:
+                    await PostAs(FakeProcessRunner.ParticipantOf(spec), "ok");
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwner("@opus task A");
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        await PostAsOwner("@gpt-5.5 task B");
+        Assert.Equal("gpt-5.5", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // both in flight at once
+
+        foreach (var _ in Enumerable.Range(0, 100))                                     // the launch's Publish can trail the queued spec
+        {
+            if (Spawner.Snapshot("general").Exchanges!.Sum(e => e.InFlight.Count) == 2) break;
+            await Task.Delay(50);
+        }
+        var both = Spawner.Snapshot("general");
+        Assert.Equal(["open", "open"], both.Exchanges!.Select(e => e.Status));
+        Assert.Equal(new[] { "opus", "gpt-5.5" }, both.Exchanges!.SelectMany(e => e.InFlight).ToArray());   // each exchange owns its one spawn
+
+        releaseOpus.SetResult();
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        var mid = Spawner.Snapshot("general");
+        var first = mid.Exchanges!.Single(e => e.RootMessageId != mid.RootMessageId);
+        var second = mid.Exchanges!.Single(e => e.RootMessageId == mid.RootMessageId);
+        Assert.Equal(2, first.TurnsCommitted);                                          // opus + sonnet, in A
+        Assert.Equal(1, second.TurnsCommitted);                                         // B untouched
+
+        releaseGpt.SetResult();
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if (Spawner.Snapshot("general").Exchanges!.All(e => e.Status == "concluded")) break;
+            await Task.Delay(50);
+        }
+        Assert.All(Spawner.Snapshot("general").Exchanges!, e => Assert.Equal("concluded", e.Status));
+        Assert.Equal(2, (await Messages()).Count(m => m.Body.StartsWith("Exchange concluded")));
+
+        await PostAsOwner("@fable task C");                                             // opening a third prunes the two closed, spawn-less ones
+        Assert.Equal("fable", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        Assert.Single(Spawner.Snapshot("general").Exchanges!);
+    }
+
+    [Fact]
+    public async Task R32_an_app_backed_post_joins_the_open_exchange_involving_a_model_it_mentions()
+    {
+        // Hang on the cancellation token only: the fixture's 1 s timeout must never close an exchange mid-test.
+        _runner.Handler = async (_, _, ct) =>
+        {
+            try { await Task.Delay(Timeout.Infinite, ct); } catch (OperationCanceledException) { }
+            return new ProcessResult(null, false, true, "", "", TimeSpan.Zero);
+        };
+        await PostAsOwner("@opus task A");
+        await _runner.NextSpecAsync(Wait);
+        await PostAsOwner("@gpt-5.5 task B");
+        await _runner.NextSpecAsync(Wait);
+
+        await PostAs("claude", "@opus a thought for you, and @sonnet too");
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // sonnet launches in A
+        ExchangeView ViewAt(int i) => Spawner.Snapshot("general").Exchanges![i];
+        foreach (var _ in Enumerable.Range(0, 100)) { if (ViewAt(0).TurnsCommitted == 3) break; await Task.Delay(50); }
+        Assert.Equal(3, ViewAt(0).TurnsCommitted);                                      // opus, then opus again (queued behind its own spawn) and sonnet
+        Assert.Contains("opus", ViewAt(0).Pending);
+        Assert.Equal(1, ViewAt(1).TurnsCommitted);                                      // B untouched
+
+        await PostAs("codex", "@fable anyone?");                                        // no overlap: the newest open exchange
+        Assert.Equal("fable", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        foreach (var _ in Enumerable.Range(0, 100)) { if (ViewAt(1).TurnsCommitted == 2) break; await Task.Delay(50); }
+        Assert.Equal(2, ViewAt(1).TurnsCommitted);
+        Assert.Equal(3, ViewAt(0).TurnsCommitted);
+        await Spawner.StopAsync("general");
+    }
+
+    [Fact]
+    public async Task R32_stopping_one_exchange_kills_only_its_own_spawn_and_reaches_a_superseded_one()
+    {
+        // Hang on the cancellation token only, so the list records cancellations and never the fixture's 1 s timeout.
+        var cancelled = new List<string>();
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { lock (cancelled) cancelled.Add(FakeProcessRunner.ParticipantOf(spec)); }
+            return new ProcessResult(null, false, true, "", "", TimeSpan.Zero);
+        };
+        await PostAsOwner("@opus task A");
+        await _runner.NextSpecAsync(Wait);
+        await PostAsOwner("@gpt-5.5 task B");
+        await _runner.NextSpecAsync(Wait);
+        var snap = Spawner.Snapshot("general");
+        var a = snap.Exchanges![0].RootMessageId;
+        var b = snap.Exchanges![1].RootMessageId;
+
+        Assert.Equal(ExchangeStopOutcome.NotFound, (await Spawner.StopExchangeAsync("general", 999_999)).Outcome);
+
+        var (outcome, afterA) = await Spawner.StopExchangeAsync("general", a);
+        Assert.Equal(ExchangeStopOutcome.Stopped, outcome);
+        Assert.Equal("stopped", afterA!.Exchanges!.Single(e => e.RootMessageId == a).Status);
+        Assert.Equal("open", afterA.Exchanges!.Single(e => e.RootMessageId == b).Status);
+        foreach (var _ in Enumerable.Range(0, 100)) { lock (cancelled) if (cancelled.Count > 0) break; await Task.Delay(50); }
+        lock (cancelled) Assert.Equal(["opus"], cancelled);
+
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if (Spawner.Snapshot("general").InFlight.SequenceEqual(["gpt-5.5"])) break;
+            await Task.Delay(50);
+        }
+        Assert.Equal(ExchangeStopOutcome.NothingToStop, (await Spawner.StopExchangeAsync("general", a)).Outcome);
+
+        // A superseded exchange with a live spawn is still stoppable on its own.
+        await PostAsOwner("/nope @gpt-5.5");
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if (Spawner.Snapshot("general").Exchanges!.Single(e => e.RootMessageId == b).Status == "superseded") break;
+            await Task.Delay(50);
+        }
+        Assert.Equal("superseded", Spawner.Snapshot("general").Exchanges!.Single(e => e.RootMessageId == b).Status);
+        Assert.Equal(ExchangeStopOutcome.Stopped, (await Spawner.StopExchangeAsync("general", b)).Outcome);
+        foreach (var _ in Enumerable.Range(0, 100)) { lock (cancelled) if (cancelled.Count > 1) break; await Task.Delay(50); }
+        lock (cancelled) Assert.Equal(["opus", "gpt-5.5"], cancelled);
     }
 }
 
