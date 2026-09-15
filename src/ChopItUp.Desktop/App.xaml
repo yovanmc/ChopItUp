@@ -1,0 +1,6 @@
+<Application x:Class="ChopItUp.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Row 12 T2: no StartupUri. The window is built after the hub-start-or-attach decision (Task 5);
+         until then OnStartup only parses the command line. -->
+</Application>
