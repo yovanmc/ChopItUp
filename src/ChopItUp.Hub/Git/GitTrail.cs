@@ -16,12 +16,24 @@ public sealed record TrailCommit(string Hash, string Author, DateTimeOffset At, 
 /// the commit that was made (0 for an empty one).</summary>
 public sealed record CommitOutcome(string? Hash, bool Created, int FilesChanged, string? Reason);
 
+/// <summary>How a <see cref="GitTrail.MergeAsync"/> call ended: a merge commit was made
+/// (<see cref="Merged"/>), it conflicted and was aborted (<see cref="Conflict"/>), or it failed for
+/// some other reason and was also aborted when a merge was left in progress (<see cref="Failed"/>).</summary>
+public enum MergeResult { Merged, Conflict, Failed }
+
+/// <summary><see cref="Hash"/> is the merge commit's HEAD, set only for <see cref="MergeResult.Merged"/>.
+/// <see cref="Conflicts"/> lists the conflicting paths, set only for <see cref="MergeResult.Conflict"/>.
+/// <see cref="Reason"/> is set for <see cref="MergeResult.Failed"/> (and for a failed abort of an
+/// otherwise-conflicting merge).</summary>
+public sealed record MergeOutcome(MergeResult Result, string? Hash, IReadOnlyList<string> Conflicts, string? Reason);
+
 /// <summary>One git working tree the hub commits into - the memory store (D15) and every room
 /// directory (D11). Generalised from M10's MemoryGit: the committer is always the hub, the author is
 /// whoever the caller says (a spawned model, the owner). git is resolved directly (a real git.exe on
 /// PATH), not through the spawner's CliLocator seam, so hub tests exercise the real trail (M10
 /// decision 4). Nothing here throws: a failure is a null/false/empty result with <see cref="Reason"/>
-/// set and one line in the hub log. Serialised per instance - one tree, one writer at a time.</summary>
+/// set and one line in the hub log. Serialised per repository - every trail made by <see cref="WithRoot"/>
+/// shares the gate.</summary>
 public class GitTrail
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
@@ -35,18 +47,31 @@ public class GitTrail
 
     private readonly Func<ResolvedCli> _resolve;
     private readonly IProcessRunner _runner;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _gate;
     private ResolvedCli? _git;
     private bool _unavailable;
 
     public GitTrail(string root, Func<ResolvedCli>? resolve = null, IProcessRunner? runner = null)
+        : this(root, resolve, runner, new SemaphoreSlim(1, 1)) { }
+
+    private GitTrail(string root, Func<ResolvedCli>? resolve, IProcessRunner? runner, SemaphoreSlim gate)
     {
         Root = Path.GetFullPath(root);
         _resolve = resolve ?? (() => CliResolver.Resolve("git"));
         _runner = runner ?? new ProcessRunner();
+        _gate = gate;
     }
 
     public string Root { get; }
+
+    /// <summary>A trail over <paramref name="root"/> (a linked worktree of this repository) that shares
+    /// this trail's git resolver, process runner and write gate: every write to one repository, from any
+    /// of its worktrees, goes through one gate.</summary>
+    public GitTrail WithRoot(string root) => new(root, _resolve, _runner, _gate);
+
+    /// <summary>True when <see cref="Root"/> holds a repository entry: a `.git` folder (a main tree) or
+    /// a `.git` file (a linked worktree, whose `.git` names the real one).</summary>
+    private bool HasGitEntry() => Directory.Exists(Path.Combine(Root, ".git")) || File.Exists(Path.Combine(Root, ".git"));
 
     /// <summary>Why the last call failed; null after a success.</summary>
     public string? Reason { get; private set; }
@@ -78,7 +103,7 @@ public class GitTrail
             var git = Resolve();
             if (git is null) return false;
             Directory.CreateDirectory(Root);
-            if (Directory.Exists(Path.Combine(Root, ".git"))) { Reason = null; return true; }
+            if (HasGitEntry()) { Reason = null; return true; }
             var init = await Run(git, ["init", "-q"], "", cancellation);
             if (init.ExitCode != 0) { Fail("git init", init); return false; }
             Reason = null;
@@ -92,7 +117,7 @@ public class GitTrail
     public async Task<string?> HeadAsync(CancellationToken cancellation = default)
     {
         var git = Resolve();
-        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return null;
+        if (git is null || !HasGitEntry()) return null;
         return await HeadUnlocked(git, logFailure: false, cancellation);
     }
 
@@ -101,7 +126,7 @@ public class GitTrail
     public async Task<bool> IsDirtyAsync(CancellationToken cancellation = default)
     {
         var git = Resolve();
-        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return false;
+        if (git is null || !HasGitEntry()) return false;
         var r = await Run(git, ["status", "--porcelain"], "", cancellation);
         if (r.ExitCode != 0) { Fail("git status", r); return false; }
         Reason = null;
@@ -121,10 +146,16 @@ public class GitTrail
             var git = Resolve();
             if (git is null) return new(null, false, 0, Reason);
             Directory.CreateDirectory(Root);
-            if (!Directory.Exists(Path.Combine(Root, ".git")))
+            if (!HasGitEntry())
             {
                 var init = await Run(git, ["init", "-q"], "", cancellation);
                 if (init.ExitCode != 0) return new(null, false, 0, Fail("git init", init));
+            }
+            if (await OperationInProgressUnlocked(git, cancellation) is { } op)
+            {
+                Reason = $"a {op} is in progress in {Root}; nothing was committed";
+                Console.Error.WriteLine($"{LogName}: {Reason}");
+                return new(null, false, 0, Reason);
             }
             var add = await Run(git, ["add", "-A", "--", "."], "", cancellation);
             if (add.ExitCode != 0) return new(null, false, 0, Fail("git add", add));
@@ -158,7 +189,7 @@ public class GitTrail
     public async Task<IReadOnlyList<TrailCommit>> LogAsync(int limit, CancellationToken cancellation = default)
     {
         var git = Resolve();
-        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return [];
+        if (git is null || !HasGitEntry()) return [];
         var format = "--format=%h" + FieldSep + "%an <%ae>" + FieldSep + "%aI" + FieldSep + "%s";
         var r = await Run(git, ["log", format, "-n", Math.Clamp(limit, 1, 200).ToString(CultureInfo.InvariantCulture)], "", cancellation);
         if (r.ExitCode != 0)
@@ -185,7 +216,7 @@ public class GitTrail
     public async Task<IReadOnlyList<string>> ChangedFilesAsync(string range, CancellationToken cancellation = default)
     {
         var git = Resolve();
-        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return [];
+        if (git is null || !HasGitEntry()) return [];
         var r = await Run(git, ["diff", "--name-only", range], "", cancellation);
         if (r.ExitCode != 0) { Fail("git diff", r); return []; }
         Reason = null;
@@ -198,11 +229,247 @@ public class GitTrail
     public async Task<IReadOnlyList<string>> ChangedFilesInAsync(string commitHash, CancellationToken cancellation = default)
     {
         var git = Resolve();
-        if (git is null || !Directory.Exists(Path.Combine(Root, ".git"))) return [];
+        if (git is null || !HasGitEntry()) return [];
         var r = await Run(git, ["show", "--name-only", "--pretty=format:", commitHash], "", cancellation);
         if (r.ExitCode != 0) { Fail("git show", r); return []; }
         Reason = null;
         return r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    // --- Row 35: worktree, merge and branch primitives ----------------------------------------------
+
+    /// <summary>True when <see cref="Root"/> has at least one commit (HEAD is not unborn); false,
+    /// quietly, otherwise or when git/the repository is unavailable.</summary>
+    public async Task<bool> HasCommitsAsync(CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return false;
+        var r = await Run(git, ["rev-parse", "--verify", "-q", "HEAD"], "", cancellation);
+        return r.ExitCode == 0;
+    }
+
+    /// <summary>The branch checked out at <see cref="Root"/>, or null when HEAD is detached or unborn,
+    /// or git/the repository is unavailable - none of those are failures worth a <see cref="Reason"/>.</summary>
+    public async Task<string?> CurrentBranchAsync(CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return null;
+        var r = await Run(git, ["symbolic-ref", "-q", "--short", "HEAD"], "", cancellation);
+        return r.ExitCode == 0 ? r.StandardOutput.Trim() : null;
+    }
+
+    /// <summary>True when <paramref name="branch"/> exists as a local branch (`refs/heads/&lt;branch&gt;`).</summary>
+    public async Task<bool> BranchExistsAsync(string branch, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return false;
+        var r = await Run(git, ["rev-parse", "--verify", "-q", "refs/heads/" + branch], "", cancellation);
+        return r.ExitCode == 0;
+    }
+
+    /// <summary>True when <paramref name="branch"/>'s tip is an ancestor of HEAD - it has nothing left
+    /// to merge (already contained).</summary>
+    public async Task<bool> IsAncestorOfHeadAsync(string branch, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return false;
+        var r = await Run(git, ["merge-base", "--is-ancestor", "refs/heads/" + branch, "HEAD"], "", cancellation);
+        return r.ExitCode == 0;
+    }
+
+    /// <summary>Adds a linked worktree at <paramref name="path"/> checked out to <paramref name="branch"/>
+    /// - a new branch from HEAD when <paramref name="newBranch"/>, otherwise an existing one. Null on
+    /// success, else the failure text (also left in <see cref="Reason"/>).</summary>
+    public async Task<string?> AddWorktreeAsync(string path, string branch, bool newBranch, CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return Reason;
+            var full = Path.GetFullPath(path);
+            var args = newBranch
+                ? new List<string> { "worktree", "add", "-q", "-b", branch, full }
+                : new List<string> { "worktree", "add", "-q", full, branch };
+            var r = await Run(git, args, "", cancellation);
+            if (r.ExitCode != 0) return Fail("git worktree add", r);
+            Reason = null;
+            return null;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Removes a linked worktree (never <c>--force</c>: a dirty worktree is refused, not
+    /// discarded). Null on success, else the failure text.</summary>
+    public async Task<string?> RemoveWorktreeAsync(string path, CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return Reason;
+            var r = await Run(git, ["worktree", "remove", Path.GetFullPath(path)], "", cancellation);
+            if (r.ExitCode != 0) return Fail("git worktree remove", r);
+            Reason = null;
+            return null;
+        }
+        finally { _gate.Release(); }
+    }
+
+    private static readonly (string GitPath, string Name)[] InProgressMarkers =
+    [
+        ("MERGE_HEAD", "merge"),
+        ("CHERRY_PICK_HEAD", "cherry-pick"),
+        ("REVERT_HEAD", "revert"),
+        ("rebase-merge", "rebase"),
+        ("rebase-apply", "rebase"),
+    ];
+
+    /// <summary>The gated version of <see cref="OperationInProgressAsync"/>: a caller that already holds
+    /// the gate (a commit, a merge) calls this instead of deadlocking on it.</summary>
+    private async Task<string?> OperationInProgressUnlocked(ResolvedCli git, CancellationToken cancellation)
+    {
+        foreach (var (marker, name) in InProgressMarkers)
+        {
+            var p = await Run(git, ["rev-parse", "--git-path", marker], "", cancellation);
+            if (p.ExitCode != 0) continue;
+            var text = p.StandardOutput.Trim();
+            var full = Path.IsPathRooted(text) ? text : Path.Combine(Root, text);
+            if (File.Exists(full) || Directory.Exists(full)) return name;
+        }
+        var unmerged = await Run(git, ["ls-files", "-u"], "", cancellation);
+        return unmerged.ExitCode == 0 && unmerged.StandardOutput.Trim().Length > 0 ? "unmerged paths" : null;
+    }
+
+    /// <summary>The short name of the repository operation in progress at <see cref="Root"/> (`"merge"`,
+    /// `"cherry-pick"`, `"revert"`, `"rebase"`, `"unmerged paths"`), or null when none is. A commit or a
+    /// merge over one of these would finalise it with conflict markers still in the tree (row 35).</summary>
+    public async Task<string?> OperationInProgressAsync(CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return null;
+        return await OperationInProgressUnlocked(git, cancellation);
+    }
+
+    /// <summary>Every worktree of the repository at <see cref="Root"/>, main tree first, via
+    /// `worktree list --porcelain`. Empty on failure or when git/the repository is unavailable.</summary>
+    public async Task<IReadOnlyList<string>> WorktreePathsAsync(CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return [];
+        var r = await Run(git, ["worktree", "list", "--porcelain"], "", cancellation);
+        if (r.ExitCode != 0) { Fail("git worktree list", r); return []; }
+        Reason = null;
+        var paths = new List<string>();
+        foreach (var line in r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (line.StartsWith("worktree ", StringComparison.Ordinal))
+                paths.Add(Path.GetFullPath(line["worktree ".Length..].Replace('/', '\\')));
+        return paths;
+    }
+
+    /// <summary>Removes administrative data for worktrees whose folder is gone (`worktree prune`);
+    /// quiet on failure (git's own reason is logged by <see cref="Fail"/>).</summary>
+    public async Task PruneWorktreesAsync(CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return;
+            var r = await Run(git, ["worktree", "prune"], "", cancellation);
+            if (r.ExitCode != 0) Fail("git worktree prune", r); else Reason = null;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Merges <paramref name="branch"/> into HEAD with `--no-ff`, committed as the hub
+    /// (<see cref="Committer"/>). A conflicting or otherwise-failing merge is aborted before returning,
+    /// so <see cref="Root"/>'s HEAD and working tree are exactly what they were before the call.</summary>
+    public async Task<MergeOutcome> MergeAsync(string branch, string message, CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return new(MergeResult.Failed, null, [], Reason);
+            if (await OperationInProgressUnlocked(git, cancellation) is { } already)
+                return new(MergeResult.Failed, null, [], $"a {already} is already in progress");
+            var args = new List<string>(Committer) { "merge", "--no-ff", "-m", message, branch };
+            var r = await Run(git, args, "", cancellation);
+            if (r.ExitCode == 0)
+            {
+                Reason = null;
+                return new(MergeResult.Merged, await HeadUnlocked(git, logFailure: true, cancellation), [], null);
+            }
+            var diff = await Run(git, ["diff", "--name-only", "--diff-filter=U"], "", cancellation);
+            var paths = diff.ExitCode == 0
+                ? diff.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+                : new List<string>();
+            var head = await Run(git, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], "", cancellation);
+            if (head.ExitCode == 0)
+            {
+                var abort = await Run(git, ["merge", "--abort"], "", cancellation);
+                if (abort.ExitCode != 0) return new(MergeResult.Failed, null, paths, Fail("git merge --abort", abort));
+            }
+            if (paths.Count > 0) { Reason = null; return new(MergeResult.Conflict, null, paths, null); }
+            return new(MergeResult.Failed, null, [], Fail("git merge", r));
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Deletes a fully-merged local branch (`branch -d`, never `-D`: an unmerged branch is
+    /// refused, not force-deleted). Null on success, else the failure text.</summary>
+    public async Task<string?> DeleteMergedBranchAsync(string branch, CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return Reason;
+            var r = await Run(git, ["branch", "-d", branch], "", cancellation);
+            if (r.ExitCode != 0) return Fail("git branch -d", r);
+            Reason = null;
+            return null;
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Aborts a merge left in progress at <see cref="Root"/> ONLY when it is the hub's own
+    /// exchange merge - its message starts `Merge exchange #` and its `MERGE_HEAD` is the current tip
+    /// of some `chopitup/*` branch - never an owner's own conflicted merge, which is left exactly alone
+    /// (row 35, pass 2 F1). Null when nothing is in progress; otherwise `"aborted"`, the abort's failure
+    /// text, or `"left alone"`.</summary>
+    public async Task<string?> AbortStaleExchangeMergeAsync(CancellationToken cancellation = default)
+    {
+        await _gate.WaitAsync(cancellation);
+        try
+        {
+            var git = Resolve();
+            if (git is null) return null;
+            var head = await Run(git, ["rev-parse", "-q", "--verify", "MERGE_HEAD"], "", cancellation);
+            if (head.ExitCode != 0) return null;
+            var hash = head.StandardOutput.Trim();
+
+            var message = "";
+            var msgPath = await Run(git, ["rev-parse", "--git-path", "MERGE_MSG"], "", cancellation);
+            if (msgPath.ExitCode == 0)
+            {
+                var text = msgPath.StandardOutput.Trim();
+                var full = Path.IsPathRooted(text) ? text : Path.Combine(Root, text);
+                if (File.Exists(full)) message = File.ReadAllText(full);
+            }
+            var tips = await Run(git, ["for-each-ref", "--format=%(objectname)", "refs/heads/chopitup/"], "", cancellation);
+            var isHub = message.StartsWith("Merge exchange #", StringComparison.Ordinal)
+                && tips.ExitCode == 0
+                && tips.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Contains(hash, StringComparer.Ordinal);
+            if (!isHub) return "left alone";
+
+            var abort = await Run(git, ["merge", "--abort"], "", cancellation);
+            if (abort.ExitCode != 0) return Fail("git merge --abort", abort);
+            Reason = null;
+            return "aborted";
+        }
+        finally { _gate.Release(); }
     }
 
     private async Task<string?> HeadUnlocked(ResolvedCli git, bool logFailure, CancellationToken cancellation)
