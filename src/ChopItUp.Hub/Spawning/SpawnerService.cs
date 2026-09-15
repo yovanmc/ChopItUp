@@ -56,6 +56,8 @@ public sealed class SpawnerService : BackgroundService
     private sealed record StopEvent(string RoomId, TaskCompletionSource<ExchangeSnapshot?> Reply) : Event;
     private sealed record StopOneEvent(string RoomId, long RootMessageId, TaskCompletionSource<(ExchangeStopOutcome, ExchangeSnapshot?)> Reply) : Event;
     private sealed record TickEvent : Event;
+    // Row 35, Task 5: a worktree close finished off the loop thread; carries the note to post (or null).
+    private sealed record WorktreeClosedEvent(string RoomId, string? Note) : Event;
 
     /// <summary>What the trail did around one spawn in a directory room (M9 decision 6); null when the
     /// room has no directory. <see cref="Leased"/> (row 35) is true when the spawn body ran in a
@@ -137,6 +139,16 @@ public sealed class SpawnerService : BackgroundService
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCli> _clis = new(StringComparer.Ordinal);
     private CancellationTokenSource? _wake;
+    // Row 35, Task 5: worktree closes running off the loop thread, swept lazily in CloseIdleWorktrees
+    // and waited on (briefly) at shutdown.
+    private readonly List<Task> _closing = new();
+    /// <summary>Row 35: every exchange that launched in a worktree and has not been handed to a close
+    /// yet, whether or not it is still in its room's <see cref="_rooms"/> list (a run's <c>replaceAll</c>
+    /// can drop one while it is still open - it stays here until it closes or the hub restarts).</summary>
+    private readonly List<Exchange> _worktreeExchanges = new();
+    /// <summary>Row 35: rooms with a worktree close running; a room-directory launch waits while its
+    /// room is here.</summary>
+    private readonly HashSet<string> _closingRooms = new(StringComparer.Ordinal);
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
@@ -215,6 +227,10 @@ public sealed class SpawnerService : BackgroundService
         // not leave a CLI posting into a room after the hub is gone (critique pass 2, m5).
         try { await Task.WhenAll(_inFlight.Values.Select(h => h.Run)).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
         catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some spawns did not stop within 10 s of shutdown"); }
+        // Row 35, Task 5: worktree closes run off this loop entirely (Task.Run, not an _inFlight spawn),
+        // so they need their own short wait here or a Ctrl+C could leave one mid-merge.
+        try { await Task.WhenAll(_closing.ToList()).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
+        catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some worktree closes did not finish within 10 s of shutdown"); }
     }
 
     private void OnPosted(Message message) => _events.Writer.TryWrite(new PostedEvent(message));
@@ -268,7 +284,45 @@ public sealed class SpawnerService : BackgroundService
                 finally { one.Reply.TrySetResult(oneReply); }   // a throw here must not hang the HTTP caller
                 break;
             case TickEvent: OnTick(); break;
+            case WorktreeClosedEvent w:
+                _closingRooms.Remove(w.RoomId);
+                if (w.Note is not null) PostNote(w.RoomId, w.Note);
+                // A second closed exchange of the same room (queued behind this one) closes next; the
+                // loop's LaunchDue/ArmWake pass right after Handle then launches anything that waited.
+                CloseIdleWorktrees(w.RoomId);
+                break;
         }
+    }
+
+    /// <summary>Row 35, Task 5: hands each closed, idle worktree exchange of <paramref name="roomId"/>
+    /// to <see cref="ExchangeWorktrees.CloseAsync"/>, one at a time per room, off the loop thread. Does
+    /// nothing (to be retried by a later call - <see cref="OnFinished"/>, <see cref="Publish"/> and
+    /// <see cref="AddExchange"/> all call this) while a close of this room already runs, or while any
+    /// spawn is in flight in the room directory itself (its before-commit must never race a close's own
+    /// commit of the same tree).</summary>
+    private void CloseIdleWorktrees(string roomId)
+    {
+        if (_closingRooms.Contains(roomId)) return;
+        if (_inFlight.Values.Any(h => h.Request.RoomId == roomId && h.Directory is not null && !h.InWorktree)) return;
+        var x = _worktreeExchanges.FirstOrDefault(e => e.RoomId == roomId && e.Status != ExchangeStatus.Open && e.InFlight.Count == 0);
+        if (x is null) return;
+        _worktreeExchanges.Remove(x);
+        x.WorktreeClosing = true;
+        _closingRooms.Add(roomId);
+        var runOwns = _runs.Active(roomId) is not null || _runs.Latest(roomId) is { Status: RunStatus.Parked };
+        var (dir, root, status, leased, interrupted) = (x.WorktreeRoom!, x.RootMessageId, x.Status, x.WorktreeLeased, x.Interrupted);
+        _closing.RemoveAll(t => t.IsCompleted);
+        _closing.Add(Task.Run(async () =>
+        {
+            string? note;
+            try
+            {
+                note = await _worktrees.CloseAsync(new ExchangeWorktrees.CloseRequest(dir, root, roomId, status, leased, interrupted, runOwns,
+                    RoomCommits.IdentityOf(_owner), RoomCommits.OwnerMessage(_owner, roomId)), CancellationToken.None);
+            }
+            catch (Exception e) { note = $"Exchange #{root}: its worktree could not be closed: {e.GetType().Name}: {e.Message}"; }
+            _events.Writer.TryWrite(new WorktreeClosedEvent(roomId, note));
+        }));
     }
 
     /// <summary>Row 19, task 9b: the periodic wake ArmWake arms (the wall-clock deadline, or the
@@ -729,6 +783,10 @@ public sealed class SpawnerService : BackgroundService
             // finished) - otherwise the before-commit a worktree launch makes would commit that
             // spawn's still-in-progress edits as the owner's.
             if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
+            // Row 35, Task 5: a room-directory launch (over is null) waits while a worktree close of
+            // this room is running - both write the same tree. A worktree launch (over non-null)
+            // never waits on a close: it only touches its own worktree and the gated owner commit.
+            if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
             foreach (var request in due) Launch(x, request, now);
             if (due.Count > 0) Publish(x.RoomId);
@@ -754,6 +812,10 @@ public sealed class SpawnerService : BackgroundService
     private void AddExchange(string roomId, Exchange x, bool replaceAll = false)
     {
         if (!_rooms.TryGetValue(roomId, out var list)) _rooms[roomId] = list = new List<Exchange>();
+        // Row 35, Task 5: give an already-idle worktree exchange a last chance to close before it is
+        // dropped from this list (replaceAll) or pruned (the ordinary path) - closing it never depends
+        // on _rooms, but a room with nothing left open never otherwise revisits CloseIdleWorktrees.
+        CloseIdleWorktrees(roomId);
         if (replaceAll) list.Clear();
         else list.RemoveAll(e => e.Status != ExchangeStatus.Open && e.InFlight.Count == 0);
         list.Add(x);
@@ -807,7 +869,14 @@ public sealed class SpawnerService : BackgroundService
             // exclusiveOver on the same test (UsesWorktrees), so the two must never disagree.
             var inWorktree = UsesWorktrees(request.RoomId, directory);
             var tree = inWorktree ? ExchangeWorktrees.PathFor(directory!, x.RootMessageId) : directory;
-            if (inWorktree) x.WorktreeRoom = directory;
+            if (inWorktree)
+            {
+                x.WorktreeRoom = directory;
+                // Row 35, Task 5: registered once, at its first worktree launch - CloseIdleWorktrees
+                // reads this list, not _rooms, so an exchange a run's replaceAll later drops stays
+                // closable.
+                if (!_worktreeExchanges.Contains(x)) _worktreeExchanges.Add(x);
+            }
             // Row 18 (L7): a directory room's spawn also gets the room's own topic, cut at RoomChars
             // (budget ruling). A room id that is not a slug (the table has no CHECK) gets no section,
             // not no spawn.
@@ -999,6 +1068,11 @@ public sealed class SpawnerService : BackgroundService
         if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
         h.Cancel.Dispose();
         var note = ExchangePolicy.Finished(h.Exchange, id);
+        // Row 35, Task 5: this exchange may have just gone idle (concluded, superseded or stopped with
+        // nothing left in flight) - try to hand its worktree to a close now. Also releases a close (or
+        // a worktree launch) of another exchange that was waiting on THIS spawn because it ran in the
+        // room directory itself.
+        CloseIdleWorktrees(room);
         if (note is not null)
         {
             PostNote(room, note);
@@ -1022,6 +1096,9 @@ public sealed class SpawnerService : BackgroundService
                 }
             }
         }
+        // Row 35, Task 5: a room-directory spawn finishing releases a deferred close (or worktree
+        // launch) of another exchange in this room.
+        CloseIdleWorktrees(room);
         Publish(room);
     }
 
@@ -1081,6 +1158,9 @@ public sealed class SpawnerService : BackgroundService
             var exclusive = directory is not null;
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
             if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
+            // Row 35, Task 5: skip this exchange's wake while its room's close is running - the close's
+            // own WorktreeClosedEvent wakes the loop when it finishes.
+            if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive, over);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }
@@ -1126,6 +1206,7 @@ public sealed class SpawnerService : BackgroundService
 
     private ExchangeSnapshot Publish(string roomId)
     {
+        CloseIdleWorktrees(roomId);
         // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the newest
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
         var views = ExchangesIn(roomId).Select(View).ToList();

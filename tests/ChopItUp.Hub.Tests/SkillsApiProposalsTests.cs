@@ -452,34 +452,43 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_skillpropapi_guard_" + Guid.NewGuid().ToString("N"));
         var roomDir = Path.Combine(Path.GetTempPath(), "chopitup_skillpropapi_guardroom_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(roomDir);
-        await using var host = await HubTestHost.StartAsync(dir, processRunner: runner);
-        host.Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", host.TokenFor(ChopDb.OwnerParticipantId));
-        host.Services.GetRequiredService<MessageStore>().CreateRoom("proj", "Proj", roomDir);
-        var sourceDir = Path.Combine(roomDir, "demo");
-        Directory.CreateDirectory(sourceDir);
-        File.WriteAllText(Path.Combine(sourceDir, "SKILL.md"), ValidSkillBody);
-        await using (var client = await host.ClientFor("opus"))
-            await client.CallToolAsync("propose_skill", new Dictionary<string, object?> { ["room_id"] = "proj", ["source_dir"] = sourceDir });
+        var host = await HubTestHost.StartAsync(dir, processRunner: runner);
+        try
+        {
+            host.Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", host.TokenFor(ChopDb.OwnerParticipantId));
+            host.Services.GetRequiredService<MessageStore>().CreateRoom("proj", "Proj", roomDir);
+            var sourceDir = Path.Combine(roomDir, "demo");
+            Directory.CreateDirectory(sourceDir);
+            File.WriteAllText(Path.Combine(sourceDir, "SKILL.md"), ValidSkillBody);
+            await using (var client = await host.ClientFor("opus"))
+                await client.CallToolAsync("propose_skill", new Dictionary<string, object?> { ["room_id"] = "proj", ["source_dir"] = sourceDir });
 
-        Assert.Equal(HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/proj/messages", new { body = "@opus hi" })).StatusCode);
-        await runner.NextSpecAsync(TimeSpan.FromSeconds(15));
-        Assert.True(host.Services.GetRequiredService<SpawnerService>().AnySpawnInFlight);
+            Assert.Equal(HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/proj/messages", new { body = "@opus hi" })).StatusCode);
+            await runner.NextSpecAsync(TimeSpan.FromSeconds(15));
+            Assert.True(host.Services.GetRequiredService<SpawnerService>().AnySpawnInFlight);
 
-        var refused = await host.Client.PostAsJsonAsync("api/skills/proposals/1/approve", new { treeSha256 = (string?)null });
-        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-        Assert.Contains(ChopItUp.Hub.Web.SkillsApi.SpawnRunning, await refused.Content.ReadAsStringAsync());
-        Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsync("api/skills/proposals/1/reject", null)).StatusCode);
-        Assert.Equal("pending", host.Services.GetRequiredService<SkillProposalStore>().Get(1)!.Status);
+            var refused = await host.Client.PostAsJsonAsync("api/skills/proposals/1/approve", new { treeSha256 = (string?)null });
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            Assert.Contains(ChopItUp.Hub.Web.SkillsApi.SpawnRunning, await refused.Content.ReadAsStringAsync());
+            Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsync("api/skills/proposals/1/reject", null)).StatusCode);
+            Assert.Equal("pending", host.Services.GetRequiredService<SkillProposalStore>().Get(1)!.Status);
 
-        release.SetResult();
-        // Row 35: outside a run this room's spawn now commits through the exchange's worktree
-        // machinery, which turns roomDir into a real git repository (it never was one before this
-        // row) - its objects are read-only, so a plain Directory.Delete throws UnauthorizedAccessException
-        // exactly as TestDirs.DeleteTree's own doc comment says; wait for the released spawn to actually
-        // finish its git work first, then clear attributes before deleting.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
-        while (host.Services.GetRequiredService<SpawnerService>().AnySpawnInFlight && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+            release.SetResult();
+        }
+        finally
+        {
+            // Row 35: outside a run this room's spawn now commits through the exchange's worktree
+            // machinery, which turns roomDir into a real git repository (it never was one before this
+            // row) - its objects are read-only, so a plain Directory.Delete throws
+            // UnauthorizedAccessException exactly as TestDirs.DeleteTree's own doc comment says. Task 5
+            // adds a second, later writer of roomDir: the exchange's worktree close, handed off from
+            // OnFinished and running off the spawner loop entirely (AnySpawnInFlight never sees it).
+            // SpawnerService.StopAsync (Task 5) now waits up to 10s for that close to finish, so
+            // disposing the host HERE - rather than via `await using` at the end of the method, which
+            // would run after the delete below - is what actually waits for the close's own git.exe
+            // process to let go of roomDir before this test touches it.
+            await host.DisposeAsync();
+        }
         TestDirs.DeleteTree(roomDir);
     }
 }
