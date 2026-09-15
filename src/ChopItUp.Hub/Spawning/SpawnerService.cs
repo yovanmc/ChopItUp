@@ -20,13 +20,22 @@ using Microsoft.Extensions.Hosting;
 
 namespace ChopItUp.Hub.Spawning;
 
+/// <summary>One exchange as the UI and the API see it: its own root, status, budget, turns,
+/// in-flight and pending. <see cref="InFlight"/> is this exchange's own live spawns, unlike the
+/// snapshot's room-wide list.</summary>
+public sealed record ExchangeView(
+    long RootMessageId, string Status, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, string? StoppedBy);
+
 /// <summary>What the UI and the API see. <see cref="Status"/> is <c>idle</c>, <c>open</c>,
 /// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
 /// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
-/// mapped by name so an enum reordering never silently changes the JSON; null until stopped.</summary>
+/// mapped by name so an enum reordering never silently changes the JSON; null until stopped.
+/// <see cref="Exchanges"/> lists every exchange the room still holds, oldest first; the top-level
+/// fields describe the newest open one, else the newest.</summary>
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
-    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null);
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null);
 
 /// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
 /// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
@@ -90,7 +99,9 @@ public sealed class SpawnerService : BackgroundService
     private readonly RunLimits _runLimits;
     private readonly RunPolicy _runPolicy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
-    private readonly Dictionary<string, Exchange> _rooms = new(StringComparer.Ordinal);
+    // Every exchange the loop still holds per room, oldest first. The newest is "the room's exchange"
+    // for the run machinery and the top-level snapshot.
+    private readonly Dictionary<string, List<Exchange>> _rooms = new(StringComparer.Ordinal);
     // Row 19, task 6: messages posted by a human inside an active run, waiting for the conductor's
     // next trigger set. Empty until task 6 populates it; DriveRun (task 5) already drains it whenever
     // an OpenConductor decision consumes it, so the two tasks never have to touch this line twice.
@@ -247,23 +258,32 @@ public sealed class SpawnerService : BackgroundService
 
     private void OnMessage(Message m)
     {
-        _rooms.TryGetValue(m.RoomId, out var current);
-        // A post from a spawn of an exchange that is no longer current (superseded by the owner):
-        // the message stands, its mentions are ignored (A6). The handle is the only thing that knows
-        // which exchange spawned the author.
+        var exchanges = ExchangesIn(m.RoomId);
+        var newest = Newest(m.RoomId);
+        var activeRun = _runs.Active(m.RoomId);
+        // A spawn's post belongs to the exchange that launched it. Outside a run its mentions count
+        // while that exchange is open and still held for the room, so two side-by-side exchanges never
+        // feed each other and a run exchange dropped when the run moved on stays mute after the run
+        // ends. Inside a run
+        // the room keeps one current exchange (the newest): a conductor's later post, after it rooted
+        // a workers exchange, is prose.
         bool acceptMentions = true;
+        Exchange? target;
         if (_inFlight.TryGetValue((m.RoomId, m.AuthorId), out var handle))
         {
             handle.Posted = true;
-            acceptMentions = ReferenceEquals(handle.Exchange, current);
+            target = handle.Exchange;
+            acceptMentions = activeRun is null
+                ? handle.Exchange.Status == ExchangeStatus.Open && exchanges.Contains(handle.Exchange)
+                : ReferenceEquals(handle.Exchange, newest);
         }
+        else target = activeRun is not null ? newest : AppBackedTarget(m.RoomId, m);
         // Row 19's clock seam (task 2b): OnMessage is the run-start site (task 4's _runs.Start reads
         // this same instant), so it goes through the injected clock; LaunchDue/ArmWake stay on the
         // real wall clock until a run path needs them too.
         var now = _clock.GetUtcNow();
         var skill = ResolveSkill(m);
         var startsRun = skill is SkillResolution.Found found && found.Skill.IsRun;
-        var activeRun = _runs.Active(m.RoomId);
         var run = activeRun is not null ? new RunContext(activeRun.Id, activeRun.ConductorId, activeRun.Phase) : null;
 
         // Row 19, task 8 (AC4/AC6): the conductor's own post, while its exchange is still this room's
@@ -339,16 +359,17 @@ public sealed class SpawnerService : BackgroundService
         }
 
         var hasDirectory = _store.GetRoom(m.RoomId)?.Directory is not null;
-        var (next, notes) = _policy.OnMessage(current, m, now, acceptMentions, skill, run, startsRun, hasDirectory);
-        if (next is null) _rooms.Remove(m.RoomId); else _rooms[m.RoomId] = next;
+        var hadExchanges = exchanges.Count > 0;
+        var (opened, notes) = _policy.OnRoomMessage(exchanges, target, m, now, acceptMentions, skill, run, startsRun, hasDirectory);
+        if (opened is not null) AddExchange(m.RoomId, opened);
         foreach (var note in notes) PostNote(m.RoomId, note);
-        if (next is not null || current is not null) Publish(m.RoomId);
+        if (opened is not null || hadExchanges) Publish(m.RoomId);
 
-        if (startsRun && next is not null && !ReferenceEquals(next, current))
+        if (startsRun && opened is not null)
         {
-            // The policy just built the conductor's first exchange (steps 4-7 all passed: a
-            // directory, a resolved skill, exactly one mention). Persist the run itself.
-            var conductorId = next.Pending.Keys.Single();
+            // The policy just built the conductor's first exchange (a directory, a resolved skill,
+            // exactly one mention). Persist the run itself.
+            var conductorId = opened.Pending.Keys.Single();
             var skillFound = (SkillResolution.Found)skill!;
             var runRow = _runs.Start(m.RoomId, conductorId, skillFound.Skill.Name, skillFound.Arguments, m.Id, now);
             _runs.CountExchange(runRow.Id);
@@ -358,8 +379,8 @@ public sealed class SpawnerService : BackgroundService
         }
 
         // Row 19, task 6 (AC5): a human post inside an active run that did not start a new one is a
-        // steer. ExchangePolicy already left `current` untouched above (its own step 3); this is the
-        // impure half - record it, tell the owner, and if the conductor is idle, wake it now.
+        // steer. ExchangePolicy already left the room's exchanges untouched above (its own step 3);
+        // this is the impure half - record it, tell the owner, and if the conductor is idle, wake it now.
         if (run is not null && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var runRow = activeRun!;
@@ -386,7 +407,7 @@ public sealed class SpawnerService : BackgroundService
         run.Phase, _runs.PhaseEntries(run.Id),
         run.SpawnsUsed, run.Exchanges, RunStore.ActiveElapsed(run, _clock.GetUtcNow()),
         RefusalsThisPhase: _refusalsThisPhase.GetValueOrDefault(run.Id), SilencesThisPhase: _silencesThisPhase.GetValueOrDefault(run.Id),
-        ExchangeOpen: _rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open,
+        ExchangeOpen: Newest(run.RoomId) is { Status: ExchangeStatus.Open },
         AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
         RootMessageId: run.RootMessageId);
 
@@ -526,7 +547,7 @@ public sealed class SpawnerService : BackgroundService
     private void OpenWorkersExchange(Run run, RunDecision.OpenWorkers ow)
     {
         var (exchange, notes) = _policy.OpenForWorkers(run.RoomId, ow.RootMessageId, ow.Mentioned, _clock.GetUtcNow());
-        _rooms[run.RoomId] = exchange;
+        AddExchange(run.RoomId, exchange, replaceAll: true);
         _runs.CountExchange(run.Id);
         foreach (var note in notes) PostNote(run.RoomId, note);
         Publish(run.RoomId);
@@ -545,7 +566,7 @@ public sealed class SpawnerService : BackgroundService
     {
         var now = _clock.GetUtcNow();
         _runs.Park(run.Id, reason, capSpent, now);
-        if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
+        if (Newest(run.RoomId) is { Status: ExchangeStatus.Open } x)
             PostNote(run.RoomId, ExchangePolicy.Stop(x, ExchangeStopCause.Run));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
@@ -568,7 +589,7 @@ public sealed class SpawnerService : BackgroundService
     {
         var now = _clock.GetUtcNow();
         var ended = _runs.End(run.Id, reason, now);
-        if (_rooms.TryGetValue(run.RoomId, out var x) && x.Status == ExchangeStatus.Open)
+        if (Newest(run.RoomId) is { Status: ExchangeStatus.Open } x)
             PostNote(run.RoomId, ExchangePolicy.Stop(x, cause));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
@@ -609,7 +630,7 @@ public sealed class SpawnerService : BackgroundService
             return;
         }
         var exchange = ExchangePolicy.OpenForConductor(run.RoomId, run.ConductorId, rootMessageId, triggerIds, now, ok.Skill);
-        _rooms[run.RoomId] = exchange;
+        AddExchange(run.RoomId, exchange, replaceAll: true);
         _runs.CountExchange(run.Id);
         Publish(run.RoomId);
         // Launching is left to LaunchDue on the next pass, never inline (task 5b) - a directory
@@ -659,7 +680,7 @@ public sealed class SpawnerService : BackgroundService
     private void LaunchDue()
     {
         var now = _clock.GetUtcNow();
-        foreach (var x in _rooms.Values.ToList())
+        foreach (var x in _rooms.Values.SelectMany(list => list).ToList())
         {
             if (x.Status != ExchangeStatus.Open) continue;
             var inRoom = InFlightIn(x.RoomId);
@@ -672,6 +693,42 @@ public sealed class SpawnerService : BackgroundService
 
     private HashSet<string> InFlightIn(string roomId) =>
         _inFlight.Keys.Where(k => k.Room == roomId).Select(k => k.Participant).ToHashSet(StringComparer.Ordinal);
+
+    private IReadOnlyList<Exchange> ExchangesIn(string roomId) =>
+        _rooms.TryGetValue(roomId, out var list) ? list : [];
+
+    /// <summary>The room's most recently opened exchange: what a run means by the room's current
+    /// exchange, and what the snapshot's top-level fields describe.</summary>
+    private Exchange? Newest(string roomId) =>
+        _rooms.TryGetValue(roomId, out var list) && list.Count > 0 ? list[^1] : null;
+
+    /// <summary>Appends <paramref name="x"/> and drops every exchange that is closed with nothing left
+    /// in flight, so a closed exchange stays visible until the next one opens. <paramref name="replaceAll"/>
+    /// is for the run's own exchanges: a run room holds exactly one exchange, as the loop did before rooms
+    /// held several, so an older run exchange still open with queued entries is never launched, and its
+    /// spawn's later mentions count for nothing (it is no longer in the room's list).</summary>
+    private void AddExchange(string roomId, Exchange x, bool replaceAll = false)
+    {
+        if (!_rooms.TryGetValue(roomId, out var list)) _rooms[roomId] = list = new List<Exchange>();
+        if (replaceAll) list.Clear();
+        else list.RemoveAll(e => e.Status != ExchangeStatus.Open && e.InFlight.Count == 0);
+        list.Add(x);
+    }
+
+    /// <summary>What the snapshot's top-level fields describe: the newest OPEN exchange, else the newest
+    /// one. The shipped exchange bar reads only those fields, so a concluded newest exchange must not
+    /// hide an older one that is still running.</summary>
+    private Exchange? Displayed(string roomId) =>
+        ExchangesIn(roomId).LastOrDefault(e => e.Status == ExchangeStatus.Open) ?? Newest(roomId);
+
+    /// <summary>Where an app-backed model's post goes (no spawn handle): the newest open exchange that
+    /// involves a model it mentions, else the newest open exchange, else none.</summary>
+    private Exchange? AppBackedTarget(string roomId, Message m)
+    {
+        var open = ExchangesIn(roomId).Where(e => e.Status == ExchangeStatus.Open).Reverse().ToList();
+        var mentioned = _policy.MentionedSpawnable(m);
+        return open.FirstOrDefault(e => mentioned.Any(e.Participants.Contains)) ?? open.FirstOrDefault();
+    }
 
     private void Launch(Exchange x, SpawnRequest request, DateTimeOffset now)
     {
@@ -874,7 +931,7 @@ public sealed class SpawnerService : BackgroundService
             // Row 19, task 5b: wake the run's loop, but only when the exchange that just concluded is
             // still the room's CURRENT one - a conductor may already have rooted a newer exchange that
             // superseded it (pass 2's F-1); that newer exchange must be left alone.
-            if (_runs.Active(room) is { } activeRun && ReferenceEquals(h.Exchange, _rooms.GetValueOrDefault(room)))
+            if (_runs.Active(room) is { } activeRun && ReferenceEquals(h.Exchange, Newest(room)))
             {
                 // Row 19, task 10 (A2): the run's CONDUCTOR finishing WITHOUT posting is a silence,
                 // decided through RunEvent.SpawnSilent (ask again, then park once the phase's
@@ -896,8 +953,8 @@ public sealed class SpawnerService : BackgroundService
 
     /// <summary>Room-scoped, not exchange-scoped (critique pass 2, M1): a superseded exchange's spawn
     /// is still a live CLI in this room, and an owner message with no mention leaves the room with no
-    /// open exchange while one runs. Stop kills every in-flight spawn of the room, closes the open
-    /// exchange if there is one, and answers null only when there is nothing at all to stop.
+    /// open exchange while one runs. Stop kills every in-flight spawn of the room, closes every open
+    /// exchange, and answers null only when there is nothing at all to stop.
     ///
     /// Row 19, task 13 (AC11, ticket 13 - "the control must work even when there is nothing currently
     /// running"): checked FIRST, ahead of the ordinary exchange-only stop below. An active OR parked
@@ -914,15 +971,13 @@ public sealed class SpawnerService : BackgroundService
             return Publish(roomId);
         }
 
-        _rooms.TryGetValue(roomId, out var x);
+        var open = ExchangesIn(roomId).Where(e => e.Status == ExchangeStatus.Open).ToList();
         var live = _inFlight.Values.Where(h => h.Request.RoomId == roomId).ToList();
-        var open = x is { Status: ExchangeStatus.Open };
-        if (!open && live.Count == 0) return null;
+        if (open.Count == 0 && live.Count == 0) return null;
         foreach (var handle in live) handle.Cancel.Cancel();
-        var note = open
-            ? ExchangePolicy.Stop(x!, ExchangeStopCause.Owner)
-            : $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.";
-        PostNote(roomId, note);
+        if (open.Count == 0)
+            PostNote(roomId, $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.");
+        foreach (var x in open) PostNote(roomId, ExchangePolicy.Stop(x, ExchangeStopCause.Owner));
         return Publish(roomId);
     }
 
@@ -930,7 +985,7 @@ public sealed class SpawnerService : BackgroundService
     {
         var now = _clock.GetUtcNow();
         DateTimeOffset? next = null;
-        foreach (var x in _rooms.Values)
+        foreach (var x in _rooms.Values.SelectMany(list => list))
         {
             var exclusive = _store.GetRoom(x.RoomId)?.Directory is not null;
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive);
@@ -953,7 +1008,7 @@ public sealed class SpawnerService : BackgroundService
             var wallClockDeadline = run.StartedAt + TimeSpan.FromSeconds(run.ParkedSeconds) + _runLimits.WallClock;
             if (next is null || wallClockDeadline < next) next = wallClockDeadline;
 
-            var busy = (_rooms.TryGetValue(run.RoomId, out var rx) && rx.Status == ExchangeStatus.Open) || InFlightIn(run.RoomId).Count > 0;
+            var busy = Newest(run.RoomId) is { Status: ExchangeStatus.Open } || InFlightIn(run.RoomId).Count > 0;
             if (busy) { _lastRunActivity.Remove(run.Id); continue; }
             if (!_lastRunActivity.TryGetValue(run.Id, out var idleSince)) _lastRunActivity[run.Id] = idleSince = now;
             var stallDeadline = idleSince + _runLimits.SpawnTimeout;
@@ -978,17 +1033,23 @@ public sealed class SpawnerService : BackgroundService
 
     private ExchangeSnapshot Publish(string roomId)
     {
-        // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the current
+        // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the newest
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
-        var snapshot = (_rooms.TryGetValue(roomId, out var x)
+        var views = ExchangesIn(roomId).Select(View).ToList();
+        var snapshot = (Displayed(roomId) is { } x
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
                 Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
                 StoppedBy: x.StopCause?.ToString().ToLowerInvariant())
-            : Idle(roomId)) with { Seq = ++_seq };
+            : Idle(roomId)) with { Seq = ++_seq, Exchanges = views };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);
         return snapshot;
     }
+
+    private static ExchangeView View(Exchange x) => new(
+        x.RootMessageId, x.Status.ToString().ToLowerInvariant(), x.Budget, x.TurnsStarted, x.TurnsCommitted,
+        Math.Max(0, x.Budget - x.TurnsCommitted), x.InFlight.Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
+        x.StopCause?.ToString().ToLowerInvariant());
 
     private async void BroadcastAsync(string roomId, ExchangeSnapshot snapshot)
     {
@@ -1010,7 +1071,7 @@ public sealed class SpawnerService : BackgroundService
         }
     }
 
-    private static ExchangeSnapshot Idle(string roomId) => new(roomId, "idle", null, 0, 0, 0, 0, [], []);
+    private static ExchangeSnapshot Idle(string roomId) => new(roomId, "idle", null, 0, 0, 0, 0, [], [], Exchanges: []);
 
     private ResolvedCli Cli(string name)
     {
