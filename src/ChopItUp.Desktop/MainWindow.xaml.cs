@@ -39,6 +39,12 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     /// client out from under the owner. Failed clears it, so a hub that comes up later still navigates.</summary>
     private bool _navigated;
 
+    /// <summary>Raised just before each <c>NavigateToString</c> and spent by the first boot page that
+    /// comes back through <see cref="OnNavigationStarting"/>. It is what lets the navigation lock tell
+    /// the page THIS window wrote from a <c>data:</c> URI arriving in a message (see
+    /// <see cref="NavigationPolicy"/>).</summary>
+    private bool _bootPagePending;
+
     public MainWindow(ShellArgs args, HubChild hub, ShellLog log)
     {
         _args = args;
@@ -114,6 +120,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
 
     private void ShowBoot()
     {
+        _bootPagePending = true;
         Web.CoreWebView2?.NavigateToString(BootPage.Starting(App.LaunchNonce));
         _log.Append("BOOT SHOWN");
     }
@@ -165,6 +172,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
             case HubState.Failed:
                 // Back to a page that can still be moved and dismissed, with the reason and the tail.
                 _navigated = false;
+                _bootPagePending = true;
                 _log.Append("BOOT FAILED");
                 core.NavigateToString(BootPage.Failed(status.Reason ?? "the hub did not start", _hub.Tail.Snapshot(), App.LaunchNonce));
                 return;
@@ -193,31 +201,35 @@ public partial class MainWindow : System.Windows.Window, IHostActions
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
-        if (IsHubOrigin(e.Uri)) return;
-
-        // NavigateToString reports about:blank — that is the boot page, which this window wrote.
-        if (string.Equals(e.Uri, "about:blank", StringComparison.OrdinalIgnoreCase)) return;
-
-        e.Cancel = true;
-        if (Uri.TryCreate(e.Uri, UriKind.Absolute, out var target)
-            && (target.Scheme == Uri.UriSchemeHttp || target.Scheme == Uri.UriSchemeHttps))
+        switch (NavigationPolicy.Decide(e.Uri, _hub.ResolvedOrigin, _bootPagePending))
         {
-            _log.Append($"NAV EXTERNAL {e.Uri}");
-            OpenExternal(e.Uri);
-            return;
-        }
+            case NavDecision.Allow:
+                // One shot: the boot page this window just wrote has arrived, so the next data: URI —
+                // one that could only have come from the page — is judged with the flag down again.
+                if (_bootPagePending && NavigationPolicy.IsBootPageUri(e.Uri))
+                {
+                    _bootPagePending = false;
+                    // The URI carries the whole page base64-encoded; log the shape, not the payload.
+                    _log.Append($"NAV BOOT {Describe(e.Uri)}");
+                }
+                return;
 
-        // data:, file:, ms-appx:, anything else a message could carry. Not opened, just refused.
-        _log.Append($"NAV BLOCKED {e.Uri}");
+            case NavDecision.OpenExternally:
+                e.Cancel = true;
+                _log.Append($"NAV EXTERNAL {e.Uri}");
+                OpenExternal(e.Uri);
+                return;
+
+            default:
+                // data: outside the boot window, file:, ms-appx:, anything else a message could carry.
+                e.Cancel = true;
+                _log.Append($"NAV BLOCKED {e.Uri}");
+                return;
+        }
     }
 
-    private bool IsHubOrigin(string uri) =>
-        Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
-        && (parsed.Scheme == Uri.UriSchemeHttp || parsed.Scheme == Uri.UriSchemeHttps)
-        && string.Equals(
-            parsed.GetLeftPart(UriPartial.Authority),
-            _hub.ResolvedOrigin.GetLeftPart(UriPartial.Authority),
-            StringComparison.OrdinalIgnoreCase);
+    private static string Describe(string uri) =>
+        uri.Length <= 48 ? uri : string.Concat(uri.AsSpan(0, 48), "...");
 
     // ===== page <-> host bridge (Task 5) =====================================================
 
