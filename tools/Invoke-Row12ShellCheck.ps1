@@ -142,6 +142,7 @@ public static class Row12Native
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
     public delegate bool EnumChildProc(IntPtr hWnd, IntPtr lParam);
 
@@ -168,6 +169,7 @@ Add-Type -TypeDefinition $nativeSrc -Language CSharp
 
 $AE = [System.Windows.Automation.AutomationElement]
 $TreeScope = [System.Windows.Automation.TreeScope]
+$Automation = [System.Windows.Automation.Automation]
 
 function Get-Win32Rect([IntPtr]$hwnd) {
     $r = New-Object Row12Native+RECT
@@ -473,11 +475,54 @@ try {
     Add-Check -Name 'setup.first-room-discovered' -Passed:$false -Detail 'exit=1'
 }
 
+function Wait-ComposerFocused {
+    # Polls up to $TimeoutMs for AutomationElement.FocusedElement to be $Composer, retrying
+    # SetForegroundWindow (+ ShowWindow SW_RESTORE, in case the window got minimized/hidden by an
+    # earlier leg) up to $MaxAttempts times. SetForegroundWindow can be silently denied by the
+    # foreground-lock rule, which is exactly the ambiguity this polling closes: a denied call still
+    # returns without throwing, so only checking FocusedElement afterward proves focus actually moved.
+    param(
+        [Parameter(Mandatory)][System.Windows.Automation.AutomationElement]$Composer,
+        [Parameter(Mandatory)][IntPtr]$TopHwnd,
+        [int]$MaxAttempts = 3,
+        [int]$TimeoutMs = 2000
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        [Row12Native]::ShowWindow($TopHwnd, 9) | Out-Null   # SW_RESTORE
+        [Row12Native]::SetForegroundWindow($TopHwnd) | Out-Null
+        Start-Sleep -Milliseconds 200
+        try { $Composer.SetFocus() } catch { }
+
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+            try {
+                $focused = $AE::FocusedElement
+                if ($focused) {
+                    if ($Automation::Compare($focused, $Composer)) { return $true }
+                    if ($focused.Current.NativeWindowHandle -ne 0 -and $focused.Current.NativeWindowHandle -eq $Composer.Current.NativeWindowHandle) { return $true }
+                    if ($focused.Current.AutomationId -and ($focused.Current.AutomationId -eq $Composer.Current.AutomationId) -and ($focused.Current.Name -eq $Composer.Current.Name)) { return $true }
+                }
+            } catch { }
+            Start-Sleep -Milliseconds 150
+        }
+    }
+    return $false
+}
+
 function Send-ComposerMessageAndVerify {
     # UIA-focus the composer for $RoomName (aria-label "Message <name>", Composer.tsx), type $Text via
     # SendKeys (a controlled React textarea needs real keystrokes, not ValuePattern.SetValue, to fire
     # onChange), press Enter, then poll the room's messages for it landing with authorId owner. $Text
     # must contain no SendKeys special characters (the caller uses a hex GUID for this reason).
+    #
+    # Returns a stage name rather than a bare boolean, so a flake can say WHERE it failed:
+    #   'composer-not-found'  -- Find-DescendantByName never found "Message $RoomName"
+    #   'focus-not-acquired'  -- FocusedElement never matched the composer within Wait-ComposerFocused's budget
+    #   'not-landed'          -- typed (possibly twice) but the API never saw the body land as an owner message
+    #   'landed'              -- success
+    # One retry of the whole type-and-verify cycle if the message has not landed after the first 4s,
+    # re-acquiring focus first; the verify loop continues to the original $VerifyTimeoutMs budget overall
+    # (the retry does not add extra time on top of $VerifyTimeoutMs).
     param(
         [Parameter(Mandatory)][System.Windows.Automation.AutomationElement]$WindowEl,
         [Parameter(Mandatory)][IntPtr]$TopHwnd,
@@ -494,26 +539,52 @@ function Send-ComposerMessageAndVerify {
     } catch { }
 
     $composer = Find-DescendantByName -parent $WindowEl -name "Message $RoomName" -timeoutMs 10000
-    if (-not $composer) { return $false }
+    if (-not $composer) { return 'composer-not-found' }
 
-    [Row12Native]::SetForegroundWindow($TopHwnd) | Out-Null
-    Start-Sleep -Milliseconds 200
-    $composer.SetFocus()
-    Start-Sleep -Milliseconds 300
+    if (-not (Wait-ComposerFocused -Composer $composer -TopHwnd $TopHwnd)) { return 'focus-not-acquired' }
+
+    $overallSw = [Diagnostics.Stopwatch]::StartNew()
+    $firstAttemptBudgetMs = [Math]::Min(4000, $VerifyTimeoutMs)
+
     [System.Windows.Forms.SendKeys]::SendWait($Text)
     Start-Sleep -Milliseconds 150
     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
 
-    $sw = [Diagnostics.Stopwatch]::StartNew()
-    while ($sw.ElapsedMilliseconds -lt $VerifyTimeoutMs) {
+    $landed = $false
+    while ($overallSw.ElapsedMilliseconds -lt $firstAttemptBudgetMs) {
         try {
             $page = Invoke-OwnerJson -Uri "$base/api/rooms/$RoomId/messages?afterId=$beforeId&limit=20"
-            $landed = $page.messages | Where-Object { $_.body -eq $Text -and $_.authorId -eq 'owner' }
-            if ($landed) { return $true }
+            $match2 = $page.messages | Where-Object { $_.body -eq $Text -and $_.authorId -eq 'owner' }
+            if ($match2) { $landed = $true; break }
         } catch { }
         Start-Sleep -Milliseconds 300
     }
-    return $false
+
+    if (-not $landed -and $overallSw.ElapsedMilliseconds -lt $VerifyTimeoutMs) {
+        # Re-acquire focus before the retry -- the first attempt may have lost the foreground window
+        # just as easily as it may simply not have landed yet. Select-all + delete clears whatever may
+        # have partially typed before retyping the same $Text (the API check matches the exact body, so
+        # a fresh GUID is not needed -- only a clean composer is).
+        if (-not (Wait-ComposerFocused -Composer $composer -TopHwnd $TopHwnd)) { return 'focus-not-acquired' }
+
+        [System.Windows.Forms.SendKeys]::SendWait('^a{DEL}')
+        Start-Sleep -Milliseconds 150
+        [System.Windows.Forms.SendKeys]::SendWait($Text)
+        Start-Sleep -Milliseconds 150
+        [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+
+        while ($overallSw.ElapsedMilliseconds -lt $VerifyTimeoutMs) {
+            try {
+                $page = Invoke-OwnerJson -Uri "$base/api/rooms/$RoomId/messages?afterId=$beforeId&limit=20"
+                $match2 = $page.messages | Where-Object { $_.body -eq $Text -and $_.authorId -eq 'owner' }
+                if ($match2) { $landed = $true; break }
+            } catch { }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+
+    if ($landed) { return 'landed' }
+    return 'not-landed'
 }
 
 # ===== leg 3: owner-token (the real path, end to end) ===================================================
@@ -525,8 +596,8 @@ try { $tokensBeforeLeg3 = Get-Content -LiteralPath $tokensJsonPath -Raw -ErrorAc
 if ($windowEl -and $firstRoomId) {
     $leg3Text = "shellcheck" + [guid]::NewGuid().ToString('N').Substring(0, 12)
     $topHwnd = [IntPtr]($windowEl.Current.NativeWindowHandle)
-    $leg3Ok = Send-ComposerMessageAndVerify -WindowEl $windowEl -TopHwnd $topHwnd -RoomId $firstRoomId -RoomName $firstRoomName -Text $leg3Text -VerifyTimeoutMs 8000
-    Add-Check -Name 'leg3.owner-token-post-lands' -Passed:$leg3Ok -Detail 'OK'
+    $leg3Stage = Send-ComposerMessageAndVerify -WindowEl $windowEl -TopHwnd $topHwnd -RoomId $firstRoomId -RoomName $firstRoomName -Text $leg3Text -VerifyTimeoutMs 8000
+    Add-Check -Name 'leg3.owner-token-post-lands' -Passed:($leg3Stage -eq 'landed') -Detail $leg3Stage
 
     $tokensAfterLeg3 = $null
     try { $tokensAfterLeg3 = Get-Content -LiteralPath $tokensJsonPath -Raw -ErrorAction Stop } catch { }
@@ -705,8 +776,8 @@ try {
     if ($runActive -and $windowEl -and $firstRoomId) {
         $leg7Text = "shellcheck" + [guid]::NewGuid().ToString('N').Substring(0, 12)
         $topHwnd = [IntPtr]($windowEl.Current.NativeWindowHandle)
-        $leg7Ok = Send-ComposerMessageAndVerify -WindowEl $windowEl -TopHwnd $topHwnd -RoomId $firstRoomId -RoomName $firstRoomName -Text $leg7Text -VerifyTimeoutMs 8000
-        Add-Check -Name 'leg7.owner-post-lands-with-live-spawn' -Passed:$leg7Ok -Detail 'OK'
+        $leg7Stage = Send-ComposerMessageAndVerify -WindowEl $windowEl -TopHwnd $topHwnd -RoomId $firstRoomId -RoomName $firstRoomName -Text $leg7Text -VerifyTimeoutMs 8000
+        Add-Check -Name 'leg7.owner-post-lands-with-live-spawn' -Passed:($leg7Stage -eq 'landed') -Detail $leg7Stage
     } else {
         Add-Check -Name 'leg7.owner-post-lands-with-live-spawn' -Passed:$false -Detail 'exit=1'
     }
