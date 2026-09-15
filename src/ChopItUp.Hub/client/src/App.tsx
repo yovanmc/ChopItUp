@@ -35,6 +35,8 @@ function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnaps
   return current;
 }
 
+const NO_ROOTS: ReadonlySet<number> = new Set();
+
 /** The chat-list order. Every stamp is UTC round-trip text, so string order is time order. */
 function byActivity(rooms: Room[]): Room[] {
   return [...rooms].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0));
@@ -676,6 +678,7 @@ export default function App() {
               exchange={exchange}
               runStoppable={runStoppable}
               stopping={stopping}
+              stoppingRoots={NO_ROOTS}
               onStop={stop}
             />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
