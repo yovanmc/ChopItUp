@@ -172,7 +172,9 @@ public static class SpawnPrompt
         sb.Append("):\n");
         foreach (var m in shown)
         {
-            sb.Append('\n').Append('#').Append(m.Id).Append(' ').Append(m.AuthorId).Append(" at ").Append(Timestamps.Stamp(m.CreatedAt)).Append('\n');
+            sb.Append('\n').Append('#').Append(m.Id).Append(' ').Append(m.AuthorId).Append(" at ").Append(Timestamps.Stamp(m.CreatedAt));
+            if (m.ReplyToId is { } replyTo) sb.Append(" (reply to #").Append(replyTo).Append(')');
+            sb.Append('\n');
             sb.Append(m.Body).Append('\n');
         }
         return sb.ToString();

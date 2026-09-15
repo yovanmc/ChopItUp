@@ -176,12 +176,19 @@ export async function readMessages(roomId: string, afterId = 0, signal?: AbortSi
   return all;
 }
 
-export async function postMessage(roomId: string, body: string, signal?: AbortSignal): Promise<Message> {
+/** `replyToId` names the message this post replies to; the hub answers 400 when it is not a message
+ *  of the room. Left out (or null), the request body is just `{ body }`. */
+export async function postMessage(
+  roomId: string,
+  body: string,
+  replyToId?: number | null,
+  signal?: AbortSignal,
+): Promise<Message> {
   return unwrap<Message>(
     await write(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body }),
+      body: JSON.stringify(replyToId == null ? { body } : { body, replyToId }),
       signal,
     }),
   );

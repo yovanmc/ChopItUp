@@ -307,6 +307,21 @@ public sealed class RoomToolsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task R36_read_messages_shows_reply_to_id_only_on_replies()
+    {
+        var store = _host.Services.GetRequiredService<MessageStore>();
+        var root = store.Post("general", "owner", "root", null);
+        store.Post("general", "owner", "a reply", null, replyToId: root.Message.Id);
+
+        await using var claude = await _host.ClientFor("claude");
+        var page = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0 }));
+        var msgs = page.GetProperty("messages").EnumerateArray().ToList();
+
+        Assert.Equal(root.Message.Id, msgs[1].GetProperty("reply_to_id").GetInt64());
+        Assert.False(msgs[0].TryGetProperty("reply_to_id", out _));
+    }
+
+    [Fact]
     public async Task M9_A3_list_rooms_carries_the_directory_and_omits_archived_rooms()
     {
         var store = _host.Services.GetRequiredService<ChopItUp.Core.Storage.MessageStore>();

@@ -265,7 +265,7 @@ Invoke-Check -Name 'data.host-configs-carry-no-live-token' -SkipReason $dataSkip
 
 Invoke-Check -Name 'health.responds-200-expected-schema' -Body {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-    $expectedSchema = 10   # ChopDb.LatestSchemaVersion as of row 28 (src/ChopItUp.Core/Storage/ChopDb.cs:10)
+    $expectedSchema = 11   # ChopDb.LatestSchemaVersion as of row 36 (src/ChopItUp.Core/Storage/ChopDb.cs:10)
     @{ Passed = ($health.ok -eq $true -and $health.schema -eq $expectedSchema); Detail = "ok=$($health.ok) schema=$($health.schema) expected=$expectedSchema" }
 }
 

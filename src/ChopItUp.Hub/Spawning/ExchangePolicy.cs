@@ -31,7 +31,8 @@ public sealed record RunContext(long RunId, string ConductorId, string CurrentPh
 
 /// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange. An
 /// owner prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
-/// running beside the new one. D8: a mention is the only trigger,
+/// running beside the new one. An owner reply joins the exchange it replies to instead (row 36). D8: a
+/// mention is the only trigger,
 /// never one's own message, never a row that is not spawnable. D5: four turns, whoever holds the
 /// last one is told so. D7: debounce, one in flight per (participant, room), minimum spacing per
 /// participant. Returns notes for the caller to post as the hub; never posts itself.</summary>
@@ -59,9 +60,11 @@ public sealed class ExchangePolicy
     /// exchange, else the open exchange involving a model it mentions, else the newest open one).
     /// A human prompt supersedes each open exchange it shares a mentioned participant with before any
     /// refusal is decided, since the owner spoke to that model either way; a run-start that passes
-    /// every check supersedes all of them.</summary>
+    /// every check supersedes all of them. <paramref name="joins"/> (row 36) is the exchange that holds
+    /// the message an owner post replies to, as the service resolved it (any status), or null when the
+    /// post is not a reply or its target is in no exchange the service holds.</summary>
     public (Exchange? Opened, IReadOnlyList<string> Notes) OnRoomMessage(IReadOnlyList<Exchange> room, Exchange? target, Message message, DateTimeOffset now,
-        bool acceptMentions = true, SkillResolution? skill = null, RunContext? run = null, bool startsRun = false, bool hasDirectory = false)
+        bool acceptMentions = true, SkillResolution? skill = null, RunContext? run = null, bool startsRun = false, bool hasDirectory = false, Exchange? joins = null)
     {
         var notes = new List<string>();
         if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (null, notes);
@@ -78,6 +81,7 @@ public sealed class ExchangePolicy
         {
             // A model, spawn row or app-backed window, never opens an exchange.
             if (target is not { Status: ExchangeStatus.Open }) return (null, notes);
+            target.MessageIds.Add(message.Id);
             Accept(target, mentioned, message.Id, now, notes);
             return (null, notes);
         }
@@ -85,6 +89,24 @@ public sealed class ExchangePolicy
         // A post inside an active run that is not itself a valid run-start leaves everything untouched:
         // the service records it as a steer for the conductor's next trigger set.
         if (run is not null) return (null, notes);
+
+        // Row 36: a reply joins the exchange its target belongs to. A skill invocation or a run-start is
+        // always a new prompt, and says so when it was a reply.
+        if (message.ReplyToId is { } replyTo)
+        {
+            if (skill is SkillResolution.Found invoked)
+                notes.Add($"A reply that invokes /{invoked.Skill.Name} does not join an exchange; it was handled as a new prompt.");
+            else if (skill is null or SkillResolution.None && !startsRun)
+            {
+                if (joins is { Joinable: true })
+                {
+                    Join(joins, mentioned, message.Id, now, notes);
+                    return (null, notes);
+                }
+                if (mentioned.Count > 0)
+                    notes.Add($"Reply to #{replyTo}: that message is in no exchange this hub still holds, so this post was handled as a new prompt.");
+            }
+        }
 
         var open = room.Where(x => x.Status == ExchangeStatus.Open).ToList();
         foreach (var x in open.Where(x => mentioned.Any(x.Participants.Contains))) Supersede(x);
@@ -142,8 +164,9 @@ public sealed class ExchangePolicy
         var next = new Exchange
         {
             RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget,
-            Skill = found?.Skill,
+            Skill = found?.Skill, Joinable = !startsRun,
         };
+        next.MessageIds.Add(message.Id);
         if (found is not null)
             notes.Add($"Skill /{found.Skill.Name} is in force for this exchange; every turn of it is rendered the same instruction."
                 + (found.Skill.Truncated ? $" Its text was cut to {SkillStore.MaxSkillChars} characters." : ""));
@@ -167,6 +190,33 @@ public sealed class ExchangePolicy
     {
         x.Status = ExchangeStatus.Superseded;
         x.Pending.Clear();
+    }
+
+    /// <summary>Row 36: an owner reply lands in <paramref name="x"/> and nothing is superseded. Open: its
+    /// mentions are accepted against the exchange's own remaining budget. Closed with nothing in flight:
+    /// it reopens with its turns and skill kept, but only if a mention was actually accepted; otherwise
+    /// it stays exactly as it was. Closed with a spawn still running: nothing is accepted and a note names
+    /// the spawn. With no mention the reply is only recorded as a member.</summary>
+    private static void Join(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes)
+    {
+        x.MessageIds.Add(messageId);
+        if (mentioned.Count == 0) return;
+        if (x.Status == ExchangeStatus.Open)
+        {
+            Accept(x, mentioned, messageId, now, notes);
+            return;
+        }
+        if (x.InFlight.Count > 0)
+        {
+            notes.Add($"Exchange #{x.RootMessageId} is still finishing {string.Join(", ", x.InFlight.Order(StringComparer.Ordinal).Select(id => "@" + id))}; reply again once it has.");
+            return;
+        }
+        var (status, cause, committed) = (x.Status, x.StopCause, x.TurnsCommitted);
+        x.Status = ExchangeStatus.Open;
+        x.StopCause = null;
+        x.TurnsCommitted = x.TurnsStarted;   // a stop or supersede dropped queued turns that never ran; only launched turns stay spent
+        Accept(x, mentioned, messageId, now, notes);
+        if (x.Pending.Count == 0) (x.Status, x.StopCause, x.TurnsCommitted) = (status, cause, committed);
     }
 
     private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes)

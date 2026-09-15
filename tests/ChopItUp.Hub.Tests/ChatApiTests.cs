@@ -278,6 +278,36 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
+    private async Task<JsonElement> PostJson(object body)
+    {
+        var response = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", body);
+        Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).Clone();
+    }
+
+    [Fact]
+    public async Task R36_a_post_with_replyToId_is_stored_listed_and_echoed()
+    {
+        var root = await PostJson(new { body = "root" });
+        var reply = await PostJson(new { body = "a reply", replyToId = root.GetProperty("id").GetInt64() });
+
+        Assert.Equal(root.GetProperty("id").GetInt64(), reply.GetProperty("replyToId").GetInt64());
+        using var list = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0"));
+        var ids = list.RootElement.GetProperty("messages").EnumerateArray()
+            .Select(m => m.GetProperty("replyToId").ValueKind == JsonValueKind.Null ? (long?)null : m.GetProperty("replyToId").GetInt64()).ToList();
+        Assert.Equal([null, root.GetProperty("id").GetInt64()], ids);
+    }
+
+    [Fact]
+    public async Task R36_a_replyToId_outside_the_room_is_400_and_stores_nothing()
+    {
+        var r = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "reply", replyToId = 9_999 });
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+        Assert.Contains("#9999", await r.Content.ReadAsStringAsync());
+        using var list = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0"));
+        Assert.Empty(list.RootElement.GetProperty("messages").EnumerateArray());
+    }
+
     [Fact]
     public async Task M8_A6_api_participants_returns_the_roster_in_camel_case()
     {

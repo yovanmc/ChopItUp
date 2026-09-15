@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { HubConnectionState, type HubConnection } from '@microsoft/signalr';
 import * as api from './api';
 import { createConnection, type Liveness } from './realtime';
@@ -16,6 +16,7 @@ import Thread from './Thread';
 import TrailDialog from './TrailDialog';
 import { readOwnerToken, writeOwnerToken } from './ownerToken';
 import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
+import { nextReply } from './reply';
 import type {
   ExchangeSnapshot,
   MemoryImportResult,
@@ -136,6 +137,8 @@ export default function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  /** The message the composer is replying to. Its transitions live in `reply.ts`. */
+  const [replyTo, dispatchReply] = useReducer(nextReply, null);
   const [liveness, setLiveness] = useState<Liveness>('connecting');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -508,13 +511,24 @@ export default function App() {
     return () => abort.abort();
   }, [roomId, merge, readRoom]);
 
+  // A reply target belongs to the room it was chosen in.
+  useEffect(() => {
+    dispatchReply({ kind: 'roomChanged' });
+  }, [roomId]);
+
+  // Stable, so passing them down does not re-render every memoised thread row on each App render.
+  const replyToMessage = useCallback((message: Message) => dispatchReply({ kind: 'reply', message }), []);
+  const cancelReply = useCallback(() => dispatchReply({ kind: 'cancel' }), []);
+
   const send = useCallback(
-    async (body: string) => {
+    async (body: string, replyToId: number | null) => {
       if (!roomId) return;
       try {
-        merge([await api.postMessage(roomId, body)]);
+        merge([await api.postMessage(roomId, body, replyToId)]);
+        dispatchReply({ kind: 'sent' });
         setError(null);
       } catch (failure) {
+        dispatchReply({ kind: 'failed' });
         if (!refused(failure, 'Your message was not posted.')) setError(api.describeError(failure));
         throw failure;
       }
@@ -715,7 +729,7 @@ export default function App() {
             {tokenNotice !== null && (
               <TokenGate notice={tokenNotice} onToken={takeOwnerToken} onDismiss={() => setTokenNotice(null)} />
             )}
-            <Thread messages={messages} loading={loading} />
+            <Thread messages={messages} loading={loading} onReply={replyToMessage} />
             <MemoryPanel
               proposals={proposals}
               busyId={deciding}
@@ -739,7 +753,13 @@ export default function App() {
               stoppingRoots={stoppingRoots}
               onStop={stopFromBar}
             />
-            <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
+            <Composer
+              roomName={activeRoom.name}
+              disabled={false}
+              replyTo={replyTo}
+              onCancelReply={cancelReply}
+              onSend={send}
+            />
           </>
         ) : (
           <p className="thread-note standalone">{error ?? 'Looking for rooms…'}</p>

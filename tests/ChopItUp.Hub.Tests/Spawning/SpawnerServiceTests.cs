@@ -631,6 +631,119 @@ public sealed partial class SpawnerServiceTests
         foreach (var _ in Enumerable.Range(0, 100)) { lock (cancelled) if (cancelled.Count > 1) break; await Task.Delay(50); }
         lock (cancelled) Assert.Equal(["opus", "gpt-5.5"], cancelled);
     }
+
+    private async Task<long> PostAsOwnerReply(string body, long replyToId, string room = "general")
+    {
+        var r = await _host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body, replyToId });
+        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
+        using var doc = JsonDocument.Parse(await r.Content.ReadAsStringAsync());
+        return doc.RootElement.GetProperty("id").GetInt64();
+    }
+
+    [Fact]
+    public async Task R36_a_reply_to_a_concluded_exchange_reopens_it_and_continues_its_turns()
+    {
+        await PostAsOwner("@opus first ask");                                                        // #1
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        await WaitForMessage(m => m.Body == "Exchange concluded: 1 of 4 turns used.");
+        await PostAsOwner("@gpt-6-astra unrelated");                                                 // opens a second exchange, pruning #1 from the room list
+        await _runner.NextSpecAsync(Wait);
+        var deadline = DateTime.UtcNow + Wait;
+        while ((await Messages()).Count(m => m.Body.StartsWith("Exchange concluded")) < 2)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the second exchange never concluded");
+            await Task.Delay(100);
+        }
+        Assert.DoesNotContain(Spawner.Snapshot("general").Exchanges!, e => e.RootMessageId == 1);   // the premise: #1 was pruned
+
+        var reply = await PostAsOwnerReply("@sonnet follow up on the first ask", 1);
+        var sonnet = await _runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(sonnet));
+        Assert.Contains("Turn 2 of 4; 2 turn(s) remain after yours.", sonnet.StandardInput);
+        Assert.Contains($"#{reply} owner at ", sonnet.StandardInput);
+        Assert.Contains("(reply to #1)", sonnet.StandardInput);
+        await WaitForMessage(m => m.Body == "Exchange concluded: 2 of 4 turns used.");
+        Assert.Contains(Spawner.Snapshot("general").Exchanges!, e => e.RootMessageId == 1 && e.TurnsUsed == 2);
+    }
+
+    [Fact]
+    public async Task R36_a_reply_to_an_open_exchange_joins_it_instead_of_superseding_it()
+    {
+        _runner.Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(TimeSpan.FromSeconds(30), ct);
+        await PostAsOwner("@opus task A");                                                           // #1
+        await _runner.NextSpecAsync(Wait);                                                           // opus in flight
+
+        await PostAsOwnerReply("@opus also look at B", 1);
+
+        var deadline = DateTime.UtcNow + Wait;
+        ExchangeView? view = null;
+        while (DateTime.UtcNow < deadline)
+        {
+            view = Spawner.Snapshot("general").Exchanges?.SingleOrDefault();
+            if (view is { TurnsCommitted: 2 }) break;
+            await Task.Delay(50);
+        }
+        Assert.NotNull(view);
+        Assert.Equal((1L, "open", 2), (view!.RootMessageId, view.Status, view.TurnsCommitted));
+        Assert.Equal(["opus"], view.Pending);
+        Assert.Single(Spawner.Snapshot("general").Exchanges!);
+    }
+
+    [Fact]
+    public async Task R36_a_reply_to_a_hub_note_with_a_mention_is_a_new_prompt_and_says_so()
+    {
+        await PostAsOwner("@opus go");                                                               // #1
+        await _runner.NextSpecAsync(Wait);
+        await WaitForMessage(m => m.Body == "Exchange concluded: 1 of 4 turns used.");
+        var noteId = await LastIdOf(ChopDb.HubParticipantId);
+
+        var reply = await PostAsOwnerReply("@sonnet what about this note", noteId);
+
+        var sonnet = await _runner.NextSpecAsync(Wait);
+        Assert.Contains("Turn 1 of 4; 3 turn(s) remain after yours.", sonnet.StandardInput);
+        await WaitForMessage(m => m.Body == $"Reply to #{noteId}: that message is in no exchange this hub still holds, so this post was handled as a new prompt.");
+        Assert.Contains(Spawner.Snapshot("general").Exchanges!, e => e.RootMessageId == reply);
+    }
+
+    [Fact]
+    public async Task R36_a_spawn_post_after_its_exchange_closed_is_still_a_member_so_a_reply_to_it_joins()
+    {
+        var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) != "opus") return FakeProcessRunner.Ok("""{"result":"done"}""");
+            await stopped.Task;                                                                      // ignores cancellation on purpose
+            await PostAs("opus", "a late answer");                                                   // the exchange is closed: only the service records membership
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+        await PostAsOwner("@opus go");                                                               // #1
+        await _runner.NextSpecAsync(Wait);
+        var (outcome, _) = await Spawner.StopExchangeAsync("general", 1);
+        Assert.Equal(ExchangeStopOutcome.Stopped, outcome);
+        stopped.TrySetResult();
+        await WaitForMessage(m => m.Author == "opus" && m.Body == "a late answer");
+        var lateId = await LastIdOf("opus");
+        var deadline = DateTime.UtcNow + Wait;
+        while (Spawner.Snapshot("general").InFlight.Count > 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "opus never finished");
+            await Task.Delay(50);
+        }
+
+        await PostAsOwnerReply("@sonnet check that answer", lateId);
+
+        var sonnet = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(sonnet));
+        Assert.Contains("Turn 2 of 4; 2 turn(s) remain after yours.", sonnet.StandardInput);
+    }
+
+    private async Task<long> LastIdOf(string author)
+    {
+        using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0&limit=200"));
+        return doc.RootElement.GetProperty("messages").EnumerateArray()
+            .Last(m => m.GetProperty("authorId").GetString() == author).GetProperty("id").GetInt64();
+    }
 }
 
 /// <summary>The two timing rules that need room to be deterministic: a 2-second debounce (two HTTP

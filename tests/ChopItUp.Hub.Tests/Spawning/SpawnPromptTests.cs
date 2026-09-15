@@ -319,6 +319,17 @@ public sealed class SpawnPromptTests
         Assert.DoesNotContain("You are a worker in this run", conductor);
     }
 
+    // --- Row 36: a reply is marked in the transcript ------------------------------------------------
+
+    [Fact]
+    public void R36_a_reply_is_marked_in_the_transcript()
+    {
+        var prompt = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "root"), Msg(2, "owner", "@opus reply") with { ReplyToId = 1 }), SpawnLimits.Default);
+        var lines = prompt.Split('\n');
+        Assert.Single(lines, l => l.StartsWith("#2 owner at ") && l.EndsWith(" (reply to #1)"));
+        Assert.Single(lines, l => l.StartsWith("#1 owner at ") && !l.Contains("(reply to"));
+    }
+
     [Fact]
     public void In_run_peers_carry_their_classes_and_out_of_run_peers_do_not()
     {

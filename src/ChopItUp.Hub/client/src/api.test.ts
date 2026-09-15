@@ -158,6 +158,26 @@ describe('the owner token on writes', () => {
   });
 });
 
+/** A reply names the message it answers; a post that is not a reply sends no `replyToId` at all, so
+ *  the body the hub reads is exactly what it was before replies existed. */
+describe('posting a reply', () => {
+  test('a reply sends its target alongside the body', async () => {
+    const calls = stubFetch(() => json({ id: 8 }));
+
+    await api.postMessage('general', 'hi', 7);
+
+    expect(calls[0]?.init?.body).toBe('{"body":"hi","replyToId":7}');
+  });
+
+  test('a plain post sends the body alone', async () => {
+    const calls = stubFetch(() => json({ id: 8 }));
+
+    await api.postMessage('general', 'hi');
+
+    expect(calls[0]?.init?.body).toBe('{"body":"hi"}');
+  });
+});
+
 /** Row 34: one exchange's own stop. The room stop ends every exchange in the room (and the run, when
  *  there is one), so a strip's Stop has to reach the per-root endpoint and name only its own root. */
 describe('stopping one exchange', () => {

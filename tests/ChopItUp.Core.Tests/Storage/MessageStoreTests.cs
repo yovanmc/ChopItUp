@@ -218,6 +218,42 @@ public sealed class MessageStoreTests : IDisposable
         }
     }
 
+    [Fact]
+    public void R36_a_reply_is_stored_and_read_back_with_its_target()
+    {
+        var first = _store.Post("general", "owner", "@opus hello");
+        var reply = _store.Post("general", "owner", "@opus and this", null, replyToId: first.Id).Message;
+
+        Assert.Equal(first.Id, reply.ReplyToId);
+        Assert.Equal([null, first.Id], _store.Read("general", 0, 50).Messages.Select(m => m.ReplyToId));
+        Assert.Equal([null, first.Id], _store.ReadLast("general", 10).Select(m => m.ReplyToId));
+    }
+
+    [Fact]
+    public void R36_a_reply_to_a_message_of_another_room_or_no_message_is_refused_and_stores_nothing()
+    {
+        _store.CreateRoom("other", "Other", null);
+        var elsewhere = _store.Post("other", "owner", "over here");
+
+        var cross = Assert.Throws<ArgumentException>(() => _store.Post("general", "owner", "reply", null, replyToId: elsewhere.Id));
+        Assert.Equal("replyToId", cross.ParamName);
+        var missing = Assert.Throws<ArgumentException>(() => _store.Post("general", "owner", "reply", null, replyToId: 9_999));
+        Assert.Equal("replyToId", missing.ParamName);
+        Assert.Empty(_store.Read("general", 0, 50).Messages);
+    }
+
+    [Fact]
+    public void R36_a_retried_client_key_returns_the_original_reply_target()
+    {
+        var first = _store.Post("general", "owner", "root");
+        var original = _store.Post("general", "opus", "answer", "k-36", replyToId: first.Id);
+        var retry = _store.Post("general", "opus", "answer", "k-36", replyToId: null);
+
+        Assert.True(retry.Deduplicated);
+        Assert.Equal(first.Id, retry.Message.ReplyToId);
+        Assert.Equal(original.Message.Id, retry.Message.Id);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
