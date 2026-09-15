@@ -27,7 +27,7 @@ dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 `src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · src/ChopItUp.Desktop (WPF + WebView2 shell, row 12; dev: dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe).
 
 ## Deploy
-Release = single-file exe in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside it (a single-file bundle can't serve static files from inside itself). Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
+Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
 Live checks (real CLIs/models, scratch hub, spend real calls): see `docs/verification.md`.
 
 ## Gate

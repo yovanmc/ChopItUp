@@ -8,21 +8,38 @@ namespace ChopItUp.Hub.Tests;
 /// <c>docs/superpowers/plans/m4-release.md</c>, "Task 4 — Deploy-script tests"). The staging fixture
 /// this class shares is SYNTHETIC, not a real <c>dotnet publish</c> (Task 4 dispatch amendment,
 /// 2026-09-04): CI is <c>windows-latest</c> running <c>dotnet test --no-build</c>, and every property
-/// under test here is about where bytes go, not about the exe being a real .NET binary. The fixture
-/// builds one staging directory — a &gt;30&nbsp;MB <c>ChopItUp.Hub.exe</c> of known bytes,
-/// <c>wwwroot\index.html</c>, and a file under <c>wwwroot\assets\</c> — once for the whole class; every
-/// test drives the script against it (or a modified copy of it) via
-/// <c>-StagingDir &lt;synthetic&gt; -SkipPublish</c>, and none of them publishes.
+/// under test here is about where bytes go, not about the exes being real .NET binaries. The fixture
+/// builds one staging directory — a <c>ChopItUp.Hub.exe</c> and a <c>ChopItUp.Desktop.exe</c> (row 12
+/// T8) of known bytes, each over <see cref="TestExeFloors"/>'s 4&nbsp;KB (not the real 30&nbsp;MB /
+/// 100&nbsp;MB floors — pass 1, finding 8: kept small since ~11 script runs each make up to three
+/// copies of it), <c>wwwroot\index.html</c>, and a file under <c>wwwroot\assets\</c> — once for the
+/// whole class; every test drives the script against it (or a modified copy of it) via
+/// <c>-StagingDir &lt;synthetic&gt; -SkipPublish -ExeFloors &lt;TestExeFloors&gt;</c>, and none of them
+/// publishes.
 ///
-/// The script is driven as an external <c>pwsh -NoProfile -File</c> process throughout, always with an
-/// explicit <c>-TargetDir</c> pointed at a scratch directory under <see cref="Path.GetTempPath"/> —
-/// never the script's default, which is the owner's real install.</summary>
+/// The script is driven as an external <c>pwsh -NoProfile -Command "&amp; '&lt;script&gt;' ..."</c>
+/// process throughout (not <c>-File</c>: see <see cref="DeployScriptTests.RunScript"/> for why),
+/// always with an explicit <c>-TargetDir</c> pointed at a scratch directory under
+/// <see cref="Path.GetTempPath"/> — never the script's default, which is the owner's real
+/// install.</summary>
 public sealed class DeployScriptFixture : IDisposable
 {
     public string RepoRoot { get; }
     public string DeployScriptPath { get; }
     public string StagingDir { get; }
     public byte[] StagingExeBytes { get; }
+    public byte[] StagingDesktopExeBytes { get; }
+
+    /// <summary>Row 12 T8 (pass 1, finding 8): tests drive the script with -ExeFloors set to these
+    /// KB-scale values instead of the real 30 MB / 100 MB defaults, so the shared fixture -- built
+    /// once and driven by ~11 script runs, three copies each -- stays kilobytes, not gigabytes.
+    /// <see cref="DeployScriptTests"/> keeps exactly one case at the real defaults to prove they
+    /// bind.</summary>
+    public static readonly Dictionary<string, long> TestExeFloors = new()
+    {
+        ["ChopItUp.Hub.exe"] = 4096,
+        ["ChopItUp.Desktop.exe"] = 4096,
+    };
 
     public DeployScriptFixture()
     {
@@ -36,10 +53,12 @@ public sealed class DeployScriptFixture : IDisposable
         StagingDir = Path.Combine(Path.GetTempPath(), "chopitup_deploytest_staging_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(StagingDir, "wwwroot", "assets"));
 
-        // Just over the script's 30 MB sanity-check floor, deterministic so tests can assert
-        // byte-identity after a robocopy round trip.
-        StagingExeBytes = KnownBytes((30 * 1024 * 1024) + 4096, seed: 42);
+        // Over TestExeFloors (4 KB each), deterministic so tests can assert byte-identity after a
+        // robocopy round trip. Kept small (not the real 30 MB / 100 MB) per the note above.
+        StagingExeBytes = KnownBytes(8192, seed: 42);
+        StagingDesktopExeBytes = KnownBytes(8192, seed: 11);
         File.WriteAllBytes(Path.Combine(StagingDir, "ChopItUp.Hub.exe"), StagingExeBytes);
+        File.WriteAllBytes(Path.Combine(StagingDir, "ChopItUp.Desktop.exe"), StagingDesktopExeBytes);
         File.WriteAllText(Path.Combine(StagingDir, "wwwroot", "index.html"), "<!doctype html><html><body>synthetic shell</body></html>");
         File.WriteAllBytes(Path.Combine(StagingDir, "wwwroot", "assets", "index-synthetic.js"), KnownBytes(4096, seed: 7));
     }
@@ -372,18 +391,145 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
     }
 
+    [Fact]
+    public void Deploy_refuses_a_staging_output_that_is_missing_the_desktop_exe()
+    {
+        string staging = CopyStaging();
+        File.Delete(Path.Combine(staging, "ChopItUp.Desktop.exe"));
+        string target = NewScratchPath("target");
+        try
+        {
+            var result = RunDeploy(target, staging);
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("DEPLOY_FAILED", result.Stderr);
+            Assert.Contains("ChopItUp.Desktop.exe", result.Stderr);
+            Assert.False(Directory.Exists(target));
+        }
+        finally
+        {
+            CleanupTargetAndBackups(target);
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Deploy_replaces_both_exes_and_leaves_no_new_files_behind()
+    {
+        string target = NewScratchPath("target");
+        try
+        {
+            var result = RunDeploy(target, _fixture.StagingDir);
+            Assert.Equal(0, result.ExitCode);
+            Assert.False(File.Exists(Path.Combine(target, "ChopItUp.Hub.exe.new")));
+            Assert.False(File.Exists(Path.Combine(target, "ChopItUp.Desktop.exe.new")));
+            Assert.Equal(_fixture.StagingExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
+            Assert.Equal(_fixture.StagingDesktopExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Desktop.exe")));
+        }
+        finally
+        {
+            CleanupTargetAndBackups(target);
+        }
+    }
+
+    [Fact]
+    public void Deploy_with_default_floors_refuses_a_staging_output_whose_desktop_exe_is_undersized()
+    {
+        // The one case (pass 1, finding 8) that proves the script's real default floors -- 30 MB hub,
+        // 100 MB desktop -- actually bind, rather than only ever being exercised via -ExeFloors.
+        string staging = NewScratchPath("staging_defaultfloors");
+        Directory.CreateDirectory(Path.Combine(staging, "wwwroot", "assets"));
+        File.WriteAllBytes(Path.Combine(staging, "ChopItUp.Hub.exe"), DeployScriptFixture.KnownBytes((30 * 1024 * 1024) + 4096, seed: 42));
+        File.WriteAllBytes(Path.Combine(staging, "ChopItUp.Desktop.exe"), DeployScriptFixture.KnownBytes(8192, seed: 11));
+        File.WriteAllText(Path.Combine(staging, "wwwroot", "index.html"), "<!doctype html><html><body>synthetic shell</body></html>");
+        File.WriteAllBytes(Path.Combine(staging, "wwwroot", "assets", "index-synthetic.js"), DeployScriptFixture.KnownBytes(4096, seed: 7));
+
+        string target = NewScratchPath("target");
+        try
+        {
+            var result = RunScript(target, stagingDir: staging, restoreFrom: null, exeFloors: null);
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("DEPLOY_FAILED", result.Stderr);
+            Assert.Contains("ChopItUp.Desktop.exe", result.Stderr);
+            Assert.False(Directory.Exists(target));
+        }
+        finally
+        {
+            CleanupTargetAndBackups(target);
+            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void Restore_from_a_hub_only_backup_removes_the_desktop_exe_from_the_target()
+    {
+        string target = NewScratchPath("target");
+        string hubOnlyBackup = NewScratchPath("hubonlybackup");
+        try
+        {
+            var deployV1 = RunDeploy(target, _fixture.StagingDir);
+            Assert.Equal(0, deployV1.ExitCode);
+            Assert.True(File.Exists(Path.Combine(target, "ChopItUp.Desktop.exe")));
+
+            // Every backup made before row 12 is hub-only (the plan's Task 8 note); simulate one by
+            // copying staging and dropping the desktop exe.
+            CopyDirectoryRecursive(_fixture.StagingDir, hubOnlyBackup);
+            File.Delete(Path.Combine(hubOnlyBackup, "ChopItUp.Desktop.exe"));
+
+            var restore = RunRestore(target, hubOnlyBackup);
+            Assert.Equal(0, restore.ExitCode);
+
+            Assert.True(File.Exists(Path.Combine(target, "ChopItUp.Hub.exe")));
+            Assert.Equal(_fixture.StagingExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
+            Assert.False(File.Exists(Path.Combine(target, "ChopItUp.Desktop.exe")));
+        }
+        finally
+        {
+            CleanupTargetAndBackups(target);
+            if (Directory.Exists(hubOnlyBackup)) Directory.Delete(hubOnlyBackup, recursive: true);
+        }
+    }
+
     // --- helpers ---------------------------------------------------------------------------------
 
     private const string SelfAppsDir = @"C:\Self Apps";
 
     private DeployRunResult RunDeploy(string targetDir, string stagingDir)
-        => RunScript(targetDir, stagingDir: stagingDir, restoreFrom: null);
+        => RunScript(targetDir, stagingDir: stagingDir, restoreFrom: null, exeFloors: DeployScriptFixture.TestExeFloors);
 
     private DeployRunResult RunRestore(string targetDir, string restoreFrom)
-        => RunScript(targetDir, stagingDir: null, restoreFrom: restoreFrom);
+        => RunScript(targetDir, stagingDir: null, restoreFrom: restoreFrom, exeFloors: DeployScriptFixture.TestExeFloors);
 
-    private DeployRunResult RunScript(string targetDir, string? stagingDir, string? restoreFrom)
+    /// <summary>Drives the script via `pwsh -Command "&amp; '&lt;script&gt;' ..."` rather than `-File`
+    /// plus an ArgumentList, because `-ExeFloors` is `[hashtable]`-typed and a `[hashtable]` parameter
+    /// cannot be bound from a raw argv string when a script is launched as an external process with
+    /// `-File` -- measured this task: `pwsh -File script.ps1 -Floors "@{ 'a' = 5 }"` throws
+    /// "Cannot convert ... System.String ... to type System.Collections.Hashtable". `-Command` parses
+    /// the whole line as PowerShell source, so the `@{ ... }` literal is evaluated as an object before
+    /// it ever reaches parameter binding, and `exit &lt;n&gt;` inside the invoked script still exits the
+    /// host process with that code (also measured). Every value substituted into the command string is
+    /// single-quoted with `''`-escaping (PsQuote); a null exeFloors omits `-ExeFloors` so the script's
+    /// own default (the real 30 MB / 100 MB floors) binds.</summary>
+    private DeployRunResult RunScript(string targetDir, string? stagingDir, string? restoreFrom, IReadOnlyDictionary<string, long>? exeFloors)
     {
+        var command = new StringBuilder();
+        command.Append("& ").Append(PsQuote(_fixture.DeployScriptPath));
+        command.Append(" -TargetDir ").Append(PsQuote(targetDir));
+        if (restoreFrom is not null)
+        {
+            command.Append(" -RestoreFrom ").Append(PsQuote(restoreFrom));
+        }
+        else
+        {
+            command.Append(" -StagingDir ").Append(PsQuote(stagingDir!));
+            command.Append(" -SkipPublish");
+        }
+        if (exeFloors is not null)
+        {
+            command.Append(" -ExeFloors @{ ");
+            command.Append(string.Join("; ", exeFloors.Select(kv => $"{PsQuote(kv.Key)} = {kv.Value}")));
+            command.Append(" }");
+        }
+
         var psi = new ProcessStartInfo("pwsh")
         {
             UseShellExecute = false,
@@ -392,21 +538,8 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             CreateNoWindow = true,
         };
         psi.ArgumentList.Add("-NoProfile");
-        psi.ArgumentList.Add("-File");
-        psi.ArgumentList.Add(_fixture.DeployScriptPath);
-        psi.ArgumentList.Add("-TargetDir");
-        psi.ArgumentList.Add(targetDir);
-        if (restoreFrom is not null)
-        {
-            psi.ArgumentList.Add("-RestoreFrom");
-            psi.ArgumentList.Add(restoreFrom);
-        }
-        else
-        {
-            psi.ArgumentList.Add("-StagingDir");
-            psi.ArgumentList.Add(stagingDir!);
-            psi.ArgumentList.Add("-SkipPublish");
-        }
+        psi.ArgumentList.Add("-Command");
+        psi.ArgumentList.Add(command.ToString());
 
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
@@ -432,6 +565,11 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
 
         return new DeployRunResult(proc.ExitCode, stdout.ToString(), stderr.ToString());
     }
+
+    /// <summary>Single-quotes a value for embedding in a PowerShell `-Command` string, doubling any
+    /// embedded single quotes (PowerShell's own escape for a literal `'` inside a single-quoted
+    /// string).</summary>
+    private static string PsQuote(string value) => "'" + value.Replace("'", "''") + "'";
 
     private static JsonDocument ParseDeployResult(string stdout)
     {

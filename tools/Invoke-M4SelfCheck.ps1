@@ -15,7 +15,10 @@
       already exists in that scratch copy before the first launch: C2's whole claim is that the
       database is *created* beside the exe by this run, and a pre-existing folder would let the
       check pass without proving anything. Then:
-        C1 -- the published layout is exactly what release publish is supposed to produce.
+        C1 -- the published layout is exactly what release publish is supposed to produce (row 12,
+              T8: both ChopItUp.Hub.exe and ChopItUp.Desktop.exe, each present and at/above its own
+              size floor; C2/C3/Restart below launch and probe the hub only -- the desktop shell needs
+              a real WebView2 profile and a hub to attach to, out of scope for this script).
         C2 -- launched with no --data and --port 0, from a *different* working directory than the
               exe's own, with CHOPITUP_DATA/CHOPITUP_PORT cleared from the child environment, the
               database appears beside the exe (AppContext.BaseDirectory) and nowhere in the working
@@ -252,10 +255,25 @@ try {
         Add-Check -Name 'c1.exe-size-floor-30mb' -Passed $false -Detail 'skipped: exe missing'
     }
 
-    # The loose top-level set is exactly these four entries. Anything else present is a FAIL, not a
+    # Row 12 (T8): the desktop shell exe ships beside the hub now. Same shape as the hub's own checks
+    # above -- existence, then a size floor separating a self-contained build from a stub -- but this
+    # script never launches ChopItUp.Desktop.exe (it needs a real WebView2 profile and a hub to attach
+    # to); C2/C3/Restart below stay hub-only.
+    $desktopExePath = Join-Path $scratch 'ChopItUp.Desktop.exe'
+    $desktopExeExists = Test-Path -LiteralPath $desktopExePath -PathType Leaf
+    Add-Check -Name 'c1.desktop-exe-exists' -Passed $desktopExeExists -Detail $desktopExePath
+    if ($desktopExeExists) {
+        $desktopExeSize = (Get-Item -LiteralPath $desktopExePath).Length
+        Add-Check -Name 'c1.desktop-exe-size-floor-100mb' -Passed ($desktopExeSize -ge 100MB) -Detail "size=$desktopExeSize bytes"
+    }
+    else {
+        Add-Check -Name 'c1.desktop-exe-size-floor-100mb' -Passed $false -Detail 'skipped: exe missing'
+    }
+
+    # The loose top-level set is exactly these five entries. Anything else present is a FAIL, not a
     # silently-accepted addition to the expected set -- STOP means report loudly, never expand what
     # "expected" means to match what got measured.
-    $allowedTopLevel = @('ChopItUp.Hub.exe', 'ChopItUp.Hub.staticwebassets.endpoints.json', 'web.config', 'wwwroot')
+    $allowedTopLevel = @('ChopItUp.Hub.exe', 'ChopItUp.Desktop.exe', 'ChopItUp.Hub.staticwebassets.endpoints.json', 'web.config', 'wwwroot')
     $topLevel = @(Get-ChildItem -LiteralPath $scratch -Force | ForEach-Object { $_.Name })
     $unexpected = @($topLevel | Where-Object { $allowedTopLevel -notcontains $_ })
     Add-Check -Name 'c1.loose-file-set-exact' -Passed ($unexpected.Count -eq 0) -Detail "measured=[$($topLevel -join ', ')] unexpected=[$($unexpected -join ', ')]"

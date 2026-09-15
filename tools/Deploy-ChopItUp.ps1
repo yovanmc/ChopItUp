@@ -11,22 +11,30 @@
 
     Order of operations, in the order below -- the ordering IS the safety property:
       1. Refuse to run if any process's image path is inside -TargetDir. Aborts before anything is
-         touched, naming the PID and path.
-      2. Publish into -StagingDir (never straight into the target), unless -SkipPublish.
-      3. Sanity-check the staging output (exe present and >= 30 MB, wwwroot\index.html present,
-         wwwroot\assets\ non-empty) before it is allowed near the target.
+         touched, naming the PID and path. This already matches any process image under the target,
+         so a running ChopItUp.Desktop.exe (row 12) blocks a deploy exactly the way a running hub does
+         -- no shell-specific check needed.
+      2. Publish both projects -- the hub, then the desktop shell (row 12) -- into -StagingDir (never
+         straight into the target), unless -SkipPublish.
+      3. Sanity-check the staging output (every exe in -ExeFloors present at/above its floor,
+         wwwroot\index.html present, wwwroot\assets\ non-empty) before it is allowed near the target.
+         A restore checks only the exes the restore source actually has: every backup made before row
+         12 is hub-only, and that is a valid restore source, not a failure.
       4. Copy the existing install aside (excluding `data` and `logs`) to a directory that is a
          SIBLING of -TargetDir, derived from -TargetDir itself -- never a hardcoded path, so driving
          this script at a scratch directory in tests never touches the owner's real install.
       5. Re-run the process check, then delete the target's existing `wwwroot\` wholesale (the backup
          made in step 4 already holds a copy of it) and copy the new build in additively elsewhere
-         (/E, excluding data/logs and the exe itself), replacing the exe last via copy-aside-and-rename
-         so a kill mid-deploy never leaves a half-written executable under the name the owner
-         double-clicks. Deleting `wwwroot\` wholesale (rather than copying over it) is what stops a
-         renamed or removed hashed asset from a previous build accumulating forever; `data\` and
-         `logs\` are untouched because they are siblings of `wwwroot\`, not children of it.
+         (/E, excluding data/logs and every exe), replacing each exe last via copy-aside-and-rename (hub
+         first, then desktop) so a kill mid-deploy never leaves a half-written executable under the
+         name the owner double-clicks. Deleting `wwwroot\` wholesale (rather than copying over it) is
+         what stops a renamed or removed hashed asset from a previous build accumulating forever;
+         `data\` and `logs\` are untouched because they are siblings of `wwwroot\`, not children of it.
+         An exe the source does not have but the target does (a hub-only restore source over a target
+         that has a desktop exe) is then deleted from the target -- an old hub beside a stale shell
+         would 401 the shell's launch-scoped token.
       6. Print a machine-readable "DEPLOY_RESULT: { ... }" JSON line as the last line of output:
-         target, staging, whether/where a backup was written, the deployed exe's size, the current
+         target, staging, whether/where a backup was written, each deployed exe's size, the current
          backup count, and how many running processes' image paths could not be read (a blind spot
          that must be reported, never silent). This step never verifies file contents -- that is
          tools/Invoke-M4SelfCheck.ps1's job, run separately against the staging path this script
@@ -55,20 +63,31 @@
 .PARAMETER RestoreFrom
     Path to a previous backup directory (as written by a prior deploy). Copies it back over
     -TargetDir under the same guards as a normal deploy. Mutually exclusive with -StagingDir and
-    -SkipPublish -- restoring never publishes.
+    -SkipPublish -- restoring never publishes. Every backup made before row 12 is hub-only, so a
+    restore source missing an exe that -ExeFloors names is valid, not a sanity failure.
+
+.PARAMETER ExeFloors
+    Row 12 (T8): a map of exe file name -> minimum byte size, checked by the sanity check and used to
+    decide which exes this script looks for. Defaults to the real floors: 30 MB for ChopItUp.Hub.exe,
+    100 MB for ChopItUp.Desktop.exe (both self-contained single-file builds; a floor this low mostly
+    catches a non-self-contained build or a stub). Tests pass small KB-scale floors so the fixture
+    they drive against stays small.
 #>
 [CmdletBinding()]
 param(
     [string]$TargetDir = 'C:\Self Apps\ChopItUp',
     [string]$StagingDir,
     [switch]$SkipPublish,
-    [string]$RestoreFrom
+    [string]$RestoreFrom,
+    [hashtable]$ExeFloors = @{ 'ChopItUp.Hub.exe' = 30MB; 'ChopItUp.Desktop.exe' = 100MB }
 )
 
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $hubProj = Join-Path $repoRoot 'src\ChopItUp.Hub\ChopItUp.Hub.csproj'
+$desktopProj = Join-Path $repoRoot 'src\ChopItUp.Desktop\ChopItUp.Desktop.csproj'
+$exeNames = @('ChopItUp.Hub.exe', 'ChopItUp.Desktop.exe')
 
 # --- Argument validation (cheap, and does not touch anything, so it runs before step 1 too) -------
 if ($SkipPublish -and -not $StagingDir) {
@@ -120,6 +139,9 @@ function Test-NoProcessRunningFromTarget {
 }
 
 function Assert-ProcessGuardClear {
+    <# Matches any process whose image path is under the target -- ChopItUp.Hub.exe or
+       ChopItUp.Desktop.exe (row 12) alike, with no shell-specific case needed: a running desktop
+       shell blocks a deploy exactly the way a running hub does. #>
     param([Parameter(Mandatory)][string]$NormalizedTargetDir, [Parameter(Mandatory)][string]$WhenLabel)
 
     $guard = Test-NoProcessRunningFromTarget -NormalizedTargetDir $NormalizedTargetDir
@@ -133,24 +155,34 @@ function Assert-ProcessGuardClear {
 
 function Test-StagingOutput {
     <# Returns $null if the staging/restore source is plausible, else a string describing why not.
-       The 30 MB floor and the wwwroot\assets\ check both exist for the same reason: a build that
+       The per-exe floor and the wwwroot\assets\ check both exist for the same reason: a build that
        looks fine but is missing the runtime (a non-self-contained build of this project is
        162,304 bytes) or missing the client bundle (index.html alone is served for every unreserved
        path by SpaFiles' MapFallback, so its presence proves nothing about assets\) must never reach
-       the target. #>
-    param([Parameter(Mandatory)][string]$Dir)
+       the target.
+
+       -RequireAllExes:$false (restore mode) checks only the exes present in $Dir against their
+       floors in $ExeFloors; an exe named in $ExeFloors but absent from $Dir is skipped rather than
+       failing, because every backup made before row 12 is hub-only and is a valid restore source. A
+       fresh publish (-RequireAllExes) must produce every exe named in $ExeFloors. #>
+    param([Parameter(Mandatory)][string]$Dir, [Parameter(Mandatory)][hashtable]$ExeFloors, [switch]$RequireAllExes)
 
     if (-not (Test-Path -LiteralPath $Dir -PathType Container)) {
         return "staging/restore directory '$Dir' does not exist."
     }
-    $exePath = Join-Path $Dir 'ChopItUp.Hub.exe'
-    if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-        return "'$exePath' does not exist."
-    }
-    $exeSize = (Get-Item -LiteralPath $exePath).Length
-    $floorBytes = 30MB
-    if ($exeSize -lt $floorBytes) {
-        return "'$exePath' is $exeSize bytes, below the $floorBytes-byte floor that separates a self-contained build from a stub."
+    foreach ($exeName in $ExeFloors.Keys) {
+        $exePath = Join-Path $Dir $exeName
+        if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            if ($RequireAllExes) {
+                return "'$exePath' does not exist."
+            }
+            continue
+        }
+        $exeSize = (Get-Item -LiteralPath $exePath).Length
+        $floorBytes = $ExeFloors[$exeName]
+        if ($exeSize -lt $floorBytes) {
+            return "'$exePath' is $exeSize bytes, below the $floorBytes-byte floor for '$exeName' that separates a self-contained build from a stub."
+        }
     }
     $indexPath = Join-Path $Dir 'wwwroot\index.html'
     if (-not (Test-Path -LiteralPath $indexPath -PathType Leaf)) {
@@ -228,21 +260,43 @@ function Remove-TargetWwwroot {
 }
 
 function Invoke-GuardedCopyIn {
-    <# Additive copy of $Source into $NormalizedTargetDir, excluding data\, logs\ and the exe (which
-       is copied aside and renamed into place last so a kill mid-copy never leaves a half-written
-       executable under the real name). /E is load-bearing: robocopy's default is top-level files
-       only, and /XD data logs alone would leave wwwroot\ behind entirely -- the app would still
-       start and /health would still be green while the owner got a blank page. #>
-    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$NormalizedTargetDir)
+    <# Additive copy of $Source into $NormalizedTargetDir, excluding data\, logs\ and every exe in
+       $ExeNames (each copied aside and renamed into place last, hub then desktop, so a kill mid-copy
+       never leaves a half-written executable under a real name). /E is load-bearing: robocopy's
+       default is top-level files only, and /XD data logs alone would leave wwwroot\ behind entirely
+       -- the app would still start and /health would still be green while the owner got a blank
+       page. An exe absent from $Source (a hub-only restore source, row 12) is simply not copied in;
+       the caller removes any such exe left behind in the target separately. #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$NormalizedTargetDir, [Parameter(Mandatory)][string[]]$ExeNames)
 
-    robocopy $Source $NormalizedTargetDir /E /XD data logs /XF ChopItUp.Hub.exe /R:2 /W:2 /NP /NFL /NDL | Out-Null
+    robocopy $Source $NormalizedTargetDir /E /XD data logs /XF $ExeNames /R:2 /W:2 /NP /NFL /NDL | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE (source '$Source' -> '$NormalizedTargetDir')." }
 
-    $sourceExe = Join-Path $Source 'ChopItUp.Hub.exe'
-    $stagedExe = Join-Path $NormalizedTargetDir 'ChopItUp.Hub.exe.new'
-    $finalExe = Join-Path $NormalizedTargetDir 'ChopItUp.Hub.exe'
-    Copy-Item -LiteralPath $sourceExe -Destination $stagedExe -Force
-    Move-Item -LiteralPath $stagedExe -Destination $finalExe -Force
+    foreach ($exeName in $ExeNames) {
+        $sourceExe = Join-Path $Source $exeName
+        if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf)) { continue }
+        $stagedExe = Join-Path $NormalizedTargetDir "$exeName.new"
+        $finalExe = Join-Path $NormalizedTargetDir $exeName
+        Copy-Item -LiteralPath $sourceExe -Destination $stagedExe -Force
+        Move-Item -LiteralPath $stagedExe -Destination $finalExe -Force
+    }
+}
+
+function Remove-OrphanedTargetExes {
+    <# Row 12 T8: every deploy backup made before this row is hub-only. Restoring one over a target
+       that has a desktop exe must not leave that desktop exe behind, still pointing at whatever hub
+       token it had before -- a stale shell beside a restored old hub would 401. Deletes, from the
+       target, any exe in $ExeNames that $Source does not provide. #>
+    param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$NormalizedTargetDir, [Parameter(Mandatory)][string[]]$ExeNames)
+
+    foreach ($exeName in $ExeNames) {
+        $sourceExe = Join-Path $Source $exeName
+        $targetExe = Join-Path $NormalizedTargetDir $exeName
+        if (-not (Test-Path -LiteralPath $sourceExe -PathType Leaf) -and (Test-Path -LiteralPath $targetExe -PathType Leaf)) {
+            Write-Host "Source has no '$exeName'; removing it from the target (restoring a backup made before this exe existed)."
+            Remove-Item -LiteralPath $targetExe -Force
+        }
+    }
 }
 
 try {
@@ -261,6 +315,9 @@ try {
             Write-Host "Publishing $hubProj (Release) to '$source'..."
             & dotnet publish $hubProj -c Release -o $source
             if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
+            Write-Host "Publishing $desktopProj (Release) to '$source'..."
+            & dotnet publish $desktopProj -c Release -o $source
+            if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed with exit code $LASTEXITCODE." }
         }
         else {
             Write-Host "Skipping publish; using existing staging output at '$source'."
@@ -268,7 +325,7 @@ try {
     }
 
     # --- Step 3: sanity-check the source before it is allowed near the target -----------------------
-    $sanityError = Test-StagingOutput -Dir $source
+    $sanityError = Test-StagingOutput -Dir $source -ExeFloors $ExeFloors -RequireAllExes:(-not $isRestore)
     if ($sanityError) { throw "Staging/restore output failed its sanity check: $sanityError Target untouched." }
     Write-Host "Sanity check passed for '$source'."
 
@@ -279,11 +336,14 @@ try {
     $unreadable2 = Assert-ProcessGuardClear -NormalizedTargetDir $targetDir -WhenLabel 'immediately before copy'
     if (-not (Test-Path -LiteralPath $targetDir)) { New-Item -ItemType Directory -Path $targetDir -Force | Out-Null }
     Remove-TargetWwwroot -NormalizedTargetDir $targetDir
-    Invoke-GuardedCopyIn -Source $source -NormalizedTargetDir $targetDir
+    Invoke-GuardedCopyIn -Source $source -NormalizedTargetDir $targetDir -ExeNames $exeNames
+    Remove-OrphanedTargetExes -Source $source -NormalizedTargetDir $targetDir -ExeNames $exeNames
 
     # --- Step 6: machine-readable report, as the last line of output --------------------------------
     $finalExePath = Join-Path $targetDir 'ChopItUp.Hub.exe'
     $exeSize = (Get-Item -LiteralPath $finalExePath).Length
+    $finalDesktopExePath = Join-Path $targetDir 'ChopItUp.Desktop.exe'
+    $desktopExeSize = if (Test-Path -LiteralPath $finalDesktopExePath -PathType Leaf) { (Get-Item -LiteralPath $finalDesktopExePath).Length } else { $null }
     $parent = Split-Path -Parent $targetDir
     $leaf = Split-Path -Leaf $targetDir
     $backupCount = 0
@@ -298,6 +358,7 @@ try {
         backup_made             = [bool]$backupDir
         backup_dir              = $backupDir
         exe_size_bytes          = $exeSize
+        desktop_exe_size_bytes  = $desktopExeSize
         backup_count            = $backupCount
         unreadable_process_paths = $unreadable2
     }
