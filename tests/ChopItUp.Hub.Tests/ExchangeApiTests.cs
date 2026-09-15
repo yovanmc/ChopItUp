@@ -142,4 +142,44 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         using var snapDoc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/exchange"));
         Assert.Equal("run", snapDoc.RootElement.GetProperty("stoppedBy").GetString());
     }
+
+    [Fact]
+    public async Task R32_the_snapshot_lists_each_exchange_and_the_per_exchange_stop_answers_200_404_409()
+    {
+        _runner.Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct);
+        Assert.Equal(0, (await Get("general")).GetProperty("exchanges").GetArrayLength());
+
+        var first = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@fable task A" });
+        await _runner.NextSpecAsync(TimeSpan.FromSeconds(15));
+        var second = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus task B" });
+        await _runner.NextSpecAsync(TimeSpan.FromSeconds(15));
+        Assert.Equal(HttpStatusCode.Created, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Created, second.StatusCode);
+
+        var snap = await Get("general");
+        var exchanges = snap.GetProperty("exchanges").EnumerateArray().ToList();
+        Assert.Equal(2, exchanges.Count);
+        var rootA = exchanges[0].GetProperty("rootMessageId").GetInt64();
+        Assert.Equal(["fable"], exchanges[0].GetProperty("inFlight").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(snap.GetProperty("rootMessageId").GetInt64(), exchanges[1].GetProperty("rootMessageId").GetInt64());   // top level = newest
+
+        Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsync("api/rooms/general/exchanges/999999/stop", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsync($"api/rooms/nope/exchanges/{rootA}/stop", null)).StatusCode);
+        var stop = await _host.Client.PostAsync($"api/rooms/general/exchanges/{rootA}/stop", null);
+        Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
+        using var body = JsonDocument.Parse(await stop.Content.ReadAsStringAsync());
+        Assert.Equal("stopped", body.RootElement.GetProperty("exchanges")[0].GetProperty("status").GetString());
+        Assert.Equal("owner", body.RootElement.GetProperty("exchanges")[0].GetProperty("stoppedBy").GetString());
+        Assert.Equal(4, body.RootElement.GetProperty("exchanges")[1].GetProperty("budget").GetInt32());
+        Assert.Equal(0, body.RootElement.GetProperty("exchanges")[1].GetProperty("pending").GetArrayLength());
+        Assert.Equal("open", body.RootElement.GetProperty("exchanges")[1].GetProperty("status").GetString());
+
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if ((await Get("general")).GetProperty("inFlight").GetArrayLength() == 1) break;
+            await Task.Delay(50);
+        }
+        Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync($"api/rooms/general/exchanges/{rootA}/stop", null)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);   // room-level stop still stops the rest
+    }
 }

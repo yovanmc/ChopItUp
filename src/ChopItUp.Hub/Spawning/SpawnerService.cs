@@ -27,6 +27,10 @@ public sealed record ExchangeView(
     long RootMessageId, string Status, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
     IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, string? StoppedBy);
 
+/// <summary>What a per-exchange stop found. The API maps NotFound to 404, NothingToStop and
+/// RunOwnsRoom to 409, Stopped to 200 with the snapshot.</summary>
+public enum ExchangeStopOutcome { Stopped, NotFound, NothingToStop, RunOwnsRoom }
+
 /// <summary>What the UI and the API see. <see cref="Status"/> is <c>idle</c>, <c>open</c>,
 /// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
 /// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
@@ -50,6 +54,7 @@ public sealed class SpawnerService : BackgroundService
     private sealed record PostedEvent(Message Message) : Event;
     private sealed record FinishedEvent(SpawnHandle Handle, ProcessResult Result, TrailReport? Trail) : Event;
     private sealed record StopEvent(string RoomId, TaskCompletionSource<ExchangeSnapshot?> Reply) : Event;
+    private sealed record StopOneEvent(string RoomId, long RootMessageId, TaskCompletionSource<(ExchangeStopOutcome, ExchangeSnapshot?)> Reply) : Event;
     private sealed record TickEvent : Event;
 
     /// <summary>What the trail did around one spawn in a directory room (M9 decision 6); null when the
@@ -165,6 +170,17 @@ public sealed class SpawnerService : BackgroundService
         return await reply.Task;
     }
 
+    /// <summary>The owner's stop for ONE exchange: kills that exchange's own in-flight spawns,
+    /// closes it if it is still open, and leaves every other exchange in the room alone. Works on a
+    /// closed exchange whose spawn is still running. Refused while a run is active or parked here: the
+    /// run's own stop is the one control there.</summary>
+    public async Task<(ExchangeStopOutcome Outcome, ExchangeSnapshot? Snapshot)> StopExchangeAsync(string roomId, long rootMessageId)
+    {
+        var reply = new TaskCompletionSource<(ExchangeStopOutcome, ExchangeSnapshot?)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_events.Writer.TryWrite(new StopOneEvent(roomId, rootMessageId, reply))) return (ExchangeStopOutcome.NothingToStop, null);
+        return await reply.Task;
+    }
+
     public override Task StartAsync(CancellationToken cancellationToken)
     {
         // Nothing in <data>\spawns\ can be live at start: every spawn belongs to a hub process, and
@@ -237,6 +253,11 @@ public sealed class SpawnerService : BackgroundService
                 ExchangeSnapshot? reply = null;
                 try { reply = OnStop(s.RoomId); }
                 finally { s.Reply.TrySetResult(reply); }   // a throw here must not hang the HTTP caller
+                break;
+            case StopOneEvent one:
+                (ExchangeStopOutcome, ExchangeSnapshot?) oneReply = (ExchangeStopOutcome.NothingToStop, null);
+                try { oneReply = OnStopOne(one.RoomId, one.RootMessageId); }
+                finally { one.Reply.TrySetResult(oneReply); }   // a throw here must not hang the HTTP caller
                 break;
             case TickEvent: OnTick(); break;
         }
@@ -979,6 +1000,22 @@ public sealed class SpawnerService : BackgroundService
             PostNote(roomId, $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.");
         foreach (var x in open) PostNote(roomId, ExchangePolicy.Stop(x, ExchangeStopCause.Owner));
         return Publish(roomId);
+    }
+
+    private (ExchangeStopOutcome, ExchangeSnapshot?) OnStopOne(string roomId, long rootMessageId)
+    {
+        if (_runs.Active(roomId) is not null || _runs.Latest(roomId) is { Status: RunStatus.Parked })
+            return (ExchangeStopOutcome.RunOwnsRoom, null);
+        var x = ExchangesIn(roomId).LastOrDefault(e => e.RootMessageId == rootMessageId);
+        if (x is null) return (ExchangeStopOutcome.NotFound, null);
+        var live = _inFlight.Values.Where(h => ReferenceEquals(h.Exchange, x)).ToList();
+        var open = x.Status == ExchangeStatus.Open;
+        if (!open && live.Count == 0) return (ExchangeStopOutcome.NothingToStop, null);
+        foreach (var handle in live) handle.Cancel.Cancel();
+        PostNote(roomId, open
+            ? ExchangePolicy.Stop(x, ExchangeStopCause.Owner)
+            : $"Exchange stopped by the owner: {live.Count} running spawn(s) of an earlier exchange stopped.");
+        return (ExchangeStopOutcome.Stopped, Publish(roomId));
     }
 
     private void ArmWake()

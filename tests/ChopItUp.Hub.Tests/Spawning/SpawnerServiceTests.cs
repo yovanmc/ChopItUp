@@ -585,6 +585,54 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(3, ViewAt(0).TurnsCommitted);
         await Spawner.StopAsync("general");
     }
+
+    [Fact]
+    public async Task R32_stopping_one_exchange_kills_only_its_own_spawn_and_reaches_a_superseded_one()
+    {
+        // Hang on the cancellation token only, so the list records cancellations and never the fixture's 1 s timeout.
+        var cancelled = new List<string>();
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            try { await Task.Delay(Timeout.Infinite, ct); }
+            catch (OperationCanceledException) { lock (cancelled) cancelled.Add(FakeProcessRunner.ParticipantOf(spec)); }
+            return new ProcessResult(null, false, true, "", "", TimeSpan.Zero);
+        };
+        await PostAsOwner("@opus task A");
+        await _runner.NextSpecAsync(Wait);
+        await PostAsOwner("@gpt-5.5 task B");
+        await _runner.NextSpecAsync(Wait);
+        var snap = Spawner.Snapshot("general");
+        var a = snap.Exchanges![0].RootMessageId;
+        var b = snap.Exchanges![1].RootMessageId;
+
+        Assert.Equal(ExchangeStopOutcome.NotFound, (await Spawner.StopExchangeAsync("general", 999_999)).Outcome);
+
+        var (outcome, afterA) = await Spawner.StopExchangeAsync("general", a);
+        Assert.Equal(ExchangeStopOutcome.Stopped, outcome);
+        Assert.Equal("stopped", afterA!.Exchanges!.Single(e => e.RootMessageId == a).Status);
+        Assert.Equal("open", afterA.Exchanges!.Single(e => e.RootMessageId == b).Status);
+        foreach (var _ in Enumerable.Range(0, 100)) { lock (cancelled) if (cancelled.Count > 0) break; await Task.Delay(50); }
+        lock (cancelled) Assert.Equal(["opus"], cancelled);
+
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if (Spawner.Snapshot("general").InFlight.SequenceEqual(["gpt-5.5"])) break;
+            await Task.Delay(50);
+        }
+        Assert.Equal(ExchangeStopOutcome.NothingToStop, (await Spawner.StopExchangeAsync("general", a)).Outcome);
+
+        // A superseded exchange with a live spawn is still stoppable on its own.
+        await PostAsOwner("/nope @gpt-5.5");
+        foreach (var _ in Enumerable.Range(0, 100))
+        {
+            if (Spawner.Snapshot("general").Exchanges!.Single(e => e.RootMessageId == b).Status == "superseded") break;
+            await Task.Delay(50);
+        }
+        Assert.Equal("superseded", Spawner.Snapshot("general").Exchanges!.Single(e => e.RootMessageId == b).Status);
+        Assert.Equal(ExchangeStopOutcome.Stopped, (await Spawner.StopExchangeAsync("general", b)).Outcome);
+        foreach (var _ in Enumerable.Range(0, 100)) { lock (cancelled) if (cancelled.Count > 1) break; await Task.Delay(50); }
+        lock (cancelled) Assert.Equal(["opus", "gpt-5.5"], cancelled);
+    }
 }
 
 /// <summary>The two timing rules that need room to be deterministic: a 2-second debounce (two HTTP

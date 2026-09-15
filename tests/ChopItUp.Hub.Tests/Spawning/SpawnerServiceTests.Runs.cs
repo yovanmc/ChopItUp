@@ -1141,4 +1141,32 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(["--effort", "high"], (await fable.Task.WaitAsync(Wait)).TakeLast(2));
         Assert.DoesNotContain("--effort", await sonnet.Task.WaitAsync(Wait));
     }
+
+    [Fact]
+    public async Task R32_the_per_exchange_stop_refuses_while_a_run_is_active_or_parked()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        await MakeRoom("lab-r32-stop");
+        var misbehave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await misbehave.Task.WaitAsync(ct);   // the in-run timeout is RunLimits' 30 min, not the fixture's 1 s
+                await PostAsIn("sonnet", "lab-r32-stop", "no phase tag at all, first bad post");
+                await PostAsIn("sonnet", "lab-r32-stop", "still no phase tag, second bad post");
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+        await PostAsOwnerIn("lab-r32-stop", "/build-thing @sonnet begin");
+        await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab-r32-stop").RootMessageId!.Value;
+        Assert.Equal(RunStatus.Active, Runs.Active("lab-r32-stop")!.Status);
+        Assert.Equal(ExchangeStopOutcome.RunOwnsRoom, (await Spawner.StopExchangeAsync("lab-r32-stop", root)).Outcome);
+
+        misbehave.SetResult();
+        await WaitForMessageIn("lab-r32-stop", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("parked"));
+        Assert.Equal(RunStatus.Parked, Runs.Latest("lab-r32-stop")!.Status);
+        Assert.Equal(ExchangeStopOutcome.RunOwnsRoom, (await Spawner.StopExchangeAsync("lab-r32-stop", root)).Outcome);
+    }
 }
