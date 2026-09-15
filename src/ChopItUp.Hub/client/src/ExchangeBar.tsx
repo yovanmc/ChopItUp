@@ -65,8 +65,9 @@ const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
  *  Idle is the only state that hides the bar outright. It is the zero state (seq 0, nothing has ever
  *  run) and a room never returns to it, so nothing live can be hidden behind that branch.
  *
- *  Row 34: a hub that sends `exchanges` gets one strip per entry, oldest first, each on its own fields
- *  and its own stop; the strips are siblings rather than a wrapped list, so each keeps the `.exchange`
+ *  Row 34: a hub that sends `exchanges` gets one strip per entry, in the hub's order (a reopened
+ *  exchange last), each on its own fields and its own stop; the strips are siblings rather than a
+ *  wrapped list, so each keeps the `.exchange`
  *  row it always had and the stack reads like `RunBar` above it. That hub sends an empty list exactly
  *  when its top level is idle, so the empty case falls through to the idle branch below. A hub
  *  without `exchanges` renders the one top-level strip with the room stop, as before. */

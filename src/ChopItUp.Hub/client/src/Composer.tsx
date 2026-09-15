@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as api from './api';
-import type { Skill } from './types';
+import { displayName } from './participants';
+import { replySnippet } from './reply';
+import type { Message, Skill } from './types';
 
 const MAX_HEIGHT_PX = 200;
 
@@ -13,10 +15,14 @@ const COMMAND_DRAFT = /^\/[a-z0-9-]*$/;
 interface Props {
   roomName: string;
   disabled: boolean;
-  onSend: (body: string) => Promise<void>;
+  /** The message the next post replies to, or null. Owned by App, which clears it after a successful
+   *  send and on a room change and keeps it after a failed one. */
+  replyTo: Message | null;
+  onCancelReply: () => void;
+  onSend: (body: string, replyToId: number | null) => Promise<void>;
 }
 
-export default function Composer({ roomName, disabled, onSend }: Props) {
+export default function Composer({ roomName, disabled, replyTo, onCancelReply, onSend }: Props) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -53,6 +59,11 @@ export default function Composer({ roomName, disabled, onSend }: Props) {
     return () => abort.abort();
   }, []);
 
+  // Choosing Reply on a message puts the caret where the reply goes.
+  useEffect(() => {
+    if (replyTo) box.current?.focus();
+  }, [replyTo]);
+
   const matches = useMemo(() => {
     if (!COMMAND_DRAFT.test(draft)) return [];
     const typed = draft.slice(1);
@@ -85,7 +96,7 @@ export default function Composer({ roomName, disabled, onSend }: Props) {
     if (!body || sending || disabled) return;
     setSending(true);
     try {
-      await onSend(body);
+      await onSend(body, replyTo?.id ?? null);
       setDraft('');
       setHighlight(0);
       setDismissed(false);
@@ -104,74 +115,99 @@ export default function Composer({ roomName, disabled, onSend }: Props) {
       }}
     >
       <div className="composer-field">
-        {menuOpen && (
-          <ul className="skill-menu" role="listbox" id="skill-menu" aria-label="Installed skills">
-            {matches.map((skill, index) => (
-              <li key={skill.name}>
-                <button
-                  type="button"
-                  id={`skill-option-${skill.name}`}
-                  role="option"
-                  aria-selected={index === active}
-                  className={`skill-option${index === active ? ' active' : ''}`}
-                  // The textarea must keep focus: a click lands on mouseup, and the blur in between
-                  // would move the caret out of the box the selection is about to write into.
-                  onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setHighlight(index)}
-                  onClick={() => choose(skill)}
-                >
-                  <span className="skill-name">/{skill.name}</span>
-                  <span className="skill-desc">{skill.description}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        {replyTo && (
+          <div className="reply-chip">
+            <span className="reply-chip-text">
+              Replying to <span className="reply-chip-author">{displayName(replyTo.authorId)}</span>
+              <span className="reply-chip-snippet">{replySnippet(replyTo.body)}</span>
+            </span>
+            <button
+              type="button"
+              className="reply-chip-cancel"
+              aria-label="Cancel reply"
+              // Same reason as the skill options: the caret stays in the box being written in.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onCancelReply}
+            >
+              ×
+            </button>
+          </div>
         )}
-        <textarea
-          ref={box}
-          rows={1}
-          value={draft}
-          disabled={disabled}
-          placeholder={disabled ? 'Pick a room first' : `Message ${roomName}…`}
-          aria-label={`Message ${roomName}`}
-          role="combobox"
-          aria-expanded={menuOpen}
-          aria-controls="skill-menu"
-          aria-autocomplete="list"
-          aria-activedescendant={active >= 0 ? `skill-option-${matches[active]!.name}` : undefined}
-          onChange={(event) => edit(event.target.value)}
-          onKeyDown={(event) => {
-            // The menu owns these four keys only while it is open. With it closed the composer is
-            // exactly what it was: Enter sends, Tab moves focus, Escape does nothing, and a draft of
-            // a bare `/` goes to the room as ordinary text.
-            if (menuOpen) {
-              if (event.key === 'ArrowDown') {
+        <div className="composer-input">
+          {menuOpen && (
+            <ul className="skill-menu" role="listbox" id="skill-menu" aria-label="Installed skills">
+              {matches.map((skill, index) => (
+                <li key={skill.name}>
+                  <button
+                    type="button"
+                    id={`skill-option-${skill.name}`}
+                    role="option"
+                    aria-selected={index === active}
+                    className={`skill-option${index === active ? ' active' : ''}`}
+                    // The textarea must keep focus: a click lands on mouseup, and the blur in between
+                    // would move the caret out of the box the selection is about to write into.
+                    onMouseDown={(event) => event.preventDefault()}
+                    onMouseEnter={() => setHighlight(index)}
+                    onClick={() => choose(skill)}
+                  >
+                    <span className="skill-name">/{skill.name}</span>
+                    <span className="skill-desc">{skill.description}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <textarea
+            ref={box}
+            rows={1}
+            value={draft}
+            disabled={disabled}
+            placeholder={disabled ? 'Pick a room first' : `Message ${roomName}…`}
+            aria-label={`Message ${roomName}`}
+            role="combobox"
+            aria-expanded={menuOpen}
+            aria-controls="skill-menu"
+            aria-autocomplete="list"
+            aria-activedescendant={active >= 0 ? `skill-option-${matches[active]!.name}` : undefined}
+            onChange={(event) => edit(event.target.value)}
+            onKeyDown={(event) => {
+              // The menu owns these four keys only while it is open. With it closed the composer is
+              // exactly what it was: Enter sends, Tab moves focus, Escape cancels a reply (and does
+              // nothing when there is none), and a draft of a bare `/` goes to the room as ordinary text.
+              if (menuOpen) {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setHighlight((active + 1) % matches.length);
+                  return;
+                }
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setHighlight((active - 1 + matches.length) % matches.length);
+                  return;
+                }
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  choose(matches[active]!);
+                  return;
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setDismissed(true);
+                  return;
+                }
+              }
+              if (event.key === 'Escape' && replyTo) {
                 event.preventDefault();
-                setHighlight((active + 1) % matches.length);
+                onCancelReply();
                 return;
               }
-              if (event.key === 'ArrowUp') {
+              if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                setHighlight((active - 1 + matches.length) % matches.length);
-                return;
+                void send();
               }
-              if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                choose(matches[active]!);
-                return;
-              }
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                setDismissed(true);
-                return;
-              }
-            }
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              void send();
-            }
-          }}
-        />
+            }}
+          />
+        </div>
       </div>
       <div className="composer-side">
         <button type="submit" className="send" disabled={disabled || sending || draft.trim().length === 0}>

@@ -99,6 +99,14 @@ That stop ends every exchange in the room. To stop one exchange and leave the ot
 running, POST to `/api/rooms/<room>/exchanges/<root message id>/stop` (the id is in the `exchanges`
 list of `GET /api/rooms/<room>/exchange`).
 
+Reply to a message in the web UI (the Reply button on any message that is not a hub note) and your
+post joins that message's exchange instead of starting a new one. Its mentions spend the exchange's
+remaining turns, the skill it started with stays in force, and a concluded or stopped exchange opens
+again. A reply that invokes a skill, or a reply with a mention to a hub note, a run's message, or an
+exchange from before a hub restart, is handled as a new prompt, and the hub posts a note saying so.
+While a run is going, a reply is handled like any other post in the run. The hub remembers the last
+50 exchanges per room for this.
+
 A `claude` spawn runs `claude.exe -p` with the prompt on stdin and its token in a per-spawn
 `mcp.json`, never `--bare`, which switches auth to an API key. A `codex` spawn runs `codex.cmd exec`
 (a PATH shim, not an `.exe`) with the prompt on stdin and its token in `CHOPITUP_TOKEN`.

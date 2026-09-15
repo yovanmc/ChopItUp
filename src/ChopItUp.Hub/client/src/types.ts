@@ -6,6 +6,8 @@ export interface Message {
   authorId: string;
   body: string;
   createdAt: string;
+  /** The id of the message this one replies to, always in the same room, or null/absent. */
+  replyToId?: number | null;
 }
 
 export interface Room {
