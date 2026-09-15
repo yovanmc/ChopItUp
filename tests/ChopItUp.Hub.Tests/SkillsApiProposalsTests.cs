@@ -480,10 +480,10 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
             // Row 35: outside a run this room's spawn now commits through the exchange's worktree
             // machinery, which turns roomDir into a real git repository (it never was one before this
             // row) - its objects are read-only, so a plain Directory.Delete throws
-            // UnauthorizedAccessException exactly as TestDirs.DeleteTree's own doc comment says. Task 5
+            // UnauthorizedAccessException exactly as TestDirs.DeleteTree's own doc comment says. Row 35
             // adds a second, later writer of roomDir: the exchange's worktree close, handed off from
             // OnFinished and running off the spawner loop entirely (AnySpawnInFlight never sees it).
-            // SpawnerService.StopAsync (Task 5) now waits up to 10s for that close to finish, so
+            // SpawnerService.StopAsync (Row 35) now waits up to 10s for that close to finish, so
             // disposing the host HERE - rather than via `await using` at the end of the method, which
             // would run after the delete below - is what actually waits for the close's own git.exe
             // process to let go of roomDir before this test touches it.

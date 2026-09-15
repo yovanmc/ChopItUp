@@ -298,7 +298,7 @@ public sealed class ExchangeWorktreesTests : IDisposable
         var dir = await RoomWithCommit("lab14");
         var lease = await _worktrees.EnsureAsync(dir, 15, CancellationToken.None);
         TestDirs.DeleteTree(lease.Path!);
-        await _trails.For(dir).PruneWorktreesAsync(CancellationToken.None);   // gone AND forgotten; only the branch remains
+        await _trails.For(dir).PruneWorktreeAsync(lease.Path!, CancellationToken.None);   // gone AND forgotten; only the branch remains
 
         var note = await _worktrees.CloseAsync(Close(dir, 15, "lab14", ExchangeStatus.Concluded), CancellationToken.None);
         Assert.Contains("its worktree folder was gone at close", note);
@@ -364,9 +364,8 @@ public sealed class ExchangeWorktreesTests : IDisposable
     public async Task Recover_names_a_kept_worktree_that_could_not_be_removed_and_never_deletes_its_branch()
     {
         // A locked worktree refuses `git worktree remove` regardless of dirt; its branch, still checked
-        // out there, must never be handed to `branch -d` (review fix: the old code tried anyway, the
-        // failure was swallowed, and recovery reported nothing at all while the branch and the locked,
-        // unremoved worktree stayed behind).
+        // out there, must never be handed to `branch -d` - the failure must be named, not swallowed, and
+        // the branch and the locked, unremoved worktree must both stay behind and be reported.
         var dir = await RoomWithCommit("lab19");
         var lease = await _worktrees.EnsureAsync(dir, 20, CancellationToken.None);
         Assert.Equal(0, (await RawGit(dir, "worktree", "lock", lease.Path!)).ExitCode);
@@ -381,20 +380,57 @@ public sealed class ExchangeWorktreesTests : IDisposable
     }
 
     [Fact]
-    public async Task Close_deletes_the_branch_of_a_registered_worktree_whose_folder_is_already_gone()
+    public async Task Close_keeps_the_branch_of_a_registered_worktree_whose_folder_is_already_gone()
     {
         // The folder vanished (deleted by hand, or a crash) but git's own worktree registration was
         // never pruned - unlike Close_keeps_a_leased_branch_whose_folder_vanished, where the registration
-        // was already pruned before close, here CloseAsync sees the worktree as still registered. Left
-        // unpruned, `branch -d` below refuses the branch as "used by worktree at <gone path>" (review
-        // fix: prune the stale registration before the branch checks).
+        // was already pruned before close, here CloseAsync sees the worktree as still registered. Prunes
+        // only this exchange's own registration (never a blanket prune, which could also drop an owner's
+        // own worktree elsewhere) and, being leased, keeps the branch exactly as the already-pruned case
+        // does - it never merges over a worktree whose folder is simply gone.
         var dir = await RoomWithCommit("lab20");
         var lease = await _worktrees.EnsureAsync(dir, 21, CancellationToken.None);
         TestDirs.DeleteTree(lease.Path!);
 
         var note = await _worktrees.CloseAsync(Close(dir, 21, "lab20", ExchangeStatus.Concluded), CancellationToken.None);
-        Assert.NotNull(note);
-        Assert.DoesNotContain("was not deleted", note);
-        Assert.False(await _trails.For(dir).BranchExistsAsync("chopitup/x21"));
+        Assert.Contains("its worktree folder was gone at close", note);
+        Assert.True(await _trails.For(dir).BranchExistsAsync("chopitup/x21"));
+    }
+
+    [Fact]
+    public async Task An_owners_own_worktree_elsewhere_stays_registered_through_ensure_close_and_recover()
+    {
+        // A worktree the OWNER made themselves, outside any exchange's own `.worktrees` folder, whose
+        // folder happens to be missing (an unmounted drive, say). None of the three entry points that
+        // prune a stale registration may ever touch it - only the exchange's own path.
+        var dir = await RoomWithCommit("lab21");
+        var git = _trails.For(dir);
+        var ownersOwn = Path.Combine(_dir, "owner-worktree-elsewhere");
+        Assert.Null(await git.AddWorktreeAsync(ownersOwn, "owner-elsewhere", newBranch: true));
+        TestDirs.DeleteTree(ownersOwn);
+        Assert.Contains(await git.WorktreePathsAsync(), p => RoomPaths.Same(p, ownersOwn));
+
+        await _worktrees.RecoverAsync(dir, CancellationToken.None);
+        Assert.Contains(await git.WorktreePathsAsync(), p => RoomPaths.Same(p, ownersOwn));
+        Assert.True(await git.BranchExistsAsync("owner-elsewhere"));
+
+        // EnsureAsync's own prunable-registration path: this exchange's worktree vanishes between two
+        // spawns (a stale registration Ensure prunes and re-adds onto), while the owner's worktree is
+        // never touched.
+        var lease1 = await _worktrees.EnsureAsync(dir, 30, CancellationToken.None);
+        Assert.Null(lease1.Refusal);
+        TestDirs.DeleteTree(lease1.Path!);
+        var lease2 = await _worktrees.EnsureAsync(dir, 30, CancellationToken.None);
+        Assert.Null(lease2.Refusal);
+        Assert.True(Directory.Exists(lease2.Path));
+        Assert.Contains(await git.WorktreePathsAsync(), p => RoomPaths.Same(p, ownersOwn));
+        Assert.True(await git.BranchExistsAsync("owner-elsewhere"));
+
+        // CloseAsync's registered-but-folder-gone path: same story again at close.
+        TestDirs.DeleteTree(lease2.Path!);
+        var note = await _worktrees.CloseAsync(Close(dir, 30, "lab21", ExchangeStatus.Concluded), CancellationToken.None);
+        Assert.Contains("its worktree folder was gone at close", note);
+        Assert.Contains(await git.WorktreePathsAsync(), p => RoomPaths.Same(p, ownersOwn));
+        Assert.True(await git.BranchExistsAsync("owner-elsewhere"));
     }
 }

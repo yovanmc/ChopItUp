@@ -121,7 +121,7 @@ public sealed class RoomsApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task M9_A2_a_directory_inside_another_rooms_exchange_worktrees_folder_is_refused()
+    public async Task A_directory_inside_another_rooms_exchange_worktrees_folder_is_refused()
     {
         var (created, room) = await Post("api/rooms", new { name = "Lab" });
         Assert.Equal(HttpStatusCode.Created, created);

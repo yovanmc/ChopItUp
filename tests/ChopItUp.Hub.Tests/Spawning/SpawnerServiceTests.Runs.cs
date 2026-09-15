@@ -1148,7 +1148,7 @@ public sealed partial class SpawnerServiceTests
     public async Task R35_a_run_room_still_runs_one_spawn_at_a_time()
     {
         WriteSkill("build-thing", RunSkillMd);
-        await MakeRoom("lab-run-exclusive");
+        var dir = await MakeRoom("lab-run-exclusive");
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = async (spec, _, ct) =>
         {
@@ -1165,6 +1165,7 @@ public sealed partial class SpawnerServiceTests
 
         var first = await _runner.NextSpecAsync(Wait);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(first));
+        Assert.Equal(dir, first.WorkingDirectory);                          // a run spawn works in the room directory itself, never a worktree
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));   // fable waits: the run owns the whole room
 
         release.SetResult();

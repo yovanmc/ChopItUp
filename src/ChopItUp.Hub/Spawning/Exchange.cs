@@ -50,9 +50,6 @@ public sealed class Exchange
     /// worktree launch; null for an exchange that never launched in a worktree.</summary>
     public string? WorktreeRoom { get; set; }
 
-    /// <summary>Row 35: set once its close has been handed off, so it is handed off once.</summary>
-    public bool WorktreeClosing { get; set; }
-
     /// <summary>Row 35: a spawn of this exchange ran in a worktree it was really given (not a refused
     /// lease).</summary>
     public bool WorktreeLeased { get; set; }

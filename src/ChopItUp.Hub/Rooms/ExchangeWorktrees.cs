@@ -54,9 +54,11 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         {
             if (Directory.Exists(path)) return new(path, null);
             // A registration with no folder behind it (row 35): the folder was deleted
-            // between two spawns of the same exchange. Prune the stale entry and re-add below, onto the
+            // between two spawns of the same exchange. Prune only this exchange's own stale entry
+            // (never every stale entry in the repository - that could also drop an owner's own
+            // worktree elsewhere whose folder merely happens to be missing) and re-add below, onto the
             // branch this exchange already owns rather than refusing it as "already exists".
-            await main.PruneWorktreesAsync(cancellation);
+            await main.PruneWorktreeAsync(path, cancellation);
             pruned = true;
         }
 
@@ -120,10 +122,13 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         }
         else
         {
-            // The folder is already gone but git's own registration was never pruned (review fix): prune
-            // it before the branch checks below, so a stale "used by worktree at <gone path>" entry does
-            // not refuse the `branch -d` a clean merge is about to attempt.
-            await main.PruneWorktreesAsync(cancellation);
+            // The folder is already gone but git's own registration was never pruned: prune only this
+            // exchange's own entry (never every stale entry in the repository) before the branch checks
+            // below, so a stale "used by worktree at <gone path>" registration does not refuse the
+            // `branch -d` a clean merge is about to attempt. Consistent with the already-pruned case
+            // just above: a leased exchange whose folder vanished keeps its branch rather than merging.
+            await main.PruneWorktreeAsync(path, cancellation);
+            if (leased && await main.BranchExistsAsync(branch, cancellation)) return Keep("its worktree folder was gone at close");
         }
 
         if (!await main.BranchExistsAsync(branch, cancellation))
@@ -144,13 +149,12 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
             if (oc.Hash is null) return Keep($"the owner's edits could not be committed first: {oc.Reason}");
         }
 
-        var before = await main.HeadAsync(cancellation);
         var m = await main.MergeAsync(branch, $"Merge exchange #{root} ({roomId})", cancellation);
         switch (m.Result)
         {
             case MergeResult.Merged:
                 var notDeleted = await main.DeleteMergedBranchAsync(branch, cancellation);
-                var note = m.Hash == before
+                var note = m.Hash == m.Before
                     ? $"Exchange #{root} had nothing new to merge into {current}.{removal}"
                     : $"Exchange #{root} merged into {current} as {m.Hash}.{removal}";
                 if (notDeleted is not null) note += $" Branch {branch} was not deleted: {notDeleted}";
@@ -195,16 +199,20 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
             var removeFailed = await main.RemoveWorktreeAsync(path, cancellation);
             if (removeFailed is not null)
             {
-                // Review fix: a worktree that could not be removed (locked, still in use) still has its
-                // branch checked out there - `branch -d` would only fail too, so never attempt it; name
-                // the worktree and why it stayed instead of silently reporting nothing.
+                // A worktree that could not be removed (locked, still in use) still has its branch
+                // checked out there - `branch -d` would only fail too, so never attempt it; name the
+                // worktree and why it stayed instead of silently reporting nothing. `RemoveWorktreeAsync`
+                // itself already handles a folder that is simply gone (git prunes that registration as
+                // part of removing it), so nothing further is needed for this exchange's own entry here -
+                // and nothing blanket-prunes the rest of the repository's worktrees, which could otherwise
+                // drop an owner's own registered worktree elsewhere whose folder merely happens to be
+                // missing (row 35).
                 kept.Add($"{branch} (its worktree at {path} was not removed: {removeFailed})");
                 continue;
             }
             if (await main.IsAncestorOfHeadAsync(branch, cancellation)) await main.DeleteMergedBranchAsync(branch, cancellation);
             else kept.Add(branch);
         }
-        await main.PruneWorktreesAsync(cancellation);
 
         if (kept.Count == 0) return prefix;
         return prefix + $"The hub restarted while exchange worktrees were open. Their commits stay on branch(es) {string.Join(", ", kept)}, not merged.";

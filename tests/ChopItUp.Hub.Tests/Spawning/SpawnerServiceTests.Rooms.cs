@@ -1,9 +1,14 @@
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Memory;
 using ChopItUp.Hub.Rooms;
+using ChopItUp.Hub.Skills;
 using ChopItUp.Hub.Spawning;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -51,9 +56,31 @@ public sealed partial class SpawnerServiceTests
         throw new TimeoutException($"No matching message in '{room}' within {Wait}");
     }
 
+    /// <summary>A room's git trail whose `git merge` call (and only that call - never `merge-base`,
+    /// `worktree add`, a commit, and so on) blocks until <see cref="Hold"/> is released, so a test can
+    /// deterministically catch a worktree close mid-merge. <see cref="MergeAttempted"/> completes the
+    /// instant the merge call actually starts, so a test can wait for the close to have genuinely
+    /// reached it before acting, rather than racing it.</summary>
+    private sealed class DelayingMergeRunner : IProcessRunner
+    {
+        private readonly IProcessRunner _inner = new ProcessRunner();
+        public readonly TaskCompletionSource Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource MergeAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
+        {
+            if (spec.Arguments.Contains("merge"))
+            {
+                MergeAttempted.TrySetResult();
+                await Hold.Task;
+            }
+            return await _inner.RunAsync(spec, timeout, cancellation);
+        }
+    }
+
     // Row 35: gitRef reads a branch other than the one checked out at dir - a directory room's own
     // exchange branches (see ExchangeWorktrees.Branch) share dir's repository, so its refs are visible
-    // from dir even though the commits on them were made from a linked worktree. skip is Task 5's own
+    // from dir even though the commits on them were made from a linked worktree. skip is row 35's own
     // addition: once a close merges an exchange's branch into dir, its commits are still reachable from
     // dir's own HEAD, just not at the top (the merge commit is) - skip walks past the newer entries
     // without needing the branch name (deleted by then) or the merge commit's own hash.
@@ -106,7 +133,7 @@ public sealed partial class SpawnerServiceTests
         Assert.Contains("Your edits were committed first as", note.Body);
         Assert.Contains("\"Bash(git commit *)\"", settingsAtLaunch);
 
-        // Row 35's Task 5: the exchange concludes and its worktree is merged into the room directory -
+        // Row 35: the exchange concludes and its worktree is merged into the room directory -
         // wait for that note, then read only dir (the worktree is gone once the close finishes).
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var roomLog = (await GitLog(dir, "%an <%ae>|%cn|%s", 3)).Split('\n');
@@ -179,6 +206,11 @@ public sealed partial class SpawnerServiceTests
     public async Task R35_a_directory_room_spawn_works_in_its_exchange_worktree_and_commits_on_its_branch()
     {
         var dir = await MakeRoom("lab");
+        // A real HEAD to compare against, captured before anything else can move it (not the unborn
+        // one MakeRoom leaves behind, which EnsureAsync would otherwise advance with its own "Room
+        // trail start" commit the moment the exchange below launches).
+        Assert.True((await new GitTrail(dir).CommitAllAsync("seed", GitTrail.Hub, allowEmpty: true)).Created);
+        var headBefore = await new GitTrail(dir).HeadAsync();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = async (spec, _, ct) =>
         {
@@ -198,9 +230,8 @@ public sealed partial class SpawnerServiceTests
         var second = await _runner.NextSpecAsync(Wait);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
         Assert.Equal(tree, second.WorkingDirectory);                                          // same exchange, same worktree
-        var headAfterLaunch = await new GitTrail(dir).HeadAsync();
         Assert.Equal("Opus", (await GitLog(dir, "%an", 1, ExchangeWorktrees.Branch(root))).Trim());   // opus's own commit already landed on the branch
-        Assert.Equal(headAfterLaunch, await new GitTrail(dir).HeadAsync());                   // the room directory's own HEAD never moved
+        Assert.Equal(headBefore, await new GitTrail(dir).HeadAsync());                        // the room directory's own HEAD never moved
 
         release.SetResult();
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix) && m.Body.Contains("sonnet"));
@@ -216,7 +247,13 @@ public sealed partial class SpawnerServiceTests
         await PostAsOwnerIn("lab", "@opus go");
         var spec = await _runner.NextSpecAsync(Wait);
         Assert.True(File.Exists(Path.Combine(spec.WorkingDirectory, "owner.txt")));           // forked from the room's HEAD, which already has it committed
-        Assert.Equal("owner: edits before the next spawn in room lab", await GitLog(dir, "%s", 1));
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+
+        // Reading dir's log right after the spec races the close's own merge commit landing there too;
+        // wait for the close note, then read the merged history instead: the merge commit, the agent's
+        // own commit on the branch, then the owner commit it forked from.
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
+        Assert.Equal("owner: edits before the next spawn in room lab", await GitLog(dir, "%s", 1, skip: 2));
     }
 
     [Fact]
@@ -233,7 +270,7 @@ public sealed partial class SpawnerServiceTests
         Assert.False(await new GitTrail(dir).BranchExistsAsync(ExchangeWorktrees.Branch(root)));
     }
 
-    // --- Task 5: a closed exchange's worktree is merged or kept, and the note is posted -------------
+    // --- A closed exchange's worktree is merged or kept, and the note is posted -------------
 
     [Fact]
     public async Task R35_two_exchanges_edit_at_once_and_both_merge_into_the_room_on_conclusion()
@@ -379,7 +416,7 @@ public sealed partial class SpawnerServiceTests
         var holdConductor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = async (spec, _, _) =>
         {
-            // Ignores the cancellation token on purpose (AC9, pass 2 F4): a run's cancelled conductor
+            // Ignores the cancellation token on purpose (AC9): a run's cancelled conductor
             // is not really gone until its own process ends, and this reproduces exactly that window.
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") await holdConductor.Task;
             return FakeProcessRunner.Ok("""{"result":"working"}""");
@@ -403,6 +440,91 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
+    public async Task R35_AC9_a_room_directory_launch_waits_for_a_running_close()
+    {
+        // The direction AC9 had no test for at all: a worktree close's merge is genuinely running (the
+        // repository's write gate is held) when a run's conductor - a room-directory launch - would
+        // otherwise be due; it must get no spec until the close finishes.
+        var delayingRunner = new DelayingMergeRunner();
+        var localDir = _dir + "_close_wait";
+        await using var host = await HubTestHost.StartAsync(localDir, processRunner: _runner, limits: Fast,
+            roomGit: dir => new GitTrail(dir, runner: delayingRunner));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var runs = host.Services.GetRequiredService<RunStore>();
+
+        var skillDir = Path.Combine(localDir, "skills", "build-thing");
+        Directory.CreateDirectory(skillDir);
+        var bytes = new UTF8Encoding(false).GetBytes(RunHostFixture.RunSkillMd);
+        File.WriteAllBytes(Path.Combine(skillDir, "SKILL.md"), bytes);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        new SkillHashes(host.Services.GetRequiredService<ChopDb>()).Record("build-thing", hash, "test-fixture");
+
+        var dir = Path.Combine(host.RoomsRoot, "lab-close-wait");
+        Assert.True(await new GitTrail(dir).InitAsync());
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("lab-close-wait", "Lab", dir);
+
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+        var opusPost = await host.Client.PostAsJsonAsync("api/rooms/lab-close-wait/messages", new { body = "@opus task A" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, opusPost.StatusCode);
+        await _runner.NextSpecAsync(Wait);   // opus's worktree spawn; concludes right after, its close now blocks on the delayed merge
+        await delayingRunner.MergeAttempted.Task.WaitAsync(Wait);
+
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+        var runPost = await host.Client.PostAsJsonAsync("api/rooms/lab-close-wait/messages", new { body = "/build-thing @sonnet begin" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, runPost.StatusCode);
+
+        var deadline = DateTime.UtcNow + Wait;
+        Run? run = null;
+        while (DateTime.UtcNow < deadline && (run = runs.Active("lab-close-wait")) is null) await Task.Delay(50);
+        Assert.NotNull(run);                                                        // the conductor exchange opened
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));           // its spawn waits for the close to finish
+
+        delayingRunner.Hold.SetResult();
+        var conductorSpec = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductorSpec));
+        Assert.Equal(dir, conductorSpec.WorkingDirectory);
+    }
+
+    [Fact]
+    public async Task R35_a_worktree_close_that_outlives_shutdown_logs_its_note_to_stderr()
+    {
+        // A close still running when the hub shuts down finds its event channel already completed: the
+        // note it carries must be logged, not silently dropped.
+        var delayingRunner = new DelayingMergeRunner();
+        var localDir = _dir + "_close_shutdown";
+        await using var host = await HubTestHost.StartAsync(localDir, processRunner: _runner, limits: Fast,
+            roomGit: dir => new GitTrail(dir, runner: delayingRunner));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+
+        var dir = Path.Combine(host.RoomsRoot, "lab-shutdown-close");
+        Assert.True(await new GitTrail(dir).InitAsync());
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("lab-shutdown-close", "Lab", dir);
+
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+        var post = await host.Client.PostAsJsonAsync("api/rooms/lab-shutdown-close/messages", new { body = "@opus task A" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, post.StatusCode);
+        await _runner.NextSpecAsync(Wait);   // opus's worktree spawn; its close now blocks on the delayed merge
+        await delayingRunner.MergeAttempted.Task.WaitAsync(Wait);
+
+        var error = new StringWriter();
+        var original = Console.Error;
+        Console.SetError(error);
+        try
+        {
+            // StopAsync completes the events channel on its very first line, synchronously, before its
+            // first await - so by the time this call even returns a Task, that has already happened;
+            // releasing the merge only now guarantees the close's own write lands after the channel closes.
+            var stopTask = spawner.StopAsync(CancellationToken.None);
+            delayingRunner.Hold.SetResult();
+            await stopTask.WaitAsync(Wait);
+        }
+        finally { Console.SetError(original); }
+
+        Assert.Contains("lab-shutdown-close", error.ToString());
+    }
+
+    [Fact]
     public async Task M9_A6_a_codex_spawn_in_a_directory_room_gets_the_room_as_its_workspace_and_json_output()
     {
         var dir = await MakeRoom("lab");
@@ -420,7 +542,7 @@ public sealed partial class SpawnerServiceTests
         Assert.StartsWith(Path.Combine(_dir, "spawns"), args[args.IndexOf("-o") + 1]);
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("as gpt-6-astra: 0 file(s) changed, 0 shell command(s).", note.Body);   // empty commit, empty log
-        // Row 35's Task 5: wait for the close's merge note, then read the merged history in dir itself -
+        // Row 35: wait for the close's merge note, then read the merged history in dir itself -
         // the branch is deleted once the merge lands.
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var log = (await GitLog(dir, "%an <%ae>", 3)).Split('\n');
@@ -446,7 +568,7 @@ public sealed partial class SpawnerServiceTests
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("HEAD moved during the spawn: sonnet committed on its own.", note.Body);
         var root = Spawner.Snapshot("lab").RootMessageId!.Value;
-        // Row 35's Task 5: wait for the close's merge note, then read the merged history in dir - the
+        // Row 35: wait for the close's merge note, then read the merged history in dir - the
         // room itself was unborn, so ExchangeWorktrees made one empty start commit for the branch to
         // fork from, and that start commit is what the merge commit's other parent already is.
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
@@ -476,7 +598,7 @@ public sealed partial class SpawnerServiceTests
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
     }
 
-    // --- Task 6: start-up recovery ------------------------------------------------------------------
+    // --- Start-up recovery ------------------------------------------------------------------
 
     private static async Task<string> GitShow(string dir, string gitRef, string path)
     {
@@ -501,9 +623,14 @@ public sealed partial class SpawnerServiceTests
         try
         {
             string tree;
+            string ownerToken;
             await using (var first = await HubTestHost.StartAsync(dir, deleteOnDispose: false))
             {
                 first.Services.GetRequiredService<MessageStore>().CreateRoom("lab-recover", "Lab", roomDir);
+                // Captured while the minting host is alive (row 28): the plaintext bearer itself outlives
+                // it, since it is the same secret whose hash is persisted to tokens.json - a later host
+                // over the SAME data dir can be handed it directly even though it cannot look it back up.
+                ownerToken = first.TokenFor(ChopDb.OwnerParticipantId);
                 // A worktree left registered with no close ever having run - exactly what a hub killed
                 // mid-exchange leaves behind (no spawn needed to reproduce it: EnsureAsync's own
                 // book-keeping is the whole of what a crash interrupts).
@@ -537,12 +664,29 @@ public sealed partial class SpawnerServiceTests
             }
             finally { await second.DisposeAsync(); }
 
-            // A second restart (nothing left to recover) is quiet - AC7/ticket 06's "a start never
-            // aborts a merge the hub did not make" also covers "never repeats a note for what is
-            // already gone": the room's history still holds the ONE note from the first recovery
-            // (messages are durable), but a second, later restart must not add a second one.
+            // A second restart (nothing left to recover) is quiet - "a start never aborts a merge the
+            // hub did not make" also covers "never repeats a note for what is already gone": the room's
+            // history still holds the ONE note from the first recovery (messages are durable), but a
+            // second, later restart must not add a second one.
             await using var third = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
-            await Task.Delay(300);
+            // A deterministic proof that recovery has already run, instead of a bare delay: the
+            // spawner's startup loop recovers every directory room (lab-recover included) entirely
+            // before its event loop ever reads a posted message, so once THIS probe gets its own hub
+            // note, every room's recovery has already happened.
+            var probe = new HttpRequestMessage(HttpMethod.Post, "api/rooms/lab-recover/messages") { Content = JsonContent.Create(new { body = "/nope" }) };
+            probe.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ownerToken);
+            Assert.Equal(System.Net.HttpStatusCode.Created, (await third.Client.SendAsync(probe)).StatusCode);
+            var probeDeadline = DateTime.UtcNow + Wait;
+            var probeAnswered = false;
+            while (DateTime.UtcNow < probeDeadline)
+            {
+                using var probeDoc = JsonDocument.Parse(await third.Client.GetStringAsync("api/rooms/lab-recover/messages?afterId=0&limit=200"));
+                probeAnswered = probeDoc.RootElement.GetProperty("messages").EnumerateArray()
+                    .Any(m => m.GetProperty("authorId").GetString() == "hub" && m.GetProperty("body").GetString()!.Contains("No skill named"));
+                if (probeAnswered) break;
+                await Task.Delay(100);
+            }
+            Assert.True(probeAnswered);
             using var doc3 = JsonDocument.Parse(await third.Client.GetStringAsync("api/rooms/lab-recover/messages?afterId=0&limit=200"));
             Assert.Equal(1, doc3.RootElement.GetProperty("messages").EnumerateArray()
                 .Count(m => m.GetProperty("body").GetString()!.Contains("restarted while exchange worktrees were open")));
