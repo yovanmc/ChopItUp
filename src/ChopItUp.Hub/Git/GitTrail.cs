@@ -437,7 +437,7 @@ public class GitTrail
     /// <summary>Aborts a merge left in progress at <see cref="Root"/> ONLY when it is the hub's own
     /// exchange merge - its message starts `Merge exchange #` and its `MERGE_HEAD` is the current tip
     /// of some `chopitup/*` branch - never an owner's own conflicted merge, which is left exactly alone
-    /// (row 35, pass 2 F1). Null when nothing is in progress; otherwise `"aborted"`, the abort's failure
+    /// (row 35). Null when nothing is in progress; otherwise `"aborted"`, the abort's failure
     /// text, or `"left alone"`.</summary>
     public async Task<string?> AbortStaleExchangeMergeAsync(CancellationToken cancellation = default)
     {

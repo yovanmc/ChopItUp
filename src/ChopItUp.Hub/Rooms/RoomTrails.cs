@@ -10,4 +10,11 @@ public sealed class RoomTrails(Func<string, GitTrail> factory)
     private readonly ConcurrentDictionary<string, GitTrail> _trails = new(StringComparer.OrdinalIgnoreCase);
 
     public GitTrail For(string directory) => _trails.GetOrAdd(RoomPaths.Normalize(directory), factory);
+
+    /// <summary>The trail of a linked worktree of <paramref name="roomDirectory"/>, sharing the room
+    /// trail's write gate (<see cref="GitTrail.WithRoot"/>).</summary>
+    public GitTrail ForWorktree(string roomDirectory, string worktree) =>
+        _trails.GetOrAdd(RoomPaths.Normalize(worktree), path => For(roomDirectory).WithRoot(path));
+
+    public void Forget(string directory) => _trails.TryRemove(RoomPaths.Normalize(directory), out _);
 }
