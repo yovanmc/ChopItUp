@@ -18,15 +18,27 @@ public static class HostBridge
 
     private sealed class Request
     {
-        public string? Id { get; set; }
+        // JsonElement, not string: hostBridge.ts numbers its request ids (`let nextId = 1`) and sends
+        // {id: <number>, cmd}, so this has to accept whatever JSON value shows up (or none at all) and
+        // echo it back verbatim in Reply -- a string-typed Id threw JsonException on the number token,
+        // which Handle swallowed as "malformed", refusing every real page call.
+        public JsonElement? Id { get; set; }
         public string? Cmd { get; set; }
         public string? Nonce { get; set; }
     }
 
+    /// <summary>The result of dispatching one page message: the JSON reply to post back, plus the
+    /// command name and outcome so a caller can log without re-parsing the reply (which carries id/ok/
+    /// result, never the command that produced it).</summary>
+    public readonly record struct BridgeResult(string Reply, string? Cmd, bool Ok);
+
     /// <summary>Dispatches one page message onto <paramref name="host"/> and returns the JSON reply.
     /// Never throws: malformed JSON and an unknown command both come back as an <c>ok:false</c> reply
     /// rather than an exception reaching WebView2's event handler.</summary>
-    public static string Handle(string json, IHostActions host)
+    public static string Handle(string json, IHostActions host) => HandleDetailed(json, host).Reply;
+
+    /// <summary>Same dispatch as <see cref="Handle"/>, plus the command name and ok flag for logging.</summary>
+    public static BridgeResult HandleDetailed(string json, IHostActions host)
     {
         Request? request;
         try
@@ -39,7 +51,7 @@ public static class HostBridge
         }
 
         if (request is null || string.IsNullOrEmpty(request.Cmd))
-            return Reply(request?.Id, ok: false, error: "malformed");
+            return new BridgeResult(Reply(request?.Id, ok: false, error: "malformed"), request?.Cmd, false);
 
         object? result;
         switch (request.Cmd)
@@ -54,10 +66,12 @@ public static class HostBridge
             case "close": host.Close(); result = null; break;
             case "quit": host.Quit(); result = null; break;
             case "getState": result = StatePayload(host); break;
-            default: return Reply(request.Id, ok: false, error: $"unknown command '{request.Cmd}'");
+            default:
+                return new BridgeResult(
+                    Reply(request.Id, ok: false, error: $"unknown command '{request.Cmd}'"), request.Cmd, false);
         }
 
-        return Reply(request.Id, ok: true, result: result);
+        return new BridgeResult(Reply(request.Id, ok: true, result: result), request.Cmd, true);
     }
 
     /// <summary>Pushed to the page whenever <see cref="IHostActions.Hub"/> or the window's maximized
@@ -134,9 +148,13 @@ public static class HostBridge
         _ => state.ToString().ToLowerInvariant(),
     };
 
-    private static string Reply(string? id, bool ok, object? result = null, string? error = null)
+    private static string Reply(JsonElement? id, bool ok, object? result = null, string? error = null)
     {
-        var obj = new Dictionary<string, object?> { ["id"] = id, ["ok"] = ok };
+        // Boxing the JsonElement (rather than pulling out .GetString()/.GetInt32()) is what makes the
+        // reply echo the incoming id's own JSON kind verbatim: System.Text.Json has a built-in
+        // converter for JsonElement that writes its underlying token as-is, so a number stays a number,
+        // a string stays a string, and an absent id serializes as null.
+        var obj = new Dictionary<string, object?> { ["id"] = id.HasValue ? (object?)id.Value : null, ["ok"] = ok };
         if (ok) obj["result"] = result;
         else obj["error"] = error;
         return JsonSerializer.Serialize(obj, JsonOptions);

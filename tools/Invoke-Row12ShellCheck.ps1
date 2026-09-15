@@ -540,6 +540,7 @@ if ($windowEl -and $firstRoomId) {
 # ===== leg 4: hide =====================================================================================
 
 try {
+    $sinceCount4 = (Get-LogLines -Path $desktopLog).Count
     if ($chromeButtons['Close']) { Invoke-UiaElement $chromeButtons['Close'] | Out-Null } else { throw 'no Close button' }
     Start-Sleep -Milliseconds 500
     $hideOk = $false
@@ -552,6 +553,12 @@ try {
     Add-Check -Name 'leg4.window-hidden' -Passed:$hideOk -Detail 'OK'
     Add-Check -Name 'leg4.hub-pid-alive' -Passed:((Get-Process -Id $hubPid -ErrorAction SilentlyContinue) -ne $null) -Detail "pid=$hubPid"
     Add-Check -Name 'leg4.health-still-ok' -Passed:(Test-Health $base) -Detail 'OK'
+
+    # Defect fix verification: the Close click's page->host bridge message must land as a numeric-id
+    # request the host actually dispatches, logged by MainWindow.OnWebMessage as "BRIDGE cmd=close
+    # ok=True" (desktop.log, under the data dir -- same file HUB STATE lines above already read from).
+    $bridgeClose = Wait-ForLogPattern -Path $desktopLog -Pattern 'BRIDGE cmd=close ok=True' -SinceCount $sinceCount4 -TimeoutMs 5000
+    Add-Check -Name 'leg4.bridge-close-logged' -Passed:$bridgeClose.Found -Detail "ms=$($bridgeClose.ElapsedMs)"
 } catch {
     Add-Check -Name 'leg4.hide' -Passed:$false -Detail 'exit=1'
 }

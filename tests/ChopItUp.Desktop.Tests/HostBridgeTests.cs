@@ -73,6 +73,23 @@ public sealed class HostBridgeTests
     }
 
     [Fact]
+    public void Numeric_id_round_trips_as_a_number_not_a_string()
+    {
+        // Row 12 defect fix: the page's hostBridge.ts sends {id: <number>, cmd} (`let nextId = 1`) and
+        // only accepts a reply whose id is a number. The old `Request.Id` was `string?`, so
+        // System.Text.Json threw JsonException on the number token, Handle caught it and answered
+        // {"id":null,"ok":false,"error":"malformed"} -- every real page call was refused.
+        var host = NewHost();
+        var reply = HostBridge.Handle("""{"id":7,"cmd":"minimize"}""", host);
+        Assert.Equal(new[] { "Minimize" }, host.Calls);
+        using var doc = JsonDocument.Parse(reply);
+        var idProp = doc.RootElement.GetProperty("id");
+        Assert.Equal(JsonValueKind.Number, idProp.ValueKind);
+        Assert.Equal(7, idProp.GetInt32());
+        Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+    }
+
+    [Fact]
     public void Missing_id_round_trips_as_null()
     {
         var host = NewHost();

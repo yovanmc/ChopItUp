@@ -248,7 +248,9 @@ public partial class MainWindow : System.Windows.Window, IHostActions
 
         var core = Web.CoreWebView2;
         if (core is null) return;
-        core.PostWebMessageAsJson(HostBridge.Handle(json, this));
+        var dispatched = HostBridge.HandleDetailed(json, this);
+        core.PostWebMessageAsJson(dispatched.Reply);
+        _log.Append($"BRIDGE cmd={dispatched.Cmd} ok={dispatched.Ok}");
         core.PostWebMessageAsJson(HostBridge.StateEvent(this));
     }
 
