@@ -98,9 +98,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
                 a.Handled = true;
                 OpenExternal(a.Uri);
             };
-            core.WebMessageReceived += (_, a) =>
-                // Task 5 replaces this body with HostBridge (trust check, reply, state events).
-                _log.Append($"BRIDGE source={a.Source} (no handler until T5)");
+            core.WebMessageReceived += OnWebMessage;
 
             ShowBoot();
 
@@ -221,6 +219,27 @@ public partial class MainWindow : System.Windows.Window, IHostActions
             _hub.ResolvedOrigin.GetLeftPart(UriPartial.Authority),
             StringComparison.OrdinalIgnoreCase);
 
+    // ===== page <-> host bridge (Task 5) =====================================================
+
+    /// <summary>Trust-checks with <see cref="HostBridge.IsTrusted"/> before touching the message at
+    /// all (B5/B8: only the hub origin, or the boot page carrying this launch's nonce), then dispatches
+    /// through the pure <see cref="HostBridge.Handle"/> and posts its reply back, followed by a fresh
+    /// state event so a toggleMaximize's own glyph update does not have to wait for OnStateChanged.</summary>
+    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        var json = e.WebMessageAsJson;
+        if (!HostBridge.IsTrusted(e.Source, _hub.ResolvedOrigin, HostBridge.ExtractNonce(json), App.LaunchNonce))
+        {
+            _log.Append($"BRIDGE UNTRUSTED source={e.Source}");
+            return;
+        }
+
+        var core = Web.CoreWebView2;
+        if (core is null) return;
+        core.PostWebMessageAsJson(HostBridge.Handle(json, this));
+        core.PostWebMessageAsJson(HostBridge.StateEvent(this));
+    }
+
     private void OpenExternal(string url)
     {
         try
@@ -282,9 +301,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     public void Quit() => Dispatcher.BeginInvoke(() =>
     {
         App.Quitting = true;
-        // Task 5 replaces this single line with ((App)System.Windows.Application.Current).QuitAsync(),
-        // which also stops the hub and removes the tray icon before shutting down.
-        System.Windows.Application.Current.Shutdown(0);
+        _ = ((App)System.Windows.Application.Current).QuitAsync();
     });
 
     // ===== frameless-chrome plumbing =========================================================
@@ -365,5 +382,8 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     {
         base.OnStateChanged(e);
         Web.Margin = WindowState == WindowState.Maximized ? new Thickness(0) : new Thickness(6);
+        // A maximize/restore that did not originate from the page's own button (a taskbar action, a
+        // double-click on the drag strip) still needs the chrome row's glyph to flip.
+        Web.CoreWebView2?.PostWebMessageAsJson(HostBridge.StateEvent(this));
     }
 }
