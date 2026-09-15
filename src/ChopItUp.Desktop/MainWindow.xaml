@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         Title="Chop It Up"
+        Icon="chopitup.ico"
         WindowStyle="None"
         ResizeMode="CanResize"
         AllowsTransparency="False"

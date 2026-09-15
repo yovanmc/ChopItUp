@@ -9,6 +9,10 @@
          ambiguous, so this project always writes System.Windows.* in full. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Row 12 T6: the exe's Win32 icon (Explorer, the taskbar, Alt-Tab). Generated, not hand-drawn:
+         tools\New-DesktopIcon.ps1 renders it and its output is byte-stable, so a palette change is a
+         re-run plus a commit, never a redraw. -->
+    <ApplicationIcon>chopitup.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Row 12 T3: Hub/JobObjectInterop.cs's LibraryImportAttribute-generated SafeFileHandle marshalling
          needs unsafe code (SYSLIB1062), same as ChopItUp.Hub.csproj, which this file was copied from. -->
@@ -27,6 +31,11 @@
          Icon are written fully qualified. -->
     <Using Remove="System.Windows.Forms" />
     <Using Remove="System.Drawing" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- ApplicationIcon only reaches the exe's Win32 resources. MainWindow.xaml's Icon and TrayIcon's
+         pack:// load both need the same file as a WPF resource as well. -->
+    <Resource Include="chopitup.ico" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />

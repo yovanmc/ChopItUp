@@ -15,6 +15,7 @@ public sealed class TrayIcon : IDisposable
 {
     private readonly System.Windows.Forms.NotifyIcon _icon;
     private readonly System.Windows.Forms.ToolStripMenuItem _status;
+    private readonly System.Drawing.Icon _glyph;
 
     public TrayIcon(Action onOpen, Action onQuit)
     {
@@ -33,10 +34,18 @@ public sealed class TrayIcon : IDisposable
         quit.Click += (_, _) => onQuit();
         menu.Items.Add(quit);
 
+        // Row 12 T6: the shipped icon, read from this assembly's WPF resources — the same chopitup.ico
+        // the exe carries as its Win32 icon and MainWindow shows. The size argument picks the .ico's
+        // 16 px entry, so the notification area gets a layer drawn for that size instead of a
+        // downscaled 256 one. GetResourceStream returns null only if the Resource item is missing from
+        // the csproj, which is a build mistake, not a runtime condition.
+        var resource = System.Windows.Application.GetResourceStream(new Uri("pack://application:,,,/chopitup.ico"))
+            ?? throw new InvalidOperationException("chopitup.ico is not a Resource in ChopItUp.Desktop.");
+        _glyph = new System.Drawing.Icon(resource.Stream, System.Windows.Forms.SystemInformation.SmallIconSize);
+
         _icon = new System.Windows.Forms.NotifyIcon
         {
-            // Task 6 replaces this with the shipped chopitup.ico resource.
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = _glyph,
             Text = "Chop It Up",
             ContextMenuStrip = menu,
             Visible = true,
@@ -61,5 +70,6 @@ public sealed class TrayIcon : IDisposable
     {
         _icon.Visible = false;
         _icon.Dispose();
+        _glyph.Dispose();
     }
 }
