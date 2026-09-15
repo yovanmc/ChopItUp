@@ -29,6 +29,8 @@ public sealed class RoomDirectories(MessageStore store, RoomTrails trails, RoomP
             var theirs = RoomPaths.Normalize(other.Directory);
             if (RoomPaths.IsUnderOrEqual(full, theirs) || RoomPaths.IsUnderOrEqual(theirs, full))
                 throw new RoomDirectoryException($"'{full}' overlaps room '{other.Id}' ({theirs}); rooms cannot share or nest directories.");
+            if (RoomPaths.IsUnderOrEqual(full, ExchangeWorktrees.FolderFor(other.Directory)))
+                throw new RoomDirectoryException($"'{full}' is inside room '{other.Id}''s exchange worktrees.");
         }
 
         if (!Directory.Exists(full))

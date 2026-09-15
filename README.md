@@ -155,7 +155,17 @@ must pass.
 
 Inside a directory room a spawned participant can read, create, edit, search and run shell commands
 with network access, cwd set to the room; git is read-only for it by rule. Only one spawn runs at a
-time in a directory room, so two models never edit the tree at once.
+time within one exchange, so two models never edit the same tree at once.
+
+Outside a run, each of a directory room's exchanges works in its own git worktree at
+`<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's
+HEAD, so two exchanges edit the room's repository side by side without racing. When an exchange
+concludes with nothing left in flight, its worktree is removed and its branch is merged into the room
+directory's checked-out branch with a `--no-ff` merge commit, and a hub note names the merge. A
+conflict aborts the merge and keeps the branch, naming it and the conflicting paths; a stop, an
+interrupted spawn (cancelled or timed out), or a run owning the room also keeps the branch unmerged,
+each with its own note. A run's own spawns still work in the room directory itself, one at a time
+across the whole room, exactly as before.
 
 The trail: before a spawn, if the tree is dirty, the hub commits the owner's edits as the owner; when
 the spawn ends the hub always commits the tree as that participant (`Name <id@chopitup.local>`,

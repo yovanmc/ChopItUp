@@ -341,6 +341,29 @@ public sealed class ExchangePolicyTests
         Assert.Equal(2, next[0].TurnNumber);
     }
 
+    // Row 35: exclusiveOver narrows what an exclusive exchange waits on to its own in-flight set
+    // (a worktree exchange) rather than the whole room's (row 32's plain directory-room behaviour,
+    // still the default when exclusiveOver is omitted).
+    [Fact]
+    public void Due_and_NextWake_take_exclusiveOver_to_narrow_exclusivity_to_one_exchange()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(20, "owner", "@opus @gpt-6-astra go"), T0);
+        var later = T0 + Limits.Debounce;
+        var roomInFlight = new HashSet<string> { "sonnet" };   // a sibling exchange's own spawn, still running in the room
+
+        Assert.Empty(p.Due(x!, later, NoStarts, roomInFlight, exclusive: true));                  // room-wide: blocked by sonnet
+        Assert.Null(p.NextWake(x!, later, NoStarts, roomInFlight, exclusive: true));
+
+        var overOwn = p.Due(x!, later, NoStarts, roomInFlight, exclusive: true, exclusiveOver: Nobody);
+        Assert.Equal(["opus"], overOwn.Select(r => r.ParticipantId).ToArray());                   // narrowed to this exchange's own (empty) in-flight set
+        Assert.NotNull(p.NextWake(x!, later, NoStarts, roomInFlight, exclusive: true, exclusiveOver: Nobody));
+
+        var over = new HashSet<string> { "opus" };   // this exchange's own opus is in flight: still waits
+        Assert.Empty(p.Due(x!, later, NoStarts, roomInFlight, exclusive: true, exclusiveOver: over));
+        Assert.Null(p.NextWake(x!, later, NoStarts, roomInFlight, exclusive: true, exclusiveOver: over));
+    }
+
     [Fact]
     public void Five_mentions_in_one_owner_message_commit_four_and_note_the_fifth()
     {

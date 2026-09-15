@@ -45,6 +45,18 @@ public sealed class Exchange
     /// <summary>The skill in force for every spawn of this exchange (row 11, D-b): set once when the
     /// exchange opens and never changed, so turn 4 answers the same instruction as turn 1.</summary>
     public ResolvedSkill? Skill { get; init; }
+
+    /// <summary>Row 35: the room directory whose worktree this exchange used, set at its first
+    /// worktree launch; null for an exchange that never launched in a worktree.</summary>
+    public string? WorktreeRoom { get; set; }
+
+    /// <summary>Row 35: a spawn of this exchange ran in a worktree it was really given (not a refused
+    /// lease).</summary>
+    public bool WorktreeLeased { get; set; }
+
+    /// <summary>Row 35: a spawn of this exchange was cancelled or timed out, so its tree may be
+    /// half-written and a close keeps the branch unmerged whatever the status says.</summary>
+    public bool Interrupted { get; set; }
 }
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two

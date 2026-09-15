@@ -137,6 +137,25 @@ public sealed class SpawnPromptTests
         Assert.Contains("post_message exactly once", withDir);
     }
 
+    /// <summary>Row 35 (AC10): a spawn told its working directory IS a linked worktree of
+    /// the room directory gets an extra paragraph naming the checkout relationship; a null (the
+    /// default) checkout renders byte-for-byte as before this row.</summary>
+    [Fact]
+    public void R35_a_worktree_checkout_appends_the_extra_paragraph_and_a_null_checkout_is_byte_for_byte_as_before()
+    {
+        Assert.Equal(SpawnPrompt.DirectoryRules(@"C:\Rooms\lab"), SpawnPrompt.DirectoryRules(@"C:\Rooms\lab", null));
+        Assert.Equal(SpawnPrompt.DirectoryRules(@"C:\Rooms\lab"), SpawnPrompt.DirectoryRules(@"C:\Rooms\lab", @"C:\Rooms\lab"));   // same path: nothing to explain
+
+        var rules = SpawnPrompt.DirectoryRules(@"C:\Rooms\lab.worktrees\x1", @"C:\Rooms\lab");
+        Assert.Contains(@"This folder is a git worktree: the room directory C:\Rooms\lab is checked out for you at C:\Rooms\lab.worktrees\x1.", rules);
+        Assert.Contains(@"A path under C:\Rooms\lab in the conversation means the same relative path under C:\Rooms\lab.worktrees\x1.", rules);
+        Assert.Contains(@"Never write under C:\Rooms\lab.", rules);
+        Assert.Contains("Gitignored files (dependencies, build output, local settings) are not in this checkout; recreate what you need here.", rules);
+
+        var input = Input(1, 3, Msg(1, "owner", "@opus hi")) with { Directory = @"C:\Rooms\lab.worktrees\x1", DirectoryCheckoutOf = @"C:\Rooms\lab" };
+        Assert.Contains(rules, SpawnPrompt.Render(input, SpawnLimits.Default));
+    }
+
     /// <summary>Task 2, 2b: with two human rows in the roster (the default seed roster, since
     /// owner-remote), the prompt names both ids and no longer claims there is only one human.</summary>
     [Fact]

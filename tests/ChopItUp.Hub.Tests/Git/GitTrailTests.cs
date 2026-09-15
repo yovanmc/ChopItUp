@@ -11,7 +11,12 @@ public sealed class GitTrailTests : IDisposable
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_trail_" + Guid.NewGuid().ToString("N"));
 
     public GitTrailTests() => Directory.CreateDirectory(_dir);
-    public void Dispose() => TestDirs.DeleteTree(_dir);
+    public void Dispose()
+    {
+        TestDirs.DeleteTree(_dir);
+        TestDirs.DeleteTree(_dir + "_wt");
+        TestDirs.DeleteTree(_dir + "_owner");
+    }
 
     private static async Task<string> GitOut(string dir, params string[] args)
     {
@@ -20,6 +25,43 @@ public sealed class GitTrailTests : IDisposable
             TimeSpan.FromSeconds(30), CancellationToken.None);
         Assert.Equal(0, r.ExitCode);
         return r.StandardOutput;
+    }
+
+    // A raw git call for setup that a GitTrail method does not cover (checkout, an in-progress merge or
+    // cherry-pick left conflicted on purpose): carries a committer identity so it works on a machine
+    // with no git config, and does not assert on the exit code - several callers expect a conflict.
+    private static Task<ProcessResult> RawGit(string dir, params string[] args)
+    {
+        var withIdentity = new[] { "-c", "user.name=Test", "-c", "user.email=test@chopitup.local", "-c", "commit.gpgsign=false" }.Concat(args).ToArray();
+        return new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, withIdentity, new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+    }
+
+    // A repository with one commit, ready to grow worktrees off of.
+    private static async Task<GitTrail> RepoWithCommit(string dir, IProcessRunner? runner = null)
+    {
+        Directory.CreateDirectory(dir);
+        var git = new GitTrail(dir, runner: runner);
+        File.WriteAllText(Path.Combine(dir, "seed.txt"), "seed");
+        var seed = await git.CommitAllAsync("seed", Owner, allowEmpty: false);
+        Assert.True(seed.Created);
+        return git;
+    }
+
+    private sealed class ConcurrencyTrackingRunner : IProcessRunner
+    {
+        private readonly IProcessRunner _inner = new ProcessRunner();
+        private readonly object _lock = new();
+        private int _current;
+        public int Peak { get; private set; }
+
+        public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
+        {
+            lock (_lock) { _current++; if (_current > Peak) Peak = _current; }
+            try { return await _inner.RunAsync(spec, timeout, cancellation); }
+            finally { lock (_lock) { _current--; } }
+        }
     }
 
     [Fact]
@@ -215,6 +257,287 @@ public sealed class GitTrailTests : IDisposable
         var b = trails.For(@"c:\rooms\LAB");
         Assert.Same(a, b);
         Assert.NotSame(a, trails.For(@"C:\Rooms\other"));
+    }
+
+    // --- Row 35: worktree, merge and branch primitives ----------------------------------------------
+
+    [Fact]
+    public async Task Worktree_trail_sees_dirt_and_commits_on_its_branch_without_reinitialising()
+    {
+        var main = await RepoWithCommit(_dir);
+        var headBefore = await main.HeadAsync();
+        var wt = Path.Combine(_dir + "_wt", "x1");
+        Directory.CreateDirectory(_dir + "_wt");
+
+        Assert.Null(await main.AddWorktreeAsync(wt, "chopitup/x1", newBranch: true));
+        var w = main.WithRoot(wt);
+        File.WriteAllText(Path.Combine(wt, "edit.txt"), "edit");
+        Assert.True(await w.IsDirtyAsync());
+        var commit = await w.CommitAllAsync("edit in worktree", Owner, allowEmpty: false);
+        Assert.True(commit.Created);
+        Assert.Equal("chopitup/x1", await w.CurrentBranchAsync());
+        Assert.True(File.Exists(Path.Combine(wt, ".git")));
+        Assert.False(Directory.Exists(Path.Combine(wt, ".git")));
+        Assert.Equal(headBefore, await main.HeadAsync());
+    }
+
+    [Fact]
+    public async Task Merge_of_a_clean_branch_creates_a_no_ff_merge_commit_and_the_branch_deletes()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "x2");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/x2", newBranch: true);
+        var w = main.WithRoot(wt);
+        File.WriteAllText(Path.Combine(wt, "feature.txt"), "feature");
+        await w.CommitAllAsync("feature work", Owner, allowEmpty: false);
+
+        var outcome = await main.MergeAsync("chopitup/x2", "Merge exchange #2 (lab)");
+        Assert.Equal(MergeResult.Merged, outcome.Result);
+        Assert.NotNull(outcome.Hash);
+        var parents = (await GitOut(_dir, "rev-list", "--parents", "-n", "1", "HEAD")).Trim().Split(' ');
+        Assert.Equal(3, parents.Length);
+
+        Assert.Null(await main.RemoveWorktreeAsync(wt));
+        Assert.Null(await main.DeleteMergedBranchAsync("chopitup/x2"));
+        Assert.False(await main.BranchExistsAsync("chopitup/x2"));
+    }
+
+    [Fact]
+    public async Task A_conflicting_merge_is_aborted_and_names_the_paths()
+    {
+        var main = await RepoWithCommit(_dir);
+        Directory.CreateDirectory(_dir + "_wt");
+        var wtA = Path.Combine(_dir + "_wt", "xA");
+        var wtB = Path.Combine(_dir + "_wt", "xB");
+        await main.AddWorktreeAsync(wtA, "chopitup/xA", newBranch: true);
+        await main.AddWorktreeAsync(wtB, "chopitup/xB", newBranch: true);
+        File.WriteAllText(Path.Combine(wtA, "c.txt"), "from A");
+        await main.WithRoot(wtA).CommitAllAsync("A edits c.txt", Owner, allowEmpty: false);
+        File.WriteAllText(Path.Combine(wtB, "c.txt"), "from B");
+        await main.WithRoot(wtB).CommitAllAsync("B edits c.txt", Owner, allowEmpty: false);
+
+        var first = await main.MergeAsync("chopitup/xA", "Merge exchange #A (lab)");
+        Assert.Equal(MergeResult.Merged, first.Result);
+        var headAfterFirst = await main.HeadAsync();
+
+        var second = await main.MergeAsync("chopitup/xB", "Merge exchange #B (lab)");
+        Assert.Equal(MergeResult.Conflict, second.Result);
+        Assert.Equal(["c.txt"], second.Conflicts);
+        Assert.False(await main.IsDirtyAsync());
+        Assert.Equal(headAfterFirst, await main.HeadAsync());
+        Assert.False(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));
+        Assert.True(await main.BranchExistsAsync("chopitup/xB"));
+    }
+
+    [Fact]
+    public async Task Remove_refuses_a_dirty_worktree_and_delete_refuses_an_unmerged_branch()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "xD");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/xD", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "committed.txt"), "committed");
+        await main.WithRoot(wt).CommitAllAsync("branch-only work", Owner, allowEmpty: false);
+        File.WriteAllText(Path.Combine(wt, "dirty.txt"), "dirty");
+
+        Assert.NotNull(await main.RemoveWorktreeAsync(wt));   // dirty: refused, never forced
+
+        File.Delete(Path.Combine(wt, "dirty.txt"));
+        Assert.Null(await main.RemoveWorktreeAsync(wt));      // clean now: removed
+        Assert.NotNull(await main.DeleteMergedBranchAsync("chopitup/xD"));   // unmerged: refused, never forced
+    }
+
+    [Fact]
+    public async Task A_leftover_merge_head_is_never_committed()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "xM");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/xM", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "c.txt"), "branch");
+        await main.WithRoot(wt).CommitAllAsync("branch edits c.txt", Owner, allowEmpty: false);
+        File.WriteAllText(Path.Combine(_dir, "c.txt"), "main");
+        await main.CommitAllAsync("main edits c.txt", Owner, allowEmpty: false);
+
+        var merge = await RawGit(_dir, "merge", "--no-ff", "chopitup/xM");
+        Assert.NotEqual(0, merge.ExitCode);
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));
+
+        var headBefore = await main.HeadAsync();
+        var outcome = await main.CommitAllAsync("finalize", Owner, allowEmpty: false);
+        Assert.Null(outcome.Hash);
+        Assert.Contains("merge", outcome.Reason);
+        Assert.Contains("merge", main.Reason);
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));
+        Assert.Equal(headBefore, await main.HeadAsync());
+    }
+
+    [Fact]
+    public async Task A_cherry_pick_in_progress_is_never_committed()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "xC");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/xC", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "c.txt"), "branch");
+        await main.WithRoot(wt).CommitAllAsync("branch edits c.txt", Owner, allowEmpty: false);
+        var branchCommit = (await GitOut(wt, "rev-parse", "HEAD")).Trim();
+        File.WriteAllText(Path.Combine(_dir, "c.txt"), "main");
+        await main.CommitAllAsync("main edits c.txt", Owner, allowEmpty: false);
+
+        var pick = await RawGit(_dir, "cherry-pick", branchCommit);
+        Assert.NotEqual(0, pick.ExitCode);
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "CHERRY_PICK_HEAD")));
+
+        var headBefore = await main.HeadAsync();
+        var outcome = await main.CommitAllAsync("finalize", Owner, allowEmpty: false);
+        Assert.Null(outcome.Hash);
+        Assert.Contains("cherry-pick", outcome.Reason);
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "CHERRY_PICK_HEAD")));
+        Assert.Equal(headBefore, await main.HeadAsync());
+    }
+
+    [Fact]
+    public async Task Stale_abort_aborts_only_the_hubs_exchange_merge()
+    {
+        // The hub's own exchange merge, left conflicted: aborted, tree returns exactly clean.
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "x4");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/x4", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "c.txt"), "branch");
+        await main.WithRoot(wt).CommitAllAsync("branch edits c.txt", Owner, allowEmpty: false);
+        File.WriteAllText(Path.Combine(_dir, "c.txt"), "main");
+        await main.CommitAllAsync("main edits c.txt", Owner, allowEmpty: false);
+        await RawGit(_dir, "merge", "--no-ff", "-m", "Merge exchange #4 (lab)", "chopitup/x4");
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));
+
+        Assert.Equal("aborted", await main.AbortStaleExchangeMergeAsync());
+        Assert.False(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));
+        Assert.False(await main.IsDirtyAsync());
+
+        // An owner's own conflicted merge of a plain branch is left exactly alone.
+        var ownerDir = _dir + "_owner";
+        Directory.CreateDirectory(ownerDir);
+        var ownerMain = new GitTrail(ownerDir);
+        File.WriteAllText(Path.Combine(ownerDir, "c.txt"), "base");
+        Assert.True((await ownerMain.CommitAllAsync("base", Owner, allowEmpty: false)).Created);
+        var trunk = (await GitOut(ownerDir, "symbolic-ref", "--short", "HEAD")).Trim();
+        Assert.Equal(0, (await RawGit(ownerDir, "checkout", "-q", "-b", "feature")).ExitCode);
+        File.WriteAllText(Path.Combine(ownerDir, "c.txt"), "feature");
+        Assert.Equal(0, (await RawGit(ownerDir, "commit", "-q", "-am", "feature edits c.txt")).ExitCode);
+        Assert.Equal(0, (await RawGit(ownerDir, "checkout", "-q", trunk)).ExitCode);
+        File.WriteAllText(Path.Combine(ownerDir, "c.txt"), "trunk");
+        Assert.Equal(0, (await RawGit(ownerDir, "commit", "-q", "-am", "trunk edits c.txt")).ExitCode);
+        var ownerMerge = await RawGit(ownerDir, "merge", "--no-ff", "feature");
+        Assert.NotEqual(0, ownerMerge.ExitCode);
+        Assert.True(File.Exists(Path.Combine(ownerDir, ".git", "MERGE_HEAD")));
+        File.WriteAllText(Path.Combine(ownerDir, "c.txt"), "resolved by hand");   // an unstaged resolution edit
+
+        Assert.Equal("left alone", await ownerMain.AbortStaleExchangeMergeAsync());
+        Assert.True(File.Exists(Path.Combine(ownerDir, ".git", "MERGE_HEAD")));
+        Assert.Equal("resolved by hand", File.ReadAllText(Path.Combine(ownerDir, "c.txt")));
+    }
+
+    [Fact]
+    public async Task WithRoot_shares_the_gate()
+    {
+        var runner = new ConcurrencyTrackingRunner();
+        var main = await RepoWithCommit(_dir, runner);
+        var wt = Path.Combine(_dir + "_wt", "xG");
+        Directory.CreateDirectory(_dir + "_wt");
+        Assert.Null(await main.AddWorktreeAsync(wt, "chopitup/xG", newBranch: true));
+        var w = main.WithRoot(wt);
+
+        var tasks = new List<Task<CommitOutcome>>();
+        for (int i = 0; i < 10; i++)
+        {
+            File.WriteAllText(Path.Combine(_dir, $"m{i}.txt"), i.ToString());
+            tasks.Add(main.CommitAllAsync($"main {i}", Owner, allowEmpty: true));
+        }
+        for (int i = 0; i < 10; i++)
+        {
+            File.WriteAllText(Path.Combine(wt, $"w{i}.txt"), i.ToString());
+            tasks.Add(w.CommitAllAsync($"wt {i}", Owner, allowEmpty: true));
+        }
+        await Task.WhenAll(tasks);
+
+        Assert.Equal(1, runner.Peak);
+    }
+
+    [Fact]
+    public async Task Merge_refuses_a_dirty_tree_and_reports_before_the_merge_from_inside_the_gate()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "xB2");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/xB2", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "feature.txt"), "feature");
+        await main.WithRoot(wt).CommitAllAsync("feature work", Owner, allowEmpty: false);
+
+        File.WriteAllText(Path.Combine(_dir, "seed.txt"), "dirtied");   // a tracked file, modified but not committed
+        var headBefore = await main.HeadAsync();
+
+        var dirty = await main.MergeAsync("chopitup/xB2", "Merge exchange #B2 (lab)");
+        Assert.Equal(MergeResult.Failed, dirty.Result);
+        Assert.Contains("uncommitted changes", dirty.Reason);
+        Assert.Equal(headBefore, dirty.Before);
+        Assert.Equal(headBefore, await main.HeadAsync());               // never attempted
+        Assert.Equal("dirtied", File.ReadAllText(Path.Combine(_dir, "seed.txt")));
+
+        File.WriteAllText(Path.Combine(_dir, "seed.txt"), "seed");      // restored: clean again
+        var clean = await main.MergeAsync("chopitup/xB2", "Merge exchange #B2 (lab)");
+        Assert.Equal(MergeResult.Merged, clean.Result);
+        Assert.Equal(headBefore, clean.Before);
+        Assert.NotEqual(clean.Before, clean.Hash);
+    }
+
+    [Fact]
+    public async Task PruneWorktreeAsync_removes_only_the_named_worktrees_registration()
+    {
+        var main = await RepoWithCommit(_dir);
+        Directory.CreateDirectory(_dir + "_wt");
+        var wtA = Path.Combine(_dir + "_wt", "xP1");
+        var wtB = Path.Combine(_dir + "_wt", "xP2");
+        await main.AddWorktreeAsync(wtA, "chopitup/xP1", newBranch: true);
+        await main.AddWorktreeAsync(wtB, "chopitup/xP2", newBranch: true);
+        TestDirs.DeleteTree(wtA);
+        TestDirs.DeleteTree(wtB);
+        Assert.Contains(await main.WorktreePathsAsync(), p => RoomPaths.Same(p, wtA));
+        Assert.Contains(await main.WorktreePathsAsync(), p => RoomPaths.Same(p, wtB));
+
+        await main.PruneWorktreeAsync(wtA);
+
+        var remaining = await main.WorktreePathsAsync();
+        Assert.DoesNotContain(remaining, p => RoomPaths.Same(p, wtA));
+        Assert.Contains(remaining, p => RoomPaths.Same(p, wtB));         // never touched, unlike a blanket `worktree prune`
+        Assert.True(await main.BranchExistsAsync("chopitup/xP2"));
+
+        await main.PruneWorktreeAsync(wtA);                              // gone already: quiet, not an error
+    }
+
+    [Fact]
+    public async Task Stale_abort_survives_an_unreadable_merge_message()
+    {
+        var main = await RepoWithCommit(_dir);
+        var wt = Path.Combine(_dir + "_wt", "xIO");
+        Directory.CreateDirectory(_dir + "_wt");
+        await main.AddWorktreeAsync(wt, "chopitup/xIO", newBranch: true);
+        File.WriteAllText(Path.Combine(wt, "c.txt"), "branch");
+        await main.WithRoot(wt).CommitAllAsync("branch edits c.txt", Owner, allowEmpty: false);
+        File.WriteAllText(Path.Combine(_dir, "c.txt"), "main");
+        await main.CommitAllAsync("main edits c.txt", Owner, allowEmpty: false);
+        await RawGit(_dir, "merge", "--no-ff", "-m", "Merge exchange #99 (lab)", "chopitup/xIO");
+        var msgPath = Path.Combine(_dir, ".git", "MERGE_MSG");
+        Assert.True(File.Exists(msgPath));
+
+        using (new FileStream(msgPath, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            var result = await main.AbortStaleExchangeMergeAsync();
+            Assert.Equal("left alone", result);   // an unreadable message can never be proven the hub's own
+        }
+        Assert.True(File.Exists(Path.Combine(_dir, ".git", "MERGE_HEAD")));   // never touched
     }
 
     private sealed class FailingRunner : IProcessRunner

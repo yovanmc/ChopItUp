@@ -149,6 +149,8 @@ public static class HubHost
             builder.Services.AddSingleton(new RoomTrails(roomGit ?? (dir => new GitTrail(dir))));
             builder.Services.AddSingleton(sp => new RoomDirectories(
                 sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir), options.RoomsRootPath));
+            builder.Services.AddSingleton(sp => new ExchangeWorktrees(
+                sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir)));
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
                 .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>().WithTools<SkillTools>();

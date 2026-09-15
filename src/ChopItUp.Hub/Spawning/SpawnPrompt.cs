@@ -23,6 +23,7 @@ public sealed record SpawnPromptInput(
     IReadOnlyList<string>? MemoryTopics = null,
     string? Directory = null,
     ResolvedSkill? Skill = null,
+    string? DirectoryCheckoutOf = null,
     RunView? Run = null,
     RoomMemory? RoomMemory = null);
 
@@ -101,7 +102,7 @@ public static class SpawnPrompt
             sb.Append("You are stateless: this transcript is all you know of the room; your memory is the section below.\n\n");
             sb.Append("Files: this room's directory is ").Append(input.Directory).Append(", a git repository and your working directory. ")
               .Append("You can read, edit, create, search and run shell commands there, with network access. ")
-              .Append(DirectoryRules(input.Directory)).Append(' ')
+              .Append(DirectoryRules(input.Directory, input.DirectoryCheckoutOf)).Append(' ')
               .Append("Files you create or change are the deliverable; still post your reply to the room as described above.\n");
         }
         sb.Append('\n');
@@ -241,11 +242,19 @@ public static class SpawnPrompt
     /// <summary>The fence for a spawn in a directory room (M9 decision 8, F10): sent to Claude as an
     /// appended system prompt — a channel the room transcript on stdin cannot write into — and repeated
     /// in the stdin prompt's Files section for both CLIs. A rule, not a wall: the plan says which parts
-    /// are also enforced (git verbs, credential folders) and which are not (reads, the loopback API).</summary>
-    public static string DirectoryRules(string directory) =>
-        $"Stay inside your working directory, {directory}: do not read, list, create or change anything outside this directory, and do not touch its .git folder. "
-        + "Do not run git commands that write (commit, add, checkout, reset, stash, push and the like); the hub commits your work under your name when you finish and records every shell command you run in the room's commit trail. git log, git status and git diff are fine. "
-        + "Do not call the hub's HTTP API or read its data folder; the chopitup MCP tools you were given are your only channel to the hub.";
+    /// are also enforced (git verbs, credential folders) and which are not (reads, the loopback API).
+    /// Row 35 (AC10): <paramref name="checkoutOf"/> is the room directory when <paramref name="directory"/>
+    /// is really a linked worktree of it (different from it) - appends the extra paragraph explaining
+    /// the checkout relationship; null (the default) renders byte-for-byte as before.</summary>
+    public static string DirectoryRules(string directory, string? checkoutOf = null)
+    {
+        var text = $"Stay inside your working directory, {directory}: do not read, list, create or change anything outside this directory, and do not touch its .git folder. "
+            + "Do not run git commands that write (commit, add, checkout, reset, stash, push and the like); the hub commits your work under your name when you finish and records every shell command you run in the room's commit trail. git log, git status and git diff are fine. "
+            + "Do not call the hub's HTTP API or read its data folder; the chopitup MCP tools you were given are your only channel to the hub.";
+        if (checkoutOf is not null && checkoutOf != directory)
+            text += $" This folder is a git worktree: the room directory {checkoutOf} is checked out for you at {directory}. A path under {checkoutOf} in the conversation means the same relative path under {directory}. Never write under {checkoutOf}. Gitignored files (dependencies, build output, local settings) are not in this checkout; recreate what you need here.";
+        return text;
+    }
 
     /// <summary>Drops the oldest messages until the bodies fit the character budget; the newest
     /// message is always kept even when it alone exceeds it (the trigger must be visible).</summary>

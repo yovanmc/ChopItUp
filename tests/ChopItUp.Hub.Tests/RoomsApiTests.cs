@@ -121,6 +121,19 @@ public sealed class RoomsApiTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_directory_inside_another_rooms_exchange_worktrees_folder_is_refused()
+    {
+        var (created, room) = await Post("api/rooms", new { name = "Lab" });
+        Assert.Equal(HttpStatusCode.Created, created);
+        var labDir = room.GetProperty("directory").GetString()!;
+
+        var inside = Path.Combine(ExchangeWorktrees.FolderFor(labDir), "x1");
+        var (status, body) = await Post("api/rooms", new { name = "Nested Worktree", directory = inside });
+        Assert.Equal(HttpStatusCode.BadRequest, status);
+        Assert.Contains("exchange worktrees", body.GetProperty("error").GetString());
+    }
+
+    [Fact]
     public async Task M9_A4_archive_hides_a_room_keeps_it_reachable_and_unarchive_restores_it_and_general_stays()
     {
         await Post("api/rooms", new { name = "Old" });

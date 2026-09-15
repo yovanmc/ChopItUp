@@ -1141,6 +1141,38 @@ public sealed partial class SpawnerServiceTests
         Assert.DoesNotContain("--effort", await sonnet.Task.WaitAsync(Wait));
     }
 
+    /// <summary>AC6: outside a run, row 35 makes a directory room run its exchanges side by side, but a
+    /// run still owns the WHOLE room - two workers rooted at the same conductor post still run one at a
+    /// time, exactly as before this row.</summary>
+    [Fact]
+    public async Task R35_a_run_room_still_runs_one_spawn_at_a_time()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        var dir = await MakeRoom("lab-run-exclusive");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus": await PostAsIn("opus", "lab-run-exclusive", "phase: build @sonnet @fable write the thing"); break;
+                case "sonnet": await release.Task.WaitAsync(ct); break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-exclusive", "/build-thing @opus begin");
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // the conductor's own turn
+
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(first));
+        Assert.Equal(dir, first.WorkingDirectory);                          // a run spawn works in the room directory itself, never a worktree
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));   // fable waits: the run owns the whole room
+
+        release.SetResult();
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("fable", FakeProcessRunner.ParticipantOf(second));
+    }
+
     [Fact]
     public async Task R32_the_per_exchange_stop_refuses_while_a_run_is_active_or_parked()
     {

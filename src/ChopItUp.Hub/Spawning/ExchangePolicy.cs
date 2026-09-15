@@ -284,11 +284,13 @@ public sealed class ExchangePolicy
     /// whole in-flight set, across exchanges — a superseded exchange's spawn still counts.
     /// <paramref name="exclusive"/> (a directory room, M9 decision 5): at most one spawn in the room
     /// at a time — nothing is due while anything is in flight, and only the first pending spawn
-    /// launches per pass; the completion wakes the loop for the next.</summary>
-    public IReadOnlyList<SpawnRequest> Due(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false)
+    /// launches per pass; the completion wakes the loop for the next.
+    /// <paramref name="exclusiveOver"/> narrows what exclusivity waits on: the exchange's own
+    /// in-flight set when it has a worktree (row 35); the room's whole set otherwise.</summary>
+    public IReadOnlyList<SpawnRequest> Due(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false, IReadOnlySet<string>? exclusiveOver = null)
     {
         if (x.Status != ExchangeStatus.Open) return [];
-        if (exclusive && inFlightInRoom.Count > 0) return [];
+        if (exclusive && (exclusiveOver ?? inFlightInRoom).Count > 0) return [];
         var due = new List<SpawnRequest>();
         foreach (var (id, pending) in x.Pending)
         {
@@ -302,11 +304,12 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>The earliest instant something pending could become due, or null when nothing is
-    /// pending or everything pending waits on a completion (which wakes the loop by itself).</summary>
-    public DateTimeOffset? NextWake(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false)
+    /// pending or everything pending waits on a completion (which wakes the loop by itself).
+    /// <paramref name="exclusiveOver"/>: see <see cref="Due"/>.</summary>
+    public DateTimeOffset? NextWake(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false, IReadOnlySet<string>? exclusiveOver = null)
     {
         if (x.Status != ExchangeStatus.Open) return null;
-        if (exclusive && inFlightInRoom.Count > 0) return null;   // the completion wakes the loop
+        if (exclusive && (exclusiveOver ?? inFlightInRoom).Count > 0) return null;   // the completion wakes the loop
         DateTimeOffset? wake = null;
         foreach (var (id, pending) in x.Pending)
         {
