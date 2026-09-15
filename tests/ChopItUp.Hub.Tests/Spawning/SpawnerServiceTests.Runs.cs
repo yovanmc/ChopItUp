@@ -502,8 +502,7 @@ public sealed partial class SpawnerServiceTests
         await PostAsOwner("@opus think slowly");
         await _runner.NextSpecAsync(Wait);
         await PostAsOwner("/nope @opus");
-        await Task.Delay(300);
-        Assert.Equal("superseded", Spawner.Snapshot("general").Status);
+        await WaitForStatus("superseded");
         release.SetResult();
     }
 
