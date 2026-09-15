@@ -475,4 +475,81 @@ public sealed partial class SpawnerServiceTests
         await using var client = await _host.ClientFor(participant);
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
     }
+
+    // --- Task 6: start-up recovery ------------------------------------------------------------------
+
+    private static async Task<string> GitShow(string dir, string gitRef, string path)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["show", $"{gitRef}:{path}"], new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, r.ExitCode);
+        return r.StandardOutput;
+    }
+
+    [Fact]
+    public async Task R35_hub_start_recovers_leftover_worktrees()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_worktree_recover_" + Guid.NewGuid().ToString("N"));
+        var roomDir = Path.Combine(Path.GetTempPath(), "chopitup_worktree_recover_room_" + Guid.NewGuid().ToString("N"));
+        Assert.True(await new GitTrail(roomDir).InitAsync());
+        File.WriteAllText(Path.Combine(roomDir, "seed.txt"), "seed\n");
+        Assert.NotNull((await new GitTrail(roomDir).CommitAllAsync("seed", GitTrail.Hub, allowEmpty: false)).Hash);
+        const long root = 42;
+        var branch = ExchangeWorktrees.Branch(root);
+
+        try
+        {
+            string tree;
+            await using (var first = await HubTestHost.StartAsync(dir, deleteOnDispose: false))
+            {
+                first.Services.GetRequiredService<MessageStore>().CreateRoom("lab-recover", "Lab", roomDir);
+                // A worktree left registered with no close ever having run - exactly what a hub killed
+                // mid-exchange leaves behind (no spawn needed to reproduce it: EnsureAsync's own
+                // book-keeping is the whole of what a crash interrupts).
+                var lease = await first.Services.GetRequiredService<ExchangeWorktrees>().EnsureAsync(roomDir, root, CancellationToken.None);
+                Assert.Null(lease.Refusal);
+                tree = lease.Path!;
+                File.WriteAllText(Path.Combine(tree, "leftover.txt"), "left dirty by a crashed hub\n");
+            }
+
+            var second = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
+            try
+            {
+                // GET /api/rooms/.../messages needs no credential (BearerTokenMiddleware only guards
+                // non-GET routes) - and "owner" is a host-file participant whose plaintext this second,
+                // non-fresh host cannot look back up anyway (HubTestHost.TokenFor's own doc comment).
+                var deadline = DateTime.UtcNow + Wait;
+                (string Author, string Body) note = default;
+                while (DateTime.UtcNow < deadline)
+                {
+                    using var doc = JsonDocument.Parse(await second.Client.GetStringAsync("api/rooms/lab-recover/messages?afterId=0&limit=200"));
+                    note = doc.RootElement.GetProperty("messages").EnumerateArray()
+                        .Select(m => (m.GetProperty("authorId").GetString()!, m.GetProperty("body").GetString()!))
+                        .FirstOrDefault(m => m.Item1 == "hub" && m.Item2.Contains("restarted while exchange worktrees were open"));
+                    if (note != default) break;
+                    await Task.Delay(100);
+                }
+                Assert.NotEqual(default, note);
+                Assert.Contains(branch, note.Body);
+                Assert.False(Directory.Exists(tree));
+                Assert.Equal("left dirty by a crashed hub\n", (await GitShow(roomDir, branch, "leftover.txt")).Replace("\r\n", "\n"));
+            }
+            finally { await second.DisposeAsync(); }
+
+            // A second restart (nothing left to recover) is quiet - AC7/ticket 06's "a start never
+            // aborts a merge the hub did not make" also covers "never repeats a note for what is
+            // already gone": the room's history still holds the ONE note from the first recovery
+            // (messages are durable), but a second, later restart must not add a second one.
+            await using var third = await HubTestHost.StartAsync(dir, deleteOnDispose: true);
+            await Task.Delay(300);
+            using var doc3 = JsonDocument.Parse(await third.Client.GetStringAsync("api/rooms/lab-recover/messages?afterId=0&limit=200"));
+            Assert.Equal(1, doc3.RootElement.GetProperty("messages").EnumerateArray()
+                .Count(m => m.GetProperty("body").GetString()!.Contains("restarted while exchange worktrees were open")));
+        }
+        finally
+        {
+            TestDirs.DeleteTree(roomDir);
+        }
+    }
 }

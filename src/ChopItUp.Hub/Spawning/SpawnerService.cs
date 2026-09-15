@@ -247,6 +247,11 @@ public sealed class SpawnerService : BackgroundService
                 if (room.Directory is null) continue;
                 if (await _trails.For(room.Directory).IsDirtyAsync(stoppingToken))
                     Console.Error.WriteLine($"room {room.Id}: {room.Directory} has uncommitted changes at startup (a spawn may have ended without its commit); the next spawn commits them as the owner");
+                // Row 35, Task 6: a previous hub process may have died with an exchange worktree still
+                // registered (or its own exchange merge left mid-flight) - commit, remove and report
+                // before this room can launch anything.
+                var recovered = await _worktrees.RecoverAsync(room.Directory, stoppingToken);
+                if (recovered is not null) PostNote(room.Id, recovered);
             }
             while (await _events.Reader.WaitToReadAsync(stoppingToken))
             {
