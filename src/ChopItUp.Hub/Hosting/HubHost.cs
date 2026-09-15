@@ -223,6 +223,7 @@ public static class HubHost
                 message.AuthorId,
                 message.Body,
                 message.CreatedAt,
+                message.ReplyToId,
             });
         }
         catch (Exception e)

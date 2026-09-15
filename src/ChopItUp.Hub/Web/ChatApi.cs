@@ -57,13 +57,16 @@ public static class ChatApi
     /// else), falling back to the owner id only when the key is unset, and stored through the same
     /// <c>MessageStore.Post</c> the MCP tools use, so the cursor and broadcast rules cannot drift. No
     /// client_key on this surface — a browser POST has no story for "was this delivered", unlike an
-    /// MCP tool call.</summary>
+    /// MCP tool call. Row 36: <c>replyToId</c> must name a message of the same room (400 otherwise);
+    /// the spawner reads it to decide which exchange the post joins.</summary>
     private static IResult PostMessage(string roomId, PostBody body, HttpContext httpContext, MessageStore store, MessageSignal signal, ParticipantStore participants)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Body)) return Results.BadRequest(new { error = "body is empty." });
         var authorId = AuthorId(httpContext, participants);
-        var message = store.Post(roomId, authorId, body.Body);   // 3-arg overload: no client_key, always inserts
+        Message message;
+        try { message = store.Post(roomId, authorId, body.Body, null, body.ReplyToId).Message; }   // no client_key on this surface
+        catch (ArgumentException e) when (e.ParamName == "replyToId") { return Results.BadRequest(new { error = e.Message }); }
         signal.Publish(roomId, message);
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }
@@ -154,9 +157,9 @@ public static class ChatApi
         return sb.ToString();
     }
 
-    private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt };
+    private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, m.ReplyToId };
     internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread };
 
-    internal sealed record PostBody(string? Body);
+    internal sealed record PostBody(string? Body, long? ReplyToId = null);
     internal sealed record ImportBody(string? Text);
 }

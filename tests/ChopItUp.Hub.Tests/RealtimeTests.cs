@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.SignalR.Client;
 
@@ -79,5 +80,22 @@ public sealed class RealtimeTests : IAsyncLifetime
 
         Assert.Equal(1, count);
         Assert.False(second.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task R36_a_reply_posted_through_the_web_api_carries_replyToId_in_the_broadcast()
+    {
+        _host.AuthorizeAs(ChopItUp.Core.Storage.ChopDb.OwnerParticipantId);
+        var root = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "root" });
+        var rootId = JsonDocument.Parse(await root.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64();
+        await using var connection = await ConnectAsync("general");
+        var received = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.On<JsonElement>("MessagePosted", msg => received.TrySetResult(msg));
+
+        var reply = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "a reply", replyToId = rootId });
+        Assert.Equal(System.Net.HttpStatusCode.Created, reply.StatusCode);
+
+        var payload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(rootId, payload.GetProperty("replyToId").GetInt64());
     }
 }
