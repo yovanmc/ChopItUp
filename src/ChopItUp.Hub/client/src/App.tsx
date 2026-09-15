@@ -15,6 +15,8 @@ import SkillPanel from './SkillPanel';
 import Thread from './Thread';
 import TrailDialog from './TrailDialog';
 import { readOwnerToken, writeOwnerToken } from './ownerToken';
+import ChromeBar from './shell/ChromeBar';
+import { isHosted } from './shell/hostBridge';
 import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
 import { nextReply } from './reply';
 import type {
@@ -695,8 +697,14 @@ export default function App() {
   // control and `ExchangeBar` stands down for as long as that is true. One stop, one label.
   const runStoppable = run !== null && run.status !== 'ended';
 
+  // Row 12: inside ChopItUp.Desktop the window has no title bar of its own, so the page draws one and
+  // the layout grows a row for it. Asked here rather than at module scope — this module is imported
+  // under node by the tests, where there is no `window` to ask.
+  const hosted = isHosted();
+
   return (
-    <div className="app">
+    <div className={hosted ? 'app hosted' : 'app'}>
+      <ChromeBar hosted={hosted} />
       <RoomRail
         rooms={rooms}
         activeRoomId={roomId}

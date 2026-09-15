@@ -86,6 +86,96 @@ input {
   height: 100%;
 }
 
+/* ---------- desktop shell chrome (row 12) — rendered only inside ChopItUp.Desktop ---------- */
+
+/* The chrome is the first child and spans both columns, so auto-placement puts it on row 1 and drops
+   the rail and the room onto row 2. A browser tab never gets the `hosted` class and keeps the
+   one-row grid it has always had.
+
+   `app-region` is not decoration: WebView2 hit-tests it and tells Windows which pixels are the
+   window's caption, which is what makes the row draggable and double-click-to-maximize work with no
+   native title bar. Chromium resolves it geometrically, so anything stacked over the row has to opt
+   out explicitly — hence `no-drag` on the cluster AND on each button. */
+.app.hosted {
+  grid-template-rows: 36px minmax(0, 1fr);
+}
+
+.chrome {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 36px;
+  padding-left: 16px;
+  background: var(--rail);
+  border-bottom: 1px solid var(--line-soft);
+  user-select: none;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.chrome-wordmark {
+  flex: 0 0 auto;
+}
+
+.chrome-hub {
+  font-size: 11px;
+  color: var(--dim);
+  font-family: var(--mono);
+}
+
+.chrome-hub[data-state='failed'] {
+  color: var(--danger-ink);
+}
+
+.chrome-cluster {
+  margin-left: auto;
+  display: flex;
+  height: 36px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.chrome-btn {
+  width: 46px;
+  height: 36px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--dim);
+  display: grid;
+  place-items: center;
+  cursor: default;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.chrome-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+/* A white wash is invisible on the light rail. This sits ABOVE the close button's rule on purpose:
+   `.chrome-btn:hover` and `.chrome-close:hover` have the same specificity, so whichever is written
+   last wins, and the close button has to keep its red in both themes. */
+@media (prefers-color-scheme: light) {
+  .chrome-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+  }
+}
+
+/* The Windows 11 close-hover red. Curio's precedent: matching it is what makes a page-drawn title bar
+   stop reading as a web page pretending to be one. */
+.chrome-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.rail,
+.room {
+  min-height: 0;
+}
+
 /* Flex, not grid. The error banner is conditional, so a fixed four-row template handed the 1fr row
    to whichever child happened to land on it: with no banner on screen that was the composer, which
    swallowed the free height and left the thread clumped at the top of an apparently empty window.

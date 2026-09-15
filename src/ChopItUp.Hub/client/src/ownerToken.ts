@@ -19,10 +19,24 @@
  *
  *  Deliberately NOT here: any path that goes looking for a token on disk. The milestone's standing
  *  prohibition is that no agent reads the hub's `tokens.json` to obtain an owner credential; this
- *  value arrives by the owner pasting it, or it does not arrive. */
+ *  value arrives by the owner pasting it, or it does not arrive.
+ *
+ *  Row 12 adds one source that is not a paste and is still not a disk read. When the desktop shell
+ *  starts the hub itself, it mints a bearer for that launch, hands it to the child in an environment
+ *  variable the hub deletes from its own environment before it can spawn anything, and sets it on
+ *  every document of the hub origin as `window.__chopitupShellToken`. That global is read here and
+ *  preferred over the stored value: it belongs to a hub this exact window started, and it outranks a
+ *  token pasted for some earlier one. Nothing writes it — not this module, not `localStorage`, not
+ *  the WebView2 profile — so it dies with the window, which is the point (a stored copy is readable
+ *  by any process running as this user, including a spawn). A browser tab never sees it and keeps
+ *  using the paste flow below, unchanged. */
 const KEY = 'chopitup.ownerToken';
 
 export function readOwnerToken(): string | null {
+  if (typeof window !== 'undefined') {
+    const injected = (window as unknown as { __chopitupShellToken?: unknown }).__chopitupShellToken;
+    if (typeof injected === 'string' && injected.length > 0) return injected;
+  }
   try {
     const stored = window.localStorage.getItem(KEY);
     return stored !== null && stored.length > 0 ? stored : null;
