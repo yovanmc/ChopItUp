@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, test, vi } from 'vitest';
-import { TokenGate } from './App';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { stopExchangeAt, TokenGate, withStopping, type ExchangeStopHooks } from './App';
+import { isCredentialRefusal } from './api';
+import type { ExchangeSnapshot } from './types';
 
 /** Row 28, AC5's first half. A deliberate action the hub refused for want of a credential has to say
  *  what did not happen and give the owner somewhere to put the token — "Send" that silently ate the
@@ -50,5 +52,89 @@ describe('TokenGate', () => {
 
   test('the owner can put it away without pasting anything', () => {
     expect(render()).toContain('Not now');
+  });
+});
+
+/** Row 34, AC3: one strip's Stop. The component half (which root a press hands up, which button greys)
+ *  is `ExchangeBar.test.tsx`'s; this is App's half — the call that root makes and what happens to its
+ *  answer — lifted out of the component so it can run without a DOM. `fetch` is a recording stub, as
+ *  in `api.test.ts`, and no `window` means a tokenless client, which is all a stub reply needs. */
+describe('stopping one exchange from its strip', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const SNAPSHOT = { roomId: 'lab', status: 'open', seq: 14, exchanges: [] } as unknown as ExchangeSnapshot;
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
+
+  /** Every hook and every request, in the order they happened. `refused` answers the way App's does:
+   *  only a credential refusal is one. */
+  function record(reply: () => Response) {
+    const events: string[] = [];
+    const applied: ExchangeSnapshot[] = [];
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      events.push(`${init?.method ?? 'GET'} ${url}`);
+      return Promise.resolve(reply());
+    });
+    const hooks: ExchangeStopHooks = {
+      begin: () => events.push('begin'),
+      apply: (snapshot) => {
+        events.push('apply');
+        applied.push(snapshot);
+      },
+      refused: (failure, didNotHappen) => {
+        events.push(`refused? ${didNotHappen}`);
+        return isCredentialRefusal(failure);
+      },
+      fail: (message) => events.push(`fail: ${message}`),
+      end: () => events.push('end'),
+    };
+    return { events, applied, hooks };
+  }
+
+  test('it stops that root and only that root, and applies the snapshot the hub answered with', async () => {
+    const { events, applied, hooks } = record(() => json(SNAPSHOT));
+
+    await stopExchangeAt('lab', 57, hooks);
+
+    expect(events).toEqual(['begin', 'POST /api/rooms/lab/exchanges/57/stop', 'apply', 'end']);
+    expect(applied[0]?.seq).toBe(14);
+  });
+
+  test('a credential refusal raises the paste prompt with what did not happen, and no banner', async () => {
+    const { events, hooks } = record(() => json({ error: 'unauthorized' }, 401));
+
+    await stopExchangeAt('lab', 57, hooks);
+
+    expect(events).toContain('refused? That exchange was not stopped.');
+    expect(events.some((e) => e.startsWith('fail'))).toBe(false);
+    expect(events).not.toContain('apply');
+    expect(events.at(-1)).toBe('end');
+  });
+
+  test('any other refusal shows the hub its own sentence, and the strip is released either way', async () => {
+    const { events, hooks } = record(() => json({ error: 'A run owns this room; stop the run instead.' }, 409));
+
+    await stopExchangeAt('lab', 57, hooks);
+
+    expect(events).toContain('fail: A run owns this room; stop the run instead.');
+    expect(events).not.toContain('apply');
+    expect(events.at(-1)).toBe('end');
+  });
+});
+
+describe('the per-root stopping set', () => {
+  test('marking one root pending adds it beside the others and leaves the old set alone', () => {
+    const before: ReadonlySet<number> = new Set([41]);
+
+    const after = withStopping(before, 57, true);
+
+    expect([...after].sort()).toEqual([41, 57]);
+    expect([...before]).toEqual([41]);
+  });
+
+  test('releasing one root removes that root and no other', () => {
+    expect([...withStopping(new Set([41, 57]), 57, false)]).toEqual([41]);
   });
 });
