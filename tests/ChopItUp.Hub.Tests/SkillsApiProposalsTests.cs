@@ -472,6 +472,14 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Equal("pending", host.Services.GetRequiredService<SkillProposalStore>().Get(1)!.Status);
 
         release.SetResult();
-        Directory.Delete(roomDir, recursive: true);
+        // Row 35: outside a run this room's spawn now commits through the exchange's worktree
+        // machinery, which turns roomDir into a real git repository (it never was one before this
+        // row) - its objects are read-only, so a plain Directory.Delete throws UnauthorizedAccessException
+        // exactly as TestDirs.DeleteTree's own doc comment says; wait for the released spawn to actually
+        // finish its git work first, then clear attributes before deleting.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (host.Services.GetRequiredService<SpawnerService>().AnySpawnInFlight && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        TestDirs.DeleteTree(roomDir);
     }
 }

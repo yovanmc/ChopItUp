@@ -51,10 +51,15 @@ public sealed partial class SpawnerServiceTests
         throw new TimeoutException($"No matching message in '{room}' within {Wait}");
     }
 
-    private static async Task<string> GitLog(string dir, string format, int n = 5)
+    // Row 35: gitRef reads a branch other than the one checked out at dir - a directory room's own
+    // exchange branches (see ExchangeWorktrees.Branch) share dir's repository, so its refs are visible
+    // from dir even though the commits on them were made from a linked worktree.
+    private static async Task<string> GitLog(string dir, string format, int n = 5, string? gitRef = null)
     {
+        var args = new List<string> { "log", $"--format={format}", "-n", n.ToString() };
+        if (gitRef is not null) args.Add(gitRef);
         var r = await new ProcessRunner().RunAsync(
-            new ProcessSpec(CliResolver.Resolve("git").FileName, ["log", $"--format={format}", "-n", n.ToString()], new Dictionary<string, string>(), dir, "", "test-git"),
+            new ProcessSpec(CliResolver.Resolve("git").FileName, args, new Dictionary<string, string>(), dir, "", "test-git"),
             TimeSpan.FromSeconds(30), CancellationToken.None);
         Assert.Equal(0, r.ExitCode);
         return r.StandardOutput.Trim();
@@ -77,28 +82,35 @@ public sealed partial class SpawnerServiceTests
 
         await PostAsOwnerIn("lab", "@sonnet create hello.txt");
         var spec = await _runner.NextSpecAsync(Wait);
-        Assert.Equal(dir, spec.WorkingDirectory);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // row 35: works in its own worktree
+        Assert.Equal(tree, spec.WorkingDirectory);
         Assert.Contains("dontAsk", spec.Arguments);
         Assert.Equal("stream-json", spec.Arguments[spec.Arguments.ToList().IndexOf("--output-format") + 1]);
         var settingsPath = spec.Arguments[spec.Arguments.ToList().IndexOf("--settings") + 1];
         Assert.StartsWith(Path.Combine(_dir, "spawns"), settingsPath);                         // scratch, not the room
         Assert.StartsWith(Path.Combine(_dir, "spawns"), spec.Arguments[spec.Arguments.ToList().IndexOf("--mcp-config") + 1]);
-        Assert.Contains(@"Files: this room's directory is " + dir, spec.StandardInput);
-        Assert.Equal(SpawnPrompt.DirectoryRules(dir), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // F10: the fence in the system channel
+        Assert.Contains(@"Files: this room's directory is " + tree, spec.StandardInput);
+        Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
 
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("as sonnet: 1 file(s) changed, 2 shell command(s).", note.Body);
         Assert.Contains("Your edits were committed first as", note.Body);
         Assert.Contains("\"Bash(git commit *)\"", settingsAtLaunch);
 
-        var log = (await GitLog(dir, "%an <%ae>|%cn|%s")).Split('\n');
-        Assert.Equal(2, log.Length);
-        Assert.Equal("Sonnet <sonnet@chopitup.local>|ChopItUp hub|sonnet: turn 1/4 in room lab", log[0]);
-        Assert.Equal("Owner <owner@chopitup.local>|ChopItUp hub|owner: edits before the next spawn in room lab", log[1]);
-        var body = await GitLog(dir, "%B", 1);
+        // The owner's pre-spawn edit lands on the room directory itself; the agent's commit lands on
+        // the exchange's own branch inside its worktree - row 35's Task 5 (not this row) merges it back.
+        var roomLog = (await GitLog(dir, "%an <%ae>|%cn|%s")).Split('\n');
+        Assert.Equal(["Owner <owner@chopitup.local>|ChopItUp hub|owner: edits before the next spawn in room lab"], roomLog);
+        var branchLog = (await GitLog(dir, "%an <%ae>|%cn|%s", gitRef: ExchangeWorktrees.Branch(root))).Split('\n');
+        Assert.Equal(2, branchLog.Length);
+        Assert.Equal("Sonnet <sonnet@chopitup.local>|ChopItUp hub|sonnet: turn 1/4 in room lab", branchLog[0]);
+        Assert.Equal("Owner <owner@chopitup.local>|ChopItUp hub|owner: edits before the next spawn in room lab", branchLog[1]);
+        var body = await GitLog(dir, "%B", 1, ExchangeWorktrees.Branch(root));
         Assert.Contains("Shell commands run (2):\n  1. echo hello\n  2. git commit -m nope [denied]", body.Replace("\r\n", "\n"));
-        Assert.True(File.Exists(Path.Combine(dir, "hello.txt")));                             // the room survives the spawn
+        Assert.True(File.Exists(Path.Combine(tree, "hello.txt")));                            // the worktree survives the spawn
         Assert.True(File.Exists(Path.Combine(dir, "notes.md")));
+        Assert.True(File.Exists(Path.Combine(tree, "notes.md")));                             // forked from the room's HEAD, which already has it
         Assert.False(Directory.Exists(Path.GetDirectoryName(settingsPath)!));                 // the scratch folder does not
         Assert.False(File.Exists(Path.Combine(dir, "settings.json")));
         Assert.False(File.Exists(Path.Combine(dir, "mcp.json")));
@@ -132,7 +144,7 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
-    public async Task R32_a_directory_room_runs_one_spawn_at_a_time_across_two_exchanges()
+    public async Task R35_a_directory_room_runs_two_exchanges_at_once_and_one_spawn_at_a_time_within_each()
     {
         await MakeRoom("lab");
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -142,13 +154,74 @@ public sealed partial class SpawnerServiceTests
             return FakeProcessRunner.Ok("""{"type":"result","result":"done"}""");
         };
 
-        await PostAsOwnerIn("lab", "@opus task A");
+        await PostAsOwnerIn("lab", "@opus @sonnet task A");                                  // one exchange, two participants queued
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
-        await PostAsOwnerIn("lab", "@gpt-6-astra task B");
-        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));                    // B waits for A's spawn
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));                    // sonnet waits for its sibling opus, same exchange
+
+        await PostAsOwnerIn("lab", "@gpt-6-astra task B");                                   // a second, distinct exchange
+        Assert.Equal("gpt-6-astra", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // runs alongside exchange A
         Assert.Equal(["open", "open"], Spawner.Snapshot("lab").Exchanges!.Select(e => e.Status));
+
         release.SetResult();
-        Assert.Equal("gpt-6-astra", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // opus ended: its own sibling may launch now
+    }
+
+    [Fact]
+    public async Task R35_a_directory_room_spawn_works_in_its_exchange_worktree_and_commits_on_its_branch()
+    {
+        var dir = await MakeRoom("lab");
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") await release.Task.WaitAsync(ct);
+            return FakeProcessRunner.Ok("""{"type":"result","result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab", "@opus @sonnet both of you");                              // one exchange, two participants queued
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(first));
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        var tree = ExchangeWorktrees.PathFor(dir, root);
+        Assert.Equal(tree, first.WorkingDirectory);
+
+        // Opus returned at once, freeing the exchange's own exclusivity for sonnet - held here so the
+        // assertions below observe opus's already-landed commit while sonnet is still running.
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.Equal(tree, second.WorkingDirectory);                                          // same exchange, same worktree
+        var headAfterLaunch = await new GitTrail(dir).HeadAsync();
+        Assert.Equal("Opus", (await GitLog(dir, "%an", 1, ExchangeWorktrees.Branch(root))).Trim());   // opus's own commit already landed on the branch
+        Assert.Equal(headAfterLaunch, await new GitTrail(dir).HeadAsync());                   // the room directory's own HEAD never moved
+
+        release.SetResult();
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix) && m.Body.Contains("sonnet"));
+    }
+
+    [Fact]
+    public async Task R35_owner_edits_are_committed_in_the_room_before_the_worktree_branches()
+    {
+        var dir = await MakeRoom("lab");
+        File.WriteAllText(Path.Combine(dir, "owner.txt"), "owner wrote this before the spawn\n");
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+
+        await PostAsOwnerIn("lab", "@opus go");
+        var spec = await _runner.NextSpecAsync(Wait);
+        Assert.True(File.Exists(Path.Combine(spec.WorkingDirectory, "owner.txt")));           // forked from the room's HEAD, which already has it committed
+        Assert.Equal("owner: edits before the next spawn in room lab", await GitLog(dir, "%s", 1));
+    }
+
+    [Fact]
+    public async Task R35_a_refused_worktree_starts_no_cli_and_says_why()
+    {
+        var dir = await MakeRoom("lab");
+        File.WriteAllText(ExchangeWorktrees.FolderFor(dir), "not a folder");                  // deterministic refusal
+
+        await PostAsOwnerIn("lab", "@opus go");
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));
+        var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith("@opus was not started:"));
+        Assert.Contains("could not be created", note.Body);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        Assert.False(await new GitTrail(dir).BranchExistsAsync(ExchangeWorktrees.Branch(root)));
     }
 
     [Fact]
@@ -158,16 +231,19 @@ public sealed partial class SpawnerServiceTests
         _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok(""));
         await PostAsOwnerIn("lab", "@gpt-6-astra look around");
         var spec = await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // row 35: works in its own worktree
         var args = spec.Arguments.ToList();
-        Assert.Equal(dir, spec.WorkingDirectory);
-        Assert.Equal(dir, args[args.IndexOf("-C") + 1]);
+        Assert.Equal(tree, spec.WorkingDirectory);
+        Assert.Equal(tree, args[args.IndexOf("-C") + 1]);
         Assert.Contains("--json", args);
         Assert.Contains("sandbox_workspace_write.network_access=true", args);
         Assert.DoesNotContain("--skip-git-repo-check", args);
         Assert.StartsWith(Path.Combine(_dir, "spawns"), args[args.IndexOf("-o") + 1]);
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("as gpt-6-astra: 0 file(s) changed, 0 shell command(s).", note.Body);   // empty commit, empty log
-        Assert.Equal("GPT-6 Astra <gpt-6-astra@chopitup.local>", await GitLog(dir, "%an <%ae>", 1));
+        // The commit lands on the exchange's own branch, not the room's own log (unmerged until Task 5).
+        Assert.Equal("GPT-6 Astra <gpt-6-astra@chopitup.local>", await GitLog(dir, "%an <%ae>", 1, ExchangeWorktrees.Branch(root)));
     }
 
     [Fact]
@@ -183,9 +259,14 @@ public sealed partial class SpawnerServiceTests
         await PostAsOwnerIn("lab", "@sonnet go");
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("HEAD moved during the spawn: sonnet committed on its own.", note.Body);
-        var log = (await GitLog(dir, "%an|%s")).Split('\n');
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        // Both commits land on the exchange's own branch (row 35); the room itself was unborn, so
+        // ExchangeWorktrees made one empty start commit for the branch to fork from.
+        var log = (await GitLog(dir, "%an|%s", gitRef: ExchangeWorktrees.Branch(root))).Split('\n');
+        Assert.Equal(3, log.Length);
         Assert.Equal("Sonnet|sonnet: turn 1/4 in room lab", log[0]);
         Assert.Equal("Rogue|rogue", log[1]);
+        Assert.Equal("ChopItUp hub|Room trail start", log[2]);
     }
 
     [Fact]

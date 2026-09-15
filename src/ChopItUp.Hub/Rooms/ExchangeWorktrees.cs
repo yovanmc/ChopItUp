@@ -118,6 +118,13 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
             if (failed is not null) removal = $" Its worktree at {path} was not removed: {failed}";
             else trails.Forget(path);
         }
+        else
+        {
+            // The folder is already gone but git's own registration was never pruned (review fix): prune
+            // it before the branch checks below, so a stale "used by worktree at <gone path>" entry does
+            // not refuse the `branch -d` a clean merge is about to attempt.
+            await main.PruneWorktreesAsync(cancellation);
+        }
 
         if (!await main.BranchExistsAsync(branch, cancellation))
             return removal.Length > 0 ? $"Exchange #{root}:{removal}" : null;
@@ -184,8 +191,16 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
                 if (await w.IsDirtyAsync(cancellation))
                     await w.CommitAllAsync("Uncommitted when the hub restarted", GitTrail.Hub, allowEmpty: false, cancellation);
             }
-            await main.RemoveWorktreeAsync(path, cancellation);
             var branch = "chopitup/" + Path.GetFileName(path);
+            var removeFailed = await main.RemoveWorktreeAsync(path, cancellation);
+            if (removeFailed is not null)
+            {
+                // Review fix: a worktree that could not be removed (locked, still in use) still has its
+                // branch checked out there - `branch -d` would only fail too, so never attempt it; name
+                // the worktree and why it stayed instead of silently reporting nothing.
+                kept.Add($"{branch} (its worktree at {path} was not removed: {removeFailed})");
+                continue;
+            }
             if (await main.IsAncestorOfHeadAsync(branch, cancellation)) await main.DeleteMergedBranchAsync(branch, cancellation);
             else kept.Add(branch);
         }

@@ -359,4 +359,42 @@ public sealed class ExchangeWorktreesTests : IDisposable
         Assert.Null(lease.Path);
         Assert.Contains("could not be created", lease.Refusal);
     }
+
+    [Fact]
+    public async Task Recover_names_a_kept_worktree_that_could_not_be_removed_and_never_deletes_its_branch()
+    {
+        // A locked worktree refuses `git worktree remove` regardless of dirt; its branch, still checked
+        // out there, must never be handed to `branch -d` (review fix: the old code tried anyway, the
+        // failure was swallowed, and recovery reported nothing at all while the branch and the locked,
+        // unremoved worktree stayed behind).
+        var dir = await RoomWithCommit("lab19");
+        var lease = await _worktrees.EnsureAsync(dir, 20, CancellationToken.None);
+        Assert.Equal(0, (await RawGit(dir, "worktree", "lock", lease.Path!)).ExitCode);
+
+        var note = await _worktrees.RecoverAsync(dir, CancellationToken.None);
+        Assert.NotNull(note);
+        Assert.Contains("chopitup/x20", note);
+        Assert.Contains(lease.Path!, note);
+        var git = _trails.For(dir);
+        Assert.True(await git.BranchExistsAsync("chopitup/x20"));
+        Assert.True(Directory.Exists(lease.Path));
+    }
+
+    [Fact]
+    public async Task Close_deletes_the_branch_of_a_registered_worktree_whose_folder_is_already_gone()
+    {
+        // The folder vanished (deleted by hand, or a crash) but git's own worktree registration was
+        // never pruned - unlike Close_keeps_a_leased_branch_whose_folder_vanished, where the registration
+        // was already pruned before close, here CloseAsync sees the worktree as still registered. Left
+        // unpruned, `branch -d` below refuses the branch as "used by worktree at <gone path>" (review
+        // fix: prune the stale registration before the branch checks).
+        var dir = await RoomWithCommit("lab20");
+        var lease = await _worktrees.EnsureAsync(dir, 21, CancellationToken.None);
+        TestDirs.DeleteTree(lease.Path!);
+
+        var note = await _worktrees.CloseAsync(Close(dir, 21, "lab20", ExchangeStatus.Concluded), CancellationToken.None);
+        Assert.NotNull(note);
+        Assert.DoesNotContain("was not deleted", note);
+        Assert.False(await _trails.For(dir).BranchExistsAsync("chopitup/x21"));
+    }
 }

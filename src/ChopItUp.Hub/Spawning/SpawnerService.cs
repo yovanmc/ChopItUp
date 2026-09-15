@@ -58,8 +58,9 @@ public sealed class SpawnerService : BackgroundService
     private sealed record TickEvent : Event;
 
     /// <summary>What the trail did around one spawn in a directory room (M9 decision 6); null when the
-    /// room has no directory.</summary>
-    private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved);
+    /// room has no directory. <see cref="Leased"/> (row 35) is true when the spawn body ran in a
+    /// leased worktree.</summary>
+    private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved, bool Leased = false);
 
     private sealed class SpawnHandle
     {
@@ -78,11 +79,17 @@ public sealed class SpawnerService : BackgroundService
         public required TimeSpan Timeout { get; init; }
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
+        // Row 35: true when this spawn runs in its exchange's own worktree rather than the room
+        // directory itself - set false for every launch until Task 4 wires the worktree path in.
+        public bool InWorktree { get; init; }
     }
 
     public const string ChangedEvent = "ExchangeChanged";
     private const int NoteReplyChars = 4_000;
     private const int NoteStderrChars = 600;
+    // Row 35: a worktree lease refusal reported back through ProcessResult.StandardError, so OnFinished
+    // (loop thread) can tell it apart from every other "no CLI ran" shape and post the dedicated note.
+    private const string WorktreeRefused = "the exchange's worktree could not be created: ";
 
     private readonly MessageStore _store;
     private readonly IReadOnlyList<Participant> _roster;
@@ -96,6 +103,7 @@ public sealed class SpawnerService : BackgroundService
     private readonly CliLocator _locate;
     private readonly MemoryStore _memory;
     private readonly RoomTrails _trails;
+    private readonly ExchangeWorktrees _worktrees;
     private readonly Participant _owner;
     private readonly ExchangePolicy _policy;
     private readonly SkillStore _skills;
@@ -132,12 +140,12 @@ public sealed class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ParticipantStore participants, SkillStore skills, TimeProvider clock,
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, ParticipantStore participants, SkillStore skills, TimeProvider clock,
         RunStore runs, RunLimits runLimits)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
-        _trails = trails; _owner = roster.First(p => p.Id == participants.OwnerId());
+        _trails = trails; _worktrees = worktrees; _owner = roster.First(p => p.Id == participants.OwnerId());
         _policy = new ExchangePolicy(roster, limits);
         _skills = skills;
         _clock = clock;
@@ -698,6 +706,14 @@ public sealed class SpawnerService : BackgroundService
         }
     }
 
+    /// <summary>Row 35: whether an exchange of <paramref name="roomId"/> launches in its own worktree
+    /// rather than the room directory itself - outside a run (no run active or parked here), in a
+    /// room bound to a directory. When true, exclusivity narrows to the exchange's own in-flight set
+    /// (<see cref="ExchangePolicy.Due"/>'s <c>exclusiveOver</c>) so side-by-side exchanges each still
+    /// run one spawn at a time within themselves; a run keeps the whole room exclusive, as before.</summary>
+    private bool UsesWorktrees(string roomId, string? directory) =>
+        directory is not null && _runs.Active(roomId) is null && _runs.Latest(roomId) is not { Status: RunStatus.Parked };
+
     private void LaunchDue()
     {
         var now = _clock.GetUtcNow();
@@ -705,8 +721,15 @@ public sealed class SpawnerService : BackgroundService
         {
             if (x.Status != ExchangeStatus.Open) continue;
             var inRoom = InFlightIn(x.RoomId);
-            var exclusive = _store.GetRoom(x.RoomId)?.Directory is not null;
-            var due = _policy.Due(x, now, _lastStart, inRoom, exclusive);
+            var directory = _store.GetRoom(x.RoomId)?.Directory;
+            var exclusive = directory is not null;
+            var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
+            // Row 35: a worktree launch still waits while a spawn is in flight in the room
+            // directory itself (a run just ended or stopped, its cancelled conductor not yet
+            // finished) - otherwise the before-commit a worktree launch makes would commit that
+            // spawn's still-in-progress edits as the owner's.
+            if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
+            var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
             foreach (var request in due) Launch(x, request, now);
             if (due.Count > 0) Publish(x.RoomId);
         }
@@ -779,6 +802,12 @@ public sealed class SpawnerService : BackgroundService
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
+            // Row 35: outside a run, a directory room's spawn edits its exchange's own worktree, not
+            // the room directory itself - each exchange got its own in-flight set from LaunchDue's
+            // exclusiveOver on the same test (UsesWorktrees), so the two must never disagree.
+            var inWorktree = UsesWorktrees(request.RoomId, directory);
+            var tree = inWorktree ? ExchangeWorktrees.PathFor(directory!, x.RootMessageId) : directory;
+            if (inWorktree) x.WorktreeRoom = directory;
             // Row 18 (L7): a directory room's spawn also gets the room's own topic, cut at RoomChars
             // (budget ruling). A room id that is not a slug (the table has no CHECK) gets no section,
             // not no spawn.
@@ -793,7 +822,8 @@ public sealed class SpawnerService : BackgroundService
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
-                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: directory, Skill: x.Skill, Run: runView, RoomMemory: roomMemory), _limits);
+                core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: tree, Skill: x.Skill,
+                DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -823,7 +853,7 @@ public sealed class SpawnerService : BackgroundService
                         // built-in tool set (--tools) is untouched either way, and an out-of-run
                         // directory spawn never sees the extra MCP tool at all.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(directory), directory, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null), tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
                     }
                     break;
                 }
@@ -836,7 +866,7 @@ public sealed class SpawnerService : BackgroundService
                     var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.EffectiveGateTimeout.TotalSeconds : 60;
                     spec = directory is null
                         ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
-                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, directory, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds);
+                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, tree!, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds);
                     break;
                 default:
                     throw new InvalidOperationException($"Participant '{participant.Id}' has host '{participant.Host}', which the spawner does not know how to start.");
@@ -844,7 +874,7 @@ public sealed class SpawnerService : BackgroundService
             var handle = new SpawnHandle
             {
                 Request = request, Exchange = x, Participant = participant, SpawnId = spawnId, WorkDir = workDir, Token = token,
-                Cancel = new CancellationTokenSource(), Directory = directory, Timeout = timeout,
+                Cancel = new CancellationTokenSource(), Directory = tree, InWorktree = inWorktree, Timeout = timeout,
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
@@ -859,12 +889,27 @@ public sealed class SpawnerService : BackgroundService
                     GitTrail? git = null;
                     CommitOutcome? owner = null;
                     string? headBefore = null;
+                    var leased = false;
                     if (directory is not null)
                     {
-                        // Before: the owner's edits since the last spawn become their own commit (decision 6).
-                        git = _trails.For(directory);
-                        if (await git.IsDirtyAsync(CancellationToken.None))
-                            owner = await git.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
+                        // Before: the owner's edits since the last spawn become their own commit (decision 6),
+                        // in the room directory itself whether or not this spawn runs in a worktree.
+                        var roomGit = _trails.For(directory);
+                        if (await roomGit.IsDirtyAsync(CancellationToken.None))
+                            owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
+                        if (inWorktree)
+                        {
+                            var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None);
+                            if (lease.Refusal is not null)
+                            {
+                                // No CLI starts anywhere (AC8); the finally below still reports FinishedEvent.
+                                result = new ProcessResult(null, false, false, "", WorktreeRefused + lease.Refusal, TimeSpan.Zero);
+                                return;
+                            }
+                            git = _trails.ForWorktree(directory, tree!);
+                            leased = true;
+                        }
+                        else git = roomGit;
                         headBefore = await git.HeadAsync(CancellationToken.None);
                     }
                     // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
@@ -878,7 +923,7 @@ public sealed class SpawnerService : BackgroundService
                             .Select(c => c with { Command = Scrub(StripAnsi(c.Command), token) }).ToList();
                         var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
                         var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), RoomCommits.IdentityOf(participant), allowEmpty: true, CancellationToken.None);
-                        trail = new TrailReport(owner, agent, commands.Count, headMoved);
+                        trail = new TrailReport(owner, agent, commands.Count, headMoved, leased);
 
                         // Row 19, task 5c (P4): artifact authorship, from the SPAWN'S WHOLE DIFF - not
                         // one commit, so a host that commits its own work mid-spawn (Codex, or a rogue
@@ -914,6 +959,11 @@ public sealed class SpawnerService : BackgroundService
         var room = h.Request.RoomId;
         _inFlight.Remove((room, id));
         Interlocked.Decrement(ref _live);
+        // Row 35: a spawn cancelled or timed out may have left a half-written worktree, so its
+        // exchange's close must keep the branch unmerged whatever ExchangeStatus says; a spawn that
+        // really ran in a leased worktree marks its exchange so a close knows to look for one at all.
+        if (r.Cancelled || r.TimedOut) h.Exchange.Interrupted = true;
+        if (trail?.Leased == true) h.Exchange.WorktreeLeased = true;
         Console.Error.WriteLine($"spawn {h.SpawnId}: {id} ended exit={(r.ExitCode?.ToString() ?? "killed")} timedOut={r.TimedOut} cancelled={r.Cancelled} posted={h.Posted} in {r.Elapsed.TotalSeconds:0}s");
 
         if (r.TimedOut)
@@ -926,6 +976,9 @@ public sealed class SpawnerService : BackgroundService
         {
             // Stopped by the owner or by shutdown; the stop note (or nothing) is the record.
         }
+        // Row 35 (AC8): a worktree lease refused before any CLI started - never claim a process ran.
+        else if (r.ExitCode is null && r.StandardError.StartsWith(WorktreeRefused, StringComparison.Ordinal))
+            PostNote(room, $"@{id} was not started: {r.StandardError}.");
         else if (!h.Posted)
         {
             var final = h.Participant.Host == "codex"
@@ -1024,8 +1077,11 @@ public sealed class SpawnerService : BackgroundService
         DateTimeOffset? next = null;
         foreach (var x in _rooms.Values.SelectMany(list => list))
         {
-            var exclusive = _store.GetRoom(x.RoomId)?.Directory is not null;
-            var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive);
+            var directory = _store.GetRoom(x.RoomId)?.Directory;
+            var exclusive = directory is not null;
+            var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
+            if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
+            var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive, over);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }
 
