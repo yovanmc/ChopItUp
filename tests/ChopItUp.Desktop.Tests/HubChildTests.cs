@@ -215,6 +215,31 @@ public class HubChildTests
     }
 
     [Fact]
+    public async Task Cancelling_the_token_while_still_Starting_yields_Stopped_not_Failed()
+    {
+        var args = NewStartArgs();
+        var proc = new FakeHubProcess();
+        var factory = new FakeFactory(proc);
+        var probe = new FakeProbe(_ => false);   // never healthy: the loop is still polling when cancelled
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var child = new HubChild(args, factory, probe, clock, _ => { });
+        using var cts = new CancellationTokenSource();
+
+        var task = child.StartOrAttachAsync(cts.Token);
+        for (var i = 0; i < 3 && !task.IsCompleted; i++)   // reach the poll loop (probe still false)
+        {
+            clock.Advance(HubChild.PollInterval);
+            await Task.Delay(5);
+        }
+        Assert.False(task.IsCompleted);
+
+        cts.Cancel();
+        await task;
+
+        Assert.Equal(HubState.Stopped, child.Status.State);
+    }
+
+    [Fact]
     public async Task Exiting_after_Ready_flips_to_Failed_with_the_log_hint()
     {
         var args = NewStartArgs();

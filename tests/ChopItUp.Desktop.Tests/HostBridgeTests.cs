@@ -142,6 +142,18 @@ public sealed class HostBridgeTests
         Assert.False(HostBridge.IsTrusted("about:blank", new Uri(HubOrigin), null, LaunchNonce));
 
     [Fact]
+    public void Data_html_boot_uri_with_the_launch_nonce_is_trusted() =>
+        Assert.True(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), LaunchNonce, LaunchNonce));
+
+    [Fact]
+    public void Data_html_boot_uri_without_a_nonce_is_not_trusted() =>
+        Assert.False(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), null, LaunchNonce));
+
+    [Fact]
+    public void Data_html_boot_uri_with_the_wrong_nonce_is_not_trusted() =>
+        Assert.False(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), "not-the-nonce", LaunchNonce));
+
+    [Fact]
     public void Null_source_is_not_trusted() =>
         Assert.False(HostBridge.IsTrusted(null, new Uri(HubOrigin), LaunchNonce, LaunchNonce));
 

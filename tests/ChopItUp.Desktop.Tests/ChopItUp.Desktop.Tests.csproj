@@ -11,5 +11,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ChopItUp.Desktop\ChopItUp.Desktop.csproj" />
+    <!-- Row 12 review fix (F): test-only, mirrors tests\ChopItUp.Hub.Tests's own reference to this same
+         project. Pins ProcessHubFactory's repeated "CHOPITUP_SHELL_TOKEN" literal (B10: no src-to-src
+         reference exists) against ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar. -->
+    <ProjectReference Include="..\..\src\ChopItUp.Hub\ChopItUp.Hub.csproj" />
   </ItemGroup>
 </Project>

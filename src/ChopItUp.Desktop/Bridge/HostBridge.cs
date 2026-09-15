@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChopItUp.Desktop;
 using ChopItUp.Desktop.Hub;
 
 namespace ChopItUp.Desktop.Bridge;
@@ -69,9 +70,12 @@ public static class HostBridge
     }
 
     /// <summary>B8: the source's authority alone decides trust for the hub origin, no nonce needed. Any
-    /// other source is trusted only as <c>about:blank</c> (what a <c>NavigateToString</c> boot page
-    /// reports) carrying the current launch's nonce — the boot page is the one widening past
-    /// authority-only trust, and the nonce bounds it (pass 1, finding 12).</summary>
+    /// other source is trusted only when it is one of the two shapes a <c>NavigateToString</c> boot page
+    /// is known to report (<see cref="NavigationPolicy.IsBootPageUri"/>: the documented <c>about:blank</c>,
+    /// or the <c>data:text/html;charset=utf-8;base64,...</c> URI this WebView2 runtime (152.0.4191.66)
+    /// actually raises — without this, a boot-page Close/Quit is refused as untrusted on that runtime)
+    /// carrying the current launch's nonce — the boot page is the one widening past authority-only trust,
+    /// and the nonce bounds it (pass 1, finding 12; boot-page trust fix, review pass).</summary>
     public static bool IsTrusted(string? source, Uri hubOrigin, string? messageNonce, string launchNonce)
     {
         if (source is null) return false;
@@ -86,7 +90,7 @@ public static class HostBridge
             return true;
         }
 
-        return string.Equals(source, "about:blank", StringComparison.OrdinalIgnoreCase)
+        return NavigationPolicy.IsBootPageUri(source)
             && messageNonce is not null
             && string.Equals(messageNonce, launchNonce, StringComparison.Ordinal);
     }

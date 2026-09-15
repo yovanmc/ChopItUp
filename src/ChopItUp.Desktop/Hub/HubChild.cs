@@ -46,6 +46,13 @@ public sealed class HubChild : IDisposable
     public async Task StartOrAttachAsync(CancellationToken ct)
     {
         try { await StartOrAttachCoreAsync(ct); }
+        catch (OperationCanceledException)
+        {
+            // Row 12 review fix (C): a --quit during Starting cancels this token (App.QuitAsync). That
+            // is a normal stop, not a startup failure — Stopped must not push the failure page (see
+            // MainWindow.ApplyHubStatusAsync's default arm, which does nothing for Stopped).
+            Set(new HubStatus(HubState.Stopped, _proc?.Pid, Status.Port, null));
+        }
         catch (Exception ex) { Set(new HubStatus(HubState.Failed, _proc?.Pid, Status.Port, $"{ex.GetType().Name}: {ex.Message}")); }
     }
 
@@ -84,7 +91,10 @@ public sealed class HubChild : IDisposable
         // Any non-terminal state at exit time is a failure (Starting, or Ready if the probe answered
         // and the hub died right after; pass 2, finding 13).
         var proc = _proc;
-        _proc.Exited += () => { if (Status.State is HubState.Starting or HubState.Ready) Set(new HubStatus(HubState.Failed, proc.Pid, _args.Port, @"the hub exited (see data\logs\hub.log)")); };
+        // Row 12 review fix (E): the owner-facing reason names the real log path, not a hardcoded
+        // "data\logs\hub.log" that is wrong whenever --data points elsewhere.
+        var hubLogPath = Path.Combine(_args.LogDir, "hub.log");
+        _proc.Exited += () => { if (Status.State is HubState.Starting or HubState.Ready) Set(new HubStatus(HubState.Failed, proc.Pid, _args.Port, $"the hub exited (see {hubLogPath})")); };
         _proc.BeginReading();
         _log($"HUB START pid={_proc.Pid}");
 
@@ -99,7 +109,7 @@ public sealed class HubChild : IDisposable
             {
                 Set(new HubStatus(HubState.Ready, _proc.Pid, _args.Port, null));
                 if (_proc.HasExited)
-                    Set(new HubStatus(HubState.Failed, _proc.Pid, _args.Port, @"the hub exited (see data\logs\hub.log)"));
+                    Set(new HubStatus(HubState.Failed, _proc.Pid, _args.Port, $"the hub exited (see {Path.Combine(_args.LogDir, "hub.log")})"));
                 return;
             }
             await Task.Delay(PollInterval, _clock, ct);

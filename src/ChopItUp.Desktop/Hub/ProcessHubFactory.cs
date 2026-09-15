@@ -18,7 +18,9 @@ namespace ChopItUp.Desktop.Hub;
 /// fixed lenses check).</summary>
 public sealed class ProcessHubFactory : IHubProcessFactory
 {
-    private const string ShellTokenEnvVar = "CHOPITUP_SHELL_TOKEN";
+    // Row 12 review fix (F): internal (not private) so ProcessHubFactoryEnvVarTests can pin this literal
+    // against ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar directly, rather than only by convention.
+    internal const string ShellTokenEnvVar = "CHOPITUP_SHELL_TOKEN";
     private const long LogRotateBytes = 5 * 1024 * 1024;
 
     public IHubProcess Start(string exe, string dataDir, int port, string shellToken)
@@ -94,6 +96,7 @@ internal sealed class RealHubProcess : IHubProcess
     private readonly SafeFileHandle _job;
     private readonly StreamWriter _log;
     private readonly object _gate = new();
+    private bool _beganReading;
 
     public RealHubProcess(Process process, SafeFileHandle job, StreamWriter log)
     {
@@ -102,7 +105,23 @@ internal sealed class RealHubProcess : IHubProcess
         _log = log;
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) RaiseLine(e.Data); };
         _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) RaiseLine(e.Data); };
-        _process.Exited += (_, _) => Exited?.Invoke();
+        // LESSONS M4: Process.Exited can fire before the async output readers have delivered the
+        // child's last lines (typically the diagnosis, e.g. "address already in use"), so the failure
+        // page's log tail snapshot could miss exactly the line the owner needs. The parameterless
+        // WaitForExit() (unlike the overload with a timeout) also waits for the redirected streams to
+        // finish delivering, so running it here drains them before Exited is raised. Bounded to 2s: a
+        // grandchild process that inherited the redirected pipe handle would otherwise block this
+        // forever (M4 declined an unbounded wait for exactly that reason); BeginReading is only ever
+        // called after HubChild subscribes, so guard the case it was never called at all.
+        _process.Exited += (_, _) =>
+        {
+            if (_beganReading)
+            {
+                try { Task.Run(() => _process.WaitForExit()).Wait(TimeSpan.FromSeconds(2)); }
+                catch { /* best-effort drain; the Exited event still fires either way */ }
+            }
+            Exited?.Invoke();
+        };
     }
 
     public int Pid => _process.Id;
@@ -112,6 +131,7 @@ internal sealed class RealHubProcess : IHubProcess
 
     public void BeginReading()
     {
+        _beganReading = true;
         _process.BeginOutputReadLine();
         _process.BeginErrorReadLine();
     }

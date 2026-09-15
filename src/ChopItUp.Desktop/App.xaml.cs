@@ -19,10 +19,14 @@ public partial class App : System.Windows.Application
     public static bool Quitting { get; set; }
 
     /// <summary>Row 12 B8: minted once per process. The boot pages are loaded with
-    /// <c>NavigateToString</c>, so WebView2 reports their source as <c>about:blank</c> rather than the
-    /// hub origin; every message they post carries this value, and the bridge's origin rule is widened
-    /// for a non-hub source only when the nonce matches (pass 1, finding 12). 16 hex chars from the
-    /// CSPRNG: it never leaves this process except into a page this process itself wrote.</summary>
+    /// <c>NavigateToString</c>; the documented source WebView2 reports for that is <c>about:blank</c>,
+    /// but on this machine's runtime (152.0.4191.66) it is instead a
+    /// <c>data:text/html;charset=utf-8;base64,...</c> URI (measured; see
+    /// <see cref="NavigationPolicy.IsBootPageUri"/>) rather than the hub origin. Every message the boot
+    /// page posts carries this value, and the bridge's origin rule
+    /// (<see cref="Bridge.HostBridge.IsTrusted"/>) is widened for either shape of non-hub source only
+    /// when the nonce matches (pass 1, finding 12; boot-page trust fix, review pass). 16 hex chars from
+    /// the CSPRNG: it never leaves this process except into a page this process itself wrote.</summary>
     public static string LaunchNonce { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
 
     private SingleInstance? _singleInstance;
