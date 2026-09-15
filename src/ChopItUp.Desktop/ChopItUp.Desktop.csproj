@@ -10,6 +10,9 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Row 12 T3: Hub/JobObjectInterop.cs's LibraryImportAttribute-generated SafeFileHandle marshalling
+         needs unsafe code (SYSLIB1062), same as ChopItUp.Hub.csproj, which this file was copied from. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <!-- Row 12 T2 gate (plan named WFAC010; what actually fired -warnaserror on this SDK was
          WFO0003): the WinForms analyzer wants DPI awareness set via Application.SetHighDpiMode or
          ApplicationHighDpiMode instead of the manifest. The manifest is the right mechanism for a

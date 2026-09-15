@@ -5,6 +5,11 @@
     <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Row 12 T3: HubChildTests drives HubChild's poll loop (Task.Delay(interval, TimeProvider, ct))
+         without a real wall-clock wait, the same seam ChopItUp.Hub.Tests uses. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\ChopItUp.Desktop\ChopItUp.Desktop.csproj" />
   </ItemGroup>
 </Project>
