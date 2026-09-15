@@ -16,7 +16,8 @@ namespace ChopItUp.Hub.Security;
 /// plaintext is shown once, at the moment it is minted (<see cref="MintFor"/>), and never stored.
 /// Reading every file under the data dir therefore yields nothing that authenticates as a host-file
 /// participant (AC6); it still yields nothing at all for a spawnable one, because nothing was ever
-/// written for it in the first place.</summary>
+/// written for it in the first place. Row 12 adds a third class: one launch-scoped owner bearer
+/// supplied by the desktop shell, memory only.</summary>
 public sealed class TokenStore
 {
     public const string FileName = "tokens.json";
@@ -26,18 +27,20 @@ public sealed class TokenStore
     private readonly Dictionary<string, string> _hashed;      // host-file participantId -> sha256 hex, persisted
     private readonly Dictionary<string, string> _ephemeral;   // spawnable participantId -> plaintext, in-memory only
     private readonly Dictionary<string, string> _justMinted;  // host-file participantId -> plaintext, this instance's one-time reveal (Load's own backfill, or a later MintFor)
+    private readonly string? _shellOwner;                     // row 12: the desktop shell's launch-scoped owner bearer, memory only, never persisted
 
     /// <summary>How many participants currently hold a credential of either class. Excludes
     /// <c>system</c> rows, which hold none.</summary>
     public int Count => _hashed.Count + _ephemeral.Count;
 
-    private TokenStore(string dataDir, string[] allIds, Dictionary<string, string> hashed, Dictionary<string, string> ephemeral, Dictionary<string, string> justMinted)
+    private TokenStore(string dataDir, string[] allIds, Dictionary<string, string> hashed, Dictionary<string, string> ephemeral, Dictionary<string, string> justMinted, string? shellOwner)
     {
         _dataDir = dataDir;
         _allIds = allIds;
         _hashed = hashed;
         _ephemeral = ephemeral;
         _justMinted = justMinted;
+        _shellOwner = shellOwner;
     }
 
     /// <summary>Read-generate-write under a per-path cross-process mutex, with an atomic replace, so
@@ -55,7 +58,7 @@ public sealed class TokenStore
     /// caller that just backfilled a database's new participants can still learn the values (which is
     /// how a schema upgrade's new rows get their tokens told to the operator on the next start).
     /// Nothing is ever written back in plaintext.</summary>
-    public static TokenStore Load(string dataDir, IReadOnlyList<Participant> participants)
+    public static TokenStore Load(string dataDir, IReadOnlyList<Participant> participants, string? shellOwnerToken = null)
     {
         Directory.CreateDirectory(dataDir);
         var path = Path.Combine(dataDir, FileName);
@@ -98,7 +101,7 @@ public sealed class TokenStore
             }
 
             if (changed) WriteHashed(path, hashed);
-            return new TokenStore(dataDir, participants.Select(p => p.Id).ToArray(), hashed, ephemeral, justMinted);
+            return new TokenStore(dataDir, participants.Select(p => p.Id).ToArray(), hashed, ephemeral, justMinted, shellOwnerToken);
         });
     }
 
@@ -154,6 +157,13 @@ public sealed class TokenStore
                 if (bytes.Length == presentedBytes.Length && CryptographicOperations.FixedTimeEquals(bytes, presentedBytes))
                     match = id;
             }
+        }
+        if (match is null && _shellOwner is not null)
+        {
+            var presentedBytes = Encoding.UTF8.GetBytes(presented);
+            var bytes = Encoding.UTF8.GetBytes(_shellOwner);
+            if (bytes.Length == presentedBytes.Length && CryptographicOperations.FixedTimeEquals(bytes, presentedBytes))
+                match = ChopDb.OwnerParticipantId;
         }
         if (match is null) return false;
         participantId = match;

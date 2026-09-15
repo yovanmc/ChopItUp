@@ -1,10 +1,12 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/ChopItUp.Core/ChopItUp.Core.csproj" />
+    <Project Path="src/ChopItUp.Desktop/ChopItUp.Desktop.csproj" />
     <Project Path="src/ChopItUp.Hub/ChopItUp.Hub.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ChopItUp.Core.Tests/ChopItUp.Core.Tests.csproj" />
+    <Project Path="tests/ChopItUp.Desktop.Tests/ChopItUp.Desktop.Tests.csproj" />
     <Project Path="tests/ChopItUp.Hub.Tests/ChopItUp.Hub.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

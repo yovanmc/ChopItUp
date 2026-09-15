@@ -1,0 +1,10 @@
+<Application x:Class="ChopItUp.Desktop.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             ShutdownMode="OnExplicitShutdown">
+    <!-- Row 12 T2: no StartupUri. The window is built after the hub start or attach decision (Task 5).
+         Row 12 T5: ShutdownMode=OnExplicitShutdown, because AC4's Close hides the window rather than
+         closing the application; the default OnLastWindowClose would exit the process the first time
+         the owner hid the window to the tray. Every real exit goes through App.Shutdown explicitly
+         (WebView2/runtime failures, the show/quit verbs with no primary, QuitAsync). -->
+</Application>
