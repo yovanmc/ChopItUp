@@ -35,8 +35,9 @@ public enum ExchangeStopOutcome { Stopped, NotFound, NothingToStop, RunOwnsRoom 
 /// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
 /// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
 /// mapped by name so an enum reordering never silently changes the JSON; null until stopped.
-/// <see cref="Exchanges"/> lists every exchange the room still holds, oldest first; the top-level
-/// fields describe the newest open one, else the newest.</summary>
+/// <see cref="Exchanges"/> lists every exchange the room still holds, in the order they were opened; a
+/// reply that reopens one moves it to the end. The top-level fields describe the newest open one, else
+/// the newest.</summary>
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
     IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null);
@@ -117,6 +118,11 @@ public sealed class SpawnerService : BackgroundService
     // Every exchange the loop still holds per room, oldest first. The newest is "the room's exchange"
     // for the run machinery and the top-level snapshot.
     private readonly Dictionary<string, List<Exchange>> _rooms = new(StringComparer.Ordinal);
+    // Row 36: the last JoinableKept exchanges an owner prompt opened per room, oldest first, whatever
+    // their status, so an owner reply finds its exchange after AddExchange pruned it from _rooms. Run
+    // exchanges are never here: a reply never reopens a conductor's or its workers' exchange.
+    private readonly Dictionary<string, List<Exchange>> _joinable = new(StringComparer.Ordinal);
+    internal const int JoinableKept = 50;
     // Row 19, task 6: messages posted by a human inside an active run, waiting for the conductor's
     // next trigger set. Empty until task 6 populates it; DriveRun (task 5) already drains it whenever
     // an OpenConductor decision consumes it, so the two tasks never have to touch this line twice.
@@ -300,6 +306,7 @@ public sealed class SpawnerService : BackgroundService
             case TickEvent: OnTick(); break;
             case WorktreeClosedEvent w:
                 _closingRooms.Remove(w.RoomId);
+                foreach (var x in ExchangesIn(w.RoomId)) x.WaitsForClose = false;
                 if (w.Note is not null) PostNote(w.RoomId, w.Note);
                 // A second closed exchange of the same room (queued behind this one) closes next; the
                 // loop's LaunchDue/ArmWake pass right after Handle then launches anything that waited.
@@ -372,6 +379,7 @@ public sealed class SpawnerService : BackgroundService
         if (_inFlight.TryGetValue((m.RoomId, m.AuthorId), out var handle))
         {
             handle.Posted = true;
+            handle.Exchange.MessageIds.Add(m.Id);
             target = handle.Exchange;
             acceptMentions = activeRun is null
                 ? handle.Exchange.Status == ExchangeStatus.Open && exchanges.Contains(handle.Exchange)
@@ -460,10 +468,18 @@ public sealed class SpawnerService : BackgroundService
 
         var hasDirectory = _store.GetRoom(m.RoomId)?.Directory is not null;
         var hadExchanges = exchanges.Count > 0;
-        var (opened, notes) = _policy.OnRoomMessage(exchanges, target, m, now, acceptMentions, skill, run, startsRun, hasDirectory);
-        if (opened is not null) AddExchange(m.RoomId, opened);
+        var joins = m.ReplyToId is { } replyTo ? JoinableFor(m.RoomId, replyTo) : null;
+        var joinedClosed = joins is not null && joins.Status != ExchangeStatus.Open;
+        var (opened, notes) = _policy.OnRoomMessage(exchanges, target, m, now, acceptMentions, skill, run, startsRun, hasDirectory, joins);
+        if (opened is not null)
+        {
+            AddExchange(m.RoomId, opened);
+            if (!startsRun) Remember(m.RoomId, opened);
+        }
+        var reopened = joinedClosed && joins!.Status == ExchangeStatus.Open;
+        if (reopened) Reopen(m.RoomId, joins!);
         foreach (var note in notes) PostNote(m.RoomId, note);
-        if (opened is not null || hadExchanges) Publish(m.RoomId);
+        if (opened is not null || hadExchanges || reopened) Publish(m.RoomId);
 
         if (startsRun && opened is not null)
         {
@@ -804,6 +820,7 @@ public sealed class SpawnerService : BackgroundService
             // this room is running - both write the same tree. A worktree launch (over non-null)
             // never waits on a close: it only touches its own worktree and the gated owner commit.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
+            if (x.WaitsForClose) continue;
             var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
             foreach (var request in due) Launch(x, request, now);
             if (due.Count > 0) Publish(x.RoomId);
@@ -840,7 +857,7 @@ public sealed class SpawnerService : BackgroundService
 
     /// <summary>What the snapshot's top-level fields describe: the newest OPEN exchange, else the newest
     /// one. The shipped exchange bar reads only those fields, so a concluded newest exchange must not
-    /// hide an older one that is still running.</summary>
+    /// hide an older one that is still running. A reopened exchange counts as the newest.</summary>
     private Exchange? Displayed(string roomId) =>
         ExchangesIn(roomId).LastOrDefault(e => e.Status == ExchangeStatus.Open) ?? Newest(roomId);
 
@@ -851,6 +868,41 @@ public sealed class SpawnerService : BackgroundService
         var open = ExchangesIn(roomId).Where(e => e.Status == ExchangeStatus.Open).Reverse().ToList();
         var mentioned = _policy.MentionedSpawnable(m);
         return open.FirstOrDefault(e => mentioned.Any(e.Participants.Contains)) ?? open.FirstOrDefault();
+    }
+
+    /// <summary>Row 36: the exchange of <paramref name="roomId"/> that holds <paramref name="messageId"/>:
+    /// the room's own list first (so an exchange still held there is found even after it left the
+    /// remembered window), then the remembered ones; null when none does (a hub note, one older than the
+    /// last <see cref="JoinableKept"/>, one a previous hub process held). A run's exchange can be returned;
+    /// the policy refuses to join it (<see cref="Exchange.Joinable"/>).</summary>
+    private Exchange? JoinableFor(string roomId, long messageId) =>
+        ExchangesIn(roomId).LastOrDefault(x => x.MessageIds.Contains(messageId))
+        ?? (_joinable.TryGetValue(roomId, out var list) ? list.LastOrDefault(x => x.MessageIds.Contains(messageId)) : null);
+
+    private void Remember(string roomId, Exchange x)
+    {
+        if (!_joinable.TryGetValue(roomId, out var list)) _joinable[roomId] = list = new List<Exchange>();
+        list.Add(x);
+        if (list.Count > JoinableKept) list.RemoveAt(0);
+    }
+
+    /// <summary>Row 36: a closed exchange an owner reply just reopened becomes the room's newest entry
+    /// again (AddExchange may have pruned it). Its interrupted mark is dropped: the owner chose to continue.
+    /// If its worktree was already handed to a close, that bookkeeping starts over: the next launch leases
+    /// <c>chopitup/x&lt;root&gt;</c> again, continuing a kept branch only when this exchange really leased it
+    /// (a refused first lease never adopts someone else's branch), and while a close is still running in
+    /// the room (it may be this exchange's own) the launch waits for it.</summary>
+    private void Reopen(string roomId, Exchange x)
+    {
+        if (!_rooms.TryGetValue(roomId, out var list)) _rooms[roomId] = list = new List<Exchange>();
+        list.Remove(x);
+        list.Add(x);
+        x.Interrupted = false;                         // the owner chose to continue from whatever state it left
+        if (_worktreeExchanges.Contains(x)) return;    // never handed to a close: its worktree is still its own
+        x.ContinuesBranch = x.ContinuesBranch || x.WorktreeLeased;   // only a branch this exchange really leased
+        x.WorktreeRoom = null;
+        x.WorktreeLeased = false;
+        x.WaitsForClose = _closingRooms.Contains(roomId);
     }
 
     private void Launch(Exchange x, SpawnRequest request, DateTimeOffset now)
@@ -965,7 +1017,7 @@ public sealed class SpawnerService : BackgroundService
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
             Interlocked.Increment(ref _live);
-            var turn = request.TurnNumber; var budget = x.Budget; var roomId = request.RoomId; var host = participant.Host;
+            var turn = request.TurnNumber; var budget = x.Budget; var roomId = request.RoomId; var host = participant.Host; var continueBranch = x.ContinuesBranch;
             handle.Run = Task.Run(async () =>
             {
                 var result = new ProcessResult(null, false, false, "", "not started", TimeSpan.Zero);
@@ -985,7 +1037,7 @@ public sealed class SpawnerService : BackgroundService
                             owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
                         if (inWorktree)
                         {
-                            var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None);
+                            var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None, continueBranch);
                             if (lease.Refusal is not null)
                             {
                                 // No CLI starts anywhere (AC8); the finally below still reports FinishedEvent.
@@ -1178,6 +1230,7 @@ public sealed class SpawnerService : BackgroundService
             // Row 35: skip this exchange's wake while its room's close is running - the close's
             // own WorktreeClosedEvent wakes the loop when it finishes.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
+            if (x.WaitsForClose) continue;
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive, over);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }

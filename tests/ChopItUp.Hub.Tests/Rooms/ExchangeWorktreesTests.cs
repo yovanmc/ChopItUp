@@ -118,6 +118,24 @@ public sealed class ExchangeWorktreesTests : IDisposable
     }
 
     [Fact]
+    public async Task R36_Ensure_continues_an_existing_branch_only_when_asked()
+    {
+        var dir = await RoomWithCommit("lab36");
+        var first = await _worktrees.EnsureAsync(dir, 11, CancellationToken.None);
+        File.WriteAllText(Path.Combine(first.Path!, "kept.txt"), "kept");
+        await _trails.ForWorktree(dir, first.Path!).CommitAllAsync("agent work", Owner, allowEmpty: false);
+        Assert.StartsWith("Exchange #11 was not merged", await _worktrees.CloseAsync(Close(dir, 11, "lab36", ExchangeStatus.Stopped), CancellationToken.None));
+        Assert.True(await _trails.For(dir).BranchExistsAsync(ExchangeWorktrees.Branch(11)));
+
+        Assert.Contains("already exists", (await _worktrees.EnsureAsync(dir, 11, CancellationToken.None)).Refusal);
+
+        var again = await _worktrees.EnsureAsync(dir, 11, CancellationToken.None, continueBranch: true);
+        Assert.Null(again.Refusal);
+        Assert.Equal(ExchangeWorktrees.PathFor(dir, 11), again.Path);
+        Assert.True(File.Exists(Path.Combine(again.Path!, "kept.txt")));
+    }
+
+    [Fact]
     public async Task Close_merges_a_concluded_exchange_and_deletes_branch_and_worktree()
     {
         var dir = await RoomWithCommit("lab3");

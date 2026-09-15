@@ -66,6 +66,14 @@ public sealed class Exchange
     /// <summary>Row 35: a spawn of this exchange was cancelled or timed out, so its tree may be
     /// half-written and a close keeps the branch unmerged whatever the status says.</summary>
     public bool Interrupted { get; set; }
+
+    /// <summary>Row 36: reopened while a worktree close was running in its room, which may be its own;
+    /// it launches nothing until that close has finished.</summary>
+    public bool WaitsForClose { get; set; }
+
+    /// <summary>Row 36: reopened after its worktree was handed to a close, so its next lease may continue
+    /// the branch that close kept instead of refusing it.</summary>
+    public bool ContinuesBranch { get; set; }
 }
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two

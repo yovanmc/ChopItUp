@@ -34,8 +34,10 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
 
     /// <summary>Creates (or, idempotently, confirms) the worktree for exchange <paramref name="root"/>
     /// of the room at <paramref name="roomDirectory"/>. Never starts a spawn anywhere when it refuses
-    /// (AC8): the caller is expected to post the refusal and start nothing.</summary>
-    public async Task<Lease> EnsureAsync(string roomDirectory, long root, CancellationToken cancellation)
+    /// (AC8): the caller is expected to post the refusal and start nothing. <paramref name="continueBranch"/>
+    /// (row 36) is set only for an exchange a reply reopened: an existing <c>chopitup/x&lt;root&gt;</c> is
+    /// then that exchange's own kept work, and the worktree is added onto it.</summary>
+    public async Task<Lease> EnsureAsync(string roomDirectory, long root, CancellationToken cancellation, bool continueBranch = false)
     {
         var path = PathFor(roomDirectory, root);
         if (RoomPaths.Refusal(path, rules) is { } refused) return new(null, "the worktree path is refused: " + refused);
@@ -72,7 +74,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
 
         var branch = Branch(root);
         var exists = await main.BranchExistsAsync(branch, cancellation);
-        if (exists && !pruned) return new(null, $"branch {branch} already exists");
+        if (exists && !pruned && !continueBranch) return new(null, $"branch {branch} already exists");
 
         try { Directory.CreateDirectory(FolderFor(roomDirectory)); }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

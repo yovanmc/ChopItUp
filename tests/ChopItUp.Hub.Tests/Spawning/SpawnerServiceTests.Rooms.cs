@@ -598,6 +598,137 @@ public sealed partial class SpawnerServiceTests
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
     }
 
+    [Fact]
+    public async Task R36_a_reopened_exchange_in_a_directory_room_leases_its_worktree_again_after_the_merge()
+    {
+        var dir = await MakeRoom("lab");
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+
+        await PostAsOwnerIn("lab", "@opus go");
+        var first = await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        Assert.Equal(ExchangeWorktrees.PathFor(dir, root), first.WorkingDirectory);
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));   // every worktree spawn makes an agent commit, so HEAD moves
+
+        var r = await _host.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@sonnet continue", replyToId = root });
+        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
+        var second = await _runner.NextSpecAsync(Wait);
+
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.Equal(ExchangeWorktrees.PathFor(dir, root), second.WorkingDirectory);
+        Assert.Contains("Turn 2 of 4;", second.StandardInput);
+    }
+
+    /// <summary>Row 36: like <see cref="DelayingMergeRunner"/>, but holds `git worktree remove`. The close
+    /// has committed and the exchange's worktree is still registered and on disk, which is exactly the window
+    /// a reopened exchange must not lease into (EnsureAsync would hand back the path without taking the gate).</summary>
+    private sealed class DelayingRemoveRunner : IProcessRunner
+    {
+        private readonly IProcessRunner _inner = new ProcessRunner();
+        public readonly TaskCompletionSource Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource RemoveAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
+        {
+            if (spec.Arguments.Contains("worktree") && spec.Arguments.Contains("remove"))
+            {
+                RemoveAttempted.TrySetResult();
+                await Hold.Task;
+            }
+            return await _inner.RunAsync(spec, timeout, cancellation);
+        }
+    }
+
+    [Fact]
+    public async Task R36_a_reopened_exchange_waits_for_a_close_still_running_in_its_room()
+    {
+        var delayingRunner = new DelayingRemoveRunner();
+        var localDir = _dir + "_reply_close_wait";
+        await using var host = await HubTestHost.StartAsync(localDir, processRunner: _runner, limits: Fast,
+            roomGit: dir => new GitTrail(dir, runner: delayingRunner));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+        var dir = Path.Combine(host.RoomsRoot, "lab-reply-wait");
+        Assert.True(await new GitTrail(dir).InitAsync());
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("lab-reply-wait", "Lab", dir);
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+
+        var post = await host.Client.PostAsJsonAsync("api/rooms/lab-reply-wait/messages", new { body = "@opus task A" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, post.StatusCode);
+        await _runner.NextSpecAsync(Wait);
+        await delayingRunner.RemoveAttempted.Task.WaitAsync(Wait);                                   // the close holds the worktree mid-removal
+        var root = spawner.Snapshot("lab-reply-wait").RootMessageId!.Value;
+
+        var reply = await host.Client.PostAsJsonAsync("api/rooms/lab-reply-wait/messages", new { body = "@sonnet continue", replyToId = root });
+        Assert.Equal(System.Net.HttpStatusCode.Created, reply.StatusCode);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));                            // without the wait it would lease the dying worktree
+
+        delayingRunner.Hold.TrySetResult();
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
+        Assert.Equal(ExchangeWorktrees.PathFor(dir, root), second.WorkingDirectory);
+        using var doc = JsonDocument.Parse(await host.Client.GetStringAsync("api/rooms/lab-reply-wait/messages?afterId=0&limit=200"));
+        var closeNote = doc.RootElement.GetProperty("messages").EnumerateArray().Select(x => x.GetProperty("body").GetString()!)
+            .First(b => b.StartsWith($"Exchange #{root} merged into"));
+        Assert.DoesNotContain("was not", closeNote);
+    }
+
+    [Fact]
+    public async Task R36_a_reply_to_a_stopped_worktree_exchange_continues_its_kept_branch()
+    {
+        var dir = await MakeRoom("lab");
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            File.WriteAllText(Path.Combine(spec.WorkingDirectory, "half.txt"), "half done\n");
+            return await FakeProcessRunner.HangUntilKilled(TimeSpan.FromSeconds(30), ct);
+        };
+        await PostAsOwnerIn("lab", "@opus start");
+        await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        var (outcome, _) = await Spawner.StopExchangeAsync("lab", root);
+        Assert.Equal(ExchangeStopOutcome.Stopped, outcome);
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} was not merged"));
+
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
+        var r = await _host.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@opus finish it", replyToId = root });
+        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
+        var spec = await _runner.NextSpecAsync(Wait);
+
+        Assert.Equal(ExchangeWorktrees.PathFor(dir, root), spec.WorkingDirectory);
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
+        Assert.True(File.Exists(Path.Combine(dir, "half.txt")));                                  // only the kept branch had it
+        Assert.DoesNotContain(await MessagesIn("lab"), m => m.Body.StartsWith("@opus was not started"));
+    }
+
+    [Fact]
+    public async Task R36_a_reply_never_adopts_a_branch_its_exchange_did_not_lease()
+    {
+        var dir = await MakeRoom("lab");
+        Assert.True((await new GitTrail(dir).CommitAllAsync("seed", GitTrail.Hub, allowEmpty: true)).Created);
+        var probe = await _host.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "no mention, no exchange" });
+        var root = JsonDocument.Parse(await probe.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64() + 1;
+        var made = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["branch", ExchangeWorktrees.Branch(root)], new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, made.ExitCode);
+        var foreignHead = await GitLog(dir, "%H", 1, gitRef: ExchangeWorktrees.Branch(root));
+
+        await PostAsOwnerIn("lab", "@opus go");                                                      // takes id root; its first lease is refused
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith("Exchange concluded"));
+
+        var r = await _host.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@opus try again", replyToId = root });
+        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
+
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));
+        var deadline = DateTime.UtcNow + Wait;
+        while ((await MessagesIn("lab")).Count(m => m.Body.StartsWith("@opus was not started:")) < 2)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "the reopened lease was not refused");
+            await Task.Delay(100);
+        }
+        Assert.Equal(foreignHead, await GitLog(dir, "%H", 1, gitRef: ExchangeWorktrees.Branch(root)));
+    }
+
     // --- Start-up recovery ------------------------------------------------------------------
 
     private static async Task<string> GitShow(string dir, string gitRef, string path)
