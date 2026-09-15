@@ -158,6 +158,31 @@ describe('the owner token on writes', () => {
   });
 });
 
+/** Row 34: one exchange's own stop. The room stop ends every exchange in the room (and the run, when
+ *  there is one), so a strip's Stop has to reach the per-root endpoint and name only its own root. */
+describe('stopping one exchange', () => {
+  test('it POSTs to that root\'s stop, escaped like every other room path, with the owner token', async () => {
+    storeToken('owner-secret');
+    const calls = stubFetch(() => json({ roomId: 'a b', status: 'open', seq: 3 }));
+
+    await api.stopOneExchange('a b', 41);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe('/api/rooms/a%20b/exchanges/41/stop');
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(authOf(calls[0])).toBe('Bearer owner-secret');
+  });
+
+  test('it hands back the room snapshot the hub answered with', async () => {
+    stubFetch(() => json({ roomId: 'lab', status: 'open', seq: 12, exchanges: [] }));
+
+    const snapshot = await api.stopOneExchange('lab', 41);
+
+    expect(snapshot.seq).toBe(12);
+    expect(snapshot.exchanges).toEqual([]);
+  });
+});
+
 describe('a failure keeps its status', () => {
   test('a 401 is a credential refusal, and says so in words the owner can act on', async () => {
     stubFetch(() => json({ error: 'unauthorized' }, 401));
@@ -213,6 +238,20 @@ describe('a failure keeps its status', () => {
     stubFetch(() => json({ error: "Unknown room 'lab'." }, 404));
 
     expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(false);
+  });
+
+  /** Row 34: the one-exchange stop refuses a stop it cannot make (a run owns the room, or that
+   *  exchange is closed with nothing running) with 409, and the hub's own sentence is what the banner
+   *  shows. It must not read as a credential refusal. */
+  test('a refused one-exchange stop keeps its 409 and the hub its sentence', async () => {
+    stubFetch(() => json({ error: 'A run owns this room; stop the run instead.' }, 409));
+
+    const failure = await refusal(() => api.stopOneExchange('lab', 41));
+
+    expect(failure).toBeInstanceOf(api.ApiError);
+    expect((failure as api.ApiError).status).toBe(409);
+    expect(api.isCredentialRefusal(failure)).toBe(false);
+    expect(api.describeError(failure)).toBe('A run owns this room; stop the run instead.');
   });
 
   test('a thrown non-Error is still described rather than crashing the describe path', () => {

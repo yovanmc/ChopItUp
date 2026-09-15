@@ -217,6 +217,23 @@ export async function stopExchange(roomId: string, signal?: AbortSignal): Promis
   );
 }
 
+/** Row 34: stops the one exchange rooted at `rootMessageId` and leaves the rest of the room running,
+ *  answering with the whole room's snapshot. 404 (no such root) and both 409s (a run owns the room;
+ *  that exchange is closed with nothing running) come back through `unwrap` as a thrown `ApiError`
+ *  carrying the hub's sentence. The room stop above stays for hubs older than row 32. */
+export async function stopOneExchange(
+  roomId: string,
+  rootMessageId: number,
+  signal?: AbortSignal,
+): Promise<ExchangeSnapshot> {
+  return unwrap<ExchangeSnapshot>(
+    await write(`/api/rooms/${encodeURIComponent(roomId)}/exchanges/${rootMessageId}/stop`, {
+      method: 'POST',
+      signal,
+    }),
+  );
+}
+
 /** The room's active-or-most-recent run, or `null` for a room that has never had one — the hub says
  *  that with 204, which has no body to parse, so this is the one endpoint here that cannot go through
  *  `unwrap`. A 404 (unknown room) still throws like everywhere else. */

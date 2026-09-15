@@ -81,6 +81,26 @@ export interface ExchangeSnapshot {
    *  ExchangeBar's marker map is keyed on this union, so a cause added to the hub without a label
    *  here is a compile error rather than a bar that silently blames the owner for it. */
   stoppedBy: 'owner' | 'run' | null;
+  /** Row 34. Every exchange the room still holds, oldest first (Spawning/SpawnerService.cs
+   *  `ExchangeView`); the top-level fields above describe the newest open one, else the newest.
+   *  Optional because a hub older than row 32 does not send it, and that hub is still served. */
+  exchanges?: ExchangeView[];
+}
+
+/** One exchange of a snapshot's `exchanges`. Its `inFlight` is THIS exchange's own live spawns, unlike
+ *  the snapshot's room-wide list, which is what lets one strip say whether it alone has anything left
+ *  to stop. `status` and `stoppedBy` reuse the snapshot's unions so ExchangeBar's total maps cover
+ *  both shapes with one declaration each. */
+export interface ExchangeView {
+  rootMessageId: number;
+  status: ExchangeSnapshot['status'];
+  budget: number;
+  turnsUsed: number;
+  turnsCommitted: number;
+  remaining: number;
+  inFlight: string[];
+  pending: string[];
+  stoppedBy: ExchangeSnapshot['stoppedBy'];
 }
 
 /** Who last wrote a path inside a run, read out of the spawn's own git diff (Web/RunsApi.cs). */

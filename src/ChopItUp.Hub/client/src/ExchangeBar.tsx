@@ -1,11 +1,28 @@
 import { memo } from 'react';
 import { displayName } from './participants';
-import type { ExchangeSnapshot } from './types';
+import type { ExchangeSnapshot, ExchangeView } from './types';
 
 interface ExchangeBarProps {
   exchange: ExchangeSnapshot | null;
   runStoppable: boolean;
+  /** The room stop in flight: the only stop a hub without `exchanges` offers, shared with `RunBar`. */
   stopping: boolean;
+  /** Row 34: the roots whose own stop is in flight. Per root, so pressing one strip greys that strip
+   *  and leaves its neighbours pressable. */
+  stoppingRoots: ReadonlySet<number>;
+  /** A strip's root, or `null` for the room stop an older hub's single strip presses. */
+  onStop: (root: number | null) => void;
+}
+
+/** What one strip draws from: the fields an `ExchangeView` and the snapshot's top level share. */
+type StripFields = Pick<ExchangeView, 'status' | 'inFlight' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy'>;
+
+interface StripControl {
+  key: string;
+  /** Rendered only when the bar holds more than one strip; `null` keeps a lone strip as it was. */
+  label: string | null;
+  runStoppable: boolean;
+  disabled: boolean;
   onStop: () => void;
 }
 
@@ -46,11 +63,43 @@ const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
  *  than by `status`. That is why Stop survives `superseded`: there is still something to stop.
  *
  *  Idle is the only state that hides the bar outright. It is the zero state (seq 0, nothing has ever
- *  run) and a room never returns to it, so nothing live can be hidden behind that branch. */
-function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarProps) {
-  if (exchange === null || exchange.status === 'idle') return null;
+ *  run) and a room never returns to it, so nothing live can be hidden behind that branch.
+ *
+ *  Row 34: a hub that sends `exchanges` gets one strip per entry, oldest first, each on its own fields
+ *  and its own stop; the strips are siblings rather than a wrapped list, so each keeps the `.exchange`
+ *  row it always had and the stack reads like `RunBar` above it. That hub sends an empty list exactly
+ *  when its top level is idle, so the empty case falls through to the idle branch below. A hub
+ *  without `exchanges` renders the one top-level strip with the room stop, as before. */
+function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, onStop }: ExchangeBarProps) {
+  const views = exchange?.exchanges ?? [];
+  if (views.length > 0) {
+    const labelled = views.length > 1;
+    return (
+      <>
+        {views.map((view) =>
+          strip(view, {
+            key: `x:${view.rootMessageId}`,
+            label: labelled ? `#${view.rootMessageId}` : null,
+            runStoppable,
+            disabled: stoppingRoots.has(view.rootMessageId),
+            onStop: () => onStop(view.rootMessageId),
+          }),
+        )}
+      </>
+    );
+  }
 
-  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy } = exchange;
+  if (exchange === null || exchange.status === 'idle') return null;
+  return strip(exchange, { key: 'room', label: null, runStoppable, disabled: stopping, onStop: () => onStop(null) });
+}
+
+/** One strip. A plain function rather than a component, so the element tree the bar returns holds the
+ *  buttons themselves — that is what lets the tests press one without a DOM.
+ *
+ *  On a top-level strip `inFlight` is the room's; on a per-exchange strip it is that exchange's own,
+ *  which is the truer gate for that strip's Stop. */
+function strip(fields: StripFields, { key, label, runStoppable, disabled, onStop }: StripControl) {
+  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy } = fields;
   const open = status === 'open';
   /** The cause only speaks for a `stopped` exchange: a superseded one carries whatever cause its
    *  last stop left behind, and "Superseded" is still the truer word for it. */
@@ -59,7 +108,8 @@ function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarPr
    *  and that endpoint ends the RUN whenever there is a live one — so while a run is `active` or
    *  `parked` this button would be a second, worse-labelled copy of `RunBar`'s. It yields for exactly
    *  as long as that run lives; once it has `ended` the gate is the old one again, because an
-   *  exchange with a spawn still talking is still worth stopping on its own. */
+   *  exchange with a spawn still talking is still worth stopping on its own. The per-exchange stop
+   *  (row 34) yields the same way: its endpoint refuses with 409 while a run owns the room. */
   const stoppable = !runStoppable && (open || inFlight.length > 0);
 
   /** Rendered in the lead while the exchange is open and in the tail after it closed, so a spawn that
@@ -72,8 +122,9 @@ function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarPr
   ));
 
   return (
-    <div className={`exchange exchange-${status}`} role="status" aria-live="polite">
+    <div key={key} className={`exchange exchange-${status}`} role="status" aria-live="polite">
       <div className="exchange-lead">
+        {label !== null && <span className="exchange-turns">{label}</span>}
         {open ? (
           <>
             {working}
@@ -98,7 +149,7 @@ function ExchangeBar({ exchange, runStoppable, stopping, onStop }: ExchangeBarPr
           working
         )}
         {stoppable && (
-          <button type="button" className="quiet danger" disabled={stopping} onClick={onStop}>
+          <button type="button" className="quiet danger" disabled={disabled} onClick={onStop}>
             Stop exchange
           </button>
         )}

@@ -35,6 +35,40 @@ function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnaps
   return current;
 }
 
+/** Row 34: a copy of the per-root stopping set with `root` added or removed. A copy because it is React
+ *  state, and one root's release must never drop a neighbour that is still pending. */
+export function withStopping(current: ReadonlySet<number>, root: number, on: boolean): ReadonlySet<number> {
+  const next = new Set(current);
+  if (on) next.add(root);
+  else next.delete(root);
+  return next;
+}
+
+/** What `stopExchangeAt` reports back to App, one hook per state change it makes. */
+export interface ExchangeStopHooks {
+  begin: () => void;
+  apply: (snapshot: ExchangeSnapshot) => void;
+  refused: (failure: unknown, didNotHappen: string) => boolean;
+  fail: (message: string) => void;
+  end: () => void;
+}
+
+/** Row 34, AC3: one strip's Stop, which ends the exchange rooted at `root` and leaves the rest of the
+ *  room running. The shape of `stop` below minus its run refresh: this endpoint refuses (409) rather
+ *  than ending a run, so there is no run change to chase. `end` is in `finally`, so a refused stop
+ *  releases its strip as surely as a successful one. Outside the component so it can be tested without
+ *  a DOM; App supplies the hooks. */
+export async function stopExchangeAt(roomId: string, root: number, hooks: ExchangeStopHooks): Promise<void> {
+  hooks.begin();
+  try {
+    hooks.apply(await api.stopOneExchange(roomId, root));
+  } catch (failure) {
+    if (!hooks.refused(failure, 'That exchange was not stopped.')) hooks.fail(api.describeError(failure));
+  } finally {
+    hooks.end();
+  }
+}
+
 /** The chat-list order. Every stamp is UTC round-trip text, so string order is time order. */
 function byActivity(rooms: Room[]): Room[] {
   return [...rooms].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0));
@@ -109,6 +143,9 @@ export default function App() {
   const [exchange, setExchange] = useState<ExchangeSnapshot | null>(null);
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [stopping, setStopping] = useState(false);
+  /** Row 34: the exchange roots whose own stop is in flight, so one strip greys and its neighbours stay
+   *  pressable. `stopping` above stays the room stop's, which `RunBar` shares. */
+  const [stoppingRoots, setStoppingRoots] = useState<ReadonlySet<number>>(() => new Set());
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
   const [skillProposals, setSkillProposals] = useState<SkillProposal[]>([]);
@@ -506,6 +543,29 @@ export default function App() {
     }
   }, [roomId, refreshRun, refused]);
 
+  /** The bar's one handler: a strip's root goes to that exchange's own stop, and `null` (a hub that
+   *  sends no `exchanges`) to the room stop above, as it did before row 34. */
+  const stopFromBar = useCallback(
+    (root: number | null) => {
+      if (root === null) {
+        void stop();
+        return;
+      }
+      if (!roomId) return;
+      void stopExchangeAt(roomId, root, {
+        begin: () => setStoppingRoots((previous) => withStopping(previous, root, true)),
+        apply: (snapshot) => {
+          setExchange((previous) => applyExchange(previous, snapshot));
+          setError(null);
+        },
+        refused,
+        fail: setError,
+        end: () => setStoppingRoots((previous) => withStopping(previous, root, false)),
+      });
+    },
+    [roomId, stop, refused],
+  );
+
   // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
   // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
   const decide = useCallback(
@@ -676,7 +736,8 @@ export default function App() {
               exchange={exchange}
               runStoppable={runStoppable}
               stopping={stopping}
-              onStop={stop}
+              stoppingRoots={stoppingRoots}
+              onStop={stopFromBar}
             />
             <Composer roomName={activeRoom.name} disabled={false} onSend={send} />
           </>
