@@ -455,9 +455,7 @@ public sealed partial class SpawnerServiceTests
         await _runner.NextSpecAsync(Wait);
         await started.Task.WaitAsync(Wait);
         await PostAsOwner("/nope @opus");
-        await Task.Delay(300);
-        var snap = Spawner.Snapshot("general");
-        Assert.Equal("superseded", snap.Status);
+        var snap = await WaitForStatus("superseded");
         Assert.Equal(["opus"], snap.InFlight);
 
         var stopped = await Spawner.StopAsync("general");
