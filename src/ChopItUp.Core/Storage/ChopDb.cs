@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 10;
+    public const int LatestSchemaVersion = 11;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -119,6 +119,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 8) ApplyV8(conn);
             if (GetUserVersion(conn) < 9) ApplyV9(conn);
             if (GetUserVersion(conn) < 10) ApplyV10(conn);
+            if (GetUserVersion(conn) < 11) ApplyV11(conn);
             return 0;
         });
     }
@@ -617,6 +618,30 @@ public sealed class ChopDb
             CREATE INDEX IF NOT EXISTS ix_skill_proposals_status ON skill_proposals(status, room_id, id);
             PRAGMA user_version = 10;
             """;
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>v11 (row 36): <c>messages.reply_to_id</c>, the message a post replies to, or NULL for
+    /// every message written before it and every post that is not a reply. Same room is enforced by
+    /// <see cref="MessageStore.Post(string,string,string,string?,long?)"/>, not by the schema. The column
+    /// is probed inside the transaction (a torn v11 re-runs cleanly) and the stamp is the last statement
+    /// (LESSONS, M1). No index: nothing queries by it.</summary>
+    private static void ApplyV11(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+
+        bool hasColumn;
+        using (var probe = conn.CreateCommand())
+        {
+            probe.Transaction = tx;
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reply_to_id'";
+            hasColumn = Convert.ToInt64(probe.ExecuteScalar()) > 0;
+        }
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = (hasColumn ? "" : "ALTER TABLE messages ADD COLUMN reply_to_id INTEGER REFERENCES messages(id);\n") + "PRAGMA user_version = 11;";
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

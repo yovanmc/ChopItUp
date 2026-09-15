@@ -1,6 +1,8 @@
 namespace ChopItUp.Core.Model;
 
-public sealed record Message(long Id, string RoomId, string AuthorId, string Body, DateTimeOffset CreatedAt);
+/// <summary>A stored message. <see cref="ReplyToId"/> (row 36) is the id of the message this one replies
+/// to, always in the same room, or null.</summary>
+public sealed record Message(long Id, string RoomId, string AuthorId, string Body, DateTimeOffset CreatedAt, long? ReplyToId = null);
 
 /// <summary>The outcome of a post. <see cref="Deduplicated"/> is true when the caller's client_key
 /// matched a message already stored, so nothing new was written and <see cref="Message"/> is the

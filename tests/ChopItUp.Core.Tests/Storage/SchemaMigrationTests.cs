@@ -632,6 +632,94 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>A real-shape v10 file: v9 plus row 25's skill_proposals table, stamped 10.</summary>
+    private void WriteRawV10()
+    {
+        WriteRawV9();
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            CREATE TABLE skill_proposals (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id            TEXT NOT NULL REFERENCES rooms(id),
+                author_id          TEXT NOT NULL REFERENCES participants(id),
+                name               TEXT NOT NULL,
+                source_dir         TEXT NOT NULL,
+                tree_sha256        TEXT NOT NULL,
+                replaces_installed INTEGER NOT NULL,
+                force              INTEGER NOT NULL,
+                files              INTEGER NOT NULL,
+                bytes              INTEGER NOT NULL,
+                status             TEXT NOT NULL DEFAULT 'pending',
+                created_at         TEXT NOT NULL,
+                decided_at         TEXT,
+                installed_at       TEXT
+            );
+            CREATE INDEX ix_skill_proposals_status ON skill_proposals(status, room_id, id);
+            PRAGMA user_version = 10;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
+    private static long ReplyColumnCount(SqliteConnection conn)
+    {
+        using var probe = conn.CreateCommand();
+        probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reply_to_id'";
+        return (long)probe.ExecuteScalar()!;
+    }
+
+    [Fact]
+    public void R36_T1_v10_database_is_backed_up_then_migrated_to_v11_with_reply_to_id_and_every_message_unchanged()
+    {
+        WriteRawV10();
+        using (var before = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString()))
+        {
+            before.Open();
+            Assert.Equal(0L, ReplyColumnCount(before));                      // the premise: a real v10 shape
+            using var v = before.CreateCommand();
+            v.CommandText = "PRAGMA user_version;";
+            Assert.Equal(10L, (long)v.ExecuteScalar()!);
+        }
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(11, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Contains(".v10.", Path.GetFileName(db.LastBackupPath!));
+        using (var conn = db.Open()) Assert.Equal(1L, ReplyColumnCount(conn));
+
+        var page = new MessageStore(db).Read("general", 0, 50);
+        Assert.Equal([(1L, "owner", "@opus first v3 message", (long?)null), (2L, "opus", "second v3 message", null)],
+            page.Messages.Select(m => (m.Id, m.AuthorId, m.Body, m.ReplyToId)));
+
+        db.EnsureDatabase();
+        Assert.Null(db.LastBackupPath);
+    }
+
+    [Fact]
+    public void R36_T1_a_torn_v11_with_the_column_present_but_stamp_10_is_finished_not_crashed()
+    {
+        WriteRawV10();
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE messages ADD COLUMN reply_to_id INTEGER REFERENCES messages(id);";
+            cmd.ExecuteNonQuery();
+        }
+        SqliteConnection.ClearAllPools();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(11, db.GetSchemaVersion());
+        using var check = db.Open();
+        Assert.Equal(1L, ReplyColumnCount(check));
+    }
+
     [Fact]
     public void R25_T3_v9_database_is_backed_up_then_migrated_to_v10_with_the_skill_proposals_table_and_nothing_else_changed()
     {
@@ -640,7 +728,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(10, db.GetSchemaVersion());
+        Assert.Equal(11, db.GetSchemaVersion());   // the ladder runs through v11 too now
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.Contains(".v9.", Path.GetFileName(db.LastBackupPath!));
