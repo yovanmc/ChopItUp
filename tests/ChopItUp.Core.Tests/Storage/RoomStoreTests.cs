@@ -99,6 +99,45 @@ public sealed class RoomStoreTests : IDisposable
         Assert.Throws<ArgumentException>(() => _store.BindDirectory("lab", " "));
     }
 
+    [Fact]
+    public void Row14_SetPersona_round_trips_through_GetRoom_and_ListRooms()
+    {
+        _store.CreateRoom("lab", "Lab", null);
+
+        Assert.True(_store.SetPersona("lab", "A grumpy sysadmin persona."));
+
+        Assert.Equal("A grumpy sysadmin persona.", _store.GetRoom("lab")!.Persona);
+        Assert.Equal("A grumpy sysadmin persona.", _store.ListRooms().Single(r => r.Id == "lab").Persona);
+    }
+
+    [Fact]
+    public void Row14_SetPersona_with_blank_text_clears_it_to_null()
+    {
+        _store.CreateRoom("lab", "Lab", null);
+        Assert.True(_store.SetPersona("lab", "Something"));
+
+        Assert.True(_store.SetPersona("lab", "   "));
+
+        Assert.Null(_store.GetRoom("lab")!.Persona);
+    }
+
+    [Fact]
+    public void Row14_SetPersona_on_an_unknown_room_returns_false()
+    {
+        Assert.False(_store.SetPersona("nope", "Anything"));
+    }
+
+    [Fact]
+    public void Row14_SetPersona_over_the_cap_throws_and_stores_nothing()
+    {
+        _store.CreateRoom("lab", "Lab", null);
+        var tooLong = new string('x', MessageStore.MaxPersonaChars + 1);
+
+        Assert.Throws<ArgumentException>(() => _store.SetPersona("lab", tooLong));
+
+        Assert.Null(_store.GetRoom("lab")!.Persona);
+    }
+
     [Theory]
     [InlineData("General", "general")]
     [InlineData("  Résumé Review!  ", "r-sum-review")]

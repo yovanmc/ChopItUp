@@ -13,9 +13,12 @@ public sealed record PostResult(Message Message, bool Deduplicated);
 /// path of its git working tree, or null for a room made before M9 that the owner has not bound;
 /// <see cref="ArchivedAt"/> hides the room without touching disk; <see cref="LastActivityAt"/> is the
 /// newest message's time, or the room's creation when it has none — the chat-list order;
-/// <see cref="Unread"/> counts messages past the cursor of whoever asked (0 when nobody did).</summary>
+/// <see cref="Unread"/> counts messages past the cursor of whoever asked (0 when nobody did);
+/// <see cref="Persona"/> (row 14) is owner-authored prose rendered into every participant's spawn
+/// prompt in this room, or null.</summary>
 public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long LastMessageId, int MessageCount,
-    string? Directory = null, DateTimeOffset? ArchivedAt = null, DateTimeOffset? LastActivityAt = null, long Unread = 0);
+    string? Directory = null, DateTimeOffset? ArchivedAt = null, DateTimeOffset? LastActivityAt = null, long Unread = 0,
+    string? Persona = null);
 
 /// <summary>A page of messages in ascending id order. <see cref="NextAfterId"/> is the value to pass
 /// as <c>afterId</c> to continue; it equals the request's afterId when the page is empty.
@@ -32,5 +35,7 @@ public sealed record MessagePage(IReadOnlyList<Message> Messages, long NextAfter
 /// shown beside the row in the generated README, e.g. the usage-credit warning on <c>fable</c>.
 /// <see cref="Classes"/> is the raw stored form of the row's roles (grill ledger D5, owner ruling
 /// 2026-09-07: a SET, not one value) — parse it with <see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>,
-/// never by hand.</summary>
-public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Classes = null);
+/// never by hand. <see cref="Role"/> (row 14) is the participant's global role text, rendered into its
+/// spawn prompt unless a room override replaces it — null for no role, and for any row that is not
+/// spawnable (<c>ExchangePolicy.IsSpawnable</c>), since a role can never be stored there.</summary>
+public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Classes = null, string? Role = null);
