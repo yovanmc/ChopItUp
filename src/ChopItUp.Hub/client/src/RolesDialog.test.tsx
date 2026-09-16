@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as api from './api';
-import { OVERRIDE_OPS, RolesEditor, SOURCE_LABEL, saveStanding, sourceOf, type SaveHooks } from './RolesDialog';
+import { draftKey, OVERRIDE_OPS, RolesEditor, SOURCE_LABEL, saveStanding, sourceOf, type SaveHooks } from './RolesDialog';
 import type { RoleRow, RoomRoles } from './types';
 
 /** Row 14, task 6. The dialog is the owner's only surface for three pieces of prompt text, so what
@@ -147,11 +147,20 @@ describe('the states the controls have to be reachable in', () => {
     expect(render(EMPTY)).not.toContain('disabled');
   });
 
-  test('a save in flight disables that row rather than the whole dialog', () => {
+  // Row 14 review fix 3c: the old name claimed row-scoped disabling, but the assertions never
+  // distinguished that from dialog-wide disabling, and the implementation (RolesDialog.tsx:147,
+  // `const saving = busy !== null`) disables every control regardless of row. The added assertion
+  // below binds that: a control on a DIFFERENT row from the one being saved is disabled too.
+  test('a save in flight disables every control and labels the pressed one Saving', () => {
     const markup = render(ROLES, null, `${PLANNER.id}|global`);
 
     expect(markup).toContain('disabled');
     expect(markup).toContain('Saving');
+
+    const scribeGlobalBoxId = `${draftKey(SCRIBE.id, 'global')}-box`;
+    const idIndex = markup.indexOf(`id="${scribeGlobalBoxId}"`);
+    expect(idIndex).toBeGreaterThan(-1);
+    expect(markup.slice(idIndex, idIndex + 300)).toContain('disabled');
   });
 
   test('the override row offers BOTH clear and suppress, which are different operations', () => {
