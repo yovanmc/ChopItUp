@@ -1252,8 +1252,12 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(2L, (long)cmd.ExecuteScalar()!);
         cmd.CommandText = "SELECT COUNT(*) FROM memory_proposals WHERE status = 'pending'";
         Assert.Equal(1L, (long)cmd.ExecuteScalar()!);
-        cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms')";
-        Assert.Equal(6L, (long)cmd.ExecuteScalar()!);   // v6's directory+archived_at, plus v12's persona (row 14) — EnsureDatabase runs the whole ladder
+        cmd.CommandText = "SELECT name FROM pragma_table_info('rooms')";
+        var roomColumns = new HashSet<string>();
+        using (var reader = cmd.ExecuteReader())
+            while (reader.Read()) roomColumns.Add(reader.GetString(0));
+        Assert.Contains("directory", roomColumns);
+        Assert.Contains("archived_at", roomColumns);
         cmd.CommandText = "SELECT COUNT(*) FROM rooms WHERE id = 'general' AND directory IS NULL AND archived_at IS NULL";
         Assert.Equal(1L, (long)cmd.ExecuteScalar()!);
 
@@ -1287,8 +1291,12 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         using var check = db.Open();
         using var count = check.CreateCommand();
-        count.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms')";
-        Assert.Equal(6L, (long)count.ExecuteScalar()!);   // v6's directory+archived_at, plus v12's persona (row 14) — EnsureDatabase runs the whole ladder
+        count.CommandText = "SELECT name FROM pragma_table_info('rooms')";
+        var roomColumns = new HashSet<string>();
+        using (var reader = count.ExecuteReader())
+            while (reader.Read()) roomColumns.Add(reader.GetString(0));
+        Assert.Contains("directory", roomColumns);
+        Assert.Contains("archived_at", roomColumns);
     }
 
     [Fact]

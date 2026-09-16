@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
@@ -222,6 +223,18 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal("Global reviewer", Str(afterClear, "effectiveRole"));
     }
 
+    /// <summary>Row 14 review fix 1: a whitespace-only room override normalises like <c>SetRole</c> and
+    /// <c>MessageStore.SetPersona</c> instead of storing the raw spaces.</summary>
+    [Fact]
+    public async Task Room_role_of_whitespace_only_stores_the_suppress_sentinel_not_the_spaces()
+    {
+        Assert.Equal(HttpStatusCode.OK, (await SetRoomRole("general", "opus", "   ")).StatusCode);
+
+        var row = Row(await GetRoles(), "opus");
+        Assert.Equal("", Str(row, "roomRole"));
+        Assert.Equal("", Str(row, "effectiveRole"));
+    }
+
     [Fact]
     public async Task Global_role_can_be_set_and_then_cleared()
     {
@@ -284,6 +297,29 @@ public sealed class RolesApiTests : IAsyncLifetime
         var r = await SetRoomRole("general", "opus", "Should not land", anon);
 
         Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode);
+        Assert.Null(Participants.RoomRole("general", "opus"));
+    }
+
+    /// <summary>Row 14 review fix 3a (AC8): the guard is owner-class, not merely "some resolvable
+    /// bearer" — a model-class participant's own token resolves fine on <c>BearerTokenMiddleware</c>
+    /// (it is spawnable and valid) but must still be refused on every guarded write, with the stored
+    /// value left exactly as it was, not merely a status code this test never checked before.</summary>
+    [Fact]
+    public async Task Writes_from_a_model_class_bearer_are_403_and_the_stored_values_are_unchanged()
+    {
+        using var model = new HttpClient { BaseAddress = _host.BaseAddress };
+        model.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _host.TokenFor("opus"));
+
+        var personaResp = await SetPersona("general", "Should not land", model);
+        Assert.Equal(HttpStatusCode.Forbidden, personaResp.StatusCode);
+        Assert.Null(_host.Services.GetRequiredService<MessageStore>().GetRoom("general")!.Persona);
+
+        var globalResp = await SetGlobalRole("opus", "Should not land", model);
+        Assert.Equal(HttpStatusCode.Forbidden, globalResp.StatusCode);
+        Assert.Null(Participants.GlobalRole("opus"));
+
+        var roomResp = await SetRoomRole("general", "opus", "Should not land", model);
+        Assert.Equal(HttpStatusCode.Forbidden, roomResp.StatusCode);
         Assert.Null(Participants.RoomRole("general", "opus"));
     }
 

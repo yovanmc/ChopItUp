@@ -107,14 +107,17 @@ public sealed class ParticipantStore(ChopDb db)
     }
 
     /// <summary>Stores this room's override for a participant (row 14), upserting rather than
-    /// throwing on a second write. <paramref name="role"/> may be the empty string — D-b's "no role in
-    /// this room" sentinel, a stored row distinct from having no override at all — and it must NOT be
-    /// turned into a delete; use <see cref="ClearRoomRole"/> for that. Returns false when the room or
-    /// a spawnable participant does not exist; <c>ChopDb.Open</c> enforces the foreign keys regardless,
-    /// so this existence check exists to produce a clean refusal, not to guard integrity.</summary>
+    /// throwing on a second write. <paramref name="role"/> is trimmed first, like <see cref="SetRole"/>
+    /// and <see cref="MessageStore.SetPersona"/>; a whitespace-only input collapses
+    /// onto D-b's "no role in this room" sentinel, the empty string stored as a row distinct from having
+    /// no override at all, which must NOT be turned into a delete — use <see cref="ClearRoomRole"/> for
+    /// that. Returns false when the room or a spawnable participant does not exist; <c>ChopDb.Open</c>
+    /// enforces the foreign keys regardless, so this existence check exists to produce a clean refusal,
+    /// not to guard integrity.</summary>
     public bool SetRoomRole(string roomId, string id, string role)
     {
-        if (role is { Length: > MaxRoleChars })
+        var normalised = string.IsNullOrWhiteSpace(role) ? "" : role.Trim();
+        if (normalised.Length > MaxRoleChars)
             throw new ArgumentException($"Role exceeds {MaxRoleChars} characters.", nameof(role));
         using var conn = db.Open();
         if (!RoomAndSpawnableParticipantExist(conn, roomId, id)) return false;
@@ -125,7 +128,7 @@ public sealed class ParticipantStore(ChopDb db)
             """;
         cmd.Parameters.AddWithValue("@room", roomId);
         cmd.Parameters.AddWithValue("@id", id);
-        cmd.Parameters.AddWithValue("@role", role);
+        cmd.Parameters.AddWithValue("@role", normalised);
         cmd.ExecuteNonQuery();
         return true;
     }

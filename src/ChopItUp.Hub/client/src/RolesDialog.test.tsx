@@ -1,7 +1,18 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as api from './api';
-import { OVERRIDE_OPS, RolesEditor, SOURCE_LABEL, saveStanding, sourceOf, type SaveHooks } from './RolesDialog';
+import {
+  draftKey,
+  OVERRIDE_OPS,
+  PERSONA_KEY,
+  reseedDrafts,
+  RolesEditor,
+  seedDrafts,
+  SOURCE_LABEL,
+  saveStanding,
+  sourceOf,
+  type SaveHooks,
+} from './RolesDialog';
 import type { RoleRow, RoomRoles } from './types';
 
 /** Row 14, task 6. The dialog is the owner's only surface for three pieces of prompt text, so what
@@ -147,11 +158,20 @@ describe('the states the controls have to be reachable in', () => {
     expect(render(EMPTY)).not.toContain('disabled');
   });
 
-  test('a save in flight disables that row rather than the whole dialog', () => {
+  // Row 14 review fix 3c: the old name claimed row-scoped disabling, but the assertions never
+  // distinguished that from dialog-wide disabling, and the implementation (RolesDialog.tsx:147,
+  // `const saving = busy !== null`) disables every control regardless of row. The added assertion
+  // below binds that: a control on a DIFFERENT row from the one being saved is disabled too.
+  test('a save in flight disables every control and labels the pressed one Saving', () => {
     const markup = render(ROLES, null, `${PLANNER.id}|global`);
 
     expect(markup).toContain('disabled');
     expect(markup).toContain('Saving');
+
+    const scribeGlobalBoxId = `${draftKey(SCRIBE.id, 'global')}-box`;
+    const idIndex = markup.indexOf(`id="${scribeGlobalBoxId}"`);
+    expect(idIndex).toBeGreaterThan(-1);
+    expect(markup.slice(idIndex, idIndex + 300)).toContain('disabled');
   });
 
   test('the override row offers BOTH clear and suppress, which are different operations', () => {
@@ -160,6 +180,95 @@ describe('the states the controls have to be reachable in', () => {
     for (const op of OVERRIDE_OPS) expect(markup).toContain(op.label);
     expect(OVERRIDE_OPS).toHaveLength(2);
     expect(new Set(OVERRIDE_OPS.map((op) => op.role)).size).toBe(2);
+  });
+});
+
+/** Row 14 review fix 4b. The note used to say "Saving an empty box clears that text" about all three
+ *  kinds of box. It is true of the persona and the global role, and false of the room box, whose Save
+ *  posts the suppress sentinel (D-b) rather than deleting the override. The note is the only place the
+ *  owner is told which of those two an empty save does, so it has to name both room controls. */
+describe('what the note promises about an empty save', () => {
+  function noteText(markup: string): string {
+    const open = markup.indexOf('<p class="dialog-note">');
+    expect(open).toBeGreaterThan(-1);
+    const start = open + '<p class="dialog-note">'.length;
+    return markup.slice(start, markup.indexOf('</p>', start));
+  }
+
+  test('the note names both room controls rather than promising one rule for every box', () => {
+    const note = noteText(render());
+
+    for (const op of OVERRIDE_OPS) expect(note).toContain(op.label);
+  });
+
+  test('the note no longer claims an empty save clears every box', () => {
+    expect(noteText(render())).not.toContain('Saving an empty box clears that text.');
+  });
+});
+
+/** Row 14 review fix 4a. Every write answers with the room's whole state, and the dialog used to
+ *  re-seed all 2N+1 boxes from it, so saving one box silently threw away unsaved text in every other
+ *  one. The rule now is that a save re-seeds only the box it saved. `renderToStaticMarkup` runs no
+ *  effects, so the seam that can be tested here is the decision itself, lifted out as a pure function
+ *  exactly as `saveStanding` lifts out the effectful half of a write. */
+describe('what a save re-seeds', () => {
+  const TYPED: Record<string, string> = {
+    [PERSONA_KEY]: 'a persona the owner has not saved yet',
+    [draftKey(PLANNER.id, 'global')]: 'half a global role',
+    [draftKey(PLANNER.id, 'room')]: 'half an override',
+    [draftKey(SCRIBE.id, 'global')]: 'another unsaved edit',
+    [draftKey(SCRIBE.id, 'room')]: 'and another',
+  };
+
+  function expectKeptExcept(next: Record<string, string>, saved: string) {
+    for (const key of Object.keys(TYPED)) {
+      if (key !== saved) expect(next[key]).toBe(TYPED[key]);
+    }
+  }
+
+  test('the first roles seeds every box, persona included', () => {
+    const seeded = seedDrafts(ROLES);
+
+    expect(reseedDrafts({}, ROLES, null)).toEqual(seeded);
+    expect(seeded[PERSONA_KEY]).toBe(ROLES.persona);
+    expect(Object.keys(seeded)).toHaveLength(2 * ROLES.participants.length + 1);
+  });
+
+  test('a persona save re-seeds the persona box and leaves every other box typed', () => {
+    const next = reseedDrafts(TYPED, ROLES, PERSONA_KEY);
+
+    expect(next[PERSONA_KEY]).toBe(ROLES.persona);
+    expectKeptExcept(next, PERSONA_KEY);
+  });
+
+  test('a global-role save re-seeds that participant global box only', () => {
+    const saved = draftKey(PLANNER.id, 'global');
+
+    const next = reseedDrafts(TYPED, ROLES, saved);
+
+    expect(next[saved]).toBe(PLANNER.role);
+    expectKeptExcept(next, saved);
+  });
+
+  test('an override save re-seeds that participant room box only', () => {
+    const saved = draftKey(SCRIBE.id, 'room');
+
+    const next = reseedDrafts(TYPED, ROLES, saved);
+
+    expect(next[saved]).toBe(SCRIBE.roomRole);
+    expectKeptExcept(next, saved);
+  });
+
+  test('a cleared override re-seeds its own box to empty rather than leaving the old text', () => {
+    const saved = draftKey(SCRIBE.id, 'room');
+    const cleared: RoomRoles = {
+      ...ROLES,
+      participants: ROLES.participants.map((row) =>
+        row.id === SCRIBE.id ? { ...row, roomRole: null, effectiveRole: row.role } : row,
+      ),
+    };
+
+    expect(reseedDrafts(TYPED, cleared, saved)[saved]).toBe('');
   });
 });
 

@@ -104,13 +104,32 @@ export interface RolesEditorProps {
   onClose: () => void;
 }
 
-function seedDrafts(roles: RoomRoles): Record<string, string> {
-  const drafts: Record<string, string> = {};
+/** The 2N+1 boxes as the hub currently has them: the room persona, and a global and a room box per
+ *  participant. */
+export function seedDrafts(roles: RoomRoles): Record<string, string> {
+  const drafts: Record<string, string> = { [PERSONA_KEY]: roles.persona ?? '' };
   for (const row of roles.participants) {
     drafts[draftKey(row.id, 'global')] = row.role ?? '';
     drafts[draftKey(row.id, 'room')] = row.roomRole ?? '';
   }
   return drafts;
+}
+
+/** What the dialog shows after a write answers with the room's whole state.
+ *
+ *  Every write answers with all 2N+1 values, and re-seeding from all of them is how the owner's
+ *  unsaved text in some other box used to disappear. So only the box that was just saved is replaced
+ *  by what the hub stored (which is still the place the hub's own trimming becomes visible); every
+ *  other box keeps what is typed in it. `saved` is null for the first load, where there is nothing
+ *  typed yet and everything is seeded. */
+export function reseedDrafts(
+  drafts: Record<string, string>,
+  roles: RoomRoles,
+  saved: string | null,
+): Record<string, string> {
+  const fresh = seedDrafts(roles);
+  if (saved === null) return fresh;
+  return { ...fresh, ...drafts, [saved]: fresh[saved] ?? '' };
 }
 
 /** The editor itself, taking the loaded state as a prop so it renders without a fetch — which is what
@@ -128,25 +147,32 @@ export function RolesEditor({
   onSaveOverride,
   onClose,
 }: RolesEditorProps) {
-  const [persona, setPersonaDraft] = useState(roles.persona ?? '');
   const [drafts, setDrafts] = useState<Record<string, string>>(() => seedDrafts(roles));
   const first = useRef<HTMLTextAreaElement>(null);
+  /** Which box the save now in flight belongs to, set by the control that started it. A room box has
+   *  three controls and one draft, so what is recorded here is the draft key, not the control key. */
+  const saved = useRef<string | null>(null);
 
   useEffect(() => {
     first.current?.focus();
   }, []);
 
-  // Every successful write answers with the room's whole state, and this is where the dialog stops
-  // showing what was typed and starts showing what the hub stored — including the hub's own trimming,
-  // and including a box the owner had edited and not saved. Deliberate: one dialog, one truth.
+  // Every successful write answers with the room's whole state, and this is where the box that was
+  // saved stops showing what was typed and starts showing what the hub stored, the hub's own trimming
+  // included. Only that box: an unsaved edit in any other one is the owner's and is left alone.
   useEffect(() => {
-    setPersonaDraft(roles.persona ?? '');
-    setDrafts(seedDrafts(roles));
+    setDrafts((current) => reseedDrafts(current, roles, saved.current));
+    saved.current = null;
   }, [roles]);
 
   const saving = busy !== null;
   const draft = (key: string) => drafts[key] ?? '';
   const edit = (key: string, value: string) => setDrafts((current) => ({ ...current, [key]: value }));
+  /** Every control that writes goes through here, so the box it saves is recorded in one place. */
+  const save = (key: string, write: () => void) => {
+    saved.current = key;
+    write();
+  };
 
   return (
     <>
@@ -159,7 +185,9 @@ export function RolesEditor({
 
       <p className="dialog-note">
         The hub renders this text into every spawn it starts in this room. Your messages in the room, and
-        the skill in force, outrank it. Saving an empty box clears that text.
+        the skill in force, outrank it. Saving an empty persona or global role box clears that text. For
+        this room, Clear override brings the global role back, and an empty save or No role in this room
+        leaves no role here.
       </p>
 
       <label className="field-label" htmlFor="roles-persona">
@@ -170,13 +198,18 @@ export function RolesEditor({
         ref={first}
         className="field roles-text"
         rows={3}
-        value={persona}
+        value={draft(PERSONA_KEY)}
         placeholder="What this room is, for everyone who works in it."
-        onChange={(event) => setPersonaDraft(event.target.value)}
+        onChange={(event) => edit(PERSONA_KEY, event.target.value)}
         disabled={saving}
       />
       <div className="roles-actions">
-        <button type="button" className="send" onClick={() => onSavePersona(persona)} disabled={saving}>
+        <button
+          type="button"
+          className="send"
+          onClick={() => save(PERSONA_KEY, () => onSavePersona(draft(PERSONA_KEY)))}
+          disabled={saving}
+        >
           {busy === PERSONA_KEY ? 'Saving…' : 'Save persona'}
         </button>
       </div>
@@ -222,7 +255,7 @@ export function RolesEditor({
                 <button
                   type="button"
                   className="quiet"
-                  onClick={() => onSaveGlobal(row, draft(globalKey))}
+                  onClick={() => save(globalKey, () => onSaveGlobal(row, draft(globalKey)))}
                   disabled={saving}
                 >
                   {busy === globalKey ? 'Saving…' : 'Save global role'}
@@ -244,7 +277,7 @@ export function RolesEditor({
                 <button
                   type="button"
                   className="quiet"
-                  onClick={() => onSaveOverride(row, draft(roomKey), roomKey)}
+                  onClick={() => save(roomKey, () => onSaveOverride(row, draft(roomKey), roomKey))}
                   disabled={saving}
                 >
                   {busy === roomKey ? 'Saving…' : 'Save for this room'}
@@ -257,7 +290,7 @@ export function RolesEditor({
                       type="button"
                       className="quiet"
                       title={op.hint}
-                      onClick={() => onSaveOverride(row, op.role, key)}
+                      onClick={() => save(roomKey, () => onSaveOverride(row, op.role, key))}
                       disabled={saving}
                     >
                       {busy === key ? 'Saving…' : op.label}
