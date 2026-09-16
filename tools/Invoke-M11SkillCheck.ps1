@@ -153,7 +153,7 @@ try {
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     # Check 9: /health reports the new schema version.
-    Add-Check -Name 'health.schema-is-11' -Passed ($health.schema -eq 11) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-12' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
 
     # --- Check 3: GET /api/skills lists the imported skill with a non-empty description ------------
     # M10 lesson: a top-level JSON array comes back as one nested Object[]; enumerate before filtering.
