@@ -83,10 +83,14 @@ owner-class credential presented from inside @sonnet's spawn (pid `, no message 
 name, which is the leg that shows a spawn's own credential still works from inside its job. Neither
 the model's words nor the gate script's own output are ever asserted, only the hub's state.
 
-The deploy-day half lives in `tools\Invoke-Row28SelfCheck.ps1`: the `auth.owner-token-post-accepted-201`
-leg and the `-ipv6` twin beside it post as the owner from your own shell over `127.0.0.1` and over
-`[::1]`, which is what proves the refusal has not locked you out of your own hub on either loopback
-family.
+The deploy-day half lives in `tools\Invoke-Row28SelfCheck.ps1`. Five of its seven legs are
+agent-runnable end to end: `health.responds-200-expected-schema`, `auth.no-credential-post-refused-401`
+and `hub.host-configs-sweep-clean` need no `-OwnerToken`, no `-PublishDir` and no read under
+`<InstallDir>\data\`, and `bundle.exe-sha256-matches-publish` / `bundle.wwwroot-matches-publish` need
+only `-PublishDir`. The `auth.owner-token-post-accepted-201` leg and the `-ipv6` twin beside it are the
+owner's only: they post as the owner from your own shell over `127.0.0.1` and over `[::1]`, which is
+what proves the refusal has not locked you out of your own hub on either loopback family, and they SKIP
+with a reason naming the owner when `-OwnerToken` is omitted rather than run with no credential.
 
 What neither check can cover: a process that leaves its job through the shell over COM, the Task
 Scheduler or WMI is outside the job and can still use a stolen credential, as is anything created in
