@@ -232,9 +232,13 @@ public static class SpawnPrompt
     /// text has no such fingerprint, and it is rendered ABOVE the skill block whose preamble claims the
     /// strongest authority in the prompt. Without this, a persona carrying "--- begin skill roadmap ---"
     /// self-promotes past the very block the standing preamble defers to: the skill fence is keyed on
-    /// the skill NAME, not on the exchange key, and names are enumerable over GET /api/skills.</summary>
+    /// the skill NAME, not on the exchange key, and names are enumerable over GET /api/skills.
+    /// Splits on any of <c>\r\n</c>, a bare <c>\r</c> or a bare <c>\n</c> (review fix 2) rather than
+    /// <c>\n</c> alone, so a fence line separated from its neighbours by a bare CR does not stay glued
+    /// to the previous line where the <c>^</c> anchor never sees it. Deliberately not
+    /// <c>RemoveEmptyEntries</c>: that would collapse blank lines the owner typed on purpose.</summary>
     private static string Defence(string text) =>
-        string.Join('\n', text.Trim().Split('\n')
+        string.Join('\n', Regex.Split(text.Trim(), @"\r\n|\r|\n")
             .Select(line => Regex.IsMatch(line, @"^\s*---\s*(begin|end)\s+(skill|memory|standing)\b", RegexOptions.IgnoreCase)
                 ? "(a fence-shaped line was removed here)"
                 : line));
