@@ -230,16 +230,19 @@ refuses identically on content, so only the store's root path tells the two apar
 The manifest holds the absolute path of the source memory directory (`<data>\memory`, not merely
 `<data>`) inside the export directory itself, and every later run's source check reads it from there.
 
-**Owner probe (post-merge, not a merge gate).** Whether a running Claude Code session actually reads an
-exported directory cannot be checked from here — no agent session in this repo can enable
-`autoMemoryDirectory`, start a session and ask it what it remembers. Set it to an exported scratch
-directory in a throwaway project, start a session, and ask; build the fixture so the answer actually
-distinguishes reading the directory from guessing:
-- one exported memory whose `metadata.type` is not one of the vendor's four enum values — `type:
-  room-general`, one of ChopItUp's own topic names, not `user`/`feedback`/`project`/`reference`. If the
-  session recalls it, the vendor reads by `name`/`description` regardless of `type`; if it recalls only
-  the four-value entries, `type` is filtered.
-- an index at exactly 198 entries and again at exactly 199 — the vendor's own cap is 200 lines including
-  the two-line header, so 198 fit and 199 do not; the answer at 199 is the only way from here to confirm
-  the line cap holds and see what it does with the memory that falls off (silently missing, or an
-  error). Record the answer on the board row.
+**Probe: does a session read the export? (row 26, post-merge, not a merge gate).** `pwsh tools\Invoke-Row26MemoryProbe.ps1 -KeepEvidence`
+builds a scratch store of exactly 198 live entries, exports it with the real exe, and runs up to four
+`claude -p --model sonnet` calls (never `--bare`, which skips auto-memory) with `--settings` pointing
+`autoMemoryDirectory` at the export. Each entry carries an unguessable title nonce (lands on the index
+line) and a separate body-only nonce, so an answer can only come from what was actually loaded:
+- leg 1, `--tools ""` at 198 entries: which of the `user`, `room-general` and last-line nonces the
+  session reports present (reading is by index line, or `metadata.type` is filtered);
+- leg 2, a copy with one hand-appended 199th index line (the exporter refuses at 199): whether the
+  199th nonce is absent and what error, if any, the session reports;
+- leg 3, `--tools Read`: whether the session reads the `room-general` topic file on demand;
+- leg 4 only if leg 1 reports nothing: leg 1 without `--setting-sources ""`.
+The run needs the standalone CLI signed in (`claude auth status` must say `loggedIn: true`); the
+desktop app's session auth does not carry over to a spawned `claude.exe`. Measured 2026-09-16: the
+mechanics pass (fixture, export, index at exactly 200 lines, envelope parsing, spend cap) and every
+leg returned `Failed to authenticate: OAuth session expired`, so the answer is still unrecorded.
+Record it on the board row when a signed-in run produces one.
