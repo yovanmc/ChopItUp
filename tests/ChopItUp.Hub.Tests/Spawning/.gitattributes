@@ -1,0 +1,5 @@
+# Row 14, task 3: the golden prompt capture is compared to a rendered string byte-for-byte, and the
+# renderer emits LF only. core.autocrlf is true on this machine and the repo has no other
+# .gitattributes, so without this a fresh checkout would hand the test CRLF bytes it never produced
+# and the comparison would fail on line endings rather than on prompt text.
+golden-prompt-*.txt -text

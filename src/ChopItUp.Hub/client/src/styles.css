@@ -2162,3 +2162,78 @@ input {
   text-decoration: underline;
   cursor: pointer;
 }
+
+/* ---------- roles dialog (row 14) ---------- */
+
+/* Wider than the other dialogs, and the list scrolls on its own: one card per spawnable participant,
+   each carrying two text boxes, is a taller thing than anything else that uses `.dialog`. */
+.roles-dialog {
+  width: min(760px, 100%);
+}
+
+.roles-text {
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.roles-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.roles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.roles-card {
+  padding: 10px 12px 12px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.roles-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.roles-name {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.roles-id {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* The line that answers "what is this one actually told here". Above both boxes on purpose: it is the
+   answer, and the boxes are only how the answer gets changed. --dim, not --faint: at 12px this has to
+   clear WCAG AA. */
+.roles-inforce {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.roles-inforce-text {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+
+.roles-inforce-empty {
+  font-style: italic;
+}

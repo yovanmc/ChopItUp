@@ -663,11 +663,73 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>v10 shape plus exactly what ApplyV11 adds: reply_to_id on messages, stamped 11. Raw
+    /// SQL on purpose (LESSONS M2): this must keep describing v11 after ChopDb can no longer produce
+    /// one — row 14 task 1 is the first migration to need this fixture.</summary>
+    private void WriteRawV11()
+    {
+        WriteRawV10();
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            ALTER TABLE messages ADD COLUMN reply_to_id INTEGER REFERENCES messages(id);
+            PRAGMA user_version = 11;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
     private static long ReplyColumnCount(SqliteConnection conn)
     {
         using var probe = conn.CreateCommand();
         probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'reply_to_id'";
         return (long)probe.ExecuteScalar()!;
+    }
+
+    /// <summary>Every column of every participant row, in seed/rowid order — the row 14 task 1
+    /// migration guard's capture-before/assert-after instrument. Explicit column list rather than
+    /// SELECT * so an ALTER that appends a column (role) does not shift tuple shape out from under a
+    /// capture taken before that column existed.</summary>
+    private static List<(string Id, string DisplayName, string Kind, string? Host, string? Model, string? Note, string? Classes)> ReadParticipantsV11Shape(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, display_name, kind, host, model, note, classes FROM participants ORDER BY rowid";
+        using var r = cmd.ExecuteReader();
+        var result = new List<(string, string, string, string?, string?, string?, string?)>();
+        while (r.Read())
+            result.Add((r.GetString(0), r.GetString(1), r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetString(6)));
+        return result;
+    }
+
+    /// <summary>Every column of every room row, in rowid order — same rationale as
+    /// <see cref="ReadParticipantsV11Shape"/>, ahead of the persona column ApplyV12 appends.</summary>
+    private static List<(string Id, string Name, string CreatedAt, string? Directory, string? ArchivedAt)> ReadRoomsV11Shape(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, name, created_at, directory, archived_at FROM rooms ORDER BY rowid";
+        using var r = cmd.ExecuteReader();
+        var result = new List<(string, string, string, string?, string?)>();
+        while (r.Read())
+            result.Add((r.GetString(0), r.GetString(1), r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4)));
+        return result;
+    }
+
+    /// <summary>Every column of every message row at the v11 shape (reply_to_id already present),
+    /// in id order — v12 adds no message column, so this is the plain unchanged-rows check.</summary>
+    private static List<(long Id, string RoomId, string AuthorId, string Body, string CreatedAt, string? ClientKey, long? ReplyToId)> ReadMessagesV11Shape(SqliteConnection conn)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, room_id, author_id, body, created_at, client_key, reply_to_id FROM messages ORDER BY id";
+        using var r = cmd.ExecuteReader();
+        var result = new List<(long, string, string, string, string, string?, long?)>();
+        while (r.Read())
+            result.Add((r.GetInt64(0), r.GetString(1), r.GetString(2), r.GetString(3), r.GetString(4),
+                r.IsDBNull(5) ? null : r.GetString(5), r.IsDBNull(6) ? null : r.GetInt64(6)));
+        return result;
     }
 
     [Fact]
@@ -686,7 +748,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(11, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v10.", Path.GetFileName(db.LastBackupPath!));
         using (var conn = db.Open()) Assert.Equal(1L, ReplyColumnCount(conn));
@@ -715,9 +777,121 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(11, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         using var check = db.Open();
         Assert.Equal(1L, ReplyColumnCount(check));
+    }
+
+    [Fact]
+    public void Row14_T1_a_v11_database_is_migrated_to_v12_with_role_persona_and_room_roles_and_every_existing_row_unchanged()
+    {
+        WriteRawV11();
+
+        List<(string Id, string DisplayName, string Kind, string? Host, string? Model, string? Note, string? Classes)> participantsBefore;
+        List<(string Id, string Name, string CreatedAt, string? Directory, string? ArchivedAt)> roomsBefore;
+        List<(long Id, string RoomId, string AuthorId, string Body, string CreatedAt, string? ClientKey, long? ReplyToId)> messagesBefore;
+        using (var before = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString()))
+        {
+            before.Open();
+            using var v = before.CreateCommand();
+            v.CommandText = "PRAGMA user_version;";
+            Assert.Equal(11L, (long)v.ExecuteScalar()!);   // the premise: a real v11 shape
+
+            participantsBefore = ReadParticipantsV11Shape(before);
+            roomsBefore = ReadRoomsV11Shape(before);
+            messagesBefore = ReadMessagesV11Shape(before);
+        }
+        Assert.True(participantsBefore.Count >= 1);
+        Assert.True(roomsBefore.Count >= 1);
+        Assert.True(messagesBefore.Count >= 2);
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+
+        using var conn = db.Open();
+        using (var probe = conn.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'role'";
+            Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+        }
+        using (var probe = conn.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name = 'persona'";
+            Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+        }
+        using (var nullCheck = conn.CreateCommand())
+        {
+            nullCheck.CommandText = "SELECT COUNT(*) FROM participants WHERE role IS NOT NULL";
+            Assert.Equal(0L, (long)nullCheck.ExecuteScalar()!);
+        }
+        using (var nullCheck = conn.CreateCommand())
+        {
+            nullCheck.CommandText = "SELECT COUNT(*) FROM rooms WHERE persona IS NOT NULL";
+            Assert.Equal(0L, (long)nullCheck.ExecuteScalar()!);
+        }
+        using (var roomRoles = conn.CreateCommand())
+        {
+            roomRoles.CommandText = "SELECT COUNT(*) FROM room_roles";
+            Assert.Equal(0L, (long)roomRoles.ExecuteScalar()!);
+        }
+
+        Assert.Equal(participantsBefore, ReadParticipantsV11Shape(conn));
+        Assert.Equal(roomsBefore, ReadRoomsV11Shape(conn));
+        Assert.Equal(messagesBefore, ReadMessagesV11Shape(conn));
+    }
+
+    [Fact]
+    public void Row14_T1_a_torn_v12_with_the_columns_present_but_stamp_11_is_finished_not_crashed()
+    {
+        WriteRawV11();
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                ALTER TABLE participants ADD COLUMN role TEXT;
+                ALTER TABLE rooms ADD COLUMN persona TEXT;
+                """;
+            cmd.ExecuteNonQuery();
+            // stamp deliberately left at 11 — the torn state
+        }
+        SqliteConnection.ClearAllPools();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        using var check = db.Open();
+        using (var probe = check.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'role'";
+            Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+        }
+        using (var probe = check.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='room_roles'";
+            Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+        }
+    }
+
+    [Fact]
+    public void Row14_T1_room_roles_rejects_a_duplicate_room_participant_pair()
+    {
+        WriteRawV11();
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        using var conn = db.Open();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "INSERT INTO room_roles (room_id, participant_id, role) VALUES ('general', 'opus', 'first')";
+            cmd.ExecuteNonQuery();
+        }
+        using var dup = conn.CreateCommand();
+        dup.CommandText = "INSERT INTO room_roles (room_id, participant_id, role) VALUES ('general', 'opus', 'second')";
+        Assert.Throws<SqliteException>(() => dup.ExecuteNonQuery());
     }
 
     [Fact]
@@ -728,7 +902,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(11, db.GetSchemaVersion());   // the ladder runs through v11 too now
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());   // the ladder runs through v11 too now
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.Contains(".v9.", Path.GetFileName(db.LastBackupPath!));
@@ -1079,7 +1253,7 @@ public sealed class SchemaMigrationTests : IDisposable
         cmd.CommandText = "SELECT COUNT(*) FROM memory_proposals WHERE status = 'pending'";
         Assert.Equal(1L, (long)cmd.ExecuteScalar()!);
         cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms')";
-        Assert.Equal(5L, (long)cmd.ExecuteScalar()!);
+        Assert.Equal(6L, (long)cmd.ExecuteScalar()!);   // v6's directory+archived_at, plus v12's persona (row 14) — EnsureDatabase runs the whole ladder
         cmd.CommandText = "SELECT COUNT(*) FROM rooms WHERE id = 'general' AND directory IS NULL AND archived_at IS NULL";
         Assert.Equal(1L, (long)cmd.ExecuteScalar()!);
 
@@ -1114,7 +1288,7 @@ public sealed class SchemaMigrationTests : IDisposable
         using var check = db.Open();
         using var count = check.CreateCommand();
         count.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms')";
-        Assert.Equal(5L, (long)count.ExecuteScalar()!);
+        Assert.Equal(6L, (long)count.ExecuteScalar()!);   // v6's directory+archived_at, plus v12's persona (row 14) — EnsureDatabase runs the whole ladder
     }
 
     [Fact]

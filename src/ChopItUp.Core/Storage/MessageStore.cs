@@ -16,7 +16,8 @@ public sealed class MessageStore(ChopDb db)
                CASE WHEN $p IS NULL THEN 0 ELSE (
                    SELECT COUNT(*) FROM messages u
                    WHERE u.room_id = r.id
-                     AND u.id > COALESCE((SELECT c.last_read_id FROM read_cursors c WHERE c.participant_id = $p AND c.room_id = r.id), 0)) END
+                     AND u.id > COALESCE((SELECT c.last_read_id FROM read_cursors c WHERE c.participant_id = $p AND c.room_id = r.id), 0)) END,
+               r.persona
         FROM rooms r LEFT JOIN messages m ON m.room_id = r.id
         WHERE {0}
         GROUP BY r.id
@@ -57,7 +58,8 @@ public sealed class MessageStore(ChopDb db)
         r.IsDBNull(5) ? null : r.GetString(5),
         r.IsDBNull(6) ? null : Timestamps.Parse(r.GetString(6)),
         Timestamps.Parse(r.GetString(7)),
-        r.GetInt64(8));
+        r.GetInt64(8),
+        r.IsDBNull(9) ? null : r.GetString(9));
 
     /// <summary>Inserts a room. The id is the caller's (<see cref="RoomIds"/>); the primary key is the
     /// arbiter for a duplicate, surfaced as <see cref="ArgumentException"/>. <paramref name="directory"/>
@@ -101,6 +103,28 @@ public sealed class MessageStore(ChopDb db)
         using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE rooms SET directory = $dir WHERE id = $id AND directory IS NULL";
         cmd.Parameters.AddWithValue("$dir", directory);
+        cmd.Parameters.AddWithValue("$id", roomId);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    /// <summary>Row 14 (D-h): the cap on a room persona, enforced here so a future writer that is not
+    /// the HTTP API cannot exceed it. The persona is the higher-leverage field — one write reaches
+    /// every participant spawned in the room — so it is capped here, not only at the API. Equals
+    /// <see cref="ChopItUp.Core.Memory.MemoryStore.RoomChars"/> so the two per-room text budgets match.</summary>
+    public const int MaxPersonaChars = 2000;
+
+    /// <summary>Sets or clears a room's persona (row 14), rendered into every participant's spawn
+    /// prompt in this room. An empty or whitespace <paramref name="persona"/> clears it to NULL. False
+    /// for an unknown room.</summary>
+    public bool SetPersona(string roomId, string? persona)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(persona) ? null : persona.Trim();
+        if (trimmed is { Length: > MaxPersonaChars })
+            throw new ArgumentException($"Persona exceeds {MaxPersonaChars} characters.", nameof(persona));
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE rooms SET persona = $p WHERE id = $id";
+        cmd.Parameters.AddWithValue("$p", (object?)trimmed ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$id", roomId);
         return cmd.ExecuteNonQuery() == 1;
     }

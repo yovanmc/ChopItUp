@@ -23,6 +23,42 @@ export interface Room {
   lastActivityAt: string;
   /** Messages past the owner's read cursor. */
   unread: number;
+  /** Row 14: the room-wide text the hub renders into every spawn here, or null. */
+  persona: string | null;
+}
+
+/** One participant's standing text in one room, as `RolesApi` builds it. Mirrors the server shape
+ *  exactly (Web/RolesApi.cs `BuildRoomRoles`), field for field.
+ *
+ *  The three role fields are three different things and collapsing any two of them loses a state the
+ *  owner can reach (D-b): `role` is the global role the participant carries everywhere; `roomRole`
+ *  is this room's override, `null` when none is stored and `''` when the room stores the "no role
+ *  here" sentinel — a stored row, not the absence of one; `effectiveRole` is what the hub actually
+ *  renders into the prompt, `COALESCE(roomRole, role)`, computed by the server and never re-derived
+ *  here. */
+export interface RoleRow {
+  id: string;
+  displayName: string;
+  role: string | null;
+  roomRole: string | null;
+  effectiveRole: string | null;
+}
+
+/** Mirrors `GET /api/rooms/{id}/roles` and the answer to every write on it. `participants` holds only
+ *  the rows the hub can actually spawn (`ExchangePolicy.IsSpawnable`), so the app-backed `claude` and
+ *  `codex` rows are absent — a role stored on them could never render. */
+export interface RoomRoles {
+  roomId: string;
+  persona: string | null;
+  participants: RoleRow[];
+}
+
+/** The narrower answer `POST /api/participants/{id}/role` gives: the participant's new global role,
+ *  with no room in the question and so no `effectiveRole` in the answer. */
+export interface RoleUpdate {
+  id: string;
+  displayName: string;
+  role: string | null;
 }
 
 /** One line of `git log` in a room's directory (Web/RoomsApi.cs `GetTrail`). */

@@ -5,7 +5,9 @@ import type {
   MemorySource,
   Message,
   Participant,
+  RoleUpdate,
   Room,
+  RoomRoles,
   RunSnapshot,
   Skill,
   SkillProposal,
@@ -128,6 +130,69 @@ export async function bindDirectory(roomId: string, directory: string, signal?: 
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ directory }),
+      signal,
+    }),
+  );
+}
+
+/** Row 14. The room's persona and every spawnable participant's global role, this room's override of
+ *  it and the effective role the hub would render — read fresh, because a role edited anywhere takes
+ *  effect on the next spawn without a restart. A GET, so it needs no credential; the three writes
+ *  below go through `write()` like every other write here (ledger 15). */
+export async function getRoomRoles(roomId: string, signal?: AbortSignal): Promise<RoomRoles> {
+  return unwrap<RoomRoles>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/roles`, { signal }));
+}
+
+/** The room-wide text every spawn here is given. Empty clears it (the hub trims and stores NULL), so
+ *  this must never be gated on the text being non-empty or the owner cannot take a persona back off
+ *  a room. */
+export async function setPersona(roomId: string, persona: string, signal?: AbortSignal): Promise<RoomRoles> {
+  return unwrap<RoomRoles>(
+    await write(`/api/rooms/${encodeURIComponent(roomId)}/persona`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ persona }),
+      signal,
+    }),
+  );
+}
+
+/** The participant's role in every room that does not override it. Empty clears it, same as above.
+ *  The hub answers with that participant alone — there is no room in the question, so there is no
+ *  `effectiveRole` in the answer, which is why the dialog re-reads the room after this one. */
+export async function setGlobalRole(participantId: string, role: string, signal?: AbortSignal): Promise<RoleUpdate> {
+  return unwrap<RoleUpdate>(
+    await write(`/api/participants/${encodeURIComponent(participantId)}/role`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ role }),
+      signal,
+    }),
+  );
+}
+
+/** This room's override of one participant's global role — and D-b's two DIFFERENT operations, told
+ *  apart by the body this sends and nothing else:
+ *
+ *  - `role === null` omits the key entirely, which the hub reads as *clear the override*: the row is
+ *    deleted and the participant falls back to its global role.
+ *  - any string, `''` INCLUDED, sends `{"role": …}`, which the hub *stores* — and `''` is the "no
+ *    role in this room" sentinel, a stored row that suppresses the global role here.
+ *
+ *  Collapsing the two (defaulting the missing key to `''`, or turning an empty string into a delete)
+ *  makes one of the four states of a role in a room unreachable, which is the whole reason the
+ *  sentinel exists. */
+export async function setRoomRole(
+  roomId: string,
+  participantId: string,
+  role: string | null,
+  signal?: AbortSignal,
+): Promise<RoomRoles> {
+  return unwrap<RoomRoles>(
+    await write(`/api/rooms/${encodeURIComponent(roomId)}/roles/${encodeURIComponent(participantId)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(role === null ? {} : { role }),
       signal,
     }),
   );

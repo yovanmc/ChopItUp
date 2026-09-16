@@ -171,7 +171,7 @@ try {
         Write-Error "Hub never answered /health on pid $($hub.Id); see $(Join-Path $DataDir 'hub.stderr.log')." -ErrorAction Continue
         exit 2
     }
-    Add-Check -Name 'health.schema-is-11' -Passed ($health.schema -eq 11) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-12' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
 
     # --- run.no-directory-refused: the 'general' room has no directory (seeded that way), so the
     # same invocation there must refuse rather than start a run (AC2). Checked BEFORE the real toy

@@ -108,6 +108,10 @@ public sealed class SpawnerService : BackgroundService
     private readonly RoomTrails _trails;
     private readonly ExchangeWorktrees _worktrees;
     private readonly Participant _owner;
+    // Row 14, task 4 (D-c): the roster (_roster) stays the startup-static snapshot for identity, peers
+    // and tokens, but role and persona text must reflect a web-UI edit without a hub restart, so this
+    // is read live at launch time via _participants.EffectiveRole, never off _roster.
+    private readonly ParticipantStore _participants;
     private readonly ExchangePolicy _policy;
     private readonly SkillStore _skills;
     private readonly TimeProvider _clock;
@@ -164,6 +168,7 @@ public sealed class SpawnerService : BackgroundService
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
         _trails = trails; _worktrees = worktrees; _owner = roster.First(p => p.Id == participants.OwnerId());
+        _participants = participants;
         _policy = new ExchangePolicy(roster, limits);
         _skills = skills;
         _clock = clock;
@@ -957,11 +962,14 @@ public sealed class SpawnerService : BackgroundService
                 roomMemory = new RoomMemory(roomTopic, text?.Text ?? "", text?.Truncated ?? false);
             }
             var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) : null;
+            // Row 14, task 4 (D-c): read fresh at launch, not from the startup-static _roster, so an
+            // owner edit through the API takes effect on the very next spawn with no hub restart (AC7).
+            var standing = new SpawnPrompt.StandingText(room?.Persona, _participants.EffectiveRole(request.RoomId, participant.Id));
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
                 participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
                 core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: tree, Skill: x.Skill,
-                DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory), _limits);
+                DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory, Standing: standing), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)

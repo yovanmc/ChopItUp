@@ -347,7 +347,7 @@ try {
     Add-Check -Name 'c2.no-database-in-working-directory' -Passed (-not (Test-Path -LiteralPath (Join-Path $workDir 'data'))) -Detail (Join-Path $workDir 'data')
 
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
-    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 11) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
 
     # Row 28: tokens.json (which the hub's own start-up migration already rewrote to the hashed
     # shape by now -- /health above only answers once startup finishes) no longer holds a plaintext

@@ -12,13 +12,14 @@ interface Props {
   onBind: () => void;
   onArchive: () => void;
   onTrail: () => void;
+  onRoles: () => void;
 }
 
 /** Import and export live here, quiet, rather than competing with the conversation. Export is a
  *  plain same-origin download link — the hub already returns text/markdown. M9 adds the room's
  *  directory (or the one-time Bind control on a room made before M9), Archive/Unarchive (never on
  *  general — the hub refuses it), and the Trail dialog. */
-function RoomHeader({ room, loadedCount, busy, onImport, onImportMemory, onBind, onArchive, onTrail }: Props) {
+function RoomHeader({ room, loadedCount, busy, onImport, onImportMemory, onBind, onArchive, onTrail, onRoles }: Props) {
   const archived = room.archivedAt !== null;
   return (
     <header className="room-head">
@@ -50,6 +51,14 @@ function RoomHeader({ room, loadedCount, busy, onImport, onImportMemory, onBind,
           title={room.directory === null ? 'This room has no directory' : 'Commits the hub made in this room'}
         >
           Trail
+        </button>
+        <button
+          type="button"
+          className="quiet"
+          onClick={onRoles}
+          title="The persona of this room, and what each participant is told it is here"
+        >
+          Roles
         </button>
         {room.id !== 'general' && (
           <button type="button" className="quiet" onClick={onArchive} disabled={busy}>

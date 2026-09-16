@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 11;
+    public const int LatestSchemaVersion = 12;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -120,6 +120,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 9) ApplyV9(conn);
             if (GetUserVersion(conn) < 10) ApplyV10(conn);
             if (GetUserVersion(conn) < 11) ApplyV11(conn);
+            if (GetUserVersion(conn) < 12) ApplyV12(conn);
             return 0;
         });
     }
@@ -642,6 +643,41 @@ public sealed class ChopDb
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = (hasColumn ? "" : "ALTER TABLE messages ADD COLUMN reply_to_id INTEGER REFERENCES messages(id);\n") + "PRAGMA user_version = 11;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Row 14: the two nullable text columns and the one join table that carry roles and
+    /// personas. Both ALTERs are probed first (SQLite has no ADD COLUMN IF NOT EXISTS), so a database
+    /// whose columns were added by some other path is finished rather than failing on a duplicate
+    /// column. Nothing is backfilled: a NULL role and a NULL persona mean "the prompt this build
+    /// already renders" (AC5).</summary>
+    private static void ApplyV12(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        bool hasRole, hasPersona;
+        using (var probe = conn.CreateCommand())
+        {
+            probe.Transaction = tx;
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('participants') WHERE name = 'role'";
+            hasRole = Convert.ToInt64(probe.ExecuteScalar()) > 0;
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name = 'persona'";
+            hasPersona = Convert.ToInt64(probe.ExecuteScalar()) > 0;
+        }
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText =
+            (hasRole ? "" : "ALTER TABLE participants ADD COLUMN role TEXT;\n") +
+            (hasPersona ? "" : "ALTER TABLE rooms ADD COLUMN persona TEXT;\n") +
+            """
+            CREATE TABLE IF NOT EXISTS room_roles (
+                room_id        TEXT NOT NULL REFERENCES rooms(id),
+                participant_id TEXT NOT NULL REFERENCES participants(id),
+                role           TEXT NOT NULL,
+                PRIMARY KEY (room_id, participant_id)
+            );
+            PRAGMA user_version = 12;
+            """;
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

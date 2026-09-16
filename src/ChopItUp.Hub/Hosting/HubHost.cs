@@ -204,6 +204,7 @@ public static class HubHost
             app.MapHub<RoomHub>("/hub/rooms");
             app.MapChatApi();
             app.MapRoomsApi();
+            app.MapRolesApi();
             app.MapExchangeApi();
             app.MapRunsApi();
             app.MapMemoryApi();
