@@ -196,6 +196,44 @@ public sealed class ParticipantStoreTests : IDisposable
     }
 
     [Fact]
+    public void SetRoomRole_with_whitespace_only_stores_the_suppress_sentinel_not_the_spaces()
+    {
+        var store = MakeStore(out var db);
+        MakeRooms(db);
+        Assert.True(store.SetRole("opus", "Global reviewer"));
+
+        Assert.True(store.SetRoomRole("lab", "opus", "   "));
+
+        Assert.Equal("", store.RoomRole("lab", "opus"));
+        Assert.Equal("", store.EffectiveRole("lab", "opus"));
+    }
+
+    [Fact]
+    public void SetRoomRole_trims_surrounding_whitespace()
+    {
+        var store = MakeStore(out var db);
+        MakeRooms(db);
+
+        Assert.True(store.SetRoomRole("lab", "opus", " lead "));
+
+        Assert.Equal("lead", store.RoomRole("lab", "opus"));
+    }
+
+    [Fact]
+    public void SetRoomRole_at_the_cap_after_trimming_succeeds_same_rule_as_SetRole()
+    {
+        var store = MakeStore(out var db);
+        MakeRooms(db);
+        var atCap = new string('a', ParticipantStore.MaxRoleChars) + "\n";
+
+        Assert.True(store.SetRole("opus", atCap));
+        Assert.True(store.SetRoomRole("lab", "opus", atCap));
+
+        Assert.Equal(ParticipantStore.MaxRoleChars, store.GlobalRole("opus")!.Length);
+        Assert.Equal(ParticipantStore.MaxRoleChars, store.RoomRole("lab", "opus")!.Length);
+    }
+
+    [Fact]
     public void List_round_trips_a_stored_role()
     {
         var store = MakeStore(out _);

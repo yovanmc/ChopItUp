@@ -222,6 +222,18 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal("Global reviewer", Str(afterClear, "effectiveRole"));
     }
 
+    /// <summary>Row 14 review fix 1: a whitespace-only room override normalises like <c>SetRole</c> and
+    /// <c>MessageStore.SetPersona</c> instead of storing the raw spaces.</summary>
+    [Fact]
+    public async Task Room_role_of_whitespace_only_stores_the_suppress_sentinel_not_the_spaces()
+    {
+        Assert.Equal(HttpStatusCode.OK, (await SetRoomRole("general", "opus", "   ")).StatusCode);
+
+        var row = Row(await GetRoles(), "opus");
+        Assert.Equal("", Str(row, "roomRole"));
+        Assert.Equal("", Str(row, "effectiveRole"));
+    }
+
     [Fact]
     public async Task Global_role_can_be_set_and_then_cleared()
     {
