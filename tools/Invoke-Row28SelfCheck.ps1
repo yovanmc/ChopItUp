@@ -31,12 +31,13 @@
         - /health answers 200 with the expected schema.
         - An unauthenticated POST /api/rooms/{RoomId}/messages is refused (401) and leaves the room's
           message count unchanged.
-        - hub.host-configs-sweep-clean: -RoomId holds no `hub`-authored message containing "still
-          carries a live credential" created at or after the deployed exe's LastWriteTimeUtc.
+        - hub.host-configs-sweep-clean: room 'general' holds no `hub`-authored message containing
+          "still carries a live credential" created at or after the deployed exe's LastWriteTimeUtc.
           HostConfigs.SweepLiveTokens (Hosting/HubHost.cs) posts exactly that note when a host-config
-          rewrite fails at startup, so this is the room-observable half of the two data checks row 28
-          shipped with (deleted here; see PRIVACY BOUNDARY). Reads GET
-          /api/rooms/{RoomId}/messages?afterId=&limit=, paging on NextAfterId.
+          rewrite fails at startup, always to 'general' (HubHost.cs:87), regardless of -RoomId, so
+          this is the room-observable half of the two data checks row 28 shipped with (deleted here;
+          see PRIVACY BOUNDARY). Reads GET /api/rooms/general/messages?afterId=&limit=, paging on
+          NextAfterId.
       Owner-only checks (need -OwnerToken; SKIPped with a reason naming the owner when it is omitted):
         - auth.owner-token-post-accepted-201 and its -ipv6 twin: the SAME POST above, carrying
           "Authorization: Bearer <OwnerToken>", is accepted (201) -- the "refused-then-accepted pair"
@@ -99,9 +100,10 @@
     "the live hub's" port).
 
 .PARAMETER RoomId
-    The room the 401/201 pair posts against, and hub.host-configs-sweep-clean reads. Defaults to
-    'general'. The 201 leaves one real, clearly-labelled verification message in this room -- see
-    RESUME SEMANTICS for why a re-run does not repeat it.
+    The room the 401/201 pair posts against. Defaults to 'general'. hub.host-configs-sweep-clean does
+    NOT read this parameter -- it always reads room 'general', since that is where HubHost.cs:87
+    posts the sweep-failure note regardless of -RoomId. The 201 leaves one real, clearly-labelled
+    verification message in -RoomId -- see RESUME SEMANTICS for why a re-run does not repeat it.
 
 .PARAMETER LogDir
     Where the evidence log lives. Defaults to a directory under $env:TEMP -- NEVER pass a path under
@@ -248,18 +250,19 @@ Invoke-Check -Name 'auth.no-credential-post-refused-401' -Body {
 
 Invoke-Check -Name 'hub.host-configs-sweep-clean' -Body {
     # HostConfigs.SweepLiveTokens (Hosting/HubHost.cs) runs at every hub start; a rewrite failure never
-    # stops the hub (AC4 of row 28 ticket 3) but posts a `hub`-authored note in -RoomId whose body
-    # contains "still carries a live credential" (ChatApi.MapMessage / GetMessages, Web/ChatApi.cs:
-    # 43-46, 145-155). A note from BEFORE this deploy (an old, already-handled failure) does not fail
-    # this leg -- only one at or after the deployed exe's LastWriteTimeUtc does, since that is the note
-    # this exact start would have posted.
+    # stops the hub (AC4 of row 28 ticket 3) but posts a `hub`-authored note in room 'general' -- the
+    # caller (HubHost.cs:87, messages.Post("general", ChopDb.HubParticipantId, ...)) posts there
+    # unconditionally, regardless of -RoomId -- whose body contains "still carries a live credential"
+    # (ChatApi.MapMessage / GetMessages, Web/ChatApi.cs: 43-46, 145-155). A note from BEFORE this deploy
+    # (an old, already-handled failure) does not fail this leg -- only one at or after the deployed
+    # exe's LastWriteTimeUtc does, since that is the note this exact start would have posted.
     $needle = 'still carries a live credential'
     $afterId = 0L
     $hasMore = $true
     $scanned = 0
     $hit = $null
     while ($hasMore) {
-        $page = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/rooms/$RoomId/messages?afterId=$afterId&limit=200" -TimeoutSec 10
+        $page = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/rooms/general/messages?afterId=$afterId&limit=200" -TimeoutSec 10
         # M10 (docs/LESSONS.md): pipe a top-level JSON array through ForEach-Object { $_ } first.
         $msgs = @($page.messages | ForEach-Object { $_ })
         foreach ($m in $msgs) {
