@@ -21,6 +21,7 @@ const ROOMS: Room[] = [
     messageCount: 8,
     unread: 3,
     archivedAt: null,
+    persona: null,
   },
 ];
 

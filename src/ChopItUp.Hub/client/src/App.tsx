@@ -8,6 +8,7 @@ import ImportDialog from './ImportDialog';
 import MemoryImportDialog from './MemoryImportDialog';
 import MemoryPanel from './MemoryPanel';
 import NewRoomDialog from './NewRoomDialog';
+import RolesDialog from './RolesDialog';
 import RoomHeader from './RoomHeader';
 import RoomRail from './RoomRail';
 import RunBar from './RunBar';
@@ -172,6 +173,7 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
   const [trailOpen, setTrailOpen] = useState(false);
+  const [rolesOpen, setRolesOpen] = useState(false);
   const [roomBusy, setRoomBusy] = useState(false);
 
   const hub = useRef<HubConnection | null>(null);
@@ -728,6 +730,7 @@ export default function App() {
               onBind={() => setRoomDialog({ mode: 'bind', room: activeRoom })}
               onArchive={() => void toggleArchive()}
               onTrail={() => setTrailOpen(true)}
+              onRoles={() => setRolesOpen(true)}
             />
             {error && (
               <p className="banner" role="alert">
@@ -798,6 +801,7 @@ export default function App() {
         />
       )}
       {trailOpen && activeRoom && <TrailDialog room={activeRoom} onClose={() => setTrailOpen(false)} />}
+      {rolesOpen && activeRoom && <RolesDialog room={activeRoom} onClose={() => setRolesOpen(false)} />}
     </div>
   );
 }
