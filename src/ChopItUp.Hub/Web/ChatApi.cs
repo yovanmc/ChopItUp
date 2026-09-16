@@ -158,7 +158,7 @@ public static class ChatApi
     }
 
     private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, m.ReplyToId };
-    internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread };
+    internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread, r.Persona };
 
     internal sealed record PostBody(string? Body, long? ReplyToId = null);
     internal sealed record ImportBody(string? Text);
