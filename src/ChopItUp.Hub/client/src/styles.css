@@ -2239,8 +2239,8 @@ input {
 }
 /* ---------- memory editor dialog (row 40) ---------- */
 
-/* Wider than the other dialogs and the same width as the roles one: what this holds is a whole memory
-   file, and a 6,000-character core wrapped into a 680px column is a column of ragged prose. */
+/* The widest dialog here — 860px against the roles dialog's 760 — because what it holds is a whole
+   memory file, and a 6,000-character core wrapped into a 680px column is a column of ragged prose. */
 .memory-editor-dialog {
   width: min(860px, 100%);
 }
@@ -2251,15 +2251,17 @@ input {
 }
 
 /* Monospace, and tall: the lines that matter here are headings and the hub's own `<!-- approved … -->`
-   records, which are read by their shape. */
+   records, which are read by their shape. Soft-wrapped, because a memory entry is a paragraph on one
+   line: `pre` would hide it behind a horizontal scrollbar, and `anywhere` is what wraps a provenance
+   record or a pasted path that carries no break of its own. */
 .memory-editor-text {
   min-height: 46vh;
   resize: vertical;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre;
-  overflow-wrap: normal;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* --dim, not --faint: at 12px this line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */

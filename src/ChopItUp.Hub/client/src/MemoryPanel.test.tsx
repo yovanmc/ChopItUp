@@ -177,13 +177,16 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
 
   /* Row 40. `source` used to mean one thing — the vendor an import read the text out of — and the card
      says so in words. An editor save carries `source: 'editor'`, which is not an import and has no
-     vendor path, so "imported from editor" would name the wrong door. The only way such a row reaches
-     this panel at all is the approved-but-unwritten window, where Retry performs the write. */
-  test('an editor row says it was edited by hand rather than imported', () => {
-    const html = render({ ...REWRITE, status: 'approved', writtenTo: null, source: 'editor' });
+     vendor path, so "imported from editor" would name the wrong door. Which button performs the write
+     depends on the card's state, and naming the wrong one sends the owner looking for a button that
+     is not on the card. */
+  test('an editor row is edited by hand, and names the button its own card state offers', () => {
+    const unwritten = render({ ...REWRITE, status: 'approved', writtenTo: null, source: 'editor' });
+    const pending = render({ ...REWRITE, source: 'editor' });
 
-    expect(html).toContain('edited by hand; Retry writes it');
-    expect(html).not.toContain('imported from editor');
+    expect(unwritten).toContain('edited by hand; Retry writes it');
+    expect(pending).toContain('edited by hand; Approve writes it');
+    expect(unwritten).not.toContain('imported from editor');
     expect(render({ ...REWRITE, source: 'claude:MEMORY.md' })).toContain('imported from claude:MEMORY.md');
   });
 

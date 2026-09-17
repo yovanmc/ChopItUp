@@ -82,11 +82,15 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 <span className="memory-id">#{p.id}</span>
               </div>
               <h3 className="memory-card-title">{p.title}</h3>
-              {/* Row 40: an editor row is not an import, and the only way one reaches this panel is
-                  the approved-but-unwritten crash window, where Retry is what performs the write. */}
+              {/* Row 40: an editor row is not an import. One reaches this panel only when the hub
+                  died mid-save — after the mark, leaving the approved-but-unwritten card Retry
+                  writes, or before it, leaving a pending card Approve writes — so the line names the
+                  button this card actually offers. */}
               {p.source && (
                 <p className="memory-source">
-                  {p.source === 'editor' ? 'edited by hand; Retry writes it' : `imported from ${p.source}`}
+                  {p.source === 'editor'
+                    ? `edited by hand; ${unwritten ? 'Retry' : 'Approve'} writes it`
+                    : `imported from ${p.source}`}
                 </p>
               )}
               {p.replaces && (

@@ -4,11 +4,13 @@ import {
   canPreview,
   countLine,
   isDirty,
+  isOver,
   LOCKED_HINT,
   MemoryEditor,
   NEEDS_TOKEN,
   saveEdit,
   savedLine,
+  shouldIgnoreDismiss,
   type EditHooks,
 } from './MemoryEditorDialog';
 import RoomHeader from './RoomHeader';
@@ -102,6 +104,15 @@ function render(overrides: Partial<Parameters<typeof MemoryEditor>[0]> = {}): st
   );
 }
 
+/** The opening tag of one footer button, so `disabled` is asserted about that button rather than
+ *  about whichever button in the footer happens to carry it. */
+function footerButton(markup: string, label: string): string {
+  const footer = markup.slice(markup.indexOf('<footer'));
+  const at = footer.indexOf(`>${label}<`);
+  expect(at).toBeGreaterThan(-1);
+  return footer.slice(footer.lastIndexOf('<button', at), at);
+}
+
 /** The text of the one element a class names, so a hint assertion is about the hint and not about the
  *  hint appearing anywhere in the dialog. */
 function textOf(markup: string, className: string): string {
@@ -165,6 +176,25 @@ describe('the states Save is unreachable in', () => {
     expect(canPreview(true, LOADED)).toBe(true);
   });
 
+  test('a text already past the cap cannot be saved before the first preview answers', () => {
+    const typed = `# Memory\n\n## Standing rules\n${'r'.repeat(6000)}\n`;
+
+    expect(isOver(null, typed.length, CORE.cap)).toBe(true);
+    expect(isOver(null, 10, CORE.cap)).toBe(false);
+    // Once the hub has answered, its number is the only one that decides: it is taken on the composed
+    // file, which is what the cap is enforced on, and the typed length is not that number.
+    expect(isOver({ slug: 'core', chars: 5120, cap: 6000, over: false }, 99_999, CORE.cap)).toBe(false);
+    expect(footerButton(render({ preview: null, text: typed }), 'Save')).toContain('disabled');
+  });
+
+  test('Close and Reload are shut while a save is in flight', () => {
+    const markup = render({ saving: true, text: `${LOADED.text}## More\nTyped.\n` });
+
+    expect(footerButton(markup, 'Close')).toContain('disabled');
+    expect(footerButton(markup, 'Reload')).toContain('disabled');
+    expect(footerButton(markup, 'Saving…')).toContain('disabled');
+  });
+
   test('Reload stays enabled while a save is refused, because it is the way back from a stale file', () => {
     const markup = render({
       text: `${LOADED.text}## More\nTyped.\n`,
@@ -177,6 +207,17 @@ describe('the states Save is unreachable in', () => {
     expect(button).toBeGreaterThan(-1);
     expect(footer.slice(footer.lastIndexOf('<button', button), button)).not.toContain('disabled');
     expect(markup).toContain('The file changed since you opened it.');
+  });
+});
+
+/** The two dismissals that carry no intent — a mousedown that lands on the overlay behind the dialog
+ *  and an Escape keypress — would drop a whole hand edit with nothing to undo it, because the text
+ *  the box holds exists nowhere else until a save writes it. */
+describe('what a stray dismiss does to unsaved text', () => {
+  test('a dirty box ignores the overlay and Escape, and the Close button stays the way out', () => {
+    expect(shouldIgnoreDismiss(true)).toBe(true);
+    expect(shouldIgnoreDismiss(false)).toBe(false);
+    expect(footerButton(render({ text: `${LOADED.text}## More\nTyped.\n` }), 'Close')).not.toContain('disabled');
   });
 });
 

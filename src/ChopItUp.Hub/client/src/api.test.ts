@@ -340,6 +340,12 @@ describe('the memory editor client', () => {
     expect(result.backup).toBe('topics/user.md.rewrite-1.bak');
   });
 
+  // No AbortSignal: a save is a write with a trail behind it, and an abandoned fetch would leave the
+  // caller unable to tell a cancelled request from one the hub committed.
+  test('a save takes the four things it sends and nothing else', () => {
+    expect(api.saveMemoryFile.length).toBe(4);
+  });
+
   test('a refused save carries the hub sentence as an ApiError', async () => {
     stubFetch(() => json({ error: 'The file changed since you opened it. Reload it and apply your edit again.' }, 409));
 

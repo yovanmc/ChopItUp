@@ -55,6 +55,24 @@ export function countLine(preview: MemoryPreview | null, rawLength: number): str
   return preview.over ? `${line} — over the cap by ${grouped(preview.chars - preview.cap)}` : line;
 }
 
+/** AC7. Which count the Save gate obeys. The hub's `over` is the authority, because it is taken on the
+ *  composed file the cap is enforced on. Until the first preview answers, the typed length against the
+ *  cap is the closest thing the dialog has, and it is enough for the obvious case: the composed file
+ *  puts a marker line and every surviving entry's approval record on top of the typed text, so a text
+ *  already over the cap on its own is over it composed too. Gating on nothing until the hub answers
+ *  would offer a Save that could only come back a 409. */
+export function isOver(preview: MemoryPreview | null, textLength: number, cap: number): boolean {
+  return preview === null ? textLength > cap : preview.over;
+}
+
+/** Whether a dismissal that carries no intent — a mousedown landing on the overlay behind the dialog,
+ *  or an Escape keypress — should be ignored. While the box is dirty it is, because the typed text
+ *  exists nowhere else until a save writes it and there is nothing to undo a closed dialog with. The
+ *  Close button is the explicit exit and is never gated on this. */
+export function shouldIgnoreDismiss(dirty: boolean): boolean {
+  return dirty;
+}
+
 /** Whether the dialog may ask the hub for a count. Every `POST` under `/api` needs an owner bearer
  *  and each accepted bearer costs a peer-process check, so a client with no token must not poll a
  *  route that can only answer 401; and there is nothing to count before a file has been read. */
@@ -133,7 +151,8 @@ export interface MemoryEditorProps {
  *
  *  Save is gated on the four states the hub would refuse (nothing changed, a spawn in flight, over the
  *  cap, no owner token) and on one it cannot answer yet (a save already in flight). Reload is gated on
- *  none of them: it is the way back from a stale file, and a 409 is the state it exists for (M25). */
+ *  none of the refusals: it is the way back from a stale file, and a 409 is the state it exists for
+ *  (M25). A save in flight is the one state that shuts Reload, and Close with it. */
 export function MemoryEditor({
   roomName,
   files,
@@ -154,7 +173,7 @@ export function MemoryEditor({
 }: MemoryEditorProps) {
   const box = useRef<HTMLTextAreaElement>(null);
   const dirty = loaded !== null && isDirty(loaded.text, text);
-  const over = preview?.over ?? false;
+  const over = loaded !== null && isOver(preview, text.length, loaded.cap);
 
   useEffect(() => {
     box.current?.focus();
@@ -164,7 +183,9 @@ export function MemoryEditor({
     <>
       <header className="dialog-head">
         <h2 id="memory-editor-title">Edit memory from {roomName}</h2>
-        <button type="button" className="quiet close" onClick={onClose} aria-label="Close">
+        {/* Shut mid-save, like the footer's pair: the write is in flight and its status line is what
+            says where the text and the backup landed. */}
+        <button type="button" className="quiet close" onClick={onClose} aria-label="Close" disabled={saving}>
           ✕
         </button>
       </header>
@@ -219,10 +240,12 @@ export function MemoryEditor({
       )}
 
       <footer className="dialog-actions">
-        <button type="button" className="quiet" onClick={onClose}>
+        <button type="button" className="quiet" onClick={onClose} disabled={saving}>
           Close
         </button>
-        <button type="button" className="quiet" onClick={onReload}>
+        {/* Open in every other state, a refusal included: it is the way back from a stale file (M25).
+            Shut only while the save it would race is in flight. */}
+        <button type="button" className="quiet" onClick={onReload} disabled={saving}>
           Reload
         </button>
         <button
@@ -267,6 +290,7 @@ export default function MemoryEditorDialog({ room, locked, onClose }: Props) {
    *  number for the text on screen. */
   const latest = useRef(0);
   const hasToken = readOwnerToken() !== null;
+  const dirty = loaded !== null && isDirty(loaded.text, text);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -320,11 +344,11 @@ export default function MemoryEditorDialog({ room, locked, onClose }: Props) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && !shouldIgnoreDismiss(dirty)) onClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, dirty]);
 
   const save = useCallback(() => {
     if (loaded === null) return;
@@ -350,7 +374,13 @@ export default function MemoryEditorDialog({ room, locked, onClose }: Props) {
   }, [loaded, room.id, slug, text]);
 
   return (
-    <div className="overlay" role="presentation" onMouseDown={onClose}>
+    <div
+      className="overlay"
+      role="presentation"
+      onMouseDown={() => {
+        if (!shouldIgnoreDismiss(dirty)) onClose();
+      }}
+    >
       <div
         className="dialog memory-editor-dialog"
         role="dialog"

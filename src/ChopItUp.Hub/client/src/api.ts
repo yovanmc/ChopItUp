@@ -422,14 +422,16 @@ export async function previewMemoryFile(slug: string, roomId: string, text: stri
 
 /** Row 40: one save = one approved rewrite. `baseHash` is the hash the read returned; the hub answers
  *  409 with its own sentence when the file moved on since, when a spawn is in flight, or when the
- *  result would pass the cap — all through `unwrap` as an `ApiError`, like every other refusal. */
-export async function saveMemoryFile(slug: string, roomId: string, text: string, baseHash: string, signal?: AbortSignal): Promise<MemoryEditResult> {
+ *  result would pass the cap — all through `unwrap` as an `ApiError`, like every other refusal.
+ *  No `AbortSignal`, unlike the reads above: a save leaves a proposal row, a backup and a commit
+ *  behind, and an abandoned request would leave the caller unable to tell a refusal from a write that
+ *  landed. */
+export async function saveMemoryFile(slug: string, roomId: string, text: string, baseHash: string): Promise<MemoryEditResult> {
   return unwrap<MemoryEditResult>(
     await write(`/api/memory/topics/${encodeURIComponent(slug)}`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ roomId, text, baseHash }),
-      signal,
     }),
   );
 }
