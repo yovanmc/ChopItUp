@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     M5 live check: starts a hub on a scratch data directory, posts one owner message that mentions
-    @sonnet and asks it to hand the turn to gpt-5.4-mini, and waits for the exchange to conclude.
+    @sonnet and asks it to hand the turn to gpt-5.6-terra, and waits for the exchange to conclude.
 
 .DESCRIPTION
     Proves the composition the unit tests cannot: the real claude.exe and codex.cmd, signed in on
@@ -93,7 +93,7 @@ try {
 
     # --- Leg 1: one owner message, a chain to a conclusion. An LLM must volunteer the second mention,
     #     so a chain that stops after sonnet is INCONCLUSIVE once and retried; only two misses fail.
-    $body = 'In one short line, name one thing worth checking in a deploy script, @sonnet. Then hand the turn to gpt-5.4-mini for one line of pushback, by mentioning it with an @ in front of its id.'
+    $body = 'In one short line, name one thing worth checking in a deploy script, @sonnet. Then hand the turn to gpt-5.6-terra for one line of pushback, by mentioning it with an @ in front of its id.'
     $attempts = 0; $state = $null; $messages = @(); $mini = @()
     do {
         $attempts++
@@ -101,8 +101,8 @@ try {
         Add-Check -Name "post.owner-message-$attempts" -Passed ($posted.id -ge 1) -Detail "id=$($posted.id)"
         $state = Wait-Exchange -Until 'concluded,stopped' -Seconds $TimeoutSeconds
         $messages = Read-Room
-        $mini = @($messages | Where-Object { $_.authorId -eq 'gpt-5.4-mini' -and $_.id -gt $posted.id })
-        if ($mini.Count -eq 0 -and $attempts -lt 2) { Add-Content -Path $log -Value "attempt $attempts INCONCLUSIVE: no gpt-5.4-mini reply; retrying" }
+        $mini = @($messages | Where-Object { $_.authorId -eq 'gpt-5.6-terra' -and $_.id -gt $posted.id })
+        if ($mini.Count -eq 0 -and $attempts -lt 2) { Add-Content -Path $log -Value "attempt $attempts INCONCLUSIVE: no gpt-5.6-terra reply; retrying" }
     } while ($mini.Count -eq 0 -and $attempts -lt 2)
     Add-Content -Path $log -Value ("exchange: " + ($state | ConvertTo-Json -Compress))
     foreach ($m in $messages) { Add-Content -Path $log -Value ("#{0} {1}: {2}" -f $m.id, $m.authorId, ($m.body -replace "`r?`n", ' / ')) }
@@ -110,7 +110,7 @@ try {
     $sonnet = @($messages | Where-Object authorId -eq 'sonnet')
     $hubNotes = @($messages | Where-Object authorId -eq 'hub')
     Add-Check -Name 'spawn.sonnet-replied' -Passed ($sonnet.Count -ge 1) -Detail "count=$($sonnet.Count)"
-    Add-Check -Name 'spawn.gpt-5.4-mini-replied' -Passed ($mini.Count -ge 1) -Detail "count=$($mini.Count) attempts=$attempts"
+    Add-Check -Name 'spawn.gpt-5.6-terra-replied' -Passed ($mini.Count -ge 1) -Detail "count=$($mini.Count) attempts=$attempts"
     Add-Check -Name 'exchange.concluded' -Passed ($state.status -eq 'concluded') -Detail "status=$($state.status) turnsUsed=$($state.turnsUsed)"
     Add-Check -Name 'exchange.concluded-note' -Passed ([bool]($hubNotes | Where-Object body -like 'Exchange concluded:*')) -Detail "hubNotes=$($hubNotes.Count)"
     Add-Check -Name 'exchange.turns-within-budget' -Passed ($state.turnsUsed -ge 1 -and $state.turnsUsed -le 4) -Detail "turnsUsed=$($state.turnsUsed)"
@@ -141,7 +141,7 @@ try {
     # Row 28: tokens.json now holds only host-file rows' SHA-256 hashes, never a plaintext -- it can no
     # longer be scanned for a live secret the way it could pre-row-28. $knownTokens (seeded with the
     # owner bearer this script minted, above) is what stands in for it now. This does NOT cover a
-    # spawned participant's own ephemeral bearer (sonnet's, gpt-5.4-mini's): those live only in memory
+    # spawned participant's own ephemeral bearer (sonnet's, gpt-5.6-terra's): those live only in memory
     # and in data\spawns\<id>\mcp.json for the life of the spawn, are never written to tokens.json even
     # pre-row-28's successor, and this script does not currently capture them -- see the Task 7 report
     # for why that gap is not closed here.

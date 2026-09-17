@@ -170,6 +170,19 @@ A silent-MCP-call caveat also applies to a spawn under this script, the same as 
 any timeout knob). Neither leg here calls `run_gate`, so it is unlikely to bite a one-file ask, but a
 leg that runs unexpectedly long is the same symptom, not a new one.
 
+**Measured 2026-09-17** (hub at `10d7875`, codex-cli 0.153.3, claude 2.1.267). Full run, default
+participants: 21/22 PASS — the Claude leg (`@sonnet`) 8/8 clean; the Codex leg spawned with
+`gpt-5.4-mini` exited 1 in ~2 s with empty stderr and no reply, so the hub merged an empty turn and
+only `file.codex-present-on-default-branch` FAILed. Reproduced outside the hub with the same
+`codex exec --json` arguments inside the linked (`.git`-file) worktree: Codex answered `400
+invalid_request_error: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
+account.` as a `turn.failed` event on **stdout**, not stderr — the hub's failure note only appends
+stderr (`SpawnerService.cs:1136-1140`), which is why the room only ever saw "exited with code 1
+without replying" (a board row will cover surfacing that). Re-run with `-CodexParticipant
+gpt-5.6-terra` (the account's configured model): 14/14 PASS, both legs merged cleanly — answering the
+`.git`-file worktree question above **yes**; the earlier failure was model support, not worktree
+shape. The script's default `-CodexParticipant` is now `gpt-5.6-terra`.
+
 ## Deploying a schema change, and rolling one back
 
 Written before the row 19 deploy, not after it. `ChopDb.EnsureDatabase` **throws** when the database's

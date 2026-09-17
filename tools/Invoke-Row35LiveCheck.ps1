@@ -8,8 +8,10 @@
     stubs the CLI, so nothing had ever proven that a real `claude`/`codex` process, spawned into a
     linked worktree whose `.git` is a FILE (Row 35 lesson), can create a file there and have the hub
     merge it onto the room's default branch and clean up afterward. This script closes that gap for
-    one Claude leg (`@sonnet`) and one Codex leg (`@gpt-5.4-mini`), run sequentially in the same
-    scratch directory room (row 35: the hub closes one worktree per room at a time).
+    one Claude leg (`@sonnet`) and one Codex leg (`@gpt-5.6-terra`, the model the account's Codex
+    config supports - `gpt-5.4-mini` measures a `400 invalid_request_error` from Codex, not a hub or
+    worktree defect, see docs/verification.md), run sequentially in the same scratch directory room
+    (row 35: the hub closes one worktree per room at a time).
 
     Each leg posts one owner message mentioning the participant and asking for ONE small file with
     fixed content (M5:100 shape) - no other tool use is requested, so a one-line reply concludes in
@@ -55,7 +57,7 @@ param(
     [int]$Port = 8832,
     [int]$SpawnTimeoutSeconds = 300,
     [string]$ClaudeParticipant = 'sonnet',
-    [string]$CodexParticipant = 'gpt-5.4-mini',
+    [string]$CodexParticipant = 'gpt-5.6-terra',
     [switch]$SkipClaude,
     [switch]$SkipCodex,
     [switch]$SeedOnly,
@@ -177,7 +179,7 @@ function Invoke-ExchangeLeg {
 
     $state = Wait-Exchange -Until 'concluded,stopped' -Seconds $SpawnTimeoutSeconds
     Add-Check -Name "exchange.$Label-concluded" -Passed ($state.status -in @('concluded', 'stopped')) -Detail "root=$root status=$($state.status)"
-    Add-Content -Path $log -Value ("leg $Label exchange: " + ($state | ConvertTo-Json -Compress))
+    Add-Content -Path $log -Value ("leg $Label exchange: " + ($state | ConvertTo-Json -Compress -Depth 4))
 
     # The close (merge-or-keep, worktree removal, branch deletion) runs off-thread after the exchange
     # concludes (SpawnerService.cs:329-361), so the note is polled separately, after Wait-Exchange
