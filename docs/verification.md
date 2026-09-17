@@ -138,6 +138,38 @@ The room clone's default branch is hub-owned: empty trail commits land on it, an
 by the next `finish-branch`, or closed by hand with `gh pr close`. To abandon a run's
 unfinished work outright, delete `room/m<row>` locally and on origin from a harness session.
 
+## Exchanges in worktrees, live (row 35)
+
+Rows 34/35 shipped exchange worktrees (`ExchangeWorktrees.cs`) with only a stubbed-CLI unit suite
+behind them. `pwsh tools\Invoke-Row35LiveCheck.ps1` proves the real thing: a scratch hub, a scratch
+directory room, one Claude spawn (`@sonnet`) and one Codex spawn (`@gpt-5.4-mini`), run sequentially
+in the same room (the hub closes one worktree per room at a time). Each leg asks for ONE small file
+with fixed content, then asserts with git run directly against the room directory: the `x<root>`
+worktree exists while the exchange is open and is gone after; the hub's close note for that root
+(merged-with-hash, nothing-new-to-merge, or kept-with-a-reason - whichever `ExchangeWorktrees.CloseAsync`
+posts); `git log --oneline -3` contains the merge hash when the note carries one; the requested file
+present in the room directory afterward; `chopitup/x<root>` gone from `git branch --list`. Spends at
+most one Claude call and one Codex call per leg; never retries internally.
+
+`-SeedOnly` spends no model call: it starts the hub, binds the directory room, and confirms the hub
+itself ran `git init` there — no exchange ever opens. Run that leg first: `pwsh
+tools\Invoke-Row35LiveCheck.ps1 -SeedOnly`. The full run (`pwsh tools\Invoke-Row35LiveCheck.ps1`) needs
+`claude auth status` reporting `loggedIn: true` first (LESSONS Row 26) — a signed-out CLI fails every
+Claude leg with no hub-side symptom. `-SkipClaude` / `-SkipCodex` re-run one leg alone.
+
+**The Codex `.git`-file worktree question.** A linked worktree's `.git` is a file, not a folder (row
+35's first git lesson), and nothing before this check had run a real `codex exec` inside one — only
+that Codex's sandbox tolerates a real `git commit` there (row 35's measured claim 24), not whether it
+accepts operating inside the worktree at all. This script's Codex leg is the first live measurement;
+its `file.codex-present-on-default-branch` check FAILs by name alone (never a message body) if Codex's
+file never reaches the default branch, and that is a real, recorded outcome — row 35 shipped without
+answering this, not a defect in the script that found it. Record whichever way it goes here.
+
+A silent-MCP-call caveat also applies to a spawn under this script, the same as inside a run: see
+"Timeouts inside a run" above (a hub-spawned Claude CLI cuts a silent MCP call at 300 s regardless of
+any timeout knob). Neither leg here calls `run_gate`, so it is unlikely to bite a one-file ask, but a
+leg that runs unexpectedly long is the same symptom, not a new one.
+
 ## Deploying a schema change, and rolling one back
 
 Written before the row 19 deploy, not after it. `ChopDb.EnsureDatabase` **throws** when the database's
