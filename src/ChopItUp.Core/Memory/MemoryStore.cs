@@ -229,12 +229,15 @@ public sealed class MemoryStore
     /// <see cref="Validate"/> does not apply. Requires at least one non-empty <c>## </c> heading, no
     /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b> (claim 8:
     /// <c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its length
-    /// arithmetic — raw text plus an allowance for the H1 and the marker line, and nothing per heading
-    /// (<see cref="ComposeRewrite"/> only ever adds a carried-forward provenance line to a <i>surviving</i>
-    /// live entry, never to a new or renamed heading, so the minimum any heading costs is zero) — is a
-    /// genuine floor: the smallest the composed file could possibly be. It can still under-count a body
-    /// that keeps many surviving titles, whose real carried-forward provenance this floor cannot see, so
-    /// it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
+    /// arithmetic is an honest floor (row 40): the raw composed text, charged for the H1 and the marker
+    /// line only when the body does not already carry them itself (a body an editor save round-trips
+    /// often carries both), and nothing per heading (<see cref="ComposeRewrite"/> only ever adds a
+    /// carried-forward provenance line to a <i>surviving</i> live entry, never to a new or renamed
+    /// heading, so the minimum any heading costs is zero) — the smallest the composed file could possibly
+    /// be. Charging for an H1 or a marker line the body already has would let the floor exceed the
+    /// composed size and refuse a text the authoritative cap check had accepted. It can still under-count
+    /// a body that keeps many surviving titles, whose real carried-forward provenance this floor cannot
+    /// see, so it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
     public static void ValidateRewrite(string? topic, string? body)
     {
         RequireSlug(topic);

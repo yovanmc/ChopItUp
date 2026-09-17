@@ -63,6 +63,17 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
     private IEnumerable<string> Backups() =>
         Directory.GetFiles(Memory.Root, "*.bak").Concat(Directory.GetFiles(Memory.TopicsDir, "*.bak"));
 
+    /// <summary>Row 40, pass 3 P3-2: how many commits the memory repo holds, so a second save can prove
+    /// it landed as its own commit rather than replaying the first.</summary>
+    private static async Task<int> CommitCount(string memoryRoot)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["rev-list", "--count", "HEAD"], new Dictionary<string, string>(), memoryRoot, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, r.ExitCode);
+        return int.Parse(r.StandardOutput.Trim());
+    }
+
     private async Task<List<(string Author, string Body)>> Messages()
     {
         using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0&limit=200"));
@@ -135,6 +146,17 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
         Assert.DoesNotContain(await Messages(), m => m.Body.StartsWith("Memory proposal #1 by owner", StringComparison.Ordinal));   // no Proposed note
 
         Assert.Empty((await GetJson("api/memory/proposals?room=general")).EnumerateArray());   // nothing left to decide
+
+        // Row 40, pass 3 P3-2: a second save, keyed off the FIRST response's hash, proves the hash
+        // re-arms rather than being usable once — the guard against silently clobbering an approval
+        // must be checked on the file as it now stands, not on some fixed value from GET time.
+        var again = written.Replace("Every morning.", "Every morning, still.");
+        var r2 = await Put("user", again, body.GetProperty("hash").GetString()!);
+        var body2 = JsonDocument.Parse(await r2.Content.ReadAsStringAsync()).RootElement;
+        Assert.True(r2.IsSuccessStatusCode, body2.ToString());
+        Assert.Equal("topics/user.md.rewrite-2.bak", body2.GetProperty("backup").GetString());
+        Assert.Equal(written, File.ReadAllText(Path.Combine(Memory.TopicsDir, "user.md.rewrite-2.bak")));
+        Assert.Equal(2, await CommitCount(Memory.Root));
     }
 
     [Fact]
@@ -227,7 +249,7 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
 
         var refused = await host.Client.PutAsJsonAsync("api/memory/topics/user", edit);
         Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
-        Assert.Contains(MemoryApi.SpawnRunning, await refused.Content.ReadAsStringAsync());
+        Assert.Contains(MemoryApi.SpawnRunningEdit, await refused.Content.ReadAsStringAsync());
         Assert.Empty(host.Services.GetRequiredService<MemoryProposalStore>().List(null, null));
 
         release.SetResult();

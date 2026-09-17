@@ -22,6 +22,9 @@ public static class MemoryApi
     // One decision at a time: two clicks on the same card must not race the mark-then-write sequence.
     private static readonly SemaphoreSlim Decisions = new(1, 1);
     public const string SpawnRunning = "A spawn is running; decide memory proposals when the exchange has finished.";
+    // Row 40, pass 3 P3-1: the panel's SpawnRunning names "decide memory proposals", which is not what an
+    // editor save does; the dialog's own LOCKED_HINT is this sentence verbatim.
+    public const string SpawnRunningEdit = "A spawn is running; save when the exchange has finished.";
     // Row 18, decision 3: the refusal note is posted once per proposal per hub process, never per click
     // (keyed per store too, since the test process hosts many hubs whose ids all start at 1 - pass 2 P2-6).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Root, long Id), byte> RefusalNoted = new();
@@ -98,10 +101,12 @@ public static class MemoryApi
 
     /// <summary>Row 40: a hand edit, saved as an approved <c>rewrite</c> authored by the bearer's own
     /// participant (the middleware set it) with <see cref="MemoryProposalStore.SourceEditor"/>. Every
-    /// refusal runs BEFORE the row is created — spawn in flight, stale hash, empty body, cap, body rules —
-    /// so a refused save leaves no row; the cap is decided on the composed size before ValidateRewrite
-    /// runs, so an over-cap text is always a 409 and never the floor's 400. Then <see cref="ApproveCore"/>
-    /// does exactly what the panel's Approve does. One action, one commit, under the same semaphore.</summary>
+    /// PRE-CHECK refusal runs BEFORE the row is created — spawn in flight, stale hash, empty body, cap,
+    /// body rules — so a save refused by a pre-check leaves no row; the cap is decided on the composed
+    /// size before ValidateRewrite runs, so an over-cap text is always a 409 and never the floor's 400.
+    /// <see cref="ApproveCore"/>'s own re-check is a defense in depth for a row that somehow reaches it
+    /// unrecognised by the pre-checks above; a refusal there leaves the row pending, same as any other
+    /// proposal. One action, one commit, under the same semaphore.</summary>
     private static async Task<IResult> PutTopic(string slug, EditBody body, HttpContext http, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
         if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
@@ -116,7 +121,7 @@ public static class MemoryApi
         await Decisions.WaitAsync();
         try
         {
-            if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });
+            if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunningEdit });
             var current = memory.ReadTopic(slug, int.MaxValue);
             if (current is null) return Results.NotFound(new { error = $"No topic '{slug}' to edit." });
             var currentHash = Hash(current.Text);
@@ -250,7 +255,7 @@ public static class MemoryApi
             catch (ArgumentException e) { return (Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }), null); }
             if (memory.ReadTopic(p.Topic) is null)
                 return (Results.Conflict(new { error = $"No topic '{p.Topic}' to rewrite." }), null);
-            var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+            var cap = CapOf(p.Topic);
             int chars;
             try { chars = memory.ProjectedRewriteChars(p.Topic, p.Body, provenance); }
             catch (KeyNotFoundException e) { return (Results.Conflict(new { error = e.Message }), null); }
