@@ -14,6 +14,8 @@ Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryChe
 Memory v1.1 check (no model calls, scratch hub, drives /mcp itself): `pwsh tools\Invoke-M18MemoryCheck.ps1`.
 Row 23 consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, drives
 `propose_rewrite` and the approve path itself): `pwsh tools\Invoke-M23DryRun.ps1`.
+Row 40 editor dry run (no model calls, scratch hub, fabricated corpus, drives the editor routes, the
+trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.ps1`.
 Row 23 self-check (skill import + `/health` + `/api/skills`, run against the deployed build after
 `--import-skill`, points at a scratch stand-in otherwise): `pwsh tools\Invoke-M23MemoryCheck.ps1`.
 Consolidation skill (row 23), imported with the hub stopped, into the data directory that hub will
@@ -29,6 +31,13 @@ at `<file>.rewrite-<id>.bak`, a name no later write reuses. To undo one, stop th
 backup over the topic file it names, and restart — the approval record on the (now-superseded)
 consolidation stays in `memory_proposals` for the trail, but the file content is exactly what it was
 before that approval.
+
+An editor save (row 40) is a rewrite proposal too, so the same recipe applies, and the save's status
+line names the `.bak`. With git present prefer `git -C <data>\memory revert <hash>` (hub stopped;
+every save is listed by `log --oneline` as `Approve memory proposal #<id> (<topic>): Edit <topic>`);
+when copying the `.bak` instead, commit the restore before restarting (`git -C <data>\memory add -A`
+then `commit -m "restore <file> from <bak>"`), because the next approval's `add -A` would otherwise
+record the restore as part of a model's proposal.
 
 A Debug hub serves static files from `src\ChopItUp.Hub\bin\Debug\net10.0\wwwroot`, not from
 `src\ChopItUp.Hub\wwwroot` where `npm run build` writes. Verifying a client change against a hub that
