@@ -82,7 +82,13 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 <span className="memory-id">#{p.id}</span>
               </div>
               <h3 className="memory-card-title">{p.title}</h3>
-              {p.source && <p className="memory-source">imported from {p.source}</p>}
+              {/* Row 40: an editor row is not an import, and the only way one reaches this panel is
+                  the approved-but-unwritten crash window, where Retry is what performs the write. */}
+              {p.source && (
+                <p className="memory-source">
+                  {p.source === 'editor' ? 'edited by hand; Retry writes it' : `imported from ${p.source}`}
+                </p>
+              )}
               {p.replaces && (
                 <p className="memory-replaces">
                   Replaces <q>{p.replaces}</q> in {p.topic}

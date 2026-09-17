@@ -5,6 +5,7 @@ import { createConnection, type Liveness } from './realtime';
 import Composer from './Composer';
 import ExchangeBar from './ExchangeBar';
 import ImportDialog from './ImportDialog';
+import MemoryEditorDialog from './MemoryEditorDialog';
 import MemoryImportDialog from './MemoryImportDialog';
 import MemoryPanel from './MemoryPanel';
 import NewRoomDialog from './NewRoomDialog';
@@ -174,6 +175,7 @@ export default function App() {
   const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
   const [trailOpen, setTrailOpen] = useState(false);
   const [rolesOpen, setRolesOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [roomBusy, setRoomBusy] = useState(false);
 
   const hub = useRef<HubConnection | null>(null);
@@ -731,6 +733,7 @@ export default function App() {
               onArchive={() => void toggleArchive()}
               onTrail={() => setTrailOpen(true)}
               onRoles={() => setRolesOpen(true)}
+              onMemory={() => setMemoryOpen(true)}
             />
             {error && (
               <p className="banner" role="alert">
@@ -802,6 +805,13 @@ export default function App() {
       )}
       {trailOpen && activeRoom && <TrailDialog room={activeRoom} onClose={() => setTrailOpen(false)} />}
       {rolesOpen && activeRoom && <RolesDialog room={activeRoom} onClose={() => setRolesOpen(false)} />}
+      {memoryOpen && activeRoom && (
+        <MemoryEditorDialog
+          room={activeRoom}
+          locked={(exchange?.inFlight.length ?? 0) > 0}
+          onClose={() => setMemoryOpen(false)}
+        />
+      )}
     </div>
   );
 }
