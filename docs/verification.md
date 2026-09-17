@@ -244,5 +244,13 @@ line) and a separate body-only nonce, so an answer can only come from what was a
 The run needs the standalone CLI signed in (`claude auth status` must say `loggedIn: true`); the
 desktop app's session auth does not carry over to a spawned `claude.exe`. Measured 2026-09-16: the
 mechanics pass (fixture, export, index at exactly 200 lines, envelope parsing, spend cap) and every
-leg returned `Failed to authenticate: OAuth session expired`, so the answer is still unrecorded.
-Record it on the board row when a signed-in run produces one.
+leg returned `Failed to authenticate: OAuth session expired`. Measured 2026-09-17 after `claude auth
+login` (22 PASS / 0 FAIL, 3 calls, leg 4 not needed):
+- leg 1: all three nonces present (`user`, `room-general` title, entry 198 on the last index line),
+  no error. A session loads the whole index and does not filter on `metadata.type`.
+- leg 2: entry 198 present, the hand-appended 199th index line absent, no error reported. The
+  200-line cap is enforced silently, which is why the exporter refuses at 199.
+- leg 3: the `room-general` body-only nonce present. Given `Read`, the session opens the topic
+  file the index points at.
+So an exported directory is read exactly as the vendor documents: index lines up to the cap, topic
+bodies on demand.
