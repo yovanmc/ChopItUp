@@ -229,12 +229,15 @@ public sealed class MemoryStore
     /// <see cref="Validate"/> does not apply. Requires at least one non-empty <c>## </c> heading, no
     /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b> (claim 8:
     /// <c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its length
-    /// arithmetic — raw text plus an allowance for the H1 and the marker line, and nothing per heading
-    /// (<see cref="ComposeRewrite"/> only ever adds a carried-forward provenance line to a <i>surviving</i>
-    /// live entry, never to a new or renamed heading, so the minimum any heading costs is zero) — is a
-    /// genuine floor: the smallest the composed file could possibly be. It can still under-count a body
-    /// that keeps many surviving titles, whose real carried-forward provenance this floor cannot see, so
-    /// it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
+    /// arithmetic is an honest floor (row 40): the raw composed text, charged for the H1 and the marker
+    /// line only when the body does not already carry them itself (a body an editor save round-trips
+    /// often carries both), and nothing per heading (<see cref="ComposeRewrite"/> only ever adds a
+    /// carried-forward provenance line to a <i>surviving</i> live entry, never to a new or renamed
+    /// heading, so the minimum any heading costs is zero) — the smallest the composed file could possibly
+    /// be. Charging for an H1 or a marker line the body already has would let the floor exceed the
+    /// composed size and refuse a text the authoritative cap check had accepted. It can still under-count
+    /// a body that keeps many surviving titles, whose real carried-forward provenance this floor cannot
+    /// see, so it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
     public static void ValidateRewrite(string? topic, string? body)
     {
         RequireSlug(topic);
@@ -251,7 +254,13 @@ public sealed class MemoryStore
             if (!seen.Add(title)) throw new ArgumentException($"duplicate heading '{title}'.", nameof(body));
         }
         var cap = topic == CoreTopic ? CoreChars : TopicChars;
-        var floor = normalized.Trim().Length + topic!.Length + 3 + RewrittenPrefix.Length + CommentClose.Length + 1;
+        // An honest floor (row 40): a body that already carries its H1, or the marker line ComposeRewrite
+        // drops and re-inserts, is not charged for them a second time. Without this the floor could
+        // exceed the composed size and refuse a text the authoritative cap check had accepted.
+        var lines = normalized.Trim('\n').Split('\n');
+        var hasH1 = lines.Length > 0 && lines[0].StartsWith("# ", StringComparison.Ordinal);
+        var marker = lines.Length > 1 && lines[1].StartsWith(RewrittenPrefix, StringComparison.Ordinal) ? lines[1].Length + 1 : 0;
+        var floor = normalized.Trim().Length - marker + (hasH1 ? 0 : topic!.Length + 3) + RewrittenPrefix.Length + CommentClose.Length + 1;
         if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even at its minimum possible composed size.", nameof(body));
     }
 

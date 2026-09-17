@@ -1,6 +1,10 @@
 import type {
   ExchangeSnapshot,
+  MemoryEditResult,
+  MemoryFile,
+  MemoryFileText,
   MemoryImportResult,
+  MemoryPreview,
   MemoryProposal,
   MemorySource,
   Message,
@@ -389,6 +393,45 @@ export async function importMemory(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ source, path, roomId }),
       signal,
+    }),
+  );
+}
+
+/** Row 40: the editor's file list and reads need no credential — every `GET` on `/api` stays open
+ *  (row 28 AC2) and `recall` already hands any bearer the same text. */
+export async function listMemoryFiles(signal?: AbortSignal): Promise<MemoryFile[]> {
+  return unwrap<MemoryFile[]>(await fetch('/api/memory/topics', { signal }));
+}
+
+export async function readMemoryFile(slug: string, signal?: AbortSignal): Promise<MemoryFileText> {
+  return unwrap<MemoryFileText>(await fetch(`/api/memory/topics/${encodeURIComponent(slug)}`, { signal }));
+}
+
+/** Row 40: the hub's count for the text as typed. A POST, so it goes through `write()` and carries
+ *  the stored bearer token like every write; it writes nothing. */
+export async function previewMemoryFile(slug: string, roomId: string, text: string, signal?: AbortSignal): Promise<MemoryPreview> {
+  return unwrap<MemoryPreview>(
+    await write(`/api/memory/topics/${encodeURIComponent(slug)}/preview`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId, text }),
+      signal,
+    }),
+  );
+}
+
+/** Row 40: one save = one approved rewrite. `baseHash` is the hash the read returned; the hub answers
+ *  409 with its own sentence when the file moved on since, when a spawn is in flight, or when the
+ *  result would pass the cap — all through `unwrap` as an `ApiError`, like every other refusal.
+ *  No `AbortSignal`, unlike the reads above: a save leaves a proposal row, a backup and a commit
+ *  behind, and an abandoned request would leave the caller unable to tell a refusal from a write that
+ *  landed. */
+export async function saveMemoryFile(slug: string, roomId: string, text: string, baseHash: string): Promise<MemoryEditResult> {
+  return unwrap<MemoryEditResult>(
+    await write(`/api/memory/topics/${encodeURIComponent(slug)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ roomId, text, baseHash }),
     }),
   );
 }

@@ -19,6 +19,10 @@ public sealed class MemoryProposalStore(ChopDb db)
     /// <summary>Row 23 (item 3): a whole-topic replacement rather than one entry — see
     /// <see cref="MemoryStore.Rewrite"/>.</summary>
     public const string KindRewrite = "rewrite";
+    /// <summary>Row 40: the <see cref="MemoryProposal.Source"/> of a rewrite saved through the hub's
+    /// editor route rather than proposed in a room. Imports use <c>&lt;vendor&gt;:&lt;path&gt;</c>; room
+    /// proposals have none.</summary>
+    public const string SourceEditor = "editor";
 
     /// <summary>Validates and stores a proposal. <paramref name="kind"/> defaults to
     /// <see cref="KindAppend"/> so every existing call site compiles unchanged; the resolved kind is

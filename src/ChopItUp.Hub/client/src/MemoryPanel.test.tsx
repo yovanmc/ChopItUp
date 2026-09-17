@@ -175,6 +175,21 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(html).toContain('VS Code.');
   });
 
+  /* Row 40. `source` used to mean one thing — the vendor an import read the text out of — and the card
+     says so in words. An editor save carries `source: 'editor'`, which is not an import and has no
+     vendor path, so "imported from editor" would name the wrong door. Which button performs the write
+     depends on the card's state, and naming the wrong one sends the owner looking for a button that
+     is not on the card. */
+  test('an editor row is edited by hand, and names the button its own card state offers', () => {
+    const unwritten = render({ ...REWRITE, status: 'approved', writtenTo: null, source: 'editor' });
+    const pending = render({ ...REWRITE, source: 'editor' });
+
+    expect(unwritten).toContain('edited by hand; Retry writes it');
+    expect(pending).toContain('edited by hand; Approve writes it');
+    expect(unwritten).not.toContain('imported from editor');
+    expect(render({ ...REWRITE, source: 'claude:MEMORY.md' })).toContain('imported from claude:MEMORY.md');
+  });
+
   /* The ticket's height clause — a 24 KB diff must scroll inside the card rather than push Reject and
      Approve off screen — is `max-height` + `overflow-y` on `.memory-diff` in styles.css. It is not
      asserted here: vitest stubs every CSS import to an empty string, and reading the file instead

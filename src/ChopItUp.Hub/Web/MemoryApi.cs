@@ -1,9 +1,12 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Memory;
+using ChopItUp.Hub.Security;
 using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
@@ -19,6 +22,9 @@ public static class MemoryApi
     // One decision at a time: two clicks on the same card must not race the mark-then-write sequence.
     private static readonly SemaphoreSlim Decisions = new(1, 1);
     public const string SpawnRunning = "A spawn is running; decide memory proposals when the exchange has finished.";
+    // Row 40, pass 3 P3-1: the panel's SpawnRunning names "decide memory proposals", which is not what an
+    // editor save does; the dialog's own LOCKED_HINT is this sentence verbatim.
+    public const string SpawnRunningEdit = "A spawn is running; save when the exchange has finished.";
     // Row 18, decision 3: the refusal note is posted once per proposal per hub process, never per click
     // (keyed per store too, since the test process hosts many hubs whose ids all start at 1 - pass 2 P2-6).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Root, long Id), byte> RefusalNoted = new();
@@ -31,7 +37,124 @@ public static class MemoryApi
         api.MapPost("/proposals/{id:long}/reject", Reject);
         api.MapPost("/import", Import);
         api.MapDelete("/proposals", Discard);
+        api.MapGet("/topics", ListTopics);
+        api.MapGet("/topics/{slug}", GetTopic);
+        api.MapPost("/topics/{slug}/preview", PreviewTopic);
+        api.MapPut("/topics/{slug}", PutTopic);
     }
+
+    public const string StaleEdit = "The file changed since you opened it. Reload it and apply your edit again.";
+    private const string BadSlug = "topic must be a slug: lowercase letters, digits and hyphens.";
+
+    private static string PathOf(string slug) => slug == MemoryStore.CoreTopic ? MemoryStore.CoreFileName : $"{MemoryStore.TopicsDirName}/{slug}.md";
+    private static int CapOf(string slug) => slug == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+    /// <summary>CRLF and lone CR both become LF: the store writes LF and a browser textarea holds LF.</summary>
+    private static string Lf(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
+    /// <summary>Row 40: the stale-edit token, over LF-normalised text so a CRLF file on disk, the hub's
+    /// reply and the browser's textarea all hash alike. Never over what a browser echoed back.</summary>
+    internal static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Lf(text)))).ToLowerInvariant();
+    /// <summary>The provenance <see cref="ApproveCore"/> will compose, with the one unknown — the row id —
+    /// as twelve nines: never fewer digits than a real id, so a size that passes on this string passes
+    /// on the real one. <c>MemoryTools.ProposeRewrite</c> asks the same question with <c>proposal 0</c>,
+    /// which is looser and relies on the approval re-check; this one must be strict because a refused
+    /// save must leave no row.</summary>
+    private static string Provisional(string author, string roomId) =>
+        $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {new string('9', 12)} by {author} in room {roomId}";
+    private static object FileRow(MemoryStore memory, string slug) =>
+        new { slug, path = PathOf(slug), chars = memory.ReadTopic(slug, int.MaxValue) is { } t ? Lf(t.Text).Length : 0, cap = CapOf(slug) };
+    private static object FileBody(string slug, string text)
+    {
+        var lf = Lf(text);
+        return new { slug, path = PathOf(slug), text = lf, chars = lf.Length, cap = CapOf(slug), hash = Hash(lf) };
+    }
+
+    /// <summary>Row 40: the editor's file list — the core first, then every topic in slug order, each
+    /// with its live character count and the cap a save must stay under.</summary>
+    private static IResult ListTopics(MemoryStore memory)
+    {
+        var rows = new List<object> { FileRow(memory, MemoryStore.CoreTopic) };
+        rows.AddRange(memory.ListTopics().Select(t => FileRow(memory, t.Slug)));
+        return Results.Json(rows);
+    }
+
+    /// <summary>Row 40: the whole file, uncut — the editor is the one reader that must see past a cap,
+    /// because shrinking an over-cap topic is the only thing propose_rewrite cannot do (it refuses a
+    /// truncated read).</summary>
+    private static IResult GetTopic(string slug, MemoryStore memory)
+    {
+        if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
+        var current = memory.ReadTopic(slug, int.MaxValue);
+        return current is null ? Results.NotFound(new { error = $"No topic '{slug}'." }) : Results.Json(FileBody(slug, current.Text));
+    }
+
+    /// <summary>Row 40: the size the cap is enforced on — the composed file, marker line and carried
+    /// provenance included — so the dialog's count is the hub's count, not the textarea's. Reads
+    /// nothing but the topic file; writes nothing.</summary>
+    private static IResult PreviewTopic(string slug, PreviewBody body, HttpContext http, MemoryStore memory)
+    {
+        if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
+        var author = http.Items[BearerTokenMiddleware.ParticipantKey] as string ?? ChopDb.OwnerParticipantId;
+        var chars = memory.ProjectedRewriteChars(slug, Lf(body.Text ?? "").Trim(), Provisional(author, body.RoomId ?? ""));
+        var cap = CapOf(slug);
+        return Results.Json(new { slug, chars, cap, over = chars > cap });
+    }
+
+    /// <summary>Row 40: a hand edit, saved as an approved <c>rewrite</c> authored by the bearer's own
+    /// participant (the middleware set it) with <see cref="MemoryProposalStore.SourceEditor"/>. Every
+    /// PRE-CHECK refusal runs BEFORE the row is created — spawn in flight, stale hash, empty body, cap,
+    /// body rules — so a save refused by a pre-check leaves no row; the cap is decided on the composed
+    /// size before ValidateRewrite runs, so an over-cap text is always a 409 and never the floor's 400.
+    /// <see cref="ApproveCore"/>'s own re-check is a defense in depth for a row that somehow reaches it
+    /// unrecognised by the pre-checks above; a refusal there leaves the row pending, same as any other
+    /// proposal. One action, one commit, under the same semaphore.</summary>
+    private static async Task<IResult> PutTopic(string slug, EditBody body, HttpContext http, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
+    {
+        if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
+        if (string.IsNullOrWhiteSpace(body.RoomId) || !store.RoomExists(body.RoomId)) return Results.NotFound(new { error = $"Unknown room '{body.RoomId}'." });
+        // The middleware sets this on every guarded write; the check stays so a route mapped outside the
+        // guard could never author a row as nobody.
+        if (http.Items[BearerTokenMiddleware.ParticipantKey] is not string author) return Results.Unauthorized();
+        // Exactly the string the row will hold: Create stores body.Trim(), and ApproveCore re-checks the
+        // stored text, so every check here runs on the trimmed text or a leading-space heading could pass
+        // the pre-checks unrecognised and then be refused after the INSERT.
+        var text = Lf(body.Text ?? "").Trim();
+        await Decisions.WaitAsync();
+        try
+        {
+            if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunningEdit });
+            var current = memory.ReadTopic(slug, int.MaxValue);
+            if (current is null) return Results.NotFound(new { error = $"No topic '{slug}' to edit." });
+            var currentHash = Hash(current.Text);
+            if (!string.Equals(currentHash, body.BaseHash?.Trim(), StringComparison.OrdinalIgnoreCase))
+                return Results.Conflict(new { error = StaleEdit, hash = currentHash });
+            if (string.IsNullOrWhiteSpace(text)) return Results.BadRequest(new { error = "body is empty." });
+            var cap = CapOf(slug);
+            var projected = memory.ProjectedRewriteChars(slug, text, Provisional(author, body.RoomId));
+            if (projected > cap)
+            {
+                var where = slug == MemoryStore.CoreTopic ? "the core" : $"topic '{slug}'";
+                return Results.Conflict(new { error = $"The edit of {where} would be {projected} characters, over the {cap} cap. Trim it and save again.", chars = projected, current = Lf(current.Text).Length, cap });
+            }
+            try { MemoryStore.ValidateRewrite(slug, text); }
+            catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+            MemoryProposal proposal;
+            try { proposal = proposals.Create(body.RoomId, author, slug, $"Edit {slug}", text, MemoryProposalStore.SourceEditor, null, null, MemoryProposalStore.KindRewrite); }
+            catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+            var (refusal, decided) = await ApproveCore(proposal, proposals, memory, git, store, signal);
+            if (refusal is not null) return refusal;
+            var written = memory.ReadTopic(slug, int.MaxValue)!.Text;
+            return Results.Json(new
+            {
+                proposal = Map(decided!),
+                slug, path = PathOf(slug), text = Lf(written), chars = Lf(written).Length, cap, hash = Hash(written),
+                backup = $"{PathOf(slug)}.rewrite-{decided!.Id}.bak",
+            });
+        }
+        finally { Decisions.Release(); }
+    }
+
+    internal sealed record EditBody(string? RoomId, string? Text, string? BaseHash);
+    internal sealed record PreviewBody(string? RoomId, string? Text);
 
     private static IResult ListProposals(MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, string? room = null, string? status = MemoryProposalStore.Undecided)
     {
@@ -102,84 +225,95 @@ public static class MemoryApi
             if (p.Status == MemoryProposalStore.Rejected || (p.Status == MemoryProposalStore.Approved && p.WrittenTo is not null))
                 return Results.Conflict(new { error = $"Memory proposal #{id} is already {p.Status}." });
 
-            // Row 18, decision 3: refuse BEFORE marking, so a refused row stays pending rather than becoming
-            // the replayable approved-but-unwritten state. A row that is ALREADY approved (a Retry after a crash
-            // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
-            // to finish it (critique P1-5).
-            var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
-
-            // Row 23, pass 2 finding H: a rewrite's pre-write checks run on BOTH the pending path AND the
-            // Retry path (approved, written_to still null) - unlike the append/supersede checks below, which
-            // stay pending-only under P1-5's ruling. Rewrite() itself throws KeyNotFoundException when the
-            // topic vanished in the crash window, and unlike append/supersede that must never reach the
-            // write uncaught: checking here turns it into a 409, not a 500.
-            if (p.Kind == MemoryProposalStore.KindRewrite)
-            {
-                try { MemoryStore.ValidateRewrite(p.Topic, p.Body); }
-                catch (ArgumentException e) { return Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }); }
-                if (memory.ReadTopic(p.Topic) is null)
-                    return Results.Conflict(new { error = $"No topic '{p.Topic}' to rewrite." });
-                var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
-                int chars;
-                try { chars = memory.ProjectedRewriteChars(p.Topic, p.Body, provenance); }
-                catch (KeyNotFoundException e) { return Results.Conflict(new { error = e.Message }); }
-                if (chars > cap)
-                {
-                    var current = memory.ReadTopic(p.Topic)!.FullChars;
-                    var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
-                    if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
-                    return Results.Conflict(new { error = refused, chars, current, cap });
-                }
-            }
-            else if (p.Status == MemoryProposalStore.Pending)
-            {
-                // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
-                // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
-                // rejected. The same check covers any future Validate rule.
-                try { MemoryStore.Validate(p.Title, p.Body); }
-                catch (ArgumentException e) { return Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }); }
-                if (p.Topic == MemoryStore.CoreTopic)
-                {
-                    int chars;
-                    try { chars = memory.ProjectedCoreChars(p.Replaces, p.Title, p.Body, provenance); }
-                    catch (KeyNotFoundException e) { return Results.Conflict(new { error = e.Message }); }
-                    if (chars > MemoryStore.CoreChars)
-                    {
-                        var current = memory.ReadTopic(MemoryStore.CoreTopic)!.FullChars;
-                        var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
-                        if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
-                        return Results.Conflict(new { error = refused, chars, current, cap = MemoryStore.CoreChars });
-                    }
-                }
-                else if (p.Replaces is not null && !memory.Titles(p.Topic).Contains(p.Replaces, StringComparer.Ordinal))
-                    return Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." });
-            }
-
-            // Row 23 (item 4): captured before the mark/write so the approval note can name what a
-            // rewrite removed - the set difference of live titles before and after the replacement.
-            var beforeTitles = p.Kind == MemoryProposalStore.KindRewrite ? memory.Titles(p.Topic) : null;
-
-            // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
-            if (p.Status == MemoryProposalStore.Pending && proposals.Decide(id, MemoryProposalStore.Approved, null, null) is null)
-                return Results.Conflict(new { error = $"Memory proposal #{id} was decided concurrently." });
-            // A Supersede here can still throw KeyNotFoundException if the file changed between the check
-            // above and this write - only the owner's editor can do that (same process, same semaphore, no
-            // spawn in flight). Let it surface as a 500 with the row approved-but-unwritten, which the
-            // panel's Retry then re-checks.
-            var dedupKey = $"proposal {p.Id} by {p.AuthorId}";
-            var written = p.Kind switch
-            {
-                MemoryProposalStore.KindRewrite => memory.Rewrite(p.Topic, p.Body, provenance, p.Id, dedupKey),
-                _ when p.Replaces is null => memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey),
-                _ => memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey),
-            };
-            var removedTitles = beforeTitles is null ? null : beforeTitles.Except(memory.Titles(p.Topic), StringComparer.Ordinal).ToList();
-            var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
-            var decided = proposals.RecordWrite(id, written, hash) ?? proposals.Get(id)!;
-            Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
-            return Results.Json(Map(decided));
+            var (refusal, decided) = await ApproveCore(p, proposals, memory, git, store, signal);
+            return refusal ?? Results.Json(Map(decided!));
         }
         finally { Decisions.Release(); }
+    }
+
+    /// <summary>Everything an approval does for a row that is pending or approved-but-unwritten —
+    /// pre-write checks, mark, write, commit, record, note — shared by the panel's Approve and the
+    /// editor's save (row 40, which hands it the row it just created) so the two doors cannot drift.
+    /// Runs under <see cref="Decisions"/>, which the caller holds. Returns the refusal, or null and the
+    /// decided row.</summary>
+    private static async Task<(IResult? Refusal, MemoryProposal? Decided)> ApproveCore(MemoryProposal p, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal)
+    {
+        // Row 18, decision 3: refuse BEFORE marking, so a refused row stays pending rather than becoming
+        // the replayable approved-but-unwritten state. A row that is ALREADY approved (a Retry after a crash
+        // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
+        // to finish it (critique P1-5).
+        var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
+
+        // Row 23, pass 2 finding H: a rewrite's pre-write checks run on BOTH the pending path AND the
+        // Retry path (approved, written_to still null) - unlike the append/supersede checks below, which
+        // stay pending-only per P1-5. Rewrite() itself throws KeyNotFoundException when the
+        // topic vanished in the crash window, and unlike append/supersede that must never reach the
+        // write uncaught: checking here turns it into a 409, not a 500.
+        if (p.Kind == MemoryProposalStore.KindRewrite)
+        {
+            try { MemoryStore.ValidateRewrite(p.Topic, p.Body); }
+            catch (ArgumentException e) { return (Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }), null); }
+            if (memory.ReadTopic(p.Topic) is null)
+                return (Results.Conflict(new { error = $"No topic '{p.Topic}' to rewrite." }), null);
+            var cap = CapOf(p.Topic);
+            int chars;
+            try { chars = memory.ProjectedRewriteChars(p.Topic, p.Body, provenance); }
+            catch (KeyNotFoundException e) { return (Results.Conflict(new { error = e.Message }), null); }
+            if (chars > cap)
+            {
+                var current = memory.ReadTopic(p.Topic)!.FullChars;
+                var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
+                if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                return (Results.Conflict(new { error = refused, chars, current, cap }), null);
+            }
+        }
+        else if (p.Status == MemoryProposalStore.Pending)
+        {
+            // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
+            // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
+            // rejected. The same check covers any future Validate rule.
+            try { MemoryStore.Validate(p.Title, p.Body); }
+            catch (ArgumentException e) { return (Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }), null); }
+            if (p.Topic == MemoryStore.CoreTopic)
+            {
+                int chars;
+                try { chars = memory.ProjectedCoreChars(p.Replaces, p.Title, p.Body, provenance); }
+                catch (KeyNotFoundException e) { return (Results.Conflict(new { error = e.Message }), null); }
+                if (chars > MemoryStore.CoreChars)
+                {
+                    var current = memory.ReadTopic(MemoryStore.CoreTopic)!.FullChars;
+                    var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
+                    if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                    return (Results.Conflict(new { error = refused, chars, current, cap = MemoryStore.CoreChars }), null);
+                }
+            }
+            else if (p.Replaces is not null && !memory.Titles(p.Topic).Contains(p.Replaces, StringComparer.Ordinal))
+                return (Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." }), null);
+        }
+
+        // Row 23 (item 4): captured before the mark/write so the approval note can name what a
+        // rewrite removed - the set difference of live titles before and after the replacement.
+        var beforeTitles = p.Kind == MemoryProposalStore.KindRewrite ? memory.Titles(p.Topic) : null;
+
+        // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
+        if (p.Status == MemoryProposalStore.Pending && proposals.Decide(p.Id, MemoryProposalStore.Approved, null, null) is null)
+            return (Results.Conflict(new { error = $"Memory proposal #{p.Id} was decided concurrently." }), null);
+        // A Supersede here can still throw KeyNotFoundException if the file changed between the check
+        // above and this write - only a hand edit to the file in between can do that (same process, same semaphore, no
+        // spawn in flight). Let it surface as a 500 with the row approved-but-unwritten, which the
+        // panel's Retry then re-checks.
+        var dedupKey = $"proposal {p.Id} by {p.AuthorId}";
+        var written = p.Kind switch
+        {
+            MemoryProposalStore.KindRewrite => memory.Rewrite(p.Topic, p.Body, provenance, p.Id, dedupKey),
+            _ when p.Replaces is null => memory.Append(p.Topic, p.Title, p.Body, provenance, dedupKey),
+            _ => memory.Supersede(p.Topic, p.Replaces, p.Title, p.Body, provenance, dedupKey),
+        };
+        var removedTitles = beforeTitles is null ? null : beforeTitles.Except(memory.Titles(p.Topic), StringComparer.Ordinal).ToList();
+        var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
+        var decided = proposals.RecordWrite(p.Id, written, hash) ?? proposals.Get(p.Id)!;
+        Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
+        return (null, decided);
     }
 
     private static async Task<IResult> Reject(long id, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, SpawnerService spawner)

@@ -82,7 +82,17 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 <span className="memory-id">#{p.id}</span>
               </div>
               <h3 className="memory-card-title">{p.title}</h3>
-              {p.source && <p className="memory-source">imported from {p.source}</p>}
+              {/* Row 40: an editor row is not an import. One reaches this panel only when the hub
+                  died mid-save — after the mark, leaving the approved-but-unwritten card Retry
+                  writes, or before it, leaving a pending card Approve writes — so the line names the
+                  button this card actually offers. */}
+              {p.source && (
+                <p className="memory-source">
+                  {p.source === 'editor'
+                    ? `edited by hand; ${unwritten ? 'Retry' : 'Approve'} writes it`
+                    : `imported from ${p.source}`}
+                </p>
+              )}
               {p.replaces && (
                 <p className="memory-replaces">
                   Replaces <q>{p.replaces}</q> in {p.topic}

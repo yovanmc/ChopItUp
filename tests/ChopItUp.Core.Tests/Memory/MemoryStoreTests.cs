@@ -521,4 +521,15 @@ public sealed class MemoryStoreTests : IDisposable
         store.Rewrite("user", body, "prov", 2);
         Assert.Equal(File.ReadAllText(Path.Combine(store.TopicsDir, "user.md")).Length, projected);
     }
+
+    [Fact]
+    public void R40_ValidateRewrite_floor_does_not_charge_an_H1_or_a_marker_the_body_already_carries()
+    {
+        var marker = "<!-- rewritten: approved 2026-01-01T00:00:00.0000000+00:00 proposal 1 by owner in room general -->";
+        var n = 5_990 - (7 + marker.Length + 2 + 9 + 1);
+        var body = "# core\n" + marker + "\n\n## Rules\n" + new string('r', n) + "\n";
+        Assert.Equal(5_990, body.Length);
+        MemoryStore.ValidateRewrite("core", body);   // composed ≈ 5,990: under the cap, so no throw
+        Assert.Throws<ArgumentException>(() => MemoryStore.ValidateRewrite("core", "# core\n\n## Rules\n" + new string('r', 6_000) + "\n"));
+    }
 }
