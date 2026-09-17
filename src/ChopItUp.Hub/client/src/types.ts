@@ -304,3 +304,35 @@ export interface MemoryImportResult {
   skipped: number;
   proposals: MemoryProposal[];
 }
+
+/** Row 40: one row of `GET /api/memory/topics` — the core first, then topics in slug order. */
+export interface MemoryFile {
+  slug: string;
+  /** `MEMORY.md` for the core, `topics/<slug>.md` otherwise. */
+  path: string;
+  chars: number;
+  cap: number;
+}
+
+/** Row 40: `GET /api/memory/topics/{slug}` — the whole file, uncut and LF-normalised, and the hash a
+ *  save must echo. */
+export interface MemoryFileText extends MemoryFile {
+  text: string;
+  hash: string;
+}
+
+/** Row 40: `POST /api/memory/topics/{slug}/preview` — the size the hub would write, which is what the
+ *  cap is enforced on. */
+export interface MemoryPreview {
+  slug: string;
+  chars: number;
+  cap: number;
+  over: boolean;
+}
+
+/** Row 40: what a save returns — the approved editor row, the file as the hub wrote it, and where the
+ *  pre-edit copy went. */
+export interface MemoryEditResult extends MemoryFileText {
+  proposal: MemoryProposal;
+  backup: string;
+}

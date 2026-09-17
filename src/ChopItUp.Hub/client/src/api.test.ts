@@ -279,3 +279,74 @@ describe('a failure keeps its status', () => {
     expect(api.isCredentialRefusal('plain string')).toBe(false);
   });
 });
+
+/** Row 40: the editor's three routes. The list and read are GETs (row 28 AC2 keeps every GET open);
+ *  the save is a write like any other and goes through the same token-attaching door. */
+describe('the memory editor client', () => {
+  test('listing files is a bare GET with no credential', async () => {
+    storeToken('owner-secret');
+    const calls = stubFetch(() => json([{ slug: 'core', path: 'MEMORY.md', chars: 10, cap: 6000 }]));
+
+    const files = await api.listMemoryFiles();
+
+    expect(calls[0]?.url).toBe('/api/memory/topics');
+    expect(authOf(calls[0])).toBeNull();
+    expect(files).toEqual([{ slug: 'core', path: 'MEMORY.md', chars: 10, cap: 6000 }]);
+  });
+
+  test('reading one file is a bare GET on its slug', async () => {
+    const calls = stubFetch(() => json({ slug: 'user', path: 'topics/user.md', chars: 4, cap: 24000, text: 'abcd', hash: 'deadbeef' }));
+
+    const file = await api.readMemoryFile('user');
+
+    expect(calls[0]?.url).toBe('/api/memory/topics/user');
+    expect(file.hash).toBe('deadbeef');
+  });
+
+  test('previewing a file POSTs the room and text with the owner token', async () => {
+    storeToken('owner-secret');
+    const calls = stubFetch(() => json({ slug: 'user', chars: 120, cap: 24000, over: false }));
+
+    const preview = await api.previewMemoryFile('user', 'general', 'some text');
+
+    expect(calls[0]?.url).toBe('/api/memory/topics/user/preview');
+    expect(calls[0]?.init?.method).toBe('POST');
+    expect(calls[0]?.init?.body).toBe('{"roomId":"general","text":"some text"}');
+    expect(authOf(calls[0])).toBe('Bearer owner-secret');
+    expect(preview.over).toBe(false);
+  });
+
+  test('saving a file PUTs the room, text and base hash with the owner token', async () => {
+    storeToken('owner-secret');
+    const calls = stubFetch(() =>
+      json({
+        slug: 'user',
+        path: 'topics/user.md',
+        text: '# user\n',
+        chars: 7,
+        cap: 24000,
+        hash: 'newhash',
+        backup: 'topics/user.md.rewrite-1.bak',
+        proposal: { id: 1 },
+      }),
+    );
+
+    const result = await api.saveMemoryFile('user', 'general', '# user\n', 'oldhash');
+
+    expect(calls[0]?.url).toBe('/api/memory/topics/user');
+    expect(calls[0]?.init?.method).toBe('PUT');
+    expect(calls[0]?.init?.body).toBe('{"roomId":"general","text":"# user\\n","baseHash":"oldhash"}');
+    expect(authOf(calls[0])).toBe('Bearer owner-secret');
+    expect(result.backup).toBe('topics/user.md.rewrite-1.bak');
+  });
+
+  test('a refused save carries the hub sentence as an ApiError', async () => {
+    stubFetch(() => json({ error: 'The file changed since you opened it. Reload it and apply your edit again.' }, 409));
+
+    const failure = await refusal(() => api.saveMemoryFile('user', 'general', '# user\n', 'stale'));
+
+    expect(failure).toBeInstanceOf(api.ApiError);
+    expect((failure as api.ApiError).status).toBe(409);
+    expect(api.describeError(failure)).toBe('The file changed since you opened it. Reload it and apply your edit again.');
+  });
+});
