@@ -251,7 +251,13 @@ public sealed class MemoryStore
             if (!seen.Add(title)) throw new ArgumentException($"duplicate heading '{title}'.", nameof(body));
         }
         var cap = topic == CoreTopic ? CoreChars : TopicChars;
-        var floor = normalized.Trim().Length + topic!.Length + 3 + RewrittenPrefix.Length + CommentClose.Length + 1;
+        // An honest floor (row 40): a body that already carries its H1, or the marker line ComposeRewrite
+        // drops and re-inserts, is not charged for them a second time. Without this the floor could
+        // exceed the composed size and refuse a text the authoritative cap check had accepted.
+        var lines = normalized.Trim('\n').Split('\n');
+        var hasH1 = lines.Length > 0 && lines[0].StartsWith("# ", StringComparison.Ordinal);
+        var marker = lines.Length > 1 && lines[1].StartsWith(RewrittenPrefix, StringComparison.Ordinal) ? lines[1].Length + 1 : 0;
+        var floor = normalized.Trim().Length - marker + (hasH1 ? 0 : topic!.Length + 3) + RewrittenPrefix.Length + CommentClose.Length + 1;
         if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even at its minimum possible composed size.", nameof(body));
     }
 

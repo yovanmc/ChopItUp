@@ -54,7 +54,8 @@ public static class HubNotes
             var removed = removedTitles is { Count: > 0 }
                 ? $", removing {string.Join(", ", removedTitles.Select(t => $"'{t}'"))}"
                 : "";
-            return $"{ProposalPrefix}{p.Id} approved: consolidated memory/{p.WrittenTo}{removed}{commit}";
+            var verb = p.Source == MemoryProposalStore.SourceEditor ? "edited" : "consolidated";
+            return $"{ProposalPrefix}{p.Id} approved: {verb} memory/{p.WrittenTo}{removed}{commit}";
         }
         return $"{ProposalPrefix}{p.Id} approved: " + (p.Replaces is null ? $"written to memory/{p.WrittenTo}" : $"replaced '{p.Replaces}' in memory/{p.WrittenTo}") + commit;
     }
@@ -71,7 +72,10 @@ public static class HubNotes
         {
             var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
             var where = p.Topic == MemoryStore.CoreTopic ? "the core" : $"topic '{p.Topic}'";
-            return $"{ProposalPrefix}{p.Id} refused: the rewrite of {where} would be {chars} characters, over the {cap} cap. Trim it and propose the rewrite again.";
+            // Row 40: an editor row is never pending for anyone, so the Retry path's fix-and-try-again
+            // sentence must say "save", not "propose" (the editor has no separate propose step).
+            var tryAgain = p.Source == MemoryProposalStore.SourceEditor ? "Trim it and save again." : "Trim it and propose the rewrite again.";
+            return $"{ProposalPrefix}{p.Id} refused: the rewrite of {where} would be {chars} characters, over the {cap} cap. {tryAgain}";
         }
         return $"{ProposalPrefix}{p.Id} refused: the core would be {chars} characters, over the {MemoryStore.CoreChars} cap. "
             + (current > MemoryStore.CoreChars
