@@ -222,7 +222,7 @@ public static class SpawnPrompt
             if (m.Imported) sb.Append(" (imported: pasted history, not addressed to you)");
             if (m.ReplyToId is { } replyTo) sb.Append(" (reply to #").Append(replyTo).Append(')');
             sb.Append('\n');
-            sb.Append(m.Body).Append('\n');
+            sb.Append(m.Imported ? DefenceHeader(m.Body) : m.Body).Append('\n');
         }
         return sb.ToString();
     }
@@ -242,6 +242,19 @@ public static class SpawnPrompt
         string.Join('\n', Regex.Split(text.Trim(), @"\r\n|\r|\n")
             .Select(line => Regex.IsMatch(line, @"^\s*---\s*(begin|end)\s+(skill|memory|standing)\b", RegexOptions.IgnoreCase)
                 ? "(a fence-shaped line was removed here)"
+                : line));
+
+    /// <summary>Row 42 (F1): an imported body is pasted transcript text, not fingerprinted bytes (the
+    /// skill body's reason for staying verbatim) and not owner-typed prose either (<see cref="Defence"/>'s
+    /// case). A line inside it shaped like this renderer's own per-message header (<c>#id author at
+    /// &lt;stamp&gt;</c>) would otherwise read as an unmarked live turn to whatever follows it, so it is
+    /// neutralised the same way <see cref="Defence"/> neutralises a fence line - same technique, a
+    /// different shape to match. Only ever called on a message whose <see cref="Message.Imported"/> is
+    /// true; a live body is always rendered verbatim, unescaped.</summary>
+    private static string DefenceHeader(string text) =>
+        string.Join('\n', Regex.Split(text.Trim(), @"\r\n|\r|\n")
+            .Select(line => Regex.IsMatch(line, @"^#\d+ \S+ at ")
+                ? "(a header-shaped line was removed here)"
                 : line));
 
     /// <summary>Row 19, task 7 (AC9): the run-state section, rendered for every spawn inside a run

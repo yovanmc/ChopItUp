@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Row 14 Task 7 (issues/07-self-check.md): deploy-day evidence that the whole roles/personas path
-    works -- a v11 fixture migrated to v12 by the REAL hub, a persona and a role set and read back over
+    works -- a v11 fixture migrated to v13 by the REAL hub, a persona and a role set and read back over
     the API, the three write routes refused with no credential and unchanged storage, a role edit
     visible in the next GET with no hub restart, and the room_roles foreign key actually enforced.
 

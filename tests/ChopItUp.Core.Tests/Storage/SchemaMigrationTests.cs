@@ -940,6 +940,7 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v12.", Path.GetFileName(db.LastBackupPath!));
         Assert.True(File.Exists(db.LastBackupPath));
+        Assert.Equal(messagesBefore.Count, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
 
         using var conn = db.Open();
         using (var probe = conn.CreateCommand())

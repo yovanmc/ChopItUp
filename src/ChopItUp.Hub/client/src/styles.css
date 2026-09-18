@@ -778,7 +778,8 @@ input {
   font-weight: 620;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--faint);
+  /* --dim, not --faint: at 10px this line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */
+  color: var(--dim);
 }
 
 /* ---------- message body (markdown) ---------- */

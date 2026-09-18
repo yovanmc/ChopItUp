@@ -23,11 +23,16 @@
     have no directory bound, so at HEAD the imported `/build-thing` and `/stop` turns would (if they
     reached the spawner) produce an unknown-skill note, and a run-start here is structurally impossible
     regardless — the run-start and run-stop suppression is proven by task 3's in-process tests, not by
-    this script. What DOES bind here is the mention turns: at HEAD an imported `@opus` mention opens an
-    exchange and launches a spawn attempt before the stripped PATH makes `CliResolver` throw
-    `FileNotFoundException`, publishing a note and moving the exchange — so leg 6 (the barrier) and leg
-    7 (the exact-arithmetic negatives) both fail at HEAD on the mention path and pass once the row 42
-    guard (`SpawnerService.OnMessage`'s `if (m.Imported) return;`) is in place.
+    this script. The mention turns do NOT bind here either: measured 2026-09-18 with the row 42 guard
+    (`SpawnerService.OnMessage`'s `if (m.Imported) return;`) commented out, all 8 legs still PASS (no
+    FAIL legs recorded). An imported `@opus` mention does open an exchange, but `SpawnLimits.Debounce`
+    (2s) delays the actual spawn attempt — and therefore the "could not be started" note that would
+    prove it happened — past leg 8's `Stop-Process` on the hub, so the in-memory pending launch is
+    discarded before it can ever fire, guard or no guard. Leg 6 (the barrier) only proves an exchange
+    opened at the control post, and leg 7's arithmetic never sees a note from the import or the control
+    to fail on. This script is real evidence for AC3/AC4/AC7 (schema, backup, flags, restart) but proves
+    nothing about mention-path inertness; that is task 3's in-process tests' job alone, where the fake
+    clock advances past the debounce deterministically.
 
     PATH IS STRIPPED for each hub child (`$env:SystemRoot\System32;$env:SystemRoot` only) so neither
     `claude` nor `codex` can be found: a spawn attempt that escapes the guard shows up as an open
@@ -158,17 +163,34 @@ try {
     $bakNameOk = $bakName -match '^chopitup\.db\.v2\.\d{8}T\d{6}Z\.bak$'
     Add-Check -Name 'backup.count-is-one' -Passed ($baks.Count -eq 1 -and $bakNameOk) -Detail "count=$($baks.Count) name=$bakName"
 
-    # 4. existing.not-imported -- the first corpus room, every pre-existing row imported == false.
+    # 4. existing.not-imported -- EVERY corpus room, every pre-existing row imported == false. Each
+    # page is capped at MessageStore.MaxLimit (200, ChatApi.cs/MessageStore.cs:9,297): hasMore must be
+    # false in every room or the counts below are a silent undercount, not the room's real total (row
+    # 42 fix F2/F8). $room stays the first room, the one every later leg imports into and controls.
     $roomsResp = Invoke-Api -Method Get -Path '/api/rooms'
     $rooms = @($roomsResp.Body | ForEach-Object { $_ })
     $room = $rooms[0].id
-    $existingResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
-    $existingMessages = @($existingResp.Body.messages | ForEach-Object { $_ })
-    $totalBefore = $existingMessages.Count
-    $hubNotesBefore = @($existingMessages | Where-Object { $_.authorId -eq 'hub' }).Count
-    $anyImportedBefore = @($existingMessages | Where-Object { $_.imported -eq $true }).Count
-    Add-Check -Name 'existing.not-imported' -Passed ($roomsResp.Status -eq 200 -and $existingResp.Status -eq 200 -and $totalBefore -gt 0 -and $anyImportedBefore -eq 0) `
-        -Detail "room=$room totalBefore=$totalBefore hubNotesBefore=$hubNotesBefore anyImportedBefore=$anyImportedBefore"
+    $existingOk = $roomsResp.Status -eq 200 -and $rooms.Count -gt 0
+    $totalAcrossRooms = 0
+    $importedAcrossRooms = 0
+    $roomDetails = @()
+    foreach ($r in $rooms) {
+        $resp = Invoke-Api -Method Get -Path "/api/rooms/$($r.id)/messages?afterId=0&limit=200"
+        $msgs = @($resp.Body.messages | ForEach-Object { $_ })
+        $hasMoreOk = $resp.Body.hasMore -eq $false
+        $importedCount = @($msgs | Where-Object { $_.imported -eq $true }).Count
+        $existingOk = $existingOk -and $resp.Status -eq 200 -and $msgs.Count -gt 0 -and $importedCount -eq 0 -and $hasMoreOk
+        $totalAcrossRooms += $msgs.Count
+        $importedAcrossRooms += $importedCount
+        $roomDetails += "$($r.id)=$($msgs.Count)/hasMore=$($resp.Body.hasMore)"
+        if ($r.id -eq $room) {
+            $existingMessages = $msgs
+            $totalBefore = $msgs.Count
+            $hubNotesBefore = @($msgs | Where-Object { $_.authorId -eq 'hub' }).Count
+        }
+    }
+    Add-Check -Name 'existing.not-imported' -Passed $existingOk `
+        -Detail "rooms=$($rooms.Count) totalAcrossRooms=$totalAcrossRooms importedAcrossRooms=$importedAcrossRooms totalBefore($room)=$totalBefore hubNotesBefore($room)=$hubNotesBefore [$($roomDetails -join '; ')]"
 
     # 5. import.201-five-flagged
     $importResp = Invoke-Api -Method Post -Path "/api/rooms/$room/import" -Headers $ownerAuth -Body @{ text = $ImportedHistory }
@@ -201,10 +223,13 @@ try {
         -Detail "controlId=$controlId lastImportedId=$lastImportedId exchangeRootSeen=$exchangeRootSeen noteFound=$controlNoteFound"
 
     # 7. import.no-spawn-no-note -- THE NEGATIVES, exact arithmetic, asserted only after the barrier.
+    # limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or the arithmetic below
+    # compares against a silently truncated page, not the room's real total (row 42 fix F2/F8).
     $runResp = Invoke-Api -Method Get -Path "/api/rooms/$room/run"
     $runIs204 = $runResp.Status -eq 204
-    $afterResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=300"
+    $afterResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
     $allAfter = @($afterResp.Body.messages | ForEach-Object { $_ })
+    $afterHasMoreOk = $afterResp.Body.hasMore -eq $false
     $hubNotesAfter = @($allAfter | Where-Object { $_.authorId -eq 'hub' })
     $noteCountSinceControl = $hubNotesAfter.Count - $hubNotesBefore
     $badNotes = @($hubNotesAfter | Where-Object { $_.body -match '/build-thing' -or $_.body -match 'No skill named' -or $_.body -match 'Steer noted' -or $_.body -match 'Run #' })
@@ -213,8 +238,8 @@ try {
     $exResp2 = Invoke-Api -Method Get -Path "/api/rooms/$room/exchange"
     $exchangeRootOk = $true
     if ($exResp2.Status -eq 200 -and $exResp2.Body.rootMessageId) { $exchangeRootOk = $exResp2.Body.rootMessageId -gt $lastImportedId }
-    Add-Check -Name 'import.no-spawn-no-note' -Passed ($runIs204 -and $badNotes.Count -eq 0 -and ($noteCountSinceControl -eq 0 -or $noteCountSinceControl -eq 1) -and $totalOk -and $exchangeRootOk) `
-        -Detail "run204=$runIs204 badNotes=$($badNotes.Count) noteCountSinceControl=$noteCountSinceControl total=$($allAfter.Count) expected=$totalExpected exchangeRoot=$($exResp2.Body.rootMessageId)"
+    Add-Check -Name 'import.no-spawn-no-note' -Passed ($runIs204 -and $badNotes.Count -eq 0 -and ($noteCountSinceControl -eq 0 -or $noteCountSinceControl -eq 1) -and $totalOk -and $exchangeRootOk -and $afterHasMoreOk) `
+        -Detail "run204=$runIs204 badNotes=$($badNotes.Count) noteCountSinceControl=$noteCountSinceControl total=$($allAfter.Count) expected=$totalExpected exchangeRoot=$($exResp2.Body.rootMessageId) hasMore=$($afterResp.Body.hasMore)"
 
     # 8. restart.flags-persist -- stop, restart (PATH stripped again, hub2.* logs so the first start's
     # migration record is not truncated), the imported ids still true and the corpus rows still false.
@@ -236,16 +261,19 @@ try {
     }
     if ($null -eq $health2) { throw "hub2 on port $Port did not become healthy (pid=$($hub2.Id))" }
 
-    $finalResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=300"
+    # limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or this page is a silent
+    # undercount of the room's real total (row 42 fix F2/F8).
+    $finalResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
     $allFinal = @($finalResp.Body.messages | ForEach-Object { $_ })
+    $finalHasMoreOk = $finalResp.Body.hasMore -eq $false
     $importedIds = @($importedMsgs | ForEach-Object { $_.id })
     $corpusIds = @($existingMessages | ForEach-Object { $_.id })
     $importedRowsFinal = @($allFinal | Where-Object { $_.id -in $importedIds })
     $importedStillTrue = ($importedRowsFinal.Count -eq $importedIds.Count) -and (@($importedRowsFinal | Where-Object { $_.imported -ne $true }).Count -eq 0)
     $corpusRowsFinal = @($allFinal | Where-Object { $_.id -in $corpusIds })
     $corpusStillFalse = ($corpusRowsFinal.Count -eq $corpusIds.Count) -and (@($corpusRowsFinal | Where-Object { $_.imported -ne $false }).Count -eq 0)
-    Add-Check -Name 'restart.flags-persist' -Passed ($health2.schema -eq 13 -and $importedStillTrue -and $corpusStillFalse) `
-        -Detail "schema2=$($health2.schema) importedStillTrue=$importedStillTrue corpusStillFalse=$corpusStillFalse"
+    Add-Check -Name 'restart.flags-persist' -Passed ($health2.schema -eq 13 -and $importedStillTrue -and $corpusStillFalse -and $finalHasMoreOk) `
+        -Detail "schema2=$($health2.schema) importedStillTrue=$importedStillTrue corpusStillFalse=$corpusStillFalse hasMore=$($finalResp.Body.hasMore)"
 }
 finally {
     if ($hub2 -and -not $hub2.HasExited) { Stop-Process -Id $hub2.Id -Force -ErrorAction SilentlyContinue }
