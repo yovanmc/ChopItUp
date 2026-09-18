@@ -508,6 +508,17 @@ Do not touch `tests/`: the suite reads `ChopDb.LatestSchemaVersion` (no test lit
 - 9 (Participation edit ambiguous, em dash) — **fixed**: "after line 61", ` - ` style, no dash.
 - 10 (deploy guard stops nothing) — **fixed**: step 5 names both PIDs from the guard's refusal line.
 
+**Diff interrogation (opus, 2026-09-18, 7.6 FIX-THEN-SHIP, patch `.scratch/m42-inert-import/diff.patch`).**
+- F1 MAJOR (an imported body can carry a header-shaped line, so the prompt shows a second unmarked header) — **fixed** (b7e782c): `SpawnPrompt.DefenceHeader` neutralises `^#\d+ \S+ at ` lines inside imported bodies only; RED `Expected: 2, Actual: 3` header lines, GREEN after; golden prompt unchanged.
+- F2 MINOR (dry run pages past `MaxLimit` 200) — **fixed**: every GET uses `limit=200` and asserts `hasMore` false.
+- F3 MINOR (backup asserted by name only) — **fixed**: the v12→v13 guard test now reads the message count out of the `.bak`.
+- F4 MINOR (`Invoke-Row14RolesCheck.ps1:4` prose still v12) — **fixed**.
+- F5 MINOR (tag `--faint` at 10px against the file's own AA rule) — **fixed**: `--dim`.
+- F6 MINOR (dry run never seen RED) — **measured, then fixed**: with the guard deleted the script still passed 8/8, because the 2 s `SpawnLimits.Debounce` put every spawn attempt after leg 8's kill. Leg 6's barrier is now the control's own failed spawn attempt (its `could not be started` note), and leg 7 asserts the exact note sequence after the import (the control's attempt, then its `Exchange concluded: 1 of N`); the guard-less run is quoted in the script's description.
+- F7 NIT (`post_message` reply lacks `imported`) — **declined**: the reply describes the caller's own live post, which is never imported by construction; AC3 lists the read surfaces only. Its assertion threw `KeyNotFoundException` and was not added.
+- F8 NIT (leg 4 checks one room) — **fixed**: every corpus room, one check.
+- F9 NIT (suite totals not in the trail) — **met in the PR body**: Desktop 108, Core 254, Hub 869 at 7808c7f, re-run after the fixes.
+
 ## Could not verify in this environment
 
 - The live hub's actual v12 → v13 migration: the exact step is rehearsed only in-process (task 1 guard tests); the built-binary dry run rehearses v2 → v13 (claim 18, owner rule against copying the real store). Rollback procedure in Phase B step 5.
