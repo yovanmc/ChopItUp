@@ -680,6 +680,29 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>v11 shape plus exactly what ApplyV12 adds: role, persona, room_roles, stamped 12. Raw
+    /// SQL on purpose (LESSONS M2): this must keep describing v12 after ChopDb can no longer produce one.</summary>
+    private void WriteRawV12()
+    {
+        WriteRawV11();
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            ALTER TABLE participants ADD COLUMN role TEXT;
+            ALTER TABLE rooms ADD COLUMN persona TEXT;
+            CREATE TABLE IF NOT EXISTS room_roles (
+                room_id        TEXT NOT NULL REFERENCES rooms(id),
+                participant_id TEXT NOT NULL REFERENCES participants(id),
+                role           TEXT NOT NULL,
+                PRIMARY KEY (room_id, participant_id)
+            );
+            PRAGMA user_version = 12;
+            """;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
     private static long ReplyColumnCount(SqliteConnection conn)
     {
         using var probe = conn.CreateCommand();
@@ -892,6 +915,74 @@ public sealed class SchemaMigrationTests : IDisposable
         using var dup = conn.CreateCommand();
         dup.CommandText = "INSERT INTO room_roles (room_id, participant_id, role) VALUES ('general', 'opus', 'second')";
         Assert.Throws<SqliteException>(() => dup.ExecuteNonQuery());
+    }
+
+    [Fact]
+    public void Row42_T1_a_v12_database_is_backed_up_then_migrated_to_v13_with_imported_zero_and_every_message_unchanged()
+    {
+        WriteRawV12();
+
+        List<(long Id, string RoomId, string AuthorId, string Body, string CreatedAt, string? ClientKey, long? ReplyToId)> messagesBefore;
+        using (var before = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString()))
+        {
+            before.Open();
+            using var v = before.CreateCommand();
+            v.CommandText = "PRAGMA user_version;";
+            Assert.Equal(12L, (long)v.ExecuteScalar()!);   // the premise: a real v12 shape
+
+            messagesBefore = ReadMessagesV11Shape(before);
+        }
+        Assert.True(messagesBefore.Count >= 2);
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Contains(".v12.", Path.GetFileName(db.LastBackupPath!));
+        Assert.True(File.Exists(db.LastBackupPath));
+
+        using var conn = db.Open();
+        using (var probe = conn.CreateCommand())
+        {
+            probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'imported'";
+            Assert.Equal(1L, (long)probe.ExecuteScalar()!);
+        }
+        using (var nonZero = conn.CreateCommand())
+        {
+            nonZero.CommandText = "SELECT COUNT(*) FROM messages WHERE imported <> 0";
+            Assert.Equal(0L, (long)nonZero.ExecuteScalar()!);
+        }
+        using (var nullCheck = conn.CreateCommand())
+        {
+            nullCheck.CommandText = "SELECT COUNT(*) FROM messages WHERE imported IS NULL";
+            Assert.Equal(0L, (long)nullCheck.ExecuteScalar()!);
+        }
+
+        Assert.Equal(messagesBefore, ReadMessagesV11Shape(conn));
+    }
+
+    [Fact]
+    public void Row42_T1_a_torn_v13_with_the_column_present_but_stamp_12_is_finished_not_crashed()
+    {
+        WriteRawV12();
+        using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "ALTER TABLE messages ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;";
+            cmd.ExecuteNonQuery();
+            // stamp deliberately left at 12 — the torn state
+        }
+        SqliteConnection.ClearAllPools();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        using var check = db.Open();
+        using var probe = check.CreateCommand();
+        probe.CommandText = "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'imported'";
+        Assert.Equal(1L, (long)probe.ExecuteScalar()!);
     }
 
     [Fact]
