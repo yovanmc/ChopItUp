@@ -23,16 +23,23 @@
     have no directory bound, so at HEAD the imported `/build-thing` and `/stop` turns would (if they
     reached the spawner) produce an unknown-skill note, and a run-start here is structurally impossible
     regardless — the run-start and run-stop suppression is proven by task 3's in-process tests, not by
-    this script. The mention turns do NOT bind here either: measured 2026-09-18 with the row 42 guard
-    (`SpawnerService.OnMessage`'s `if (m.Imported) return;`) commented out, all 8 legs still PASS (no
-    FAIL legs recorded). An imported `@opus` mention does open an exchange, but `SpawnLimits.Debounce`
-    (2s) delays the actual spawn attempt — and therefore the "could not be started" note that would
-    prove it happened — past leg 8's `Stop-Process` on the hub, so the in-memory pending launch is
-    discarded before it can ever fire, guard or no guard. Leg 6 (the barrier) only proves an exchange
-    opened at the control post, and leg 7's arithmetic never sees a note from the import or the control
-    to fail on. This script is real evidence for AC3/AC4/AC7 (schema, backup, flags, restart) but proves
-    nothing about mention-path inertness; that is task 3's in-process tests' job alone, where the fake
-    clock advances past the debounce deterministically.
+    this script. THE BARRIER (leg 6) is the control post's own spawn attempt, not the exchange root: an
+    exchange can root at the control message the instant it is parsed, well before
+    `SpawnLimits.Debounce` (2s) elapses and a launch actually fires, so the root alone proves nothing
+    about the FIFO loop having drained the five imported PostedEvents first. Leg 6 now polls up to 30s
+    for the control's own "could not be started" hub note (PATH is stripped, so every spawn attempt
+    produces one) and treats only that note's arrival as the barrier. Leg 7 then asserts the exact note
+    sequence since the import, not just a count: a clean control exchange always yields exactly two hub
+    notes (the control's "could not be started" attempt, then ExchangePolicy.cs's `Finished()` posting
+    "Exchange concluded: 1 of N turns used." the instant that attempt empties the exchange), so leg 7
+    checks both notes' ids, order and bodies. Measured 2026-09-18: with the row 42 guard
+    (`SpawnerService.OnMessage`'s `if (m.Imported) return;`) in place, 8/8 PASS, note0=#207 "could not be
+    started", note1=#208 "Exchange concluded: 1 of 4". With the guard commented out, leg 7 FAILs
+    (noteCount=6, total=112 vs expected=108): the imported `@opus`, `@gpt-6-astra` and `@sonnet` mentions
+    each produced their own "could not be started"/"Exchange concluded" pair ahead of the control's,
+    pushing controlNoteId to #211. This script is real evidence for AC3/AC4/AC7 (schema, backup, flags,
+    restart) and now also for mention-path inertness at the transport boundary; task 3's in-process tests
+    separately cover the fake-clock, sub-debounce timing this script cannot control.
 
     PATH IS STRIPPED for each hub child (`$env:SystemRoot\System32;$env:SystemRoot` only) so neither
     `claude` nor `codex` can be found: a spawn attempt that escapes the guard shows up as an open
@@ -200,46 +207,66 @@ try {
     Add-Check -Name 'import.201-five-flagged' -Passed ($importResp.Status -eq 201 -and $importedMsgs.Count -eq 5 -and $notFlagged -eq 0) `
         -Detail "status=$($importResp.Status) count=$($importedMsgs.Count) notFlagged=$notFlagged lastImportedId=$lastImportedId"
 
-    # 6. control.live-mention-moves-the-room -- THE BARRIER. A live mention posted after the import: its
-    # spec reaching the exchange, or a "could not be started" note (PATH is stripped), proves the FIFO
-    # loop already drained the five imported PostedEvents ahead of it (row 42 claim 26).
+    # 6. control.live-mention-moves-the-room -- THE BARRIER. The exchange root can appear the instant
+    # the mention is parsed, well before SpawnLimits.Debounce (2s) elapses and the launch actually
+    # fires -- so it proves an exchange opened, not that a spawn was attempted. The real barrier is the
+    # control's own spawn attempt: PATH is stripped, so that attempt always surfaces as a "could not be
+    # started" hub note (SpawnerService.cs:1100's FileNotFoundException path). Poll up to 30s (debounce
+    # plus margin) for that note; only its arrival proves the FIFO loop already drained the five
+    # imported PostedEvents ahead of the control post (row 42 claim 26). The root, when seen, is still
+    # recorded in Detail.
     $controlResp = Invoke-Api -Method Post -Path "/api/rooms/$room/messages" -Headers $ownerAuth -Body @{ body = '@opus control post' }
     $controlId = $controlResp.Body.id
-    $deadline = (Get-Date).AddSeconds(15)
+    $deadline = (Get-Date).AddSeconds(30)
     $controlOk = $false
     $exchangeRootSeen = $null
-    $controlNoteFound = $false
+    $controlNoteId = $null
     while ((Get-Date) -lt $deadline) {
         $exResp = Invoke-Api -Method Get -Path "/api/rooms/$room/exchange"
-        if ($exResp.Status -eq 200 -and $exResp.Body.rootMessageId -eq $controlId) { $controlOk = $true; $exchangeRootSeen = $exResp.Body.rootMessageId; break }
-        $sinceResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=$lastImportedId&limit=50"
+        if ($exResp.Status -eq 200 -and $exResp.Body.rootMessageId -eq $controlId) { $exchangeRootSeen = $exResp.Body.rootMessageId }
+        $sinceResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=$controlId&limit=50"
         $sinceMessages = @($sinceResp.Body.messages | ForEach-Object { $_ })
-        if (@($sinceMessages | Where-Object { $_.authorId -eq 'hub' -and $_.body -like '*@opus could not be started*' }).Count -gt 0) {
-            $controlOk = $true; $controlNoteFound = $true; break
-        }
+        $note = $sinceMessages | Where-Object { $_.authorId -eq 'hub' -and $_.body -like '@opus could not be started*' } | Select-Object -First 1
+        if ($note) { $controlOk = $true; $controlNoteId = $note.id; break }
         Start-Sleep -Milliseconds 500
     }
     Add-Check -Name 'control.live-mention-moves-the-room' -Passed ($controlOk -and $controlId -eq ($lastImportedId + 1)) `
-        -Detail "controlId=$controlId lastImportedId=$lastImportedId exchangeRootSeen=$exchangeRootSeen noteFound=$controlNoteFound"
+        -Detail "controlId=$controlId lastImportedId=$lastImportedId exchangeRootSeen=$exchangeRootSeen controlNoteId=$controlNoteId"
 
-    # 7. import.no-spawn-no-note -- THE NEGATIVES, exact arithmetic, asserted only after the barrier.
-    # limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or the arithmetic below
-    # compares against a silently truncated page, not the room's real total (row 42 fix F2/F8).
+    # 7. import.no-spawn-no-note -- THE NEGATIVES, exact note SEQUENCE, asserted only after the barrier.
+    # A clean control exchange deterministically produces exactly two hub notes, in order: the control's
+    # own "could not be started" note (SpawnerService.cs:1100), then ExchangePolicy.cs's Finished()
+    # posting "Exchange concluded: 1 of <budget> turns used." the instant that failed attempt empties
+    # the exchange (ExchangePolicy.cs:383-389) -- a single-participant mention always yields both notes,
+    # not one. notesSinceImport is every hub note with id > lastImportedId, in id order: asserting its
+    # count is exactly 2, note 0 is the control's own attempt (id > controlId, right body prefix), and
+    # note 1 is its conclusion with the right turn count and a contiguous id is what makes an unguarded
+    # import fail -- its own spawn attempts and conclusions would either push the count past 2, land
+    # with an id below controlId, or (if it added a turn some other way) change "1 of" to something
+    # else. limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or the arithmetic
+    # below compares against a silently truncated page, not the room's real total (row 42 fix F2/F8).
     $runResp = Invoke-Api -Method Get -Path "/api/rooms/$room/run"
     $runIs204 = $runResp.Status -eq 204
     $afterResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
     $allAfter = @($afterResp.Body.messages | ForEach-Object { $_ })
     $afterHasMoreOk = $afterResp.Body.hasMore -eq $false
     $hubNotesAfter = @($allAfter | Where-Object { $_.authorId -eq 'hub' })
-    $noteCountSinceControl = $hubNotesAfter.Count - $hubNotesBefore
     $badNotes = @($hubNotesAfter | Where-Object { $_.body -match '/build-thing' -or $_.body -match 'No skill named' -or $_.body -match 'Steer noted' -or $_.body -match 'Run #' })
-    $totalExpected = $totalBefore + 5 + 1 + $noteCountSinceControl
+    $notesSinceImport = @($allAfter | Where-Object { $_.authorId -eq 'hub' -and $_.id -gt $lastImportedId } | Sort-Object id)
+    $note0 = if ($notesSinceImport.Count -ge 1) { $notesSinceImport[0] } else { $null }
+    $note1 = if ($notesSinceImport.Count -ge 2) { $notesSinceImport[1] } else { $null }
+    $note0Ok = ($null -ne $note0) -and ($note0.id -gt $controlId) -and ($note0.body -like '@opus could not be started*')
+    $note1Ok = ($null -ne $note1) -and ($note1.body -match '^Exchange concluded: 1 of \d+ turns used\.$') -and ($note1.id -eq ($note0.id + 1))
+    $sequenceOk = ($notesSinceImport.Count -eq 2) -and $note0Ok -and $note1Ok
+    $totalExpected = $totalBefore + 5 + 1 + 2
     $totalOk = $allAfter.Count -eq $totalExpected
     $exResp2 = Invoke-Api -Method Get -Path "/api/rooms/$room/exchange"
     $exchangeRootOk = $true
     if ($exResp2.Status -eq 200 -and $exResp2.Body.rootMessageId) { $exchangeRootOk = $exResp2.Body.rootMessageId -gt $lastImportedId }
-    Add-Check -Name 'import.no-spawn-no-note' -Passed ($runIs204 -and $badNotes.Count -eq 0 -and ($noteCountSinceControl -eq 0 -or $noteCountSinceControl -eq 1) -and $totalOk -and $exchangeRootOk -and $afterHasMoreOk) `
-        -Detail "run204=$runIs204 badNotes=$($badNotes.Count) noteCountSinceControl=$noteCountSinceControl total=$($allAfter.Count) expected=$totalExpected exchangeRoot=$($exResp2.Body.rootMessageId) hasMore=$($afterResp.Body.hasMore)"
+    $note0Detail = if ($note0) { "#$($note0.id):$($note0.body.Substring(0, [Math]::Min(40, $note0.body.Length)))" } else { '<none>' }
+    $note1Detail = if ($note1) { "#$($note1.id):$($note1.body.Substring(0, [Math]::Min(40, $note1.body.Length)))" } else { '<none>' }
+    Add-Check -Name 'import.no-spawn-no-note' -Passed ($runIs204 -and $badNotes.Count -eq 0 -and $sequenceOk -and $totalOk -and $exchangeRootOk -and $afterHasMoreOk) `
+        -Detail "run204=$runIs204 badNotes=$($badNotes.Count) noteCount=$($notesSinceImport.Count) note0=[$note0Detail] note1=[$note1Detail] total=$($allAfter.Count) expected=$totalExpected exchangeRoot=$($exResp2.Body.rootMessageId) hasMore=$($afterResp.Body.hasMore)"
 
     # 8. restart.flags-persist -- stop, restart (PATH stripped again, hub2.* logs so the first start's
     # migration record is not truncated), the imported ids still true and the corpus rows still false.
