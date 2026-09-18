@@ -157,6 +157,7 @@ const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak, orig
               </div>
             )}
             {message.replyToId != null && <ReplyQuote replyToId={message.replyToId} original={original} />}
+            {message.imported && <span className="imported-tag">imported</span>}
             <MessageBody body={message.body} />
           </div>
         </article>
