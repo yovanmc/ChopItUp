@@ -18,14 +18,21 @@ public sealed record PhaseTag(string Kind, string? Name)
 
     /// <summary>Parses the first line of <paramref name="body"/> only — a tag on a later line never
     /// matches, and neither does a kind outside <see cref="Kinds"/>.</summary>
-    public static bool TryParse(string body, out PhaseTag? tag)
+    public static bool TryParse(string body, out PhaseTag? tag) => TryParse(body, out tag, out _);
+
+    /// <summary>Same as the two-argument overload, and also reports <paramref name="prefixLength"/>:
+    /// the length of the matched tag token on the (CRLF-normalised) first line, 0 when there is no
+    /// tag. Row 43 (D5) uses this to find where the tag ends and the recipient region begins.</summary>
+    public static bool TryParse(string body, out PhaseTag? tag, out int prefixLength)
     {
         tag = null;
+        prefixLength = 0;
         var match = Pattern.Match(FirstLine(body));
         if (!match.Success) return false;
         var kind = match.Groups["kind"].Value;
         if (!Kinds.Contains(kind)) return false;
         tag = new PhaseTag(kind, match.Groups["name"].Success ? match.Groups["name"].Value : null);
+        prefixLength = match.Length;
         return true;
     }
 

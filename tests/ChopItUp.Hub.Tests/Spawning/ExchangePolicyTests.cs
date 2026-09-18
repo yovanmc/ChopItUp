@@ -17,7 +17,7 @@ public sealed class ExchangePolicyTests
     [Fact]
     public void An_owner_mention_opens_an_exchange_and_ignores_owner_app_backed_hub_and_self()
     {
-        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@opus @claude @codex @owner @hub @gpt-6-astra go"), T0);
+        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@opus @claude @codex @owner @gpt-6-astra go"), T0);
         Assert.NotNull(x);
         Assert.Equal(ExchangeStatus.Open, x!.Status);
         Assert.Equal(10, x.RootMessageId);
@@ -198,7 +198,7 @@ public sealed class ExchangePolicyTests
     {
         var p = Policy();
         var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus"), T0);
-        var (none, notes) = p.OnRoomMessage([a!], null, Msg(2, "owner", "thanks @claude, carry on"), T0);
+        var (none, notes) = p.OnRoomMessage([a!], null, Msg(2, "owner", "@claude thanks, carry on"), T0);
         Assert.Null(none);
         Assert.Empty(notes);
         Assert.Equal(ExchangeStatus.Open, a!.Status);
@@ -733,7 +733,7 @@ public sealed class ExchangePolicyTests
         var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
         ExchangePolicy.Started(a!, p.Due(a!, T0.AddSeconds(2), NoStarts, Nobody).Single());
 
-        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "@opus and also this @sonnet", 1), T0.AddSeconds(3), joins: a);
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "@opus @sonnet and also this", 1), T0.AddSeconds(3), joins: a);
 
         Assert.Null(opened);
         Assert.Empty(notes);
@@ -935,5 +935,145 @@ public sealed class ExchangePolicyTests
         p.OnRoomMessage([a!], a, Msg(2, "claude", "noted"), T0.AddSeconds(1));
 
         Assert.Equal([1L, 2L], a!.MessageIds.Order());
+    }
+
+    // --- Row 43 (D-b, D-c): only a leading mention addresses anyone; an inline id is a reference -----
+
+    private static readonly ResolvedSkill GrillSkill = new("grill", "Grill", "Grill it.", false);
+
+    [Fact]
+    public void Row43_AC1_only_leading_mentions_open_an_exchange()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@opus Please ask @gpt-5.6-sol one question"), T0);
+        Assert.NotNull(x);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        Assert.Equal(1, x.TurnsCommitted);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void Row43_AC2_an_inline_mention_alone_opens_nothing_and_is_noted_as_a_reference()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "please ask @opus something"), T0);
+        Assert.Null(x);
+        Assert.Equal("Nobody was addressed: @opus appears inside the text, so it was read as a reference. Start the message with @opus to send it.",
+            Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_AC2_a_bracket_prefix_is_prose()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "[usability trial] @sonnet describe"), T0);
+        Assert.Null(x);
+        Assert.Equal("Nobody was addressed: @sonnet appears inside the text, so it was read as a reference. Start the message with @sonnet to send it.",
+            Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_AC2_a_non_spawnable_recipient_is_addressed_so_no_reference_note()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@claude what did @opus say?"), T0);
+        Assert.Null(x);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void Row43_AC2_a_skill_with_inline_only_carries_the_reference_on_its_idle_line()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/grill see what @opus thinks"), T0,
+            skill: new SkillResolution.Found(GrillSkill, "see what @opus thinks"));
+        Assert.Null(x);
+        Assert.Equal("/grill needs a mention to run: nobody was addressed, so no exchange started. @opus appears inside the text, so it was read as a reference.",
+            Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_AC2_an_unknown_skill_with_inline_only_gets_the_skill_note_alone()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/nosuchskill see what @opus thinks"), T0,
+            skill: new SkillResolution.Unknown("nosuchskill", ["demo"]));
+        Assert.Null(x);
+        Assert.Equal("No skill named '/nosuchskill'. Installed: /demo.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_AC2_a_reply_that_joins_gets_no_reference_note()
+    {
+        var p = Policy();
+        var (a, _) = p.OnRoomMessage([], null, Msg(1, "owner", "@opus task A"), T0);
+
+        var (opened, notes) = p.OnRoomMessage([a!], null, Reply(2, "owner", "thanks, @opus was right", 1), T0.AddSeconds(1), joins: a);
+
+        Assert.Null(opened);
+        Assert.Empty(notes);
+        Assert.Contains(2L, a!.MessageIds);
+    }
+
+    [Fact]
+    public void Row43_AC3_an_unknown_leading_word_is_noted_and_the_rest_still_act()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@nobody @opus hi"), T0);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        var addressable = string.Join(", ", ChopDb.SeedRoster.Where(ExchangePolicy.IsSpawnable).Select(p => "@" + p.Id));
+        Assert.Equal($"No participant named @nobody. Address one of: {addressable}.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_B1_a_typo_and_an_inline_id_get_the_unknown_note_only()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@sonet please ask @opus"), T0);
+        Assert.Null(x);
+        var note = Assert.Single(notes);
+        Assert.StartsWith("No participant named @sonet.", note);
+    }
+
+    [Fact]
+    public void Row43_AC3_hub_gets_its_own_sentence()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@hub @opus hi"), T0);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        Assert.Equal("The hub cannot be addressed; it only posts notes.", Assert.Single(notes));
+    }
+
+    [Fact]
+    public void Row43_AC3_a_model_author_is_not_noted()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        var (_, notes) = p.OnMessage(x, Msg(2, "opus", "@nobody @sonnet your view?"), T0);
+        Assert.Contains("sonnet", x!.Pending.Keys);
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public void Row43_AC4_a_model_reply_hands_on_only_when_leading()
+    {
+        var p1 = Policy();
+        var (x1, _) = p1.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        p1.OnMessage(x1, Msg(2, "opus", "@sonnet your view?"), T0);
+        Assert.Equal(["opus", "sonnet"], x1!.Pending.Keys);
+
+        var p2 = Policy();
+        var (x2, _) = p2.OnMessage(null, Msg(1, "owner", "@opus"), T0);
+        var (_, notes2) = p2.OnMessage(x2, Msg(2, "opus", "thanks, maybe @sonnet knows"), T0);
+        Assert.Equal(["opus"], x2!.Pending.Keys);
+        Assert.Equal(1, x2.TurnsCommitted);
+        Assert.Empty(notes2);
+    }
+
+    [Fact]
+    public void Row43_AC4_a_conductor_post_needs_the_mention_after_the_tag()
+    {
+        Assert.Null(Refuse(Policy(), "phase: build/x @sonnet do it", conductor: "fable"));
+
+        var refusal = Refuse(Policy(), "phase: build/x\nSee @sonnet's note", conductor: "fable");
+        Assert.NotNull(refusal);
+        Assert.Contains("needs a mention of who does the work", refusal);
+    }
+
+    [Fact]
+    public void Row43_D_d_referenced_spawnable_reads_the_whole_body()
+    {
+        Assert.Equal(["opus"], Policy().ReferencedSpawnable(Msg(1, "claude", "I agree with @opus")));
     }
 }

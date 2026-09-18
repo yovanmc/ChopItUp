@@ -876,7 +876,7 @@ public sealed class SpawnerService : BackgroundService
     private Exchange? AppBackedTarget(string roomId, Message m)
     {
         var open = ExchangesIn(roomId).Where(e => e.Status == ExchangeStatus.Open).Reverse().ToList();
-        var mentioned = _policy.MentionedSpawnable(m);
+        var mentioned = _policy.ReferencedSpawnable(m);
         return open.FirstOrDefault(e => mentioned.Any(e.Participants.Contains)) ?? open.FirstOrDefault();
     }
 

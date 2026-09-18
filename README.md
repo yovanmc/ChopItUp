@@ -76,8 +76,12 @@ won't need to roll back to them.
 
 ## Spawning (M5)
 
-A spawn starts when an owner message carries `@id` for a roster row that has a model set. A spawned
-model can hand the turn on the same way, mentioning another spawnable id while turns remain.
+A spawn starts when an owner message begins with `@id` for a roster row that has a model set (several
+ids may follow each other at the start; after a `/skill` token they still count). An `@id` anywhere
+later in the text is a reference and spawns nothing; the hub says so in a note when a message
+addresses nobody but names someone inline, and when a leading `@word` matches no participant. A
+spawned model hands the turn on the same way, starting its reply with another spawnable id while
+turns remain.
 
 Caps, all hard-coded: 4 turns per exchange, a 2 second debounce on repeated mentions, at least 10
 seconds between two spawns of the same participant across rooms, a 5 minute wall clock per spawn,
