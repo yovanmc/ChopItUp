@@ -114,7 +114,7 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         {
             switch (FakeProcessRunner.ParticipantOf(spec))
             {
-                case "opus": await PostAs("opus", "I think so. @gpt-6-astra, a second opinion?"); break;
+                case "opus": await PostAs("opus", "@gpt-6-astra I think so; a second opinion?"); break;
                 case "gpt-6-astra": await PostAs("gpt-6-astra", "Agreed, nothing to add."); break;
             }
             return FakeProcessRunner.Ok("""{"result":"done"}""");
@@ -245,7 +245,7 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
             {
                 case "opus" when Interlocked.Increment(ref opusRuns) == 1:
                     await releaseOpus.Task.WaitAsync(ct);
-                    await PostAs("opus", "late: @sonnet @fable please");
+                    await PostAs("opus", "@sonnet @fable late: please");
                     break;
                 case "opus":
                     await PostAs("opus", "second take, done");
@@ -568,7 +568,7 @@ public sealed partial class SpawnerServiceTests
         await PostAsOwner("@gpt-5.5 task B");
         await _runner.NextSpecAsync(Wait);
 
-        await PostAs("claude", "@opus a thought for you, and @sonnet too");
+        await PostAs("claude", "@opus @sonnet a thought for you both");
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));   // sonnet launches in A
         ExchangeView ViewAt(int i) => Spawner.Snapshot("general").Exchanges![i];
         foreach (var _ in Enumerable.Range(0, 100)) { if (ViewAt(0).TurnsCommitted == 3) break; await Task.Delay(50); }

@@ -32,7 +32,7 @@ public sealed record RunContext(long RunId, string ConductorId, string CurrentPh
 /// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange. An
 /// owner prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
 /// running beside the new one. An owner reply joins the exchange it replies to instead (row 36). D8: a
-/// mention is the only trigger,
+/// LEADING mention (row 43, D5; see <see cref="Mentions.Leading"/>) is the only trigger,
 /// never one's own message, never a row that is not spawnable. D5: four turns, whoever holds the
 /// last one is told so. D7: debounce, one in flight per (participant, room), minimum spacing per
 /// participant. Returns notes for the caller to post as the hub; never posts itself.</summary>
@@ -42,11 +42,14 @@ public sealed class ExchangePolicy
     private readonly Mentions _mentions;
     private readonly SpawnLimits _limits;
 
+    private readonly string _addressable;
+
     public ExchangePolicy(IReadOnlyList<Participant> roster, SpawnLimits limits)
     {
         _roster = roster.ToDictionary(p => p.Id, StringComparer.Ordinal);
         _mentions = new Mentions(roster.Where(p => p.Kind != "system").Select(p => p.Id));
         _limits = limits;
+        _addressable = string.Join(", ", roster.Where(IsSpawnable).Select(p => "@" + p.Id));
     }
 
     /// <summary>A row the hub can spawn: a model with a model name of its own. App-backed rows are
@@ -71,11 +74,10 @@ public sealed class ExchangePolicy
 
         // acceptMentions = false: the author is a spawn of an exchange that is closed, or (inside a run)
         // no longer the room's newest one; its post lands, its mentions do not.
-        var mentioned = acceptMentions
-            ? _mentions.Find(message.Body)
-                .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p))
-                .ToList()
-            : new List<string>();
+        var leading = acceptMentions ? _mentions.Leading(message.Body) : Mentions.LeadingMentions.None;
+        var mentioned = leading.Recipients
+            .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p))
+            .ToList();
 
         if (author.Kind != "human")
         {
@@ -137,13 +139,29 @@ public sealed class ExchangePolicy
                 return (null, notes);
         }
 
+        // Row 43 (D-b): a leading word that matched nobody is noted once per word, whatever else this
+        // post did or refused; the mentioned recipients above still act.
+        foreach (var word in leading.Unknown)
+            notes.Add(word.Equals("hub", StringComparison.OrdinalIgnoreCase)
+                ? "The hub cannot be addressed; it only posts notes."
+                : $"No participant named @{word}. Address one of: {_addressable}.");
+
+        // Row 43 (D-c): with no leading recipient at all (spawnable or not), a spawnable id elsewhere
+        // in the body is a reference, not an address; named here so both refusal shapes below can carry it.
+        var referenced = leading.Recipients.Count == 0
+            ? _mentions.Find(message.Body).Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList()
+            : new List<string>();
+        var referenceSuffix = referenced.Count == 0 ? ""
+            : referenced.Count == 1 ? $" @{referenced[0]} appears inside the text, so it was read as a reference."
+            : $" {string.Join(", ", referenced.Select(r => "@" + r))} appear inside the text, so they were read as references.";
+
         // A run needs exactly one conductor; zero or many are both refused.
         if (startsRun && mentioned.Count != 1)
         {
             var name = (skill as SkillResolution.Found)?.Skill.Name
                 ?? throw new ArgumentException("startsRun requires a Found skill.", nameof(skill));
             notes.Add(mentioned.Count == 0
-                ? $"/{name} starts a run and needs exactly one conductor mentioned; none was."
+                ? $"/{name} starts a run and needs exactly one conductor mentioned; none was.{referenceSuffix}"
                 : $"/{name} starts a run and needs exactly one conductor mentioned; {mentioned.Count} were: {string.Join(", ", mentioned.Select(m => "@" + m))}.");
             return (null, notes);
         }
@@ -152,7 +170,9 @@ public sealed class ExchangePolicy
         {
             // A skill with nobody to run it: say so, or the owner watches an invocation do nothing.
             if (skill is SkillResolution.Found idle)
-                notes.Add($"/{idle.Skill.Name} needs a mention to run: nobody was addressed, so no exchange started.");
+                notes.Add($"/{idle.Skill.Name} needs a mention to run: nobody was addressed, so no exchange started.{referenceSuffix}");
+            else if (referenced.Count > 0)
+                notes.Add($"Nobody was addressed:{referenceSuffix} Start the message with @{referenced[0]} to send it.");
             return (null, notes);
         }
 
@@ -245,8 +265,14 @@ public sealed class ExchangePolicy
     /// mention set <see cref="OnMessage"/> builds for itself, a self-mention is deliberately kept
     /// rather than dropped, because <see cref="RefuseConductorPost"/>'s own rule ("mentions the
     /// conductor itself") needs to see it in order to refuse it - silently filtering it out here would
-    /// make that rule unreachable.</summary>
+    /// make that rule unreachable. Row 43 (D5): the mentions read are leading ones, via <see cref="Mentions.Leading"/>.</summary>
     public IReadOnlyList<string> MentionedSpawnable(Message message) =>
+        _mentions.Leading(message.Body).Recipients.Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
+
+    /// <summary>Row 43 (D-d): the whole-body reader, kept for TARGET SELECTION only (which open
+    /// exchange an app-backed window's post lands in, <c>SpawnerService.AppBackedTarget</c>) - never
+    /// for dispatch, which is <see cref="MentionedSpawnable"/>'s leading-only reading.</summary>
+    public IReadOnlyList<string> ReferencedSpawnable(Message message) =>
         _mentions.Find(message.Body).Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
 
     /// <summary>Row 19, task 8 (D8/AC6): the class rules a conductor's post inside its run must pass,
