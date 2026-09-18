@@ -254,6 +254,24 @@ public sealed class MessageStoreTests : IDisposable
         Assert.Equal(original.Message.Id, retry.Message.Id);
     }
 
+    [Fact]
+    public void Row42_T1_Import_stores_the_flag_and_every_read_path_returns_it()
+    {
+        var live = _store.Post("general", "owner", "live");
+        var imported = _store.Import("general", "owner", "Claude: history");
+
+        Assert.False(live.Imported);
+        Assert.True(imported.Imported);
+
+        Assert.Equal([false, true], _store.Read("general", 0, 10).Messages.Select(m => m.Imported));
+        Assert.Equal([false, true], _store.ReadLast("general", 2).Select(m => m.Imported));
+
+        _store.Post("general", "owner", "live", "k1");
+        var retried = _store.Post("general", "owner", "live", "k1");
+        Assert.True(retried.Deduplicated);
+        Assert.False(retried.Message.Imported);
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();

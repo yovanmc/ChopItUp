@@ -69,7 +69,8 @@ export default function ImportDialog({ roomId, roomName, onClose, onImported }: 
           Paste a conversation. A line that opens with a name and a colon — <code>Claude:</code>,{' '}
           <code>Codex:</code> — starts a new message. Everything you import is stored as{' '}
           <strong>your</strong> message; the original speaker stays inside the text, because the author on a
-          message is stamped by the hub and never re-attributed.
+          message is stamped by the hub and never re-attributed. Imported text is history: the hub never acts
+          on a mention, a slash command or a <code>/stop</code> inside it.
         </p>
 
         <textarea
@@ -87,7 +88,8 @@ export default function ImportDialog({ roomId, roomName, onClose, onImported }: 
         {landed && (
           <section className="landed" aria-live="polite">
             <h3>
-              {landed.length === 1 ? '1 message imported' : `${landed.length} messages imported`} — stored as you
+              {landed.length === 1 ? '1 message imported' : `${landed.length} messages imported`} — stored as you,
+              dispatched to no one
             </h3>
             <ol>
               {landed.slice(0, PREVIEW_LIMIT).map((message) => (

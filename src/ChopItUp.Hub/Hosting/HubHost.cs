@@ -233,6 +233,7 @@ public static class HubHost
                 message.Body,
                 message.CreatedAt,
                 message.ReplyToId,
+                message.Imported,
             });
         }
         catch (Exception e)

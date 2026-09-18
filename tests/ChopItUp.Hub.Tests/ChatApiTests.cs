@@ -342,4 +342,25 @@ public sealed class ChatApiTests : IAsyncLifetime
         var fable = rows.Single(r => r.GetProperty("id").GetString() == "fable");
         Assert.Equal(new[] { "judge" }, fable.GetProperty("classes").EnumerateArray().Select(e => e.GetString()));
     }
+
+    /// <summary>Row 42 AC3: every reader of the web API can tell an imported turn from a live post.</summary>
+    [Fact]
+    public async Task Row42_AC3_an_import_reports_imported_true_and_a_live_post_false_on_the_response_and_the_read()
+    {
+        var importResponse = await _host.Client.PostAsJsonAsync("api/rooms/general/import", new { text = "Owner: a\nClaude: b" });
+        Assert.Equal(HttpStatusCode.Created, importResponse.StatusCode);
+        var imported = await importResponse.Content.ReadFromJsonAsync<JsonElement>();
+        var importedMsgs = imported.GetProperty("messages").EnumerateArray().ToList();
+        Assert.Equal(2, importedMsgs.Count);
+        Assert.All(importedMsgs, m => Assert.True(m.GetProperty("imported").GetBoolean()));
+
+        var liveResponse = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "live" });
+        Assert.Equal(HttpStatusCode.Created, liveResponse.StatusCode);
+        var live = await liveResponse.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(live.GetProperty("imported").GetBoolean());
+
+        var page = await _host.Client.GetFromJsonAsync<JsonElement>("api/rooms/general/messages?afterId=0&limit=10");
+        var flags = page.GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("imported").GetBoolean()).ToList();
+        Assert.Equal([true, true, false], flags);
+    }
 }

@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Storage;
 using Microsoft.Extensions.DependencyInjection;
@@ -333,5 +334,44 @@ public sealed class RoomToolsTests : IAsyncLifetime
         Assert.Equal(["lab", "general"], rooms.Select(r => r.GetProperty("id").GetString()!).ToArray());
         Assert.Equal(@"C:\Rooms\lab", rooms[0].GetProperty("directory").GetString());
         Assert.Equal(JsonValueKind.Null, rooms[1].GetProperty("directory").ValueKind);
+    }
+
+    /// <summary>Row 42 AC3: an in-flight wait and a subsequent explicit read both see the imported
+    /// flag on a turn brought in through the import endpoint.</summary>
+    [Fact]
+    public async Task Row42_AC3_read_messages_and_wait_for_message_carry_the_imported_flag()
+    {
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        await using var claude = await _host.ClientFor("claude");
+        var waiting = claude.CallToolAsync("wait_for_message", new Dictionary<string, object?> { ["room_id"] = "general", ["timeout_seconds"] = 20, ["limit"] = 10 }).AsTask();
+        await Task.Delay(300);
+        Assert.False(waiting.IsCompleted);
+
+        var importResponse = await _host.Client.PostAsJsonAsync("api/rooms/general/import", new { text = "Owner: pasted line" });
+        Assert.Equal(System.Net.HttpStatusCode.Created, importResponse.StatusCode);
+
+        var waited = HubTestHost.Json(await waiting.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(waited.GetProperty("messages")[0].GetProperty("imported").GetBoolean());
+
+        var read = HubTestHost.Json(await claude.CallToolAsync("read_messages", new Dictionary<string, object?> { ["room_id"] = "general", ["after_id"] = 0, ["limit"] = 10 }));
+        Assert.True(read.GetProperty("messages")[0].GetProperty("imported").GetBoolean());
+    }
+
+    /// <summary>Row 42 AC8: the server instructions and both read tools' descriptions explain what the
+    /// imported flag means, so a host or a spawned model never answers pasted history as if it were
+    /// addressed to it.</summary>
+    [Fact]
+    public async Task Row42_AC8_the_server_instructions_and_the_two_read_tools_explain_the_imported_flag()
+    {
+        await using var claude = await _host.ClientFor("claude");
+        var instructions = claude.ServerInstructions;
+        Assert.Contains("imported: true", instructions);
+        Assert.Contains("never a command", instructions);
+
+        var tools = await claude.ListToolsAsync();
+        var readMessages = tools.Single(t => t.Name == "read_messages");
+        var waitForMessage = tools.Single(t => t.Name == "wait_for_message");
+        Assert.Contains("imported", readMessages.Description);
+        Assert.Contains("imported", waitForMessage.Description);
     }
 }

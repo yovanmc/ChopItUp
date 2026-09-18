@@ -82,7 +82,10 @@ public static class ChatApi
     /// <summary>D1, binding: every imported message is authored as the roster's one human row; the
     /// original speaker label (if any) stays as plain text inside the body. A line matching
     /// <see cref="SpeakerHeader"/> starts a new message; everything before the first such line, or the
-    /// whole paste when no line matches, becomes one message.</summary>
+    /// whole paste when no line matches, becomes one message. Row 42: each turn is stored through
+    /// <see cref="MessageStore.Import"/>, so it carries <c>imported = 1</c> and the spawner never
+    /// dispatches it; the signal still fires so browsers and waiting hosts see the rows, and the MCP
+    /// instructions say what the flag means.</summary>
     private static IResult PostImport(string roomId, ImportBody body, MessageStore store, MessageSignal signal, ParticipantStore participants)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
@@ -94,7 +97,7 @@ public static class ChatApi
         var posted = new List<Message>(turns.Count);
         foreach (var turn in turns)
         {
-            var message = store.Post(roomId, humanId, turn);   // D1: always the human row, never the label in the text
+            var message = store.Import(roomId, humanId, turn);   // D1: always the human row; row 42: flagged, never dispatched
             signal.Publish(roomId, message);
             posted.Add(message);
         }
@@ -157,7 +160,7 @@ public static class ChatApi
         return sb.ToString();
     }
 
-    private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, m.ReplyToId };
+    private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, m.ReplyToId, m.Imported };
     internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread, r.Persona };
 
     internal sealed record PostBody(string? Body, long? ReplyToId = null);

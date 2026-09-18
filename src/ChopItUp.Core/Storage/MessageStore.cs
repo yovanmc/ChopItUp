@@ -160,8 +160,9 @@ public sealed class MessageStore(ChopDb db)
     /// idempotent: a repeat of the same key by the same author in the same room returns the stored
     /// message untouched. The unique index is the arbiter, not the pre-check, so two racing retries
     /// still collapse to one row. <paramref name="replyToId"/> must name a message of the same room, or
-    /// the post is refused with an <see cref="ArgumentException"/> whose ParamName is <c>replyToId</c>.</summary>
-    public PostResult Post(string roomId, string authorId, string body, string? clientKey, long? replyToId = null)
+    /// the post is refused with an <see cref="ArgumentException"/> whose ParamName is <c>replyToId</c>.
+    /// <paramref name="imported"/> (row 42) is set only by <see cref="Import"/>.</summary>
+    public PostResult Post(string roomId, string authorId, string body, string? clientKey, long? replyToId = null, bool imported = false)
     {
         if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("Message body is empty.", nameof(body));
         clientKey = string.IsNullOrWhiteSpace(clientKey) ? null : clientKey.Trim();
@@ -184,7 +185,7 @@ public sealed class MessageStore(ChopDb db)
             using var insert = conn.CreateCommand();
             insert.Transaction = tx;
             insert.CommandText = """
-                INSERT INTO messages (room_id, author_id, body, created_at, client_key, reply_to_id) VALUES ($room, $author, $body, $at, $key, $reply);
+                INSERT INTO messages (room_id, author_id, body, created_at, client_key, reply_to_id, imported) VALUES ($room, $author, $body, $at, $key, $reply, $imported);
                 SELECT last_insert_rowid();
                 """;
             insert.Parameters.AddWithValue("$room", roomId);
@@ -193,6 +194,7 @@ public sealed class MessageStore(ChopDb db)
             insert.Parameters.AddWithValue("$at", Timestamps.Stamp(createdAt));
             insert.Parameters.AddWithValue("$key", (object?)clientKey ?? DBNull.Value);
             insert.Parameters.AddWithValue("$reply", (object?)replyToId ?? DBNull.Value);
+            insert.Parameters.AddWithValue("$imported", imported ? 1 : 0);
             id = (long)insert.ExecuteScalar()!;   // captured BEFORE the cursor upsert moves last_insert_rowid()
         }
         // 2067 is SQLITE_CONSTRAINT_UNIQUE. The bare code 19 is NOT usable here: a foreign-key
@@ -218,14 +220,19 @@ public sealed class MessageStore(ChopDb db)
         cursor.ExecuteNonQuery();
 
         tx.Commit();
-        return new PostResult(new Message(id, roomId, authorId, body, createdAt, replyToId), false);
+        return new PostResult(new Message(id, roomId, authorId, body, createdAt, replyToId, imported), false);
     }
+
+    /// <summary>A transcript turn brought in by import (row 42). Stored like any post (same cursor
+    /// rule, same table) but flagged, so every reader can tell history from a live message and the
+    /// spawner never dispatches anything inside it.</summary>
+    public Message Import(string roomId, string authorId, string body) => Post(roomId, authorId, body, null, null, imported: true).Message;
 
     private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, string clientKey)
     {
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, room_id, author_id, body, created_at, reply_to_id FROM messages
+            SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM messages
             WHERE room_id = $room AND author_id = $author AND client_key = $key
             """;
         cmd.Parameters.AddWithValue("$room", roomId);
@@ -237,7 +244,7 @@ public sealed class MessageStore(ChopDb db)
 
     private static Message ReadMessage(SqliteDataReader reader) =>
         new(reader.GetInt64(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), Timestamps.Parse(reader.GetString(4)),
-            reader.IsDBNull(5) ? null : reader.GetInt64(5));
+            reader.IsDBNull(5) ? null : reader.GetInt64(5), reader.GetInt64(6) != 0);
 
     private static bool IsInRoom(SqliteConnection conn, string roomId, long messageId)
     {
@@ -272,8 +279,8 @@ public sealed class MessageStore(ChopDb db)
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, room_id, author_id, body, created_at, reply_to_id FROM (
-                SELECT id, room_id, author_id, body, created_at, reply_to_id FROM messages
+            SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM (
+                SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM messages
                 WHERE room_id = $room ORDER BY id DESC LIMIT $limit)
             ORDER BY id
             """;
@@ -291,7 +298,7 @@ public sealed class MessageStore(ChopDb db)
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, room_id, author_id, body, created_at, reply_to_id FROM messages
+            SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM messages
             WHERE room_id = $room AND id > $after ORDER BY id LIMIT $limit
             """;
         cmd.Parameters.AddWithValue("$room", roomId);

@@ -98,4 +98,24 @@ public sealed class RealtimeTests : IAsyncLifetime
         var payload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(rootId, payload.GetProperty("replyToId").GetInt64());
     }
+
+    /// <summary>Row 42 AC3: the SignalR payload carries the imported flag too, so a connected browser
+    /// can tell pasted history from a live post.</summary>
+    [Fact]
+    public async Task Row42_AC3_an_import_broadcast_carries_imported_true_and_a_post_false()
+    {
+        _host.AuthorizeAs(ChopItUp.Core.Storage.ChopDb.OwnerParticipantId);
+        await using var connection = await ConnectAsync("general");
+        var received = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.On<JsonElement>("MessagePosted", msg => received.TrySetResult(msg));
+
+        await _host.Client.PostAsJsonAsync("api/rooms/general/import", new { text = "Owner: pasted history" });
+        var importedPayload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.True(importedPayload.GetProperty("imported").GetBoolean());
+
+        received = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "live post" });
+        var livePayload = await received.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(livePayload.GetProperty("imported").GetBoolean());
+    }
 }

@@ -8,6 +8,9 @@ export interface Message {
   createdAt: string;
   /** The id of the message this one replies to, always in the same room, or null/absent. */
   replyToId?: number | null;
+  /** Row 42: true for a transcript turn brought in by import. The hub stores it as history and never
+   *  dispatches anything inside it. */
+  imported?: boolean;
 }
 
 export interface Room {

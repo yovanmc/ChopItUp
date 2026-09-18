@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Row 14 Task 7 (issues/07-self-check.md): deploy-day evidence that the whole roles/personas path
-    works -- a v11 fixture migrated to v12 by the REAL hub, a persona and a role set and read back over
+    works -- a v11 fixture migrated to v13 by the REAL hub, a persona and a role set and read back over
     the API, the three write routes refused with no credential and unchanged storage, a role edit
     visible in the next GET with no hub restart, and the room_roles foreign key actually enforced.
 
@@ -16,7 +16,7 @@
     THE FIXTURE (ledger 21/22): tools/ChopItUp.Corpus refuses any schema but v1/v2
     (CorpusBuilder.cs:64), so it cannot build the v11 fixture this dry run needs, and a v2 corpus
     replayed through the whole ladder would not model the deployed jump -- the live install is at
-    schema 11, so the real migration is a single v11->v12 step. Following Invoke-M25DryRun.ps1's own
+    schema 11, so the real migration is the v11->v13 chain. Following Invoke-M25DryRun.ps1's own
     precedent exactly: the real, already-built Microsoft.Data.Sqlite.dll is loaded straight out of the
     hub's own bin output (Add-Type, with runtimes\win-x64\native prepended onto PATH so the native
     provider resolves outside the hub's own AppContext.BaseDirectory), and the v11 fixture is written
@@ -41,7 +41,7 @@
     LEGS (mapped to issues/07-self-check.md's acceptance criteria):
       fixture.*      -- build and stamp the v11 database.
       hub.*          -- launch the real exe, wait for /health.
-      migrated.*     -- schema 12, every pre-migration table's row count and room name preserved,
+      migrated.*     -- schema 13, every pre-migration table's row count and room name preserved,
                         the two new columns present and NULL, room_roles present and empty.
       api.*          -- a persona and a role set over the API and read back.
       auth.*         -- each of the three write routes refused with no credential, storage unchanged.
@@ -310,11 +310,11 @@ PRAGMA user_version = 11;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-12' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-13' -Passed ($health.schema -eq 13) -Detail "schema=$($health.schema)"
 
     # --- Step 5: the migrated database preserved everything ---------------------------------------------
     $after = Get-Counts -Path $dbPath
-    Add-Check -Name 'migrated.stamped-v12' -Passed ($after['user_version'] -eq 12) -Detail "user_version=$($after['user_version'])"
+    Add-Check -Name 'migrated.stamped-v13' -Passed ($after['user_version'] -eq 13) -Detail "user_version=$($after['user_version'])"
     foreach ($t in 'participants', 'rooms', 'messages') {
         Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t]) -Detail "before=$($before[$t]) after=$($after[$t])"
     }
