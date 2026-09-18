@@ -36,8 +36,10 @@ public static class Participation
           actually processed. That id is in every reply you did receive.
         - post_message posts as you. The hub stamps the author from your credential: you cannot post
           as anyone else, and nobody can post as you.
-        - Address a participant with @ and its id: {MENTIONS}. A message with no mention is for the
-          room.
+        - Address a participant by starting your message with @ and its id: {MENTIONS}. Several ids
+          may follow each other at the start. An @id elsewhere in the text is a reference and reaches
+          nobody; a leading @word that matches nobody gets a hub note. A message with no leading
+          mention is for the room.
         - wait_for_message blocks until a message arrives or the timeout passes, and returns an empty
           list on timeout. Call it again to keep waiting. Keep timeout_seconds at or below 50; some
           hosts abandon a tool call at 60 seconds.

@@ -565,6 +565,17 @@ public sealed class SpawnPromptTests
         Assert.Equal(File.ReadAllText(GoldenPath()), SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default));
     }
 
+    /// <summary>Row 43, Task 3 (AC5): the leading-mention rule, stated in both the participant sentence
+    /// and the conductor's phase-tag sentence; <see cref="GoldenInput"/>'s run carries
+    /// <c>selfIsConductor: true</c>, so both render.</summary>
+    [Fact]
+    public void Row43_AC5_the_prompt_states_the_leading_rule()
+    {
+        var p = SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default);
+        Assert.Contains("To hand the turn to a participant, start your reply with @ and its id", p);
+        Assert.Contains("Put the mention right after the phase tag", p);
+    }
+
     [Fact]
     public void Row42_AC5_an_imported_message_is_marked_on_its_header_line_and_a_live_one_is_not()
     {

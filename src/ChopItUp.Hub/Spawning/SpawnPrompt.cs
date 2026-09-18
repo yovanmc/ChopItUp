@@ -110,7 +110,7 @@ public static class SpawnPrompt
         sb.Append('\n');
         sb.Append("How to reply: call the chopitup tool post_message exactly once, with room_id \"").Append(input.RoomId).Append("\", client_key \"").Append(input.ClientKey)
           .Append("\", and your whole reply as body. Text you print instead of posting is not seen by the room. Keep it short enough to read in a chat pane. ")
-          .Append("Mention a participant with @ and its id to hand it the turn; each mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ");
+          .Append("To hand the turn to a participant, start your reply with @ and its id (several may follow each other at the start, line breaks between them are fine); an @id elsewhere in your reply is a reference and hands nothing on. Each leading mention of a spawnable participant costs one turn of the budget, and only the participants listed above can be mentioned. Never mention yourself. ");
         if (input.Directory is null)
             sb.Append("You are stateless: this transcript is all you know of the room. You have no files and no tools besides this hub; your memory is the section below.\n");
         else
@@ -291,7 +291,7 @@ public static class SpawnPrompt
             sb.Append("phase: <kind>/<name>\n");
             sb.Append("For a critique, also put this on its own line:\n");
             sb.Append("artifact: <path>\n");
-            sb.Append("<kind> is one of plan, build, critique, verify, ping. Never mention yourself. ");
+            sb.Append("<kind> is one of plan, build, critique, verify, ping. Never mention yourself. Put the mention right after the phase tag (phase: build/<name> @<id> ...); an @id later in the post is a reference and dispatches nobody. ");
             sb.Append("build needs a mention of a plumbing- or visible-class row; critique needs the artifact: line, an artifact that is recorded or in the room's directory tree, and a judge mentioned who is not that artifact's recorded author. ");
             sb.Append("phase: ping needs no one mentioned and ends the run.\n");
         }

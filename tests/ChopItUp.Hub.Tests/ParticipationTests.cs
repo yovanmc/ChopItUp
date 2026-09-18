@@ -50,4 +50,15 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("owner-remote", instructions);
         Assert.Contains("the hub stamps which", instructions);
     }
+
+    /// <summary>Row 43, Task 3 (AC5): every reader of the instructions is told the leading-mention
+    /// rule, in the same words as the spawn prompt, the README and the room overlay.</summary>
+    [Fact]
+    public async Task Row43_AC5_instructions_state_the_leading_rule()
+    {
+        await using var client = await _host.ClientFor("claude");
+        var instructions = client.ServerInstructions;
+        Assert.Contains("Address a participant by starting your message with @ and its id", instructions);
+        Assert.Contains("elsewhere in the text is a reference", instructions);
+    }
 }
