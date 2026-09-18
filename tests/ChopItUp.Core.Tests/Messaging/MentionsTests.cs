@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using ChopItUp.Core.Messaging;
 
 namespace ChopItUp.Core.Tests.Messaging;
@@ -5,6 +7,50 @@ namespace ChopItUp.Core.Tests.Messaging;
 public sealed class MentionsTests
 {
     private static readonly string[] Ids = ["owner", "claude", "codex", "opus", "sonnet", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "hub"];
+
+    private sealed record MentionCase(
+        string Name,
+        string Body,
+        [property: JsonPropertyName("recipients")] string[] Recipients,
+        [property: JsonPropertyName("unknown")] string[] Unknown,
+        [property: JsonPropertyName("references")] string[] References);
+
+    private sealed record MentionCasesFile(string[] Roster, MentionCase[] Cases);
+
+    /// <summary>The fixture lives in <c>tests/mention-cases.json</c> at the repo root, shared with the
+    /// TypeScript twin (Task 4). Found the way <c>SpawnPromptTests.GoldenPath</c> finds the repo root:
+    /// walk up from the test assembly to <c>ChopItUp.slnx</c>.</summary>
+    private static string FixturePath()
+    {
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "ChopItUp.slnx")))
+                return Path.Combine(dir.FullName, "tests", "mention-cases.json");
+        }
+        throw new InvalidOperationException("Could not locate the repo root (ChopItUp.slnx) above " + AppContext.BaseDirectory);
+    }
+
+    private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+
+    public static IEnumerable<object[]> Cases()
+    {
+        var file = JsonSerializer.Deserialize<MentionCasesFile>(File.ReadAllText(FixturePath()), JsonOptions)!;
+        foreach (var c in file.Cases)
+            yield return [c.Name, file.Roster, c.Body, c.Recipients, c.Unknown, c.References];
+    }
+
+    [Theory]
+    [MemberData(nameof(Cases))]
+    public void Leading_and_the_reference_remainder_match_the_shared_fixture(
+        string name, string[] roster, string body, string[] recipients, string[] unknown, string[] references)
+    {
+        Assert.False(string.IsNullOrWhiteSpace(name));
+        var m = new Mentions(roster);
+        var leading = m.Leading(body);
+        Assert.Equal(recipients, leading.Recipients);
+        Assert.Equal(unknown, leading.Unknown);
+        Assert.Equal(references, m.Find(body).Except(leading.Recipients));
+    }
 
     [Fact]
     public void Finds_ids_in_first_appearance_order_without_duplicates()
