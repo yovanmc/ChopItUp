@@ -1199,6 +1199,70 @@ input {
   color: var(--text);
 }
 
+/* Who the draft will reach, above the box it is being typed in. Chips take the thread's own mention
+   colours so a name means the same thing here as it does in history; a row the hub will not spawn is
+   outlined rather than filled, and a word that matches nobody drops to the dim palette. The preview
+   sits at the far end of the same row and drops below the chips when the strip runs out of width. */
+.recipient-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px 0;
+  font-size: 12px;
+}
+
+.recipient-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.recipient-chip {
+  --m: var(--accent-other);
+  color: var(--m);
+  background: color-mix(in srgb, var(--m) 15%, transparent);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-weight: 600;
+}
+
+.recipient-chip[data-host='human'] {
+  --m: var(--accent-owner);
+}
+.recipient-chip[data-host='claude'] {
+  --m: var(--accent-claude);
+}
+.recipient-chip[data-host='codex'] {
+  --m: var(--accent-codex);
+}
+
+.recipient-chip.passive {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--m);
+}
+
+.recipient-chip.unknown {
+  --m: var(--dim);
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--m);
+  font-weight: 400;
+}
+
+.dispatch-preview {
+  margin-left: auto;
+  min-width: 0;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
 /* The line box is pinned to a whole number of pixels so an empty single-line box measures the same
    height the autosize effect gives it; a fractional line height rounded up to a scrollHeight one
    pixel taller than the box, which is what grew the permanent native scrollbar. */

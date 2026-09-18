@@ -4,6 +4,7 @@ import type { Participant } from './types';
  *  Until it arrives, unknown ids fall back to the id itself, so a message never renders blank. */
 let roster = new Map<string, Participant>();
 let mention: RegExp | null = null;
+let reference: RegExp | null = null;
 
 /** Client-side twins of `ChopDb.OwnerParticipantId` and `ChopDb.OwnerRemoteParticipantId`. Two rows of
  *  kind `human` since schema v7: the owner at the desk, and the owner's hand on another device (grill
@@ -21,7 +22,12 @@ export function isOwnerRemote(authorId: string): boolean {
 export function setRoster(list: Participant[]): void {
   roster = new Map(list.map((p) => [p.id.toLowerCase(), p]));
   const mentionable = list.filter((p) => p.kind !== 'system');
-  mention = mentionable.length === 0 ? null : new RegExp(`@(${mentionable.map((p) => escape(p.id)).join('|')})(?!\\.?[\\w-])`, 'gi');
+  const alternation = mentionable.map((p) => escape(p.id)).join('|');
+  mention = mentionable.length === 0 ? null : new RegExp(`@(${alternation})(?!\\.?[\\w-])`, 'gi');
+  // The reference reader adds the lookbehind `Mentions.Find` has and the highlighter deliberately
+  // lacks: `me@opus writes` decorates in the thread but names nobody, and the two readers of row 43
+  // have to answer that body the same way.
+  reference = mentionable.length === 0 ? null : new RegExp(`(?<![\\w-])@(${alternation})(?!\\.?[\\w-])`, 'gi');
 }
 
 /** Ids like `gpt-5.5` carry regex metacharacters; the alternation must match them literally. */
@@ -35,6 +41,52 @@ function escape(id: string): string {
  *  this. Callers reset `lastIndex`. */
 export function mentionPattern(): RegExp | null {
   return mention;
+}
+
+/** What a draft addresses: the roster rows it sends to, the leading words that match nobody (verbatim,
+ *  as typed), and the roster rows it only names in passing. */
+export interface Recipients {
+  recipients: Participant[];
+  unknown: string[];
+  references: Participant[];
+}
+
+const SLASH = /^\/([a-z0-9][a-z0-9-]{0,63})(?=[ \t]|\n|$)/;
+const PHASE = /^phase:[ \t]+(plan|build|critique|verify|ping)(?:\/[a-z0-9][a-z0-9-]{0,31})?(?=[ \t]|\n|$)/;
+// Sticky (`y`) is `\G`'s twin; `u` is what makes `\p{L}`/`\p{N}` work. Classes are spelled out in ASCII
+// on purpose: `\w`/`\s` mean different things to V8 and to .NET, and the two readers must agree.
+const TOKEN = /[ \t\r\n\f\v,:;]*@([A-Za-z0-9][A-Za-z0-9_.-]*)(?![\p{L}\p{N}_.-])/uy;
+
+/** Twin of `Mentions.Leading` (Core, row 43) — keep the two in step through tests/mention-cases.json.
+ *  Only the run of @word tokens at the start of the draft, after an optional `/skill` or `phase:`
+ *  token, addresses anyone; a roster id anywhere else is a reference. */
+export function recipientsOf(draft: string): Recipients {
+  const text = draft.replace(/\r\n/g, '\n');
+  let start = 0;
+  const slash = SLASH.exec(text);
+  const phase = slash ? null : PHASE.exec(text);
+  if (slash) start = 1 + slash[1]!.length;
+  else if (phase) start = phase[0].length;
+  const recipients: Participant[] = [];
+  const unknown: string[] = [];
+  TOKEN.lastIndex = start;
+  for (let m = TOKEN.exec(text); m !== null; m = TOKEN.exec(text)) {
+    const word = m[1]!.replace(/[.,:;!?]+$/, '');
+    const p = roster.get(word.toLowerCase());
+    if (p && p.kind !== 'system') {
+      if (!recipients.includes(p)) recipients.push(p);
+    } else if (!unknown.some((u) => u.toLowerCase() === word.toLowerCase())) unknown.push(word);
+  }
+  const references: Participant[] = [];
+  const pattern = reference;
+  if (pattern) {
+    pattern.lastIndex = 0;
+    for (let m = pattern.exec(text); m !== null; m = pattern.exec(text)) {
+      const p = roster.get(m[1]!.toLowerCase());
+      if (p && !recipients.includes(p) && !references.includes(p)) references.push(p);
+    }
+  }
+  return { recipients, unknown, references };
 }
 
 /** The host family an id belongs to, for colour: `human`, `claude`, `codex`, or `other`. */

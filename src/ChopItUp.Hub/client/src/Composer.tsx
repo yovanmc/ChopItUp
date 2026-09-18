@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as api from './api';
 import { displayName } from './participants';
+import RecipientStrip from './RecipientStrip';
 import { replySnippet } from './reply';
 import type { Message, Skill } from './types';
 
@@ -133,6 +134,7 @@ export default function Composer({ roomName, disabled, replyTo, onCancelReply, o
             </button>
           </div>
         )}
+        <RecipientStrip draft={draft} />
         <div className="composer-input">
           {menuOpen && (
             <ul className="skill-menu" role="listbox" id="skill-menu" aria-label="Installed skills">
