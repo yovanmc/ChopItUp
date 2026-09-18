@@ -426,7 +426,7 @@ PRAGMA user_version = 9;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-12' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-13' -Passed ($health.schema -eq 13) -Detail "schema=$($health.schema)"
 
     Write-Host "Stopping hub pid $($hubProcess.Id)..."
     Stop-Process -Id $hubProcess.Id
@@ -461,7 +461,7 @@ PRAGMA user_version = 9;
 
     # --- Step 5: the migrated database -----------------------------------------------------------
     $after = Get-Counts -Path $dbPath
-    Add-Check -Name 'migrated.stamped-v12' -Passed ($after['user_version'] -eq 12) -Detail "user_version=$($after['user_version'])"
+    Add-Check -Name 'migrated.stamped-v13' -Passed ($after['user_version'] -eq 13) -Detail "user_version=$($after['user_version'])"
     Add-Check -Name 'migrated.messages-have-reply-to-id' -Passed ([bool]$after['has_reply_to_id']) -Detail "has_reply_to_id=$($after['has_reply_to_id'])"
     foreach ($t in 'participants', 'rooms', 'messages', 'read_cursors', 'memory_proposals', 'skills', 'skill_files', 'runs', 'run_phases', 'run_artifacts', 'run_gate_runs') {
         Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t]) -Detail "before=$($before[$t]) after=$($after[$t])"

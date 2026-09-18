@@ -182,7 +182,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-12' -Passed ($health.schema -eq 12) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-13' -Passed ($health.schema -eq 13) -Detail "schema=$($health.schema)"
 
     # Row 28: 'claude' and 'owner' were seeded into tokens.json BEFORE this Start-Process call
     # (right after $DataDir was created, below); the file itself now holds only their SHA-256.
