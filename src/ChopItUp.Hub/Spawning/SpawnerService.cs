@@ -370,6 +370,11 @@ public sealed class SpawnerService : BackgroundService
 
     private void OnMessage(Message m)
     {
+        // Row 42: an imported turn is history. It was stored and announced like any message (browsers,
+        // wait_for_message), but nothing in it is addressed to anyone now: no mention, skill, /stop or
+        // steer inside it reaches a run or the policy. Decided here, at the loop's one message entry,
+        // ahead of every branch below.
+        if (m.Imported) return;
         var exchanges = ExchangesIn(m.RoomId);
         var newest = Newest(m.RoomId);
         var activeRun = _runs.Active(m.RoomId);

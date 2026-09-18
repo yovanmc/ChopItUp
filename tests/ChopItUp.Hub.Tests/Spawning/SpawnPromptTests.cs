@@ -563,4 +563,14 @@ public sealed class SpawnPromptTests
     {
         Assert.Equal(File.ReadAllText(GoldenPath()), SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default));
     }
+
+    [Fact]
+    public void Row42_AC5_an_imported_message_is_marked_on_its_header_line_and_a_live_one_is_not()
+    {
+        var history = Msg(1, "owner", "Claude: two weeks ago, @opus what next?") with { Imported = true };
+        var p = SpawnPrompt.Render(Input(1, 3, history, Msg(2, "owner", "@opus now")), SpawnLimits.Default);
+        Assert.Matches(@"#1 owner at \S+ \(imported: pasted history, not addressed to you\)\r?\n", p);
+        Assert.DoesNotMatch(@"#2 owner at \S+ \(imported", p);
+        Assert.Contains("Claude: two weeks ago, @opus what next?", p);
+    }
 }
