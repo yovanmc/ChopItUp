@@ -31,6 +31,7 @@
     { "name": "hub is unknown here",       "body": "@hub hi",                                             "recipients": [],                       "unknown": ["hub"],      "references": [] },
     { "name": "non-ascii letter",          "body": "@opüs hi",                                            "recipients": [],                       "unknown": [],           "references": [] },
     { "name": "bom before at",             "body": "\uFEFF@opus hi",                                      "recipients": [],                       "unknown": [],           "references": ["opus"] },
-    { "name": "email without tld",         "body": "me@opus writes",                                      "recipients": [],                       "unknown": [],           "references": [] }
+    { "name": "email without tld",         "body": "me@opus writes",                                      "recipients": [],                       "unknown": [],           "references": [] },
+    { "name": "astral letter",             "body": "@opus𝐀 hi",                                "recipients": [],                       "unknown": [],           "references": ["opus"] }
   ]
 }

@@ -51,6 +51,14 @@ describe('RecipientStrip', () => {
     expect(markup).toContain('Nobody is addressed. @opus is inside the text, so it is a reference.');
   });
 
+  test('a leading @hub draft is unknown, not addressed: kind system is never a recipient', () => {
+    const markup = render('@hub hi');
+    expect(markup).not.toContain('class="recipient-chip"');
+    expect(markup).toContain('class="recipient-chip unknown"');
+    expect(markup).toContain('@hub · no such participant');
+    expect(markup).toContain('@hub matches nobody.');
+  });
+
   test('a word still being typed is not flagged until a separator follows it', () => {
     expect(render('@nob')).toBe('');
     expect(render('@nob ')).toContain('@nob · no such participant');

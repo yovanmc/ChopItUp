@@ -286,10 +286,10 @@ public static class SpawnPrompt
 
         if (run.SelfIsConductor)
         {
-            sb.Append("\nYou are this run's conductor. The first line of every message that should move the run forward must be exactly one of these two shapes, with the rest of your instruction as free text on the same line:\n");
-            sb.Append("phase: <kind>\n");
-            sb.Append("phase: <kind>/<name>\n");
-            sb.Append("For a critique, also put this on its own line:\n");
+            sb.Append("\nYou are this run's conductor. The first line of every message that should move the run forward must be exactly one of these two shapes, with the mention of who does the work right after the tag and the rest of your instruction as free text on that line:\n");
+            sb.Append("phase: <kind> @<id> <what to do>\n");
+            sb.Append("phase: <kind>/<name> @<id> <what to do>\n");
+            sb.Append("For a critique, also put this on its own line below the tag line:\n");
             sb.Append("artifact: <path>\n");
             sb.Append("<kind> is one of plan, build, critique, verify, ping. Never mention yourself. Put the mention right after the phase tag (phase: build/<name> @<id> ...); an @id later in the post is a reference and dispatches nobody. ");
             sb.Append("build needs a mention of a plumbing- or visible-class row; critique needs the artifact: line, an artifact that is recorded or in the room's directory tree, and a judge mentioned who is not that artifact's recorded author. ");

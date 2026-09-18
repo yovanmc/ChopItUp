@@ -146,9 +146,10 @@ public sealed class ExchangePolicy
                 ? "The hub cannot be addressed; it only posts notes."
                 : $"No participant named @{word}. Address one of: {_addressable}.");
 
-        // Row 43 (D-c): with no leading recipient at all (spawnable or not), a spawnable id elsewhere
-        // in the body is a reference, not an address; named here so both refusal shapes below can carry it.
-        var referenced = leading.Recipients.Count == 0
+        // Row 43 (D-c): with no leading recipient at all (spawnable or not) and no unknown leading
+        // word, which already got its own note, a spawnable id elsewhere in the body is a reference,
+        // not an address; named here so both refusal shapes below can carry it.
+        var referenced = leading.Recipients.Count == 0 && leading.Unknown.Count == 0
             ? _mentions.Find(message.Body).Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList()
             : new List<string>();
         var referenceSuffix = referenced.Count == 0 ? ""

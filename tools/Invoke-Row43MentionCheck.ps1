@@ -4,12 +4,20 @@
     stub Codex CLI that holds every spawn open and no real model ever reachable.
 
 .DESCRIPTION
-    Mirrors Invoke-Row42ImportCheck.ps1's frame: a param block with -HubExe/-DataDir (fresh, under
+    Mirrors Invoke-Row42ImportCheck.ps1's frame: a param block with -HubExe/-ScratchRoot (fresh, under
     $env:TEMP)/-Port/-TimeoutSeconds, Add-Check, ChopTokenHelpers.ps1 seeding 'owner' before the hub's
     first start, the hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0
     only when every check passes and the total is exactly 7. Every array read off Invoke-RestMethod/
     Invoke-Api is piped through ForEach-Object { $_ } before Where-Object (LESSONS M10: a bare
     top-level JSON array comes back as one nested Object[]).
+
+    Every scratch path this script writes -- the hub's data dir, the stub PATH dir, the imported
+    skill's source -- lives under one root, -ScratchRoot ($env:TEMP\chopitup_row43dryrun_<guid> by
+    default): data\, stub\ and skillsrc\ underneath it. The pre-existence guard checks only that root,
+    and the whole run (directory creation, the --import-skill sub-process, the token seed, the port
+    probe, the hub start and all seven legs) runs inside one try whose finally removes the root once
+    the hub's own process (if it ever started) has vanished, so a throw before the hub even starts --
+    a failed skill import, a taken port -- leaves nothing behind either.
 
     PATH for the child hub is a scratch 'stub\' directory holding codex.cmd (the Row 34 shape:
     @echo off / ping -n 600 127.0.0.1 >nul / exit /b 0) plus $env:SystemRoot\System32 and
@@ -31,7 +39,9 @@
     roots no exchange); bracket.no-exchange (a bracketed prefix is prose, same shape as the inline
     leg, for @gpt-5.6-luna); slash.dispatches (importing a one-line skill first, then invoking it with
     a leading @gpt-6-astra roots an exchange and draws the skill's in-force note); stop.cleanup (the
-    room's own stop endpoint, then this script's own hub process tree ended by PID, never by name).
+    room's own stop endpoint, then this script's own hub process tree ended by PID, never by name, and
+    waited for; the scratch root itself is removed afterward, in the outer finally, once that PID has
+    vanished).
 
     Because leg 2 leaves gpt-5.6-terra's exchange open for the rest of the run, every "no exchange
     rooted here" assertion below reads the snapshot's exchanges[] array for a match on that message's
@@ -56,14 +66,15 @@
 
     Restored, rebuilt, re-run: 7/7 PASS (measured 2026-09-18).
 
-    Never touches C:\Self Apps or any real data directory: -DataDir defaults to a fresh folder under
-    $env:TEMP and is removed by leg 7 on a clean run; a thrown run leaves it behind next to the log
-    for inspection.
+    Never touches C:\Self Apps or any real data directory: -ScratchRoot defaults to a fresh folder
+    under $env:TEMP and the outer finally removes it once the hub's own PID (if any was ever started)
+    has vanished, on both a clean run and a thrown one -- a failed skill import or a taken port leaves
+    nothing under $env:TEMP either.
 #>
 [CmdletBinding()]
 param(
     [string]$HubExe = (Join-Path $PSScriptRoot '..\src\ChopItUp.Hub\bin\Debug\net10.0\ChopItUp.Hub.exe'),
-    [string]$DataDir = (Join-Path $env:TEMP ('chopitup_row43dryrun_' + [guid]::NewGuid().ToString('N'))),
+    [string]$ScratchRoot = (Join-Path $env:TEMP ('chopitup_row43dryrun_' + [guid]::NewGuid().ToString('N'))),
     [int]$Port = 8808,
     [int]$TimeoutSeconds = 30
 )
@@ -74,10 +85,13 @@ $script:Checks = New-Object System.Collections.Generic.List[object]
 # A trailing separator would place a bare backslash before the closing quote in Start-Process's
 # quoted -ArgumentList entry, which the child process's own argv parser reads as an escaped quote
 # rather than a path terminator (same trap Invoke-Row42ImportCheck.ps1 guards against).
-$DataDir = $DataDir.TrimEnd('\', '/')
-$StubDir = "$DataDir.stub"
-$SkillSourceDir = Join-Path "$DataDir.skillsrc" 'row43check'
-$log = "$DataDir.row43-dryrun.log"
+$ScratchRoot = $ScratchRoot.TrimEnd('\', '/')
+$DataDir = Join-Path $ScratchRoot 'data'
+$StubDir = Join-Path $ScratchRoot 'stub'
+$SkillsRootDir = Join-Path $ScratchRoot 'skillsrc'
+$SkillSourceDir = Join-Path $SkillsRootDir 'row43check'
+# A sibling of the root, not under it, so the log survives the root's own removal in the finally below.
+$log = "$ScratchRoot.row43-dryrun.log"
 
 function Add-Check {
     param([string]$Name, [bool]$Passed, [string]$Detail = '')
@@ -148,30 +162,34 @@ if (-not (Test-Path -LiteralPath $HubExe -PathType Leaf)) {
     Write-Error "Hub exe not found at '$HubExe'. Build first, or pass -HubExe." -ErrorAction Continue
     exit 2
 }
-if ((Test-Path -LiteralPath $DataDir) -or (Test-Path -LiteralPath $StubDir)) {
-    Write-Error "-DataDir '$DataDir' (or its stub sibling) already exists; this script only ever runs against fresh directories." -ErrorAction Continue
+if (Test-Path -LiteralPath $ScratchRoot) {
+    Write-Error "-ScratchRoot '$ScratchRoot' already exists; this script only ever runs against a fresh root." -ErrorAction Continue
     exit 2
 }
-Add-Content -Path $log -Value ("Row 43 mention dry run {0} hub={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
-Write-Host "Hub: $HubExe"
-Write-Host "Data dir: $DataDir"
 
-New-Item -ItemType Directory -Path $DataDir | Out-Null
-New-Item -ItemType Directory -Path $StubDir | Out-Null
-New-Item -ItemType Directory -Path $SkillSourceDir | Out-Null
+$base = "http://127.0.0.1:$Port"
+$hub = $null
+try {
+    Add-Content -Path $log -Value ("Row 43 mention dry run {0} hub={1} root={2} port={3}" -f (Get-Date -Format o), $HubExe, $ScratchRoot, $Port)
+    Write-Host "Hub: $HubExe"
+    Write-Host "Scratch root: $ScratchRoot"
 
-# The Row 34 stub: a Codex row's CLI is a .cmd shim, and CliResolver wraps that as
-# "cmd.exe /d /c <shim>". Holding the process open for ten minutes means every spawn this script
-# triggers stays in flight (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill the
-# tree on its own) for well longer than this script needs.
-@'
+    New-Item -ItemType Directory -Path $DataDir | Out-Null
+    New-Item -ItemType Directory -Path $StubDir | Out-Null
+    New-Item -ItemType Directory -Path $SkillSourceDir | Out-Null
+
+    # The Row 34 stub: a Codex row's CLI is a .cmd shim, and CliResolver wraps that as
+    # "cmd.exe /d /c <shim>". Holding the process open for ten minutes means every spawn this script
+    # triggers stays in flight (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill
+    # the tree on its own) for well longer than this script needs.
+    @'
 @echo off
 ping -n 600 127.0.0.1 >nul
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $StubDir 'codex.cmd') -Encoding ascii
 
-# A minimal one-line skill: no `run: true`, so invoking it needs no directory bound to the room.
-@'
+    # A minimal one-line skill: no `run: true`, so invoking it needs no directory bound to the room.
+    @'
 ---
 name: row43check
 description: Row 43 dry run fixture; never installed anywhere but this script's own scratch data dir.
@@ -181,27 +199,24 @@ description: Row 43 dry run fixture; never installed anywhere but this script's 
 Say a short acknowledgement, then stop.
 '@ | Set-Content -LiteralPath (Join-Path $SkillSourceDir 'SKILL.md') -Encoding utf8
 
-$importOut = Join-Path "$DataDir.skillsrc" 'import.out.log'
-$importErr = Join-Path "$DataDir.skillsrc" 'import.err.log'
-$importProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSourceDir`"") -PassThru -Wait -NoNewWindow `
-    -RedirectStandardOutput $importOut -RedirectStandardError $importErr
-if ($importProc.ExitCode -ne 0) { throw "skill import failed (exit=$($importProc.ExitCode)); see $importErr" }
+    $importOut = Join-Path $SkillsRootDir 'import.out.log'
+    $importErr = Join-Path $SkillsRootDir 'import.err.log'
+    $importProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSourceDir`"") -PassThru -Wait -NoNewWindow `
+        -RedirectStandardOutput $importOut -RedirectStandardError $importErr
+    if ($importProc.ExitCode -ne 0) { throw "skill import failed (exit=$($importProc.ExitCode)); see $importErr" }
 
-# Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER the skill import
-# (which never touches tokens.json) and BEFORE the hub's first start.
-$script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
-$ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
+    # Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER the skill import
+    # (which never touches tokens.json) and BEFORE the hub's first start.
+    $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
+    $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
-# Fail fast (Row 40 lesson): a stale process already listening on $Port would either make the hub
-# fail to bind (burning this whole run's timeout waiting on a server that never starts) or, worse,
-# answer /health itself and let every leg run against the wrong process.
-$portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
-try { $portProbe.Start() } catch { throw "port $Port is already listening; pick a free -Port or stop whatever is using it." }
-finally { $portProbe.Stop() }
+    # Fail fast (Row 40 lesson): a stale process already listening on $Port would either make the hub
+    # fail to bind (burning this whole run's timeout waiting on a server that never starts) or, worse,
+    # answer /health itself and let every leg run against the wrong process.
+    $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+    try { $portProbe.Start() } catch { throw "port $Port is already listening; pick a free -Port or stop whatever is using it." }
+    finally { $portProbe.Stop() }
 
-$base = "http://127.0.0.1:$Port"
-$hub = $null
-try {
     # ---- hub, stripped PATH: stub\ (codex.cmd) plus System32/SystemRoot only, so neither claude.exe
     # nor a real codex is reachable. Restored immediately after Start-Process, in a finally, so the
     # rest of this script keeps git/dotnet. ----
@@ -272,8 +287,10 @@ try {
 
     # 7. stop.cleanup -- the room's own stop ends every open exchange and cancels every in-flight
     # spawn in it (SpawnerService.OnStop); then this script's own hub process tree, never a PID it did
-    # not start, is ended so the stub's cmd.exe/ping.exe grandchildren cannot outlive a plain
-    # Stop-Process and keep handles under $DataDir.
+    # not start, is ended by PID (never by name) and waited for, so the stub's cmd.exe/ping.exe
+    # grandchildren cannot outlive a plain Stop-Process. The scratch root itself is removed once that
+    # PID has vanished in the outer finally below, uniformly for every exit path -- not here -- so a
+    # throw before this leg ever runs still cleans up.
     $stopResp = Invoke-Api -Method Post -Path '/api/rooms/general/exchange/stop' -Headers $ownerAuth
     $stopOk = $stopResp.Status -eq 200
     $hubPid = $hub.Id
@@ -284,27 +301,38 @@ try {
         if (-not (Get-Process -Id $hubPid -ErrorAction SilentlyContinue)) { $vanished = $true; break }
         Start-Sleep -Milliseconds 300
     }
-    # A vanished PID does not mean every handle under $DataDir (the hub's own log files, the SQLite
-    # file) is closed the same instant taskkill returns -- retry the delete a few times rather than
-    # treating one race as a real cleanup failure.
-    $removed = $false
-    $lastRemoveError = $null
-    if ($vanished) {
-        for ($attempt = 1; $attempt -le 10 -and -not $removed; $attempt++) {
-            try { Remove-Item -LiteralPath $DataDir -Recurse -Force -ErrorAction Stop } catch { $lastRemoveError = $_.Exception.Message }
-            $removed = -not (Test-Path -LiteralPath $DataDir)
-            if (-not $removed) { Start-Sleep -Milliseconds 300 }
-        }
-    }
-    Add-Check -Name 'stop.cleanup' -Passed ($stopOk -and $killProc.ExitCode -eq 0 -and $vanished -and $removed) `
-        -Detail "stopStatus=$($stopResp.Status) taskkillExit=$($killProc.ExitCode) vanished=$vanished dataDirRemoved=$removed lastRemoveError=$lastRemoveError"
-    $hub = $null   # already ended above; the finally block's own Stop-Process becomes a no-op
+    Add-Check -Name 'stop.cleanup' -Passed ($stopOk -and $killProc.ExitCode -eq 0 -and $vanished) `
+        -Detail "stopStatus=$($stopResp.Status) taskkillExit=$($killProc.ExitCode) vanished=$vanished"
+    $hub = $null   # already ended above; the finally block's own kill-and-wait becomes a no-op
 }
 finally {
-    if ($hub -and -not $hub.HasExited) { Stop-Process -Id $hub.Id -Force -ErrorAction SilentlyContinue }   # only reached on an early throw
+    # Only reached on an early throw where the hub had started but leg 7 never ran to end it (health
+    # never came up, a leg's own assertion threw): end it by PID, never by name, and wait the same way
+    # leg 7 does, so the scratch root below is never removed out from under a still-running hub.
+    if ($hub -and -not $hub.HasExited) {
+        Start-Process -FilePath 'taskkill.exe' -ArgumentList @('/T', '/F', '/PID', "$($hub.Id)") -PassThru -Wait -NoNewWindow -ErrorAction SilentlyContinue | Out-Null
+        $deadline = (Get-Date).AddSeconds(15)
+        while ((Get-Date) -lt $deadline -and (Get-Process -Id $hub.Id -ErrorAction SilentlyContinue)) { Start-Sleep -Milliseconds 300 }
+    }
+    # The scratch root, removed once its hub's PID (if any) has vanished: covers leg 7's clean-run
+    # path (the hub is already gone above) and any throw after New-Item created the root, including
+    # one before the hub itself ever started (a failed skill import, a taken port). Retried: a
+    # vanished PID does not mean every handle under the root (log files, the SQLite file) is closed
+    # the same instant taskkill returns.
+    $removed = $true
+    if (Test-Path -LiteralPath $ScratchRoot) {
+        $removed = $false
+        $lastRemoveError = $null
+        for ($attempt = 1; $attempt -le 10 -and -not $removed; $attempt++) {
+            try { Remove-Item -LiteralPath $ScratchRoot -Recurse -Force -ErrorAction Stop } catch { $lastRemoveError = $_.Exception.Message }
+            $removed = -not (Test-Path -LiteralPath $ScratchRoot)
+            if (-not $removed) { Start-Sleep -Milliseconds 300 }
+        }
+        if (-not $removed) { Write-Warning "could not remove scratch root '$ScratchRoot': $lastRemoveError" }
+    }
     $passed = @($script:Checks | Where-Object Passed).Count
     $total = $script:Checks.Count
-    $line = "Results: $passed/$total PASS"
+    $line = "Results: $passed/$total PASS (scratch root removed: $removed)"
     Write-Host $line
     Add-Content -Path $log -Value $line
     Write-Host "Log: $log"

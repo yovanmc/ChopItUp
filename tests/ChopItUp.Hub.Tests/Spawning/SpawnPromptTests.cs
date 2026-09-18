@@ -257,8 +257,8 @@ public sealed class SpawnPromptTests
 
         var conductor = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: true) }, SpawnLimits.Default);
         Assert.Contains("You are this run's conductor.", conductor);
-        Assert.Contains("phase: <kind>\n", conductor);
-        Assert.Contains("phase: <kind>/<name>\n", conductor);
+        Assert.Contains("phase: <kind> @<id> <what to do>\n", conductor);
+        Assert.Contains("phase: <kind>/<name> @<id> <what to do>\n", conductor);
         Assert.Contains("artifact: <path>\n", conductor);
         Assert.Contains("Never mention yourself.", conductor);
         Assert.Contains("phase: ping needs no one mentioned and ends the run.", conductor);
@@ -574,6 +574,7 @@ public sealed class SpawnPromptTests
         var p = SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default);
         Assert.Contains("To hand the turn to a participant, start your reply with @ and its id", p);
         Assert.Contains("Put the mention right after the phase tag", p);
+        Assert.Contains("phase: <kind>/<name> @<id> <what to do>", p);
     }
 
     [Fact]

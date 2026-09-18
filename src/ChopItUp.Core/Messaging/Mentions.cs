@@ -50,7 +50,7 @@ public sealed class Mentions
         public static readonly LeadingMentions None = new([], []);
     }
 
-    private static readonly Regex Token = new(@"\G[ \t\r\n\f\v,:;]*@(?<word>[A-Za-z0-9][A-Za-z0-9_.\-]*)(?![\p{L}\p{N}_.\-])", RegexOptions.CultureInvariant);
+    private static readonly Regex Token = new(@"\G[ \t\r\n\f\v,:;]*@(?<word>[A-Za-z0-9][A-Za-z0-9_.\-]*)(?![\p{L}\p{N}_.\-\uD800-\uDBFF])", RegexOptions.CultureInvariant);
 
     public LeadingMentions Leading(string body)
     {

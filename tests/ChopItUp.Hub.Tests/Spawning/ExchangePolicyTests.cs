@@ -1019,6 +1019,15 @@ public sealed class ExchangePolicyTests
     }
 
     [Fact]
+    public void Row43_B1_a_typo_and_an_inline_id_get_the_unknown_note_only()
+    {
+        var (x, notes) = Policy().OnMessage(null, Msg(10, "owner", "@sonet please ask @opus"), T0);
+        Assert.Null(x);
+        var note = Assert.Single(notes);
+        Assert.StartsWith("No participant named @sonet.", note);
+    }
+
+    [Fact]
     public void Row43_AC3_hub_gets_its_own_sentence()
     {
         var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "@hub @opus hi"), T0);
