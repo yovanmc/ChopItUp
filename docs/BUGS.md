@@ -1,4 +1,4 @@
 # Bugs, flakes and chores (worked by the fix-bug skill; never a board row)
 
-- 60 flake: one Hub test failed once in a full-solution run (915/916, 2026-09-19, name not captured by the filtered output); the same binaries passed 916/916 on re-run. LEAD: the failing test's name.
+- 60 flake: one Hub test failed once in a full-solution run (915/916, 2026-09-19, name not captured by the filtered output); the same binaries passed 916/916 on re-run. Second occurrence `[V 2026-09-19 cff58f2]` on CI for a ROADMAP.md-only diff (run 35445533659, Hub 924/925): `ExchangeApiTests.A6_A7_stop_kills_the_running_spawn_notes_it_and_every_change_reaches_signalr` at tests/ChopItUp.Hub.Tests/ExchangeApiTests.cs:75, `Assert.Equal` expected `["fable"]`, actual empty. LEAD: whether the first occurrence was the same test.
 - 61 chore: a client showed `read_messages`/`wait_for_message` `room_id` and `limit` and `propose_memory` `replaces` as required; the hub's own tools/list marks all three optional with defaults (measured 2026-09-19 at 6ab2679 via HubTestHost.ClientFor + ListToolsAsync). LEAD: which client rendered them required, and whether it reads `default` at all.
