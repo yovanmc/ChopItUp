@@ -20,6 +20,7 @@ import { readOwnerToken, writeOwnerToken } from './ownerToken';
 import ChromeBar from './shell/ChromeBar';
 import { isHosted } from './shell/hostBridge';
 import { isHuman, isOwnerRemote, isSystem, setRoster } from './participants';
+import { draftFor, nextDrafts } from './drafts';
 import { nextReply } from './reply';
 import type {
   ExchangeSnapshot,
@@ -170,8 +171,12 @@ export default function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  /** The message the composer is replying to. Its transitions live in `reply.ts`. */
-  const [replyTo, dispatchReply] = useReducer(nextReply, null);
+  /** What each room holds unsent, and the message each room's next post replies to. Both are kept
+   *  per room so a switch away and back finds the composer as it was left; their transitions live in
+   *  `drafts.ts` and `reply.ts`. */
+  const [drafts, dispatchDraft] = useReducer(nextDrafts, {});
+  const [replies, dispatchReply] = useReducer(nextReply, {});
+  const replyTo = roomId ? (replies[roomId] ?? null) : null;
   const [liveness, setLiveness] = useState<Liveness>('connecting');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -549,24 +554,31 @@ export default function App() {
     return () => abort.abort();
   }, [roomId, merge, readRoom]);
 
-  // A reply target belongs to the room it was chosen in.
-  useEffect(() => {
-    dispatchReply({ kind: 'roomChanged' });
-  }, [roomId]);
-
   // Stable, so passing them down does not re-render every memoised thread row on each App render.
   const replyToMessage = useCallback((message: Message) => dispatchReply({ kind: 'reply', message }), []);
-  const cancelReply = useCallback(() => dispatchReply({ kind: 'cancel' }), []);
+  const cancelReply = useCallback(() => {
+    if (roomId) dispatchReply({ kind: 'cancel', roomId });
+  }, [roomId]);
+  const editDraft = useCallback(
+    (text: string) => {
+      if (roomId) dispatchDraft({ kind: 'edit', roomId, text });
+    },
+    [roomId],
+  );
 
   const send = useCallback(
     async (body: string, replyToId: number | null) => {
       if (!roomId) return;
       try {
-        merge([await api.postMessage(roomId, body, replyToId)]);
-        dispatchReply({ kind: 'sent' });
+        const posted = await api.postMessage(roomId, body, replyToId);
+        // A send clears the room it was written in, whichever room is open by the time it lands;
+        // the thread only takes the post while that room is still the one on screen.
+        if (currentRoom.current === roomId) merge([posted]);
+        dispatchDraft({ kind: 'sent', roomId });
+        dispatchReply({ kind: 'sent', roomId });
         setError(null);
       } catch (failure) {
-        dispatchReply({ kind: 'failed' });
+        dispatchReply({ kind: 'failed', roomId });
         if (!refused(failure, 'Your message was not posted.')) setError(api.describeError(failure));
         throw failure;
       }
@@ -821,8 +833,11 @@ export default function App() {
               onContinue={continueFromBar}
             />
             <Composer
+              roomId={activeRoom.id}
               roomName={activeRoom.name}
               disabled={false}
+              draft={draftFor(drafts, activeRoom.id)}
+              onDraftChange={editDraft}
               replyTo={replyTo}
               onCancelReply={cancelReply}
               onSend={send}

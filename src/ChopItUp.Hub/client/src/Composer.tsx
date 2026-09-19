@@ -14,18 +14,25 @@ const MAX_HEIGHT_PX = 200;
 const COMMAND_DRAFT = /^\/[a-z0-9-]*$/;
 
 interface Props {
+  /** The open room. Everything the composer holds that belongs to a room — the draft, the reply
+   *  target, which sends are in flight — is keyed by this rather than reset when it changes. */
+  roomId: string;
   roomName: string;
   disabled: boolean;
+  /** What this room holds unsent. Owned by App so switching rooms and coming back finds it again. */
+  draft: string;
+  onDraftChange: (text: string) => void;
   /** The message the next post replies to, or null. Owned by App, which clears it after a successful
-   *  send and on a room change and keeps it after a failed one. */
+   *  send and keeps it after a failed one. */
   replyTo: Message | null;
   onCancelReply: () => void;
   onSend: (body: string, replyToId: number | null) => Promise<void>;
 }
 
-export default function Composer({ roomName, disabled, replyTo, onCancelReply, onSend }: Props) {
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
+export default function Composer({ roomId, roomName, disabled, draft, onDraftChange, replyTo, onCancelReply, onSend }: Props) {
+  /** The rooms whose send is in flight. A set rather than a flag: a slow send in the room just left
+   *  must not grey the Send button of the room now open. */
+  const [sending, setSending] = useState<ReadonlySet<string>>(() => new Set());
   const [skills, setSkills] = useState<Skill[]>([]);
   const [highlight, setHighlight] = useState(0);
   /** Escape's memory. Cleared as soon as the draft leaves the command shape, so dismissing the menu
@@ -65,19 +72,27 @@ export default function Composer({ roomName, disabled, replyTo, onCancelReply, o
     if (replyTo) box.current?.focus();
   }, [replyTo]);
 
+  // The menu's own state is about the word being typed here and now, so a room change starts it over
+  // rather than carrying one room's highlight or its Escape into the next.
+  useEffect(() => {
+    setHighlight(0);
+    setDismissed(false);
+  }, [roomId]);
+
   const matches = useMemo(() => {
     if (!COMMAND_DRAFT.test(draft)) return [];
     const typed = draft.slice(1);
     return skills.filter((skill) => skill.name.startsWith(typed));
   }, [draft, skills]);
 
+  const busy = sending.has(roomId);
   const menuOpen = !disabled && !dismissed && matches.length > 0;
   // Clamped rather than reset by an effect: the list shrinks as the owner types, and a highlight
   // pointing past its end would render nothing selected and select nothing on Enter.
   const active = menuOpen ? Math.min(highlight, matches.length - 1) : -1;
 
   function edit(next: string) {
-    setDraft(next);
+    onDraftChange(next);
     setHighlight(0);
     if (!COMMAND_DRAFT.test(next)) setDismissed(false);
   }
@@ -86,24 +101,31 @@ export default function Composer({ roomName, disabled, replyTo, onCancelReply, o
    *  the rest of the message goes. The space also drops the draft out of `COMMAND_DRAFT`, so the menu
    *  closes without needing to be told to. */
   function choose(skill: Skill) {
-    setDraft(`/${skill.name} `);
+    onDraftChange(`/${skill.name} `);
     setHighlight(0);
     setDismissed(false);
     box.current?.focus();
   }
 
   async function send() {
+    // The room this message is for, read before the await: another room may be open by the time it
+    // resolves, and what is released then is this room's send, not whatever is on screen.
+    const room = roomId;
     const body = draft.trim();
-    if (!body || sending || disabled) return;
-    setSending(true);
+    if (!body || sending.has(room) || disabled) return;
+    setSending((previous) => new Set(previous).add(room));
     try {
+      // The draft is App's, cleared there on success so a failed send leaves the words to retry.
       await onSend(body, replyTo?.id ?? null);
-      setDraft('');
       setHighlight(0);
       setDismissed(false);
       box.current?.focus();
     } finally {
-      setSending(false);
+      setSending((previous) => {
+        const next = new Set(previous);
+        next.delete(room);
+        return next;
+      });
     }
   }
 
@@ -212,8 +234,8 @@ export default function Composer({ roomName, disabled, replyTo, onCancelReply, o
         </div>
       </div>
       <div className="composer-side">
-        <button type="submit" className="send" disabled={disabled || sending || draft.trim().length === 0}>
-          {sending ? 'Sending…' : 'Send'}
+        <button type="submit" className="send" disabled={disabled || busy || draft.trim().length === 0}>
+          {busy ? 'Sending…' : 'Send'}
         </button>
         <span className="hint">Enter sends · Shift+Enter newline · / for skills</span>
       </div>

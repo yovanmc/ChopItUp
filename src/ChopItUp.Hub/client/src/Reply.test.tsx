@@ -39,14 +39,19 @@ describe('reply-to', () => {
   });
 
   test('the composer shows a cancellable chip while replying and none otherwise', () => {
-    const replying = renderToStaticMarkup(
-      <Composer roomName="General" disabled={false} onSend={async () => undefined} replyTo={root} onCancelReply={() => undefined} />,
-    );
+    const props = {
+      roomId: 'general',
+      roomName: 'General',
+      disabled: false,
+      draft: '',
+      onDraftChange: () => undefined,
+      onCancelReply: () => undefined,
+      onSend: async () => undefined,
+    };
+    const replying = renderToStaticMarkup(<Composer {...props} replyTo={root} />);
     expect(replying).toContain('reply-chip');
     expect(replying).toContain('aria-label="Cancel reply"');
-    const idle = renderToStaticMarkup(
-      <Composer roomName="General" disabled={false} onSend={async () => undefined} replyTo={null} onCancelReply={() => undefined} />,
-    );
+    const idle = renderToStaticMarkup(<Composer {...props} replyTo={null} />);
     expect(idle).not.toContain('reply-chip');
   });
 
@@ -62,9 +67,24 @@ describe('reply-to', () => {
 });
 
 describe('nextReply', () => {
-  test('Reply sets the target', () => expect(nextReply(null, { kind: 'reply', message: root })).toBe(root));
-  test('a successful send clears it', () => expect(nextReply(root, { kind: 'sent' })).toBeNull());
-  test('a failed send keeps it', () => expect(nextReply(root, { kind: 'failed' })).toBe(root));
-  test('a room change clears it', () => expect(nextReply(root, { kind: 'roomChanged' })).toBeNull());
-  test('Cancel clears it', () => expect(nextReply(root, { kind: 'cancel' })).toBeNull());
+  test('Reply sets the target for its message\'s room', () =>
+    expect(nextReply({}, { kind: 'reply', message: root })).toEqual({ general: root }));
+  test('a successful send clears only that room', () =>
+    expect(nextReply({ general: root, other: root }, { kind: 'sent', roomId: 'general' })).toEqual({
+      general: null,
+      other: root,
+    }));
+  test('a failed send returns the state unchanged', () => {
+    const state = { general: root };
+    expect(nextReply(state, { kind: 'failed', roomId: 'general' })).toBe(state);
+  });
+  test('Cancel clears only that room', () =>
+    expect(nextReply({ general: root, other: root }, { kind: 'cancel', roomId: 'general' })).toEqual({
+      general: null,
+      other: root,
+    }));
+  test('a switch keeps the other room\'s target', () => {
+    const state = { general: root };
+    expect(nextReply(state, { kind: 'cancel', roomId: 'other' })).toEqual({ general: root, other: null });
+  });
 });
