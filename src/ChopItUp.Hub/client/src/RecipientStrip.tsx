@@ -1,4 +1,4 @@
-import { hostOf, recipientsOf } from './participants';
+import { hostOf, MAX_TURNS, recipientsOf } from './participants';
 import type { Participant } from './types';
 
 /** Row 43 (D5/AC6): who this draft will actually reach, said before it is sent. Only the @id run at
@@ -19,16 +19,23 @@ function nameList(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]!}`;
 }
 
+/** Row 44 (D-a, D-b): the budget a `turns:` token outside 1..MAX_TURNS falls back to. Both numbers
+ *  mirror the hub's hard-coded caps — they are not configuration on either side — and the sentence
+ *  below is the strip's half of the hub's own range note. */
+const DEFAULT_TURNS = 8;
+
 export default function RecipientStrip({ draft }: { draft: string }) {
   // Trimmed because that is the body `send` posts: a draft indented before its `/skill` or `phase:`
   // token would otherwise preview a prefix the hub never sees.
-  const { recipients, unknown: read, references } = recipientsOf(draft.trim());
+  const { recipients, unknown: read, references, turns } = recipientsOf(draft.trim());
   // A word the draft ends with has no separator after it yet, so it is still half-typed. Flagging it
   // would announce "@o matches nobody", then "@op", then "@opu" on the way to a perfectly good @opus.
   const trailing = /@([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(draft);
   const halfTyped = read.length > 0 && trailing !== null && read[read.length - 1]!.toLowerCase() === trailing[1]!.toLowerCase();
   const unknown = halfTyped ? read.slice(0, -1) : read;
-  if (recipients.length === 0 && unknown.length === 0 && references.length === 0) return null;
+  // Row 44: a draft that sets the turns and names nobody yet is still worth answering — the token is
+  // read the same way whether a recipient follows it or not, and going quiet would say it was prose.
+  if (recipients.length === 0 && unknown.length === 0 && references.length === 0 && turns === null) return null;
 
   const spawns = recipients.filter(isSpawnable);
   const passive = recipients.filter((p) => !isSpawnable(p));
@@ -39,6 +46,9 @@ export default function RecipientStrip({ draft }: { draft: string }) {
     const verb = passive.length === 1 ? 'reads' : 'read';
     lines.push(`${nameList(passive.map((p) => p.displayName))} ${verb} this from its own app; the hub spawns nothing.`);
   }
+  // Only beside a recipient: the number sets the exchange this draft would open, and a draft that
+  // opens none sets nothing. An out-of-range value says its piece on the chip instead.
+  if (turns !== null && turns.valid && recipients.length > 0) lines.push(`Sets the exchange to ${turns.turns} turns.`);
   for (const word of unknown) lines.push(`@${word} matches nobody.`);
   if (recipients.length === 0 && references.length > 0) {
     const named = nameList(references.map((p) => `@${p.id}`));
@@ -51,7 +61,7 @@ export default function RecipientStrip({ draft }: { draft: string }) {
 
   return (
     <div className="recipient-strip" role="status" aria-label="Recipients">
-      {(recipients.length > 0 || unknown.length > 0) && (
+      {(recipients.length > 0 || unknown.length > 0 || turns !== null) && (
         <ul className="recipient-chips" role="list">
           {recipients.map((p) => (
             <li
@@ -68,6 +78,13 @@ export default function RecipientStrip({ draft }: { draft: string }) {
               {`@${word} · no such participant`}
             </li>
           ))}
+          {turns !== null && (
+            <li role="listitem" className={`recipient-chip ${turns.valid ? 'turns' : 'unknown'}`}>
+              {turns.valid
+                ? `${turns.turns} turns`
+                : `turns: ${turns.turns} is out of range (1 to ${MAX_TURNS}); the default ${DEFAULT_TURNS} applies`}
+            </li>
+          )}
         </ul>
       )}
       <span className="dispatch-preview">{lines.join(' ')}</span>

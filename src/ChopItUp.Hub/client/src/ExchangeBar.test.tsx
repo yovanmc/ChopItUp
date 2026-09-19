@@ -37,6 +37,7 @@ const render = (
   runStoppable = false,
   stopping = false,
   stoppingRoots: ReadonlySet<number> = NONE,
+  continuingRoots: ReadonlySet<number> = NONE,
 ) =>
   renderToStaticMarkup(
     <ExchangeBar
@@ -44,7 +45,9 @@ const render = (
       runStoppable={runStoppable}
       stopping={stopping}
       stoppingRoots={stoppingRoots}
+      continuingRoots={continuingRoots}
       onStop={() => undefined}
+      onContinue={() => undefined}
     />,
   );
 
@@ -70,8 +73,24 @@ function findButtons(node: ReactNode, into: ReactElement<ButtonProps>[] = []): R
   return findButtons((node.props as { children?: ReactNode }).children ?? null, into);
 }
 
-const buttons = (exchange: ExchangeSnapshot, onStop: (root: number | null) => void, stoppingRoots = NONE) =>
-  findButtons(ExchangeBar.type({ exchange, runStoppable: false, stopping: false, stoppingRoots, onStop }));
+const buttons = (
+  exchange: ExchangeSnapshot,
+  onStop: (root: number | null) => void,
+  stoppingRoots = NONE,
+  onContinue: (root: number) => void = () => undefined,
+  continuingRoots = NONE,
+) =>
+  findButtons(
+    ExchangeBar.type({
+      exchange,
+      runStoppable: false,
+      stopping: false,
+      stoppingRoots,
+      continuingRoots,
+      onStop,
+      onContinue,
+    }),
+  );
 
 /** Row 34's two-exchange room: #41 was superseded with Sonnet still talking, #57 is open with Codex
  *  queued and nothing of its own in flight. The room-wide `inFlight` is Sonnet's, so a strip that read
@@ -289,5 +308,68 @@ describe('ExchangeBar with one strip per exchange', () => {
 
   test('a new hub\'s idle room sends an empty list and still renders nothing', () => {
     expect(render({ ...BASE, status: 'idle', inFlight: [], exchanges: [] })).toBe('');
+  });
+});
+
+/** Row 44, AC5. `continuable` is the hub's decision (owner-rooted, closed, nothing of its own in
+ *  flight, no active run), so these fixtures carry it the way a hub would: a concluded exchange with
+ *  an empty `inFlight` has it, an open one does not, and a hub older than this row sends no field at
+ *  all. The client adds one gate of its own — the live run, the same one the stop already yields to. */
+const CONTINUABLE: ExchangeView = { ...OLDER, status: 'concluded', inFlight: [], continuable: true };
+const CONTINUABLE_NEWER: ExchangeView = { ...NEWER, status: 'concluded', pending: [], continuable: true };
+const ONE: ExchangeSnapshot = { ...TWO, inFlight: [], pending: [], exchanges: [CONTINUABLE] };
+const BOTH: ExchangeSnapshot = { ...TWO, inFlight: [], pending: [], exchanges: [CONTINUABLE, CONTINUABLE_NEWER] };
+
+describe('ExchangeBar with a continuable exchange', () => {
+  test('a continuable strip offers Continue exchange and wires its root', () => {
+    const markup = render(ONE);
+
+    expect(markup).toContain('>Continue exchange</button>');
+    expect(markup).not.toContain('Stop exchange');
+
+    const roots: number[] = [];
+    const found = buttons(ONE, () => undefined, NONE, (root) => roots.push(root));
+    expect(found).toHaveLength(1);
+    found[0]?.props.onClick?.();
+    expect(roots).toEqual([41]);
+
+    // The top-level strip of a hub that sends no `exchanges` continues its own root, and has nothing
+    // to reply to when that root is null, so it offers no button there.
+    const topLevel: ExchangeSnapshot = { ...BASE, status: 'concluded', inFlight: [], continuable: true };
+    const alone = buttons(topLevel, () => undefined, NONE, (root) => roots.push(root));
+    expect(alone).toHaveLength(1);
+    alone[0]?.props.onClick?.();
+    expect(roots).toEqual([41, 41]);
+    expect(render({ ...topLevel, rootMessageId: null })).not.toContain('Continue exchange');
+  });
+
+  test('a live run hides Continue', () => {
+    expect(render(ONE, true)).not.toContain('Continue exchange');
+  });
+
+  test('an open exchange has no Continue', () => {
+    expect(render({ ...TWO, exchanges: [{ ...NEWER, continuable: false }] })).not.toContain('Continue exchange');
+  });
+
+  test('a continue in flight disables only that strip', () => {
+    const found = buttons(BOTH, () => undefined, NONE, () => undefined, new Set([57]));
+
+    expect(found).toHaveLength(2);
+    expect(found[0]?.props.disabled).toBe(false);
+    expect(found[1]?.props.disabled).toBe(true);
+  });
+
+  test('a hub that sends no continuable renders no Continue', () => {
+    const older: ExchangeSnapshot = { ...TWO, inFlight: [], pending: [], exchanges: [{ ...OLDER, status: 'concluded', inFlight: [] }] };
+
+    expect(render(older)).not.toContain('Continue exchange');
+    expect(render(older)).not.toContain('<button');
+  });
+
+  test('several strips give each Continue its own accessible name', () => {
+    expect(render(BOTH)).toContain('aria-label="Continue exchange #41"');
+    expect(render(BOTH)).toContain('aria-label="Continue exchange #57"');
+    // A lone strip names no root anywhere else either, so its button keeps its visible text alone.
+    expect(render(ONE)).not.toContain('aria-label="Continue exchange');
   });
 });
