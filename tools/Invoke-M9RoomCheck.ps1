@@ -138,11 +138,14 @@ try {
         Add-Check -Name "$Prefix.file.carries-codeword" -Passed ($text -like "*$codeword*") -Detail "codeword=$codeword"
         $trailNote = @($hubNotes | Where-Object body -like 'Committed *')
         Add-Check -Name "$Prefix.trail.note" -Passed ($trailNote.Count -eq 1 -and $trailNote[0].body -like "*for $Participant*") -Detail ($trailNote | ForEach-Object body | Select-Object -First 1)
-        $top = & git -C $roomDir log -1 --format='%an|%cn|%s' 2>&1
+        # The exchange merged into the room's branch: HEAD is the merge commit, the turn commit is its second parent.
+        $top = & git -C $roomDir log -1 --format='%an|%cn|%s' 'HEAD^2' 2>&1
         Add-Check -Name "$Prefix.git.author-is-repo-identity" -Passed ("$top" -like "Live Check|Live Check|$Participant`: turn *") -Detail "$top"
-        $coAuthor = (& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)' 2>&1 | Out-String).Trim()
+        $coAuthor = (& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)' 'HEAD^2' 2>&1 | Out-String).Trim()
         Add-Check -Name "$Prefix.git.co-author" -Passed ($coAuthor -eq $ExpectTrailer) -Detail "expected=$ExpectTrailer actual=$coAuthor"
-        $bodyText = (& git -C $roomDir log -1 --format=%B 2>&1) -join "`n"
+        $mergeCoAuthor = (& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)' 2>&1 | Out-String).Trim()
+        Add-Check -Name "$Prefix.git.merge-co-author" -Passed ($mergeCoAuthor -eq $ExpectTrailer) -Detail "merge=$mergeCoAuthor"
+        $bodyText = (& git -C $roomDir log -1 --format=%B 'HEAD^2' 2>&1) -join "`n"
         Add-Check -Name "$Prefix.git.shell-log" -Passed ($bodyText -match 'Shell commands run \(\d+\):') -Detail (($bodyText -split "`n" | Select-Object -Skip 2 -First 2) -join ' / ')
         $tracked = & git -C $roomDir ls-files 2>&1
         Add-Check -Name "$Prefix.git.file-committed" -Passed (@($tracked) -contains $FileName) -Detail (@($tracked) -join ',')
@@ -150,7 +153,8 @@ try {
 
     Test-Spawn -Participant 'sonnet' -FileName 'hello.txt' -ExpectAuthor 'Sonnet' -Prefix 'claude' -ExpectTrailer 'Claude <noreply@anthropic.com>'
     $authors = @(& git -C $roomDir log --format='%an' 2>&1)
-    Add-Check -Name 'git.owner-commit-first' -Passed ($authors.Count -eq 2 -and $authors[1] -eq 'Live Check') -Detail ($authors -join ',')
+    # merge, turn, owner edit: three commits, every one under the repository identity
+    Add-Check -Name 'git.owner-commit-first' -Passed ($authors.Count -eq 3 -and @($authors | Where-Object { $_ -ne 'Live Check' }).Count -eq 0) -Detail ($authors -join ',')
     Add-Check -Name 'git.owner-file-committed' -Passed ((& git -C $roomDir show --name-only --format= HEAD~1 2>&1) -contains 'owner.md') -Detail 'owner.md in the owner commit'
     if ($IncludeCodex) {
         Test-Spawn -Participant 'gpt-6-astra' -FileName 'hello-codex.txt' -ExpectAuthor 'GPT-6 Astra' -Prefix 'codex' -ExpectTrailer 'Codex <noreply@openai.com>'
