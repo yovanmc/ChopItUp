@@ -68,7 +68,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         {
             // The caller already committed the owner's dirty tree before this call; nothing new is
             // staged here, so this is an empty commit purely to give the room a HEAD a worktree can fork.
-            var start = await main.CommitAllAsync("Room trail start", GitTrail.Hub, allowEmpty: true, cancellation);
+            var start = await main.CommitAllAsync("Room trail start", author: null, allowEmpty: true, cancellation);
             if (start.Hash is null) return new(null, "the room directory has no commit and one could not be made: " + start.Reason);
         }
 
@@ -88,18 +88,19 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
     }
 
     /// <summary>What <see cref="CloseAsync"/> needs to decide merge-or-keep and to write the owner's
-    /// commit if the room tree is dirty. <see cref="Leased"/> is true only when a spawn of this exchange
-    /// really ran in a worktree the hub handed it (not a refused lease); <see cref="Interrupted"/> is
-    /// true when any of its spawns was cancelled or timed out, whatever <see cref="Status"/> says;
-    /// <see cref="RunOwnsRoom"/> is true when a run is active or parked in the room at close time.</summary>
-    public sealed record CloseRequest(string RoomDirectory, long Root, string RoomId, ExchangeStatus Status, bool Leased, bool Interrupted, bool RunOwnsRoom, GitIdentity Owner, string OwnerMessage);
+    /// commit if the room tree is dirty, under the repository's identity. <see cref="Leased"/> is true
+    /// only when a spawn of this exchange really ran in a worktree the hub handed it (not a refused
+    /// lease); <see cref="Interrupted"/> is true when any of its spawns was cancelled or timed out,
+    /// whatever <see cref="Status"/> says; <see cref="RunOwnsRoom"/> is true when a run is active or
+    /// parked in the room at close time.</summary>
+    public sealed record CloseRequest(string RoomDirectory, long Root, string RoomId, ExchangeStatus Status, bool Leased, bool Interrupted, bool RunOwnsRoom, string OwnerMessage);
 
     /// <summary>Merges a concluded or superseded exchange's worktree into the room directory's checked
     /// out branch and deletes it, or keeps the branch and says why not. Returns the hub note to post, or
     /// null when there is nothing to say (no worktree was ever registered for this exchange).</summary>
     public async Task<string?> CloseAsync(CloseRequest request, CancellationToken cancellation)
     {
-        var (roomDirectory, root, roomId, status, leased, interrupted, runOwnsRoom, owner, ownerMessage) = request;
+        var (roomDirectory, root, roomId, status, leased, interrupted, runOwnsRoom, ownerMessage) = request;
         var path = PathFor(roomDirectory, root);
         var branch = Branch(root);
         var main = trails.For(roomDirectory);
@@ -117,7 +118,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         {
             var w = trails.ForWorktree(roomDirectory, path);
             if (await w.IsDirtyAsync(cancellation))
-                await w.CommitAllAsync($"Uncommitted at the close of exchange #{root}", GitTrail.Hub, allowEmpty: false, cancellation);
+                await w.CommitAllAsync($"Uncommitted at the close of exchange #{root}", author: null, allowEmpty: false, cancellation);
             var failed = await main.RemoveWorktreeAsync(path, cancellation);
             if (failed is not null) removal = $" Its worktree at {path} was not removed: {failed}";
             else trails.Forget(path);
@@ -147,7 +148,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
 
         if (await main.IsDirtyAsync(cancellation))
         {
-            var oc = await main.CommitAllAsync(ownerMessage, owner, allowEmpty: false, cancellation);
+            var oc = await main.CommitAllAsync(ownerMessage, author: null, allowEmpty: false, cancellation);
             if (oc.Hash is null) return Keep($"the owner's edits could not be committed first: {oc.Reason}");
         }
 
@@ -171,8 +172,8 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
     /// <summary>Start-up cleanup for worktrees a previous hub process left open. Aborts a merge left in
     /// progress only when it is the hub's own exchange merge (never an owner's), then for every
     /// registered <c>x&lt;digits&gt;</c> worktree directly under this room's worktrees folder: commits
-    /// any dirty edits as the hub, removes the worktree, and deletes its branch when already merged or
-    /// else names it as kept. Null when nothing needed doing.</summary>
+    /// any dirty edits under the repository's identity, removes the worktree, and deletes its branch
+    /// when already merged or else names it as kept. Null when nothing needed doing.</summary>
     public async Task<string?> RecoverAsync(string roomDirectory, CancellationToken cancellation)
     {
         var main = trails.For(roomDirectory);
@@ -195,7 +196,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
             {
                 var w = trails.ForWorktree(roomDirectory, path);
                 if (await w.IsDirtyAsync(cancellation))
-                    await w.CommitAllAsync("Uncommitted when the hub restarted", GitTrail.Hub, allowEmpty: false, cancellation);
+                    await w.CommitAllAsync("Uncommitted when the hub restarted", author: null, allowEmpty: false, cancellation);
             }
             var branch = "chopitup/" + Path.GetFileName(path);
             var removeFailed = await main.RemoveWorktreeAsync(path, cancellation);

@@ -89,7 +89,7 @@ public static class HubNotes
     {
         if (agent.Hash is null || !agent.Created)
             return $"{TrailFailedPrefix}{participantId}: {agent.Reason ?? "git made no commit"}.";
-        var text = $"{TrailPrefix}{agent.Hash} as {participantId}: {agent.FilesChanged} file(s) changed, {commands} shell command(s).";
+        var text = $"{TrailPrefix}{agent.Hash} for {participantId}: {agent.FilesChanged} file(s) changed, {commands} shell command(s).";
         if (owner is { Created: true }) text += $" Your edits were committed first as {owner.Hash}.";
         if (headMoved) text += $" HEAD moved during the spawn: {participantId} committed on its own.";
         return text;

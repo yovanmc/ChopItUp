@@ -343,7 +343,7 @@ public sealed class SpawnerService : BackgroundService
             try
             {
                 note = await _worktrees.CloseAsync(new ExchangeWorktrees.CloseRequest(dir, root, roomId, status, leased, interrupted, runOwns,
-                    RoomCommits.IdentityOf(_owner), RoomCommits.OwnerMessage(_owner, roomId)), CancellationToken.None);
+                    RoomCommits.OwnerMessage(_owner, roomId)), CancellationToken.None);
             }
             catch (Exception e) { note = $"Exchange #{root}: its worktree could not be closed: {e.GetType().Name}: {e.Message}"; }
             // The event channel is closed once the hub starts shutting down (StopAsync), and this close
@@ -1087,7 +1087,7 @@ public sealed class SpawnerService : BackgroundService
                         // in the room directory itself whether or not this spawn runs in a worktree.
                         var roomGit = _trails.For(directory);
                         if (await roomGit.IsDirtyAsync(CancellationToken.None))
-                            owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), RoomCommits.IdentityOf(_owner), allowEmpty: false, CancellationToken.None);
+                            owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), author: null, allowEmpty: false, CancellationToken.None);
                         if (inWorktree)
                         {
                             var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None, continueBranch);
@@ -1105,7 +1105,8 @@ public sealed class SpawnerService : BackgroundService
                     }
                     // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
                     // refusal note can name the spawn if this credential is later stolen and replayed.
-                    try { result = await _runner.RunAsync(spec with { RoomId = roomId, ParticipantId = participant.Id }, timeout, handle.Cancel.Token); }
+                    var launched = false;
+                    try { result = await _runner.RunAsync(spec with { RoomId = roomId, ParticipantId = participant.Id }, timeout, handle.Cancel.Token); launched = true; }
                     catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
                     if (git is not null)
                     {
@@ -1113,7 +1114,12 @@ public sealed class SpawnerService : BackgroundService
                         var commands = (host == "codex" ? SpawnOutput.CodexShellCommands(result.StandardOutput) : SpawnOutput.ClaudeShellCommands(result.StandardOutput))
                             .Select(c => c with { Command = Scrub(StripAnsi(c.Command), token) }).ToList();
                         var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
-                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), RoomCommits.IdentityOf(participant), allowEmpty: true, CancellationToken.None);
+                        // Row 46: the repository's own identity is the author; the host is credited by
+                        // trailer only when its process actually launched (R11) and the turn changed
+                        // something (CommitAllAsync decides that part).
+                        var trailer = launched ? RoomCommits.CoAuthorTrailer(host) : null;
+                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true, CancellationToken.None,
+                            trailers: trailer is null ? null : [trailer]);
                         trail = new TrailReport(owner, agent, commands.Count, headMoved, leased);
 
                         // Row 19, task 5c (P4): artifact authorship, from the SPAWN'S WHOLE DIFF - not

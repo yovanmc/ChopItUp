@@ -41,8 +41,11 @@ public sealed class ExchangeWorktreesTests : IDisposable
     private async Task<string> RoomWithCommit(string id)
     {
         var dir = Room(id);
+        Assert.True(await _trails.For(dir).InitAsync());
+        Assert.Equal(0, (await RawGit(dir, "config", "user.name", "Room Owner")).ExitCode);
+        Assert.Equal(0, (await RawGit(dir, "config", "user.email", "room-owner@example.test")).ExitCode);
         File.WriteAllText(Path.Combine(dir, "seed.txt"), "seed");
-        var seed = await _trails.For(dir).CommitAllAsync("seed", Owner, allowEmpty: false);
+        var seed = await _trails.For(dir).CommitAllAsync("seed", author: null, allowEmpty: false);
         Assert.True(seed.Created);
         return dir;
     }
@@ -69,7 +72,7 @@ public sealed class ExchangeWorktreesTests : IDisposable
 
     private static ExchangeWorktrees.CloseRequest Close(string dir, long root, string roomId, ExchangeStatus status,
         bool leased = true, bool interrupted = false, bool runOwnsRoom = false) =>
-        new(dir, root, roomId, status, leased, interrupted, runOwnsRoom, Owner, $"owner: edits before the next spawn in room {roomId}\n");
+        new(dir, root, roomId, status, leased, interrupted, runOwnsRoom, $"owner: edits before the next spawn in room {roomId}\n");
 
     [Fact]
     public async Task Ensure_creates_the_branch_worktree_beside_the_room_and_is_idempotent()
@@ -238,6 +241,10 @@ public sealed class ExchangeWorktreesTests : IDisposable
         // room directory's checked-out branch - recovery never merges.
         var branchSubject = (await GitOut(dir, "log", "-1", "--format=%s", "chopitup/x2")).Trim();
         Assert.Equal("Uncommitted when the hub restarted", branchSubject);
+        var branchAuthor = (await GitOut(dir, "log", "-1", "--format=%an <%ae>", "chopitup/x2")).Trim();
+        Assert.Equal("Room Owner <room-owner@example.test>", branchAuthor);   // AC6: the repository identity, no explicit author
+        var branchBody = await GitOut(dir, "log", "-1", "--format=%B", "chopitup/x2");
+        Assert.DoesNotContain("Co-authored-by", branchBody);
 
         Assert.Null(await _worktrees.RecoverAsync(dir, CancellationToken.None));
     }
