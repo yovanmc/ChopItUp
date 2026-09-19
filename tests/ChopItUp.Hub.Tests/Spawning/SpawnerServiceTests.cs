@@ -305,6 +305,8 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         Assert.Equal("idle", Spawner.Snapshot("general").Status);
 
         await PostAs("codex", "@opus please weigh in");   // a window's mention with no open exchange (D2)
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("nothing was spawned"));
+        Assert.Equal("@codex mentioned @opus, but no exchange is open for it to join and only a human post opens one; nothing was spawned.", note.Body);
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
         Assert.Equal("idle", Spawner.Snapshot("general").Status);
     }
