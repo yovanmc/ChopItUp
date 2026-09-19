@@ -259,6 +259,12 @@ public static class SkillImport
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' is a reserved name (the run stop command) and cannot be installed as a skill.");
 
+        // Row 44: the reserved `/continue` command cannot be shadowed by an installed skill either,
+        // for the same reason and checked the same way as `/stop` above.
+        if (string.Equals(name, ExchangeCommands.ContinueName, StringComparison.Ordinal))
+            return new SkillImportResult(SkillImportOutcome.BadArgument,
+                $"'{name}' is a reserved name (the exchange continue command) and cannot be installed as a skill.");
+
         var target = Path.Combine(skillsRoot, name);
         var replaced = Path.Combine(skillsRoot, name + ".replaced");
 
