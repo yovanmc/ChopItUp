@@ -175,7 +175,7 @@ Then the tests (names are the acceptance ids):
         Assert.Equal(1, real.FilesChanged);
         Assert.Equal("Codex <noreply@openai.com>", (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
         var body = (await GitOut(_dir, "log", "-1", "--format=%B")).Replace("\r\n", "\n");
-        Assert.EndsWith("  1. dir\n\nCo-authored-by: Codex <noreply@openai.com>\n", body);
+        Assert.EndsWith("  1. dir\n\nCo-authored-by: Codex <noreply@openai.com>", body.TrimEnd('\n'));   // %B appends its own newline after the message
     }
 
     [Fact]
@@ -458,7 +458,7 @@ Line 132: `"for sonnet: 1 file(s) changed, 2 shell command(s)."`. Lines 140-144 
 (keep whatever turn/budget literal the line has at HEAD — the subject is not this row's). After the existing `body` assertion at `:146` add:
 
 ```csharp
-        Assert.EndsWith("\n\nCo-authored-by: Claude <noreply@anthropic.com>\n", body.Replace("\r\n", "\n"));   // sonnet is a claude host and changed a file
+        Assert.EndsWith("\n\nCo-authored-by: Claude <noreply@anthropic.com>", body.Replace("\r\n", "\n").TrimEnd('\n'));   // sonnet is a claude host and changed a file
         Assert.Equal("Claude <noreply@anthropic.com>", (await GitLog(dir, "%(trailers:key=Co-authored-by,valueonly)", 1)).Trim());   // the merge carries it
         Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1, skip: 2));                             // the owner's own commit credits no model
 ```
