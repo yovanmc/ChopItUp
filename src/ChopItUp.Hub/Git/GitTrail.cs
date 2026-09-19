@@ -43,11 +43,18 @@ public class GitTrail
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     public static readonly GitIdentity Hub = new("ChopItUp hub", "hub@chopitup.local");
     public const string CoAuthorKey = "Co-authored-by";
+    /// <summary>The only co-author values a hub commit or merge may carry: the two hosts the spawner
+    /// starts. A merge re-emits a branch trailer only when its value is one of these, so a trailer a
+    /// self-committing model wrote never reaches the room's first-parent history (interrogation, MAJOR 1).</summary>
+    public const string CodexCoAuthor = "Codex <noreply@openai.com>";
+    public const string ClaudeCoAuthor = "Claude <noreply@anthropic.com>";
+    private static readonly string[] KnownCoAuthors = [CodexCoAuthor, ClaudeCoAuthor];
     private const char FieldSep = (char)0x1F;
     // LC_ALL=C: the no-op detection reads git's English "nothing to commit" (M10 critique, P2-7).
     private static readonly IReadOnlyDictionary<string, string> Env = new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "0", ["LC_ALL"] = "C" };
-    // No signing and no CRLF rewriting on any commit the hub makes: an owner with commit.gpgsign
-    // configured has no agent prompt to answer here.
+    // No signing and no CRLF rewriting on the commit and merge calls: an owner with commit.gpgsign
+    // configured has no agent prompt to answer here. (The add and diff --cached calls run without
+    // these options, as before this row.)
     private static readonly string[] BaseOptions = ["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"];
     // The hub's own identity, injected through the environment (which beats every config and any
     // stray single GIT_* variable) only when git resolves no set identity of its own (row 46, R4):
@@ -90,6 +97,12 @@ public class GitTrail
     /// <summary>Why the last call failed; null after a success.</summary>
     public string? Reason { get; private set; }
 
+    /// <summary>Why the last commit or merge fell back to the hub's identity: git's failing probe, exit
+    /// code and first stderr line; null when git resolved a set identity or this trail commits as the
+    /// hub (interrogation, MAJOR 2a).</summary>
+    public string? IdentityFallbackReason { get; private set; }
+    private bool _fallbackLogged;
+
     /// <summary>Prefix of this trail's hub-log lines.</summary>
     protected virtual string LogName => "room";
 
@@ -107,29 +120,53 @@ public class GitTrail
     {
         var git = Resolve();
         if (git is null || !Directory.Exists(Root)) return null;
-        return await ConfiguredIdentityUnlocked(git, cancellation);
+        return (await ConfiguredIdentityUnlocked(git, cancellation)).Identity;
     }
 
-    private async Task<GitIdentity?> ConfiguredIdentityUnlocked(ResolvedCli git, CancellationToken cancellation)
+    /// <summary><see cref="Failure"/> is set exactly when <see cref="Identity"/> is null: which of the
+    /// two `git var` probes failed, its exit code and the first line of its stderr (interrogation,
+    /// MAJOR 2a - the earlier version fell back to the hub on any failure with no log line at all).</summary>
+    private sealed record IdentityProbe(GitIdentity? Identity, string? Failure);
+
+    private async Task<IdentityProbe> ConfiguredIdentityUnlocked(ResolvedCli git, CancellationToken cancellation)
     {
         // Both roles: a GIT_COMMITTER_* pair alone lets the committer resolve while `git commit`
         // still dies on the author, and the reverse (row 46, critique pass 2).
         var author = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_AUTHOR_IDENT"], "", cancellation);
-        if (author.ExitCode != 0) return null;
+        if (author.ExitCode != 0) return new(null, ProbeFailure("GIT_AUTHOR_IDENT", author));
         var r = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_COMMITTER_IDENT"], "", cancellation);
-        if (r.ExitCode != 0) return null;
+        if (r.ExitCode != 0) return new(null, ProbeFailure("GIT_COMMITTER_IDENT", r));
         var ident = r.StandardOutput.Trim();                 // "Name <address> 1726700000 -0400"
         var close = ident.LastIndexOf('>');
         var open = close < 0 ? -1 : ident.LastIndexOf(" <", close, StringComparison.Ordinal);
-        if (open <= 0) return null;
-        return new GitIdentity(ident[..open], ident[(open + 2)..close]);
+        if (open <= 0) return new(null, $"git var GIT_COMMITTER_IDENT produced no parseable identity: {ident}");
+        return new(new GitIdentity(ident[..open], ident[(open + 2)..close]), null);
+    }
+
+    private static string ProbeFailure(string name, ProcessResult r)
+    {
+        var firstLine = r.StandardError.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault() ?? "";
+        return $"git var {name} exited {(r.ExitCode?.ToString() ?? "killed")}: {firstLine}";
     }
 
     /// <summary>The environment a hub commit or merge runs with: the hub's identity in
     /// <see cref="HubIdentityEnv"/> when this trail commits as the hub or git resolves no set identity
-    /// at <see cref="Root"/>; otherwise nothing beyond <see cref="Env"/>, and git's own resolution applies.</summary>
-    private async Task<IReadOnlyDictionary<string, string>?> IdentityEnvUnlocked(ResolvedCli git, CancellationToken cancellation) =>
-        CommitsAsHub || await ConfiguredIdentityUnlocked(git, cancellation) is null ? HubIdentityEnv : null;
+    /// at <see cref="Root"/>; otherwise nothing beyond <see cref="Env"/>, and git's own resolution
+    /// applies. Also records <see cref="IdentityFallbackReason"/> and, the first time this trail falls
+    /// back, logs it once (interrogation, MAJOR 2a).</summary>
+    private async Task<IReadOnlyDictionary<string, string>?> IdentityEnvUnlocked(ResolvedCli git, CancellationToken cancellation)
+    {
+        if (CommitsAsHub) { IdentityFallbackReason = null; return HubIdentityEnv; }
+        var probe = await ConfiguredIdentityUnlocked(git, cancellation);
+        if (probe.Identity is not null) { IdentityFallbackReason = null; return null; }
+        IdentityFallbackReason = probe.Failure;
+        if (!_fallbackLogged)
+        {
+            _fallbackLogged = true;
+            Console.Error.WriteLine($"{LogName}: {probe.Failure}; committing as {Hub}");
+        }
+        return HubIdentityEnv;
+    }
 
     /// <summary>The message with <paramref name="trailers"/> as its own final paragraph: git reads
     /// trailers only from the last paragraph, and only when a blank line separates it from the body.</summary>
@@ -310,18 +347,26 @@ public class GitTrail
     {
         var git = Resolve();
         if (git is null || !HasGitEntry()) return [];
-        return await CoAuthorTrailersUnlocked(git, range, logFailure: true, cancellation);
+        return await CoAuthorTrailersUnlocked(git, range, cancellation);
     }
 
-    /// <param name="logFailure">False from a merge: a missing branch fails the merge itself a moment
-    /// later with its own reason, and one failure should be logged once (critique pass 2, F5).</param>
-    private async Task<IReadOnlyList<string>> CoAuthorTrailersUnlocked(ResolvedCli git, string range, bool logFailure, CancellationToken cancellation)
+    /// <summary>A non-zero exit is logged through <see cref="Fail"/> unless git's stderr says
+    /// <c>"unknown revision"</c> (a missing branch): the merge that called this fails a moment later
+    /// with its own reason, and one failure should be logged once rather than twice (critique pass 2,
+    /// F5; interrogation MAJOR 2b widened this from "every merge-time failure" to "every failure").
+    /// Only <see cref="KnownCoAuthors"/> values survive: a value a self-committing model wrote into its
+    /// own commit message never reaches a merge's re-emitted trailers (interrogation MAJOR 1).</summary>
+    private async Task<IReadOnlyList<string>> CoAuthorTrailersUnlocked(ResolvedCli git, string range, CancellationToken cancellation)
     {
         var r = await Run(git, ["log", "--format=%(trailers:key=" + CoAuthorKey + ",valueonly)", range], "", cancellation);
-        if (r.ExitCode != 0) { if (logFailure) Fail("git log", r); return []; }
+        if (r.ExitCode != 0)
+        {
+            if (!r.StandardError.Contains("unknown revision", StringComparison.Ordinal)) Fail("git log", r);
+            return [];
+        }
         var seen = new List<string>();
         foreach (var value in r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            if (!seen.Contains(value, StringComparer.Ordinal)) seen.Add(value);
+            if (KnownCoAuthors.Contains(value, StringComparer.Ordinal) && !seen.Contains(value, StringComparer.Ordinal)) seen.Add(value);
         Reason = null;
         return seen.Select(v => CoAuthorKey + ": " + v).ToList();
     }
@@ -526,7 +571,7 @@ public class GitTrail
             // Row 46: the merge is authored under the identity rule and its last paragraph carries
             // every distinct Co-authored-by line on the commits being merged, so the room's
             // first-parent history says who contributed without opening the branch.
-            var trailers = await CoAuthorTrailersUnlocked(git, "HEAD.." + branch, logFailure: false, cancellation);
+            var trailers = await CoAuthorTrailersUnlocked(git, "HEAD.." + branch, cancellation);
             var args = new List<string>(BaseOptions) { "merge", "--no-ff", "-m", message };
             if (trailers.Count > 0) { args.Add("-m"); args.Add(string.Join("\n", trailers)); }
             args.Add(branch);

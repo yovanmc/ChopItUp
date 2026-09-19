@@ -87,9 +87,11 @@ try {
     Add-Check -Name 'room.git-initialised' -Passed (Test-Path -LiteralPath (Join-Path $roomDir '.git') -PathType Container) -Detail $roomDir
     # Row 46: an owner's real repository carries its own configured identity; a scratch room needs the
     # same shape before any spawn commits into it, or every commit below would fall back to the hub's.
-    & git -C $roomDir config user.name 'Live Check' | Out-Null
+    $identityName = 'Live Check'
+    $identityEmail = 'live-check@example.test'
+    & git -C $roomDir config user.name $identityName | Out-Null
     $identityNameOk = ($LASTEXITCODE -eq 0)
-    & git -C $roomDir config user.email 'live-check@example.test' | Out-Null
+    & git -C $roomDir config user.email $identityEmail | Out-Null
     $identityEmailOk = ($LASTEXITCODE -eq 0)
     Add-Check -Name 'git.identity-configured' -Passed ($identityNameOk -and $identityEmailOk) -Detail "name=$identityNameOk email=$identityEmailOk"
     Add-Check -Name 'room.refuses-drive-root' -Passed ((Get-StatusOf { Invoke-Api POST '/api/rooms' @{ name = 'Nope'; directory = 'C:\' } }) -eq 400) -Detail 'C:\ is 400'
@@ -117,7 +119,7 @@ try {
         try { @((Invoke-RestMethod -Uri "$base/api/rooms/$RoomId/messages?afterId=0&limit=200" -TimeoutSec 10).messages) }
         catch { Add-Content -Path $log -Value "read room failed: $($_.Exception.Message)"; @() }
     }
-    function Test-Spawn([string]$Participant, [string]$FileName, [string]$ExpectAuthor, [string]$Prefix, [string]$ExpectTrailer) {
+    function Test-Spawn([string]$Participant, [string]$FileName, [string]$Prefix, [string]$ExpectTrailer) {
         # The codeword exists nowhere but this prompt: a file that carries it was written by the model, in the room.
         $codeword = 'HERON-' + (Get-Random -Minimum 100 -Maximum 999)
         $body = "@$Participant Three things, then stop: (1) create a file named $FileName in your working directory whose only content is the line $codeword; (2) run one shell command that lists the files in your working directory; (3) post one line to the room saying done. Do not mention anyone."
@@ -140,7 +142,7 @@ try {
         Add-Check -Name "$Prefix.trail.note" -Passed ($trailNote.Count -eq 1 -and $trailNote[0].body -like "*for $Participant*") -Detail ($trailNote | ForEach-Object body | Select-Object -First 1)
         # The exchange merged into the room's branch: HEAD is the merge commit, the turn commit is its second parent.
         $top = & git -C $roomDir log -1 --format='%an|%cn|%s' 'HEAD^2' 2>&1
-        Add-Check -Name "$Prefix.git.author-is-repo-identity" -Passed ("$top" -like "Live Check|Live Check|$Participant`: turn *") -Detail "$top"
+        Add-Check -Name "$Prefix.git.author-is-repo-identity" -Passed ("$top" -like "$identityName|$identityName|$Participant`: turn *") -Detail "$top"
         $coAuthor = (& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)' 'HEAD^2' 2>&1 | Out-String).Trim()
         Add-Check -Name "$Prefix.git.co-author" -Passed ($coAuthor -eq $ExpectTrailer) -Detail "expected=$ExpectTrailer actual=$coAuthor"
         $mergeCoAuthor = (& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)' 2>&1 | Out-String).Trim()
@@ -151,20 +153,20 @@ try {
         Add-Check -Name "$Prefix.git.file-committed" -Passed (@($tracked) -contains $FileName) -Detail (@($tracked) -join ',')
     }
 
-    Test-Spawn -Participant 'sonnet' -FileName 'hello.txt' -ExpectAuthor 'Sonnet' -Prefix 'claude' -ExpectTrailer 'Claude <noreply@anthropic.com>'
+    Test-Spawn -Participant 'sonnet' -FileName 'hello.txt' -Prefix 'claude' -ExpectTrailer 'Claude <noreply@anthropic.com>'
     $authors = @(& git -C $roomDir log --format='%an' 2>&1)
     # merge, turn, owner edit: three commits, every one under the repository identity
-    Add-Check -Name 'git.owner-commit-first' -Passed ($authors.Count -eq 3 -and @($authors | Where-Object { $_ -ne 'Live Check' }).Count -eq 0) -Detail ($authors -join ',')
+    Add-Check -Name 'git.owner-commit-first' -Passed ($authors.Count -eq 3 -and @($authors | Where-Object { $_ -ne $identityName }).Count -eq 0) -Detail ($authors -join ',')
     Add-Check -Name 'git.owner-file-committed' -Passed ((& git -C $roomDir show --name-only --format= HEAD~1 2>&1) -contains 'owner.md') -Detail 'owner.md in the owner commit'
     if ($IncludeCodex) {
-        Test-Spawn -Participant 'gpt-6-astra' -FileName 'hello-codex.txt' -ExpectAuthor 'GPT-6 Astra' -Prefix 'codex' -ExpectTrailer 'Codex <noreply@openai.com>'
+        Test-Spawn -Participant 'gpt-6-astra' -FileName 'hello-codex.txt' -Prefix 'codex' -ExpectTrailer 'Codex <noreply@openai.com>'
     }
 
     # Trail endpoint, unread, mark read, archive.
     $trail = Invoke-Api GET '/api/rooms/live-check/trail'
     $commits = @($trail.commits | ForEach-Object { $_ })
     $expectedCommits = if ($IncludeCodex) { 3 } else { 2 }
-    Add-Check -Name 'trail.endpoint' -Passed (($trail.directory -eq $roomDir) -and ($commits.Count -ge $expectedCommits) -and ($commits[0].author -eq 'Live Check <live-check@example.test>')) -Detail "commits=$($commits.Count) top=$($commits[0].author)"
+    Add-Check -Name 'trail.endpoint' -Passed (($trail.directory -eq $roomDir) -and ($commits.Count -ge $expectedCommits) -and ($commits[0].author -eq "$identityName <$identityEmail>")) -Detail "commits=$($commits.Count) top=$($commits[0].author)"
     $before = @(Invoke-Api GET '/api/rooms' | ForEach-Object { $_ }) | Where-Object id -eq 'live-check'
     Add-Check -Name 'unread.counts-model-and-hub-messages' -Passed ($before.unread -ge 2) -Detail "unread=$($before.unread)"
     Invoke-Api POST '/api/rooms/live-check/read' | Out-Null

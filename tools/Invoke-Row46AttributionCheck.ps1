@@ -304,6 +304,7 @@ finally {
     # not mean every handle under the root (log files, the SQLite file) is closed the same instant.
     $removed = $true
     if (Test-Path -LiteralPath $ScratchRoot) {
+        if (-not $ScratchRoot.StartsWith($env:TEMP, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to remove ${ScratchRoot}: not under TEMP" }
         $removed = $false
         $lastRemoveError = $null
         for ($attempt = 1; $attempt -le 10 -and -not $removed; $attempt++) {

@@ -388,6 +388,78 @@ public sealed class GitTrailTests : IDisposable
         Assert.DoesNotContain("Co-authored-by", await GitOut(_dir, "log", "-1", "--format=%B"));
     }
 
+    // A raw commit whose message travels on stdin (`-F -`), for a message that itself contains a
+    // literal Co-authored-by trailer this test injects (row 46, interrogation MAJOR 1: only known
+    // trailers survive a merge's union - a self-committing model cannot invent one).
+    private static async Task<int> RawCommitViaStdin(string dir, string message)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName,
+                ["-c", "user.name=Evil", "-c", "user.email=evil@attacker.test", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"],
+                new Dictionary<string, string>(), dir, message, "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        return r.ExitCode ?? -1;
+    }
+
+    [Fact]
+    public async Task Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+
+        var wt = _dir + "_wt";
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
+        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
+        Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
+        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>";
+        Assert.Equal(0, await RawCommitViaStdin(wt, message));
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+
+        var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
+        Assert.Equal(MergeResult.Merged, m.Result);
+        Assert.Equal("Claude <noreply@anthropic.com>",
+            (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
+    }
+
+    [Fact]
+    public async Task Row46_I1_merge_carries_nothing_when_the_branch_trailers_are_all_foreign()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+
+        var wt = _dir + "_wt";
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
+        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
+        Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
+        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>";
+        Assert.Equal(0, await RawCommitViaStdin(wt, message));
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+
+        var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
+        Assert.Equal(MergeResult.Merged, m.Result);
+        Assert.Equal("Merge exchange #9 (lab)", (await GitOut(_dir, "log", "-1", "--format=%B")).Trim());
+    }
+
+    [Fact]
+    public async Task Row46_I2_identity_fallback_is_recorded_and_absent_when_git_resolves_one()
+    {
+        var git = new GitTrail(_dir, runner: new EnvRunner(NoIdentity));
+        Assert.True(await git.InitAsync());
+        await git.CommitAllAsync("x", author: null, allowEmpty: true);
+        Assert.NotNull(git.IdentityFallbackReason);
+        Assert.Contains("exited 128", git.IdentityFallbackReason);
+
+        var owned = new GitTrail(_dir + "_owner");
+        Assert.True(await owned.InitAsync());
+        await ConfigureRoomOwner(_dir + "_owner");
+        await owned.CommitAllAsync("x", author: null, allowEmpty: true);
+        Assert.Null(owned.IdentityFallbackReason);
+    }
+
     [Fact]
     public async Task Row46_A6_a_bookkeeping_commit_carries_the_repository_identity_and_no_trailer_and_an_explicit_author_still_wins()
     {

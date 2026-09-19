@@ -1,5 +1,6 @@
 using System.Text;
 using ChopItUp.Core.Model;
+using ChopItUp.Hub.Git;
 
 namespace ChopItUp.Hub.Spawning;
 
@@ -13,8 +14,8 @@ namespace ChopItUp.Hub.Spawning;
 public static class RoomCommits
 {
     public const string ShellHeader = "Shell commands run";
-    public const string CodexTrailer = "Co-authored-by: Codex <noreply@openai.com>";
-    public const string ClaudeTrailer = "Co-authored-by: Claude <noreply@anthropic.com>";
+    public const string CodexTrailer = GitTrail.CoAuthorKey + ": " + GitTrail.CodexCoAuthor;
+    public const string ClaudeTrailer = GitTrail.CoAuthorKey + ": " + GitTrail.ClaudeCoAuthor;
 
     /// <summary>The trailer that credits a spawn's host, or null for a host the spawner cannot start:
     /// nothing is credited rather than something invented.</summary>
