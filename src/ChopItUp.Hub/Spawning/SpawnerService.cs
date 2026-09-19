@@ -1099,7 +1099,9 @@ public sealed class SpawnerService : BackgroundService
         {
             PostNote(request.RoomId, $"@{participant.Id} could not be started: {e.GetType().Name}: {e.Message}");
             TryDeleteDir(workDir);
-            var note = ExchangePolicy.Finished(x, participant.Id);
+            // Row 44: Finished now returns (Note, Concluded); this launch-failure path only needs the
+            // note, and a failed launch is never the addressee's own synthesis turn.
+            var (note, _) = ExchangePolicy.Finished(x, participant.Id, _clock.GetUtcNow());
             if (note is not null) PostNote(request.RoomId, note);
         }
     }
@@ -1149,7 +1151,9 @@ public sealed class SpawnerService : BackgroundService
         TryDeleteDir(h.WorkDir);
         if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
         h.Cancel.Dispose();
-        var note = ExchangePolicy.Finished(h.Exchange, id);
+        // Row 44: Finished now returns (Note, Concluded); this path keeps posting the note only, same
+        // as before its signature changed, until it also drives a queued synthesis or continuation turn.
+        var (note, _) = ExchangePolicy.Finished(h.Exchange, id, _clock.GetUtcNow());
         // Row 35: this exchange may have just gone idle (concluded, superseded or stopped with
         // nothing left in flight) - try to hand its worktree to a close now. Also releases a close (or
         // a worktree launch) of another exchange that was waiting on THIS spawn because it ran in the

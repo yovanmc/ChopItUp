@@ -9,12 +9,17 @@ public enum ExchangeStatus { Open, Concluded, Superseded, Stopped }
 /// inferred from the reason string (P7 - the service never decides).</summary>
 public enum ExchangeStopCause { Owner, Run }
 
+/// <summary>Why a spawn is queued (row 44): a mention (the ordinary case), the addressee's synthesis
+/// turn the hub queued itself, or a turn /continue re-queued.</summary>
+public enum SpawnReason { Mention, Synthesis, Continuation }
+
 /// <summary>A participant waiting to be launched, with every message that asked for it since the
 /// last launch (one burst = one spawn, D8) and when the last of them arrived (the debounce clock).</summary>
 public sealed class PendingSpawn
 {
     public List<long> TriggerIds { get; } = new();
     public DateTimeOffset LastTriggerAt { get; set; }
+    public SpawnReason Reason { get; init; } = SpawnReason.Mention;
 }
 
 /// <summary>One room's exchange (D5): rooted in an owner message, a budget of model turns, then a
@@ -26,7 +31,9 @@ public sealed class Exchange
 {
     public required string RoomId { get; init; }
     public required long RootMessageId { get; init; }
-    public required int Budget { get; init; }
+
+    /// <summary>Row 44: set at open, raised by /continue and by a synthesis turn that found no free turn.</summary>
+    public required int Budget { get; set; }
     public ExchangeStatus Status { get; set; } = ExchangeStatus.Open;
 
     /// <summary>Row 27: who caused the stop, set by <see cref="ExchangePolicy.Stop"/> when
@@ -74,8 +81,30 @@ public sealed class Exchange
     /// <summary>Row 36: reopened after its worktree was handed to a close, so its next lease may continue
     /// the branch that close kept instead of refusing it.</summary>
     public bool ContinuesBranch { get; set; }
+
+    /// <summary>Row 44: the first spawnable participant the root message addressed, for an
+    /// exchange an owner prompt opened outside a run; null for run and conductor exchanges. Gets one
+    /// synthesis turn when another participant's post would otherwise have been the last.</summary>
+    public string? Addressee { get; init; }
+
+    /// <summary>Row 44: hand-offs the budget refused, in refusal order, each with the message that made
+    /// it; what /continue re-queues when nobody was named. Cleared by a continue, and by a reply
+    /// that reopened the exchange and was accepted.</summary>
+    public OrderedDictionary<string, long> Refused { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Row 44: a synthesis turn was queued in this leg; a second one never is. Reset by a
+    /// continue or an accepted reopening reply.</summary>
+    public bool SynthesisUsed { get; set; }
+
+    /// <summary>Row 44: the queued synthesis found no free turn and grew the budget by one; cleared when
+    /// it launches, and undone by a stop or supersede that drops it while still pending.</summary>
+    public bool SynthesisGrewBudget { get; set; }
+
+    /// <summary>Row 44: the last model post that landed in this exchange (author and id), read by
+    /// <see cref="ExchangePolicy.Finished"/> to decide whether the addressee still owes a wrap-up.</summary>
+    public (string AuthorId, long MessageId)? LastModelPost { get; set; }
 }
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two
 /// numbers the prompt states.</summary>
-public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter);
+public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter, SpawnReason Reason = SpawnReason.Mention);

@@ -1,5 +1,6 @@
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
+using ChopItUp.Core.Skills;
 using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Spawning;
@@ -29,13 +30,18 @@ public abstract record SkillResolution
 /// F-9).</summary>
 public sealed record RunContext(long RunId, string ConductorId, string CurrentPhase);
 
+/// <summary>What a /continue found (row 44, D-d). The service maps each refusal to one note.</summary>
+public enum ContinueOutcome { Continued, RunExchange, StillOpen, StillFinishing, NobodySpawnable }
+
 /// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange. An
 /// owner prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
 /// running beside the new one. An owner reply joins the exchange it replies to instead (row 36). D8: a
 /// LEADING mention (row 43, D5; see <see cref="Mentions.Leading"/>) is the only trigger,
-/// never one's own message, never a row that is not spawnable. D5: four turns, whoever holds the
-/// last one is told so. D7: debounce, one in flight per (participant, room), minimum spacing per
-/// participant. Returns notes for the caller to post as the hub; never posts itself.</summary>
+/// never one's own message, never a row that is not spawnable. D5: eight turns by default (a
+/// turns: token in the leading run overrides, row 44); whoever holds the last one is told so, and
+/// the addressee gets a synthesis turn when another participant posted last. D7: debounce, one in
+/// flight per (participant, room), minimum spacing per participant. Returns notes for the caller
+/// to post as the hub; never posts itself.</summary>
 public sealed class ExchangePolicy
 {
     private readonly IReadOnlyDictionary<string, Participant> _roster;
@@ -84,6 +90,7 @@ public sealed class ExchangePolicy
             // A model, spawn row or app-backed window, never opens an exchange.
             if (target is not { Status: ExchangeStatus.Open }) return (null, notes);
             target.MessageIds.Add(message.Id);
+            target.LastModelPost = (message.AuthorId, message.Id);
             Accept(target, mentioned, message.Id, now, notes);
             return (null, notes);
         }
@@ -139,6 +146,12 @@ public sealed class ExchangePolicy
                 return (null, notes);
         }
 
+        // Row 44 (D-b): the turns token is read for every human prompt that may open an exchange; a
+        // wrong number is noted once and the default applies, so the message still dispatches.
+        if (leading.Turns == TurnsToken.OutOfRange)
+            notes.Add($"turns: must be a whole number from 1 to {ExchangeCommands.MaxTurns}; the default {_limits.Budget} applies.");
+        var budget = leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
+
         // Row 43 (D-b): a leading word that matched nobody is noted once per word, whatever else this
         // post did or refused; the mentioned recipients above still act.
         foreach (var word in leading.Unknown)
@@ -184,8 +197,8 @@ public sealed class ExchangePolicy
         var found = skill as SkillResolution.Found;
         var next = new Exchange
         {
-            RoomId = message.RoomId, RootMessageId = message.Id, Budget = _limits.Budget,
-            Skill = found?.Skill, Joinable = !startsRun,
+            RoomId = message.RoomId, RootMessageId = message.Id, Budget = budget,
+            Skill = found?.Skill, Joinable = !startsRun, Addressee = startsRun ? null : mentioned[0],
         };
         next.MessageIds.Add(message.Id);
         if (found is not null)
@@ -210,7 +223,17 @@ public sealed class ExchangePolicy
     private static void Supersede(Exchange x)
     {
         x.Status = ExchangeStatus.Superseded;
+        DropQueuedSynthesis(x);
         x.Pending.Clear();
+    }
+
+    /// <summary>Row 44: a synthesis still pending is being dropped with the rest of the queue; if it had
+    /// grown the budget, that turn goes back, so the stop note and /continue count only real turns.</summary>
+    private static void DropQueuedSynthesis(Exchange x)
+    {
+        if (!x.SynthesisGrewBudget || !x.Pending.Values.Any(p => p.Reason == SpawnReason.Synthesis)) return;
+        x.Budget--;
+        x.SynthesisGrewBudget = false;
     }
 
     /// <summary>Row 36: an owner reply lands in <paramref name="x"/> and nothing is superseded. Open: its
@@ -237,10 +260,14 @@ public sealed class ExchangePolicy
         x.StopCause = null;
         x.TurnsCommitted = x.TurnsStarted;   // a stop or supersede dropped queued turns that never ran; only launched turns stay spent
         Accept(x, mentioned, messageId, now, notes);
-        if (x.Pending.Count == 0) (x.Status, x.StopCause, x.TurnsCommitted) = (status, cause, committed);
+        if (x.Pending.Count == 0) { (x.Status, x.StopCause, x.TurnsCommitted) = (status, cause, committed); return; }
+        // Row 44: a new leg: the addressee may owe a fresh wrap-up, and what was refused before has been replayed by the reply's own words.
+        x.SynthesisUsed = false;
+        x.LastModelPost = null;
+        x.Refused.Clear();
     }
 
-    private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes)
+    private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes, SpawnReason reason = SpawnReason.Mention)
     {
         var refused = new List<string>();
         foreach (var id in mentioned)
@@ -251,15 +278,15 @@ public sealed class ExchangePolicy
                 pending.LastTriggerAt = now;
                 continue;
             }
-            if (x.TurnsCommitted >= x.Budget) { refused.Add(id); continue; }
-            var fresh = new PendingSpawn { LastTriggerAt = now };
+            if (x.TurnsCommitted >= x.Budget) { refused.Add(id); x.Refused.TryAdd(id, messageId); continue; }
+            var fresh = new PendingSpawn { LastTriggerAt = now, Reason = reason };
             fresh.TriggerIds.Add(messageId);
             x.Pending[id] = fresh;
             x.Participants.Add(id);
             x.TurnsCommitted++;
         }
         if (refused.Count > 0)
-            notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. An owner message that mentions one of them starts a fresh exchange.");
+            notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. An owner message that mentions one of them starts a fresh exchange; once it has concluded, /continue extends it.");
     }
 
     /// <summary>Row 19, task 8: every id a conductor's post @-mentions that is spawnable - UNLIKE the
@@ -374,7 +401,7 @@ public sealed class ExchangePolicy
             if (inFlightInRoom.Contains(id)) continue;
             if (now - pending.LastTriggerAt < _limits.Debounce) continue;
             if (lastStartByParticipant.TryGetValue(id, out var last) && now - last < _limits.MinSpacing) continue;
-            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, x.Budget - x.TurnsCommitted));
+            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, x.Budget - x.TurnsCommitted, pending.Reason));
             if (exclusive) break;
         }
         return due;
@@ -403,16 +430,85 @@ public sealed class ExchangePolicy
         x.Pending.Remove(request.ParticipantId);
         x.InFlight.Add(request.ParticipantId);
         x.TurnsStarted++;
+        if (request.Reason == SpawnReason.Synthesis) x.SynthesisGrewBudget = false;
     }
 
-    /// <summary>A spawn ended, however it ended. Returns the conclusion note when this was the last
-    /// thing the exchange was waiting on; null otherwise (including for a closed exchange).</summary>
-    public static string? Finished(Exchange x, string participantId)
+    /// <summary>A spawn ended, however it ended. <c>Note</c> is the conclusion note, or the synthesis
+    /// note when this exchange still owes the addressee a wrap-up (row 44, D-c), or null when nothing changed;
+    /// <c>Concluded</c> says which. The synthesis turn is queued as an ordinary pending spawn
+    /// (reason Synthesis, triggered by the last model post, debounced like any other), takes a free turn
+    /// when one is left and adds one to the budget otherwise, and is marked at once so it fires at most
+    /// once per leg. <paramref name="posted"/>: whether the spawn that just ended posted anything; an
+    /// addressee that ended silent is not retried as a synthesis.</summary>
+    public static (string? Note, bool Concluded) Finished(Exchange x, string participantId, DateTimeOffset now, bool posted = true)
     {
         x.InFlight.Remove(participantId);
-        if (x.Status != ExchangeStatus.Open || x.Pending.Count > 0 || x.InFlight.Count > 0) return null;
+        if (x.Status != ExchangeStatus.Open || x.Pending.Count > 0 || x.InFlight.Count > 0) return (null, false);
+        if (x.Addressee is { } a && !x.SynthesisUsed && x.LastModelPost is { } last && last.AuthorId != a && !(participantId == a && !posted))
+        {
+            var synthesis = new PendingSpawn { LastTriggerAt = now, Reason = SpawnReason.Synthesis };
+            synthesis.TriggerIds.Add(last.MessageId);
+            x.Pending[a] = synthesis;
+            x.Participants.Add(a);
+            if (x.TurnsCommitted >= x.Budget) { x.Budget++; x.SynthesisGrewBudget = true; }
+            x.TurnsCommitted++;
+            x.SynthesisUsed = true;
+            return ($"Exchange started at #{x.RootMessageId}: the hand-offs ended with @{last.AuthorId}'s post; queuing @{a}'s synthesis turn.", false);
+        }
         x.Status = ExchangeStatus.Concluded;
-        return $"Exchange concluded: {x.TurnsStarted} of {x.Budget} turns used.";
+        return (x.SynthesisUsed
+            ? $"Exchange concluded: {x.TurnsStarted} of {x.Budget} turns used; the last was @{x.Addressee}'s synthesis."
+            : $"Exchange concluded: {x.TurnsStarted} of {x.Budget} turns used.", true);
+    }
+
+    /// <summary>Row 44 (D-d): handles /continue on <paramref name="x"/>. Adds the message's turns
+    /// token (else the default) to the budget, reopens, and queues: the message's own spawnable leading
+    /// mentions if any, else the hand-offs the budget refused (each triggered by the message that made
+    /// it and by this one), else the addressee. A message that named someone but nobody spawnable
+    /// queues nothing. Pure: the service resolved which exchange this is and posts the notes.</summary>
+    public (ContinueOutcome Outcome, IReadOnlyList<string> Notes) Continue(Exchange x, Message message, DateTimeOffset now)
+    {
+        var notes = new List<string>();
+        if (!x.Joinable) { notes.Add($"Exchange started at #{x.RootMessageId} belongs to a run and cannot be continued."); return (ContinueOutcome.RunExchange, notes); }
+        if (x.Status == ExchangeStatus.Open) { notes.Add($"Exchange started at #{x.RootMessageId} is still open with {Math.Max(0, x.Budget - x.TurnsCommitted)} turn(s) left; /continue once it has concluded."); return (ContinueOutcome.StillOpen, notes); }
+        if (x.InFlight.Count > 0) { notes.Add($"Exchange started at #{x.RootMessageId} is still finishing {string.Join(", ", x.InFlight.Order(StringComparer.Ordinal).Select(id => "@" + id))}; /continue again once it has."); return (ContinueOutcome.StillFinishing, notes); }
+
+        var leading = _mentions.Leading(message.Body);
+        foreach (var word in leading.Unknown)
+            notes.Add(word.Equals("hub", StringComparison.OrdinalIgnoreCase)
+                ? "The hub cannot be addressed; it only posts notes."
+                : $"No participant named @{word}. Address one of: {_addressable}.");
+        var mentioned = leading.Recipients
+            .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
+        if (mentioned.Count == 0 && (leading.Recipients.Count > 0 || leading.Unknown.Count > 0))
+        {
+            notes.Add("/continue named nobody the hub can spawn; nothing was queued.");
+            return (ContinueOutcome.NobodySpawnable, notes);
+        }
+        if (leading.Turns == TurnsToken.OutOfRange)
+            notes.Add($"turns: must be a whole number from 1 to {ExchangeCommands.MaxTurns}; the default {_limits.Budget} applies.");
+        var extra = leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
+
+        var replayed = mentioned.Count == 0 ? x.Refused.ToList() : [];
+        List<string> queue = mentioned.Count > 0 ? mentioned
+            : replayed.Count > 0 ? replayed.Select(kv => kv.Key).ToList()
+            : x.Addressee is { } a ? [a] : [];
+        System.Diagnostics.Debug.Assert(queue.Count > 0, "a joinable exchange always has an addressee");
+
+        x.Budget += extra;
+        x.Status = ExchangeStatus.Open;
+        x.StopCause = null;
+        x.TurnsCommitted = x.TurnsStarted;
+        x.SynthesisUsed = false;
+        x.SynthesisGrewBudget = false;
+        x.LastModelPost = null;
+        x.Refused.Clear();
+        x.MessageIds.Add(message.Id);
+        Accept(x, queue, message.Id, now, notes, SpawnReason.Continuation);
+        foreach (var (id, refusingId) in replayed)
+            if (x.Pending.TryGetValue(id, out var pending)) pending.TriggerIds.Insert(0, refusingId);
+        notes.Add($"Exchange started at #{x.RootMessageId} continued: {extra} more turn(s), {x.Budget} in all; queued {string.Join(", ", x.Pending.Keys.Select(id => "@" + id))}.");
+        return (ContinueOutcome.Continued, notes);
     }
 
     /// <summary>Row 27: <paramref name="cause"/> is never defaulted - every call site must say who
@@ -423,6 +519,7 @@ public sealed class ExchangePolicy
     {
         x.Status = ExchangeStatus.Stopped;
         x.StopCause = cause;
+        DropQueuedSynthesis(x);
         x.Pending.Clear();
         return cause == ExchangeStopCause.Owner
             ? $"Exchange stopped by the owner: {x.TurnsStarted} of {x.Budget} turns used."
