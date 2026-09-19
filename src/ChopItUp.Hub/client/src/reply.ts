@@ -1,24 +1,26 @@
 import type { Message } from './types';
 
-/** Every event that changes what the composer is replying to. */
+/** Every event that changes what a room's composer is replying to. */
 export type ReplyEvent =
   | { kind: 'reply'; message: Message }
-  | { kind: 'cancel' }
-  | { kind: 'sent' }
-  | { kind: 'failed' }
-  | { kind: 'roomChanged' };
+  | { kind: 'cancel'; roomId: string }
+  | { kind: 'sent'; roomId: string }
+  | { kind: 'failed'; roomId: string };
 
-/** A failed send keeps the target so the owner can retry; everything else but Reply clears it. */
-export function nextReply(current: Message | null, event: ReplyEvent): Message | null {
+/** Each room keeps its own target. A failed send leaves it in place for a retry; everything else
+ *  but Reply clears the room named on the event, leaving every other room's target untouched. */
+export function nextReply(
+  state: Readonly<Record<string, Message | null>>,
+  event: ReplyEvent,
+): Readonly<Record<string, Message | null>> {
   switch (event.kind) {
     case 'reply':
-      return event.message;
+      return { ...state, [event.message.roomId]: event.message };
     case 'failed':
-      return current;
+      return state;
     case 'cancel':
     case 'sent':
-    case 'roomChanged':
-      return null;
+      return { ...state, [event.roomId]: null };
   }
 }
 
