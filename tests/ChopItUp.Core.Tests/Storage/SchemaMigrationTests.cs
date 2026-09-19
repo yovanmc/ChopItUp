@@ -963,6 +963,42 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     [Fact]
+    public void V13_history_never_becomes_accepted_context_during_upgrade()
+    {
+        WriteRawV12();
+        using (var raw = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Pooling = false }.ToString()))
+        {
+            raw.Open();
+            using var command = raw.CreateCommand();
+            command.CommandText = """
+                ALTER TABLE messages ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;
+                INSERT INTO messages (room_id, author_id, body, created_at, imported) VALUES
+                    ('general','owner','/objective Old unaccepted command','2026-09-01T12:00:00.000+00:00',0),
+                    ('general','owner','/correction Old unaccepted correction','2026-09-01T12:01:00.000+00:00',0),
+                    ('general','owner','> /objective Quoted','2026-09-01T12:02:00.000+00:00',0),
+                    ('general','owner','/objective Imported','2026-09-01T12:03:00.000+00:00',1),
+                    ('general','owner',$oversized,'2026-09-01T12:04:00.000+00:00',0);
+                PRAGMA user_version = 13;
+                """;
+            command.Parameters.AddWithValue("$oversized", "/objective " + new string('x', 6_001));
+            command.ExecuteNonQuery();
+        }
+        var db = new ChopDb(DbPath);
+        var before = new MessageStore(db).Read("general", 0, 200).Messages;
+        db.EnsureDatabase();
+        Assert.Equal(14, db.GetSchemaVersion());
+        Assert.Contains(".v13.", db.LastBackupPath);
+        Assert.Equal(13, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(before.Count, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
+        var snapshot = new MessageStore(db).ReadSpawnContext("general", 200);
+        Assert.Equal(before, snapshot.Transcript);
+        Assert.Null(snapshot.Governing.Objective);
+        Assert.Null(snapshot.Governing.Correction);
+        db.EnsureDatabase();
+        Assert.Null(new MessageStore(db).ReadSpawnContext("general", 60).Governing.Objective);
+    }
+
+    [Fact]
     public void Row42_T1_a_torn_v13_with_the_column_present_but_stamp_12_is_finished_not_crashed()
     {
         WriteRawV12();

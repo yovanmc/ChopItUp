@@ -81,7 +81,9 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         // with leading spaces is rejected here and accepted one layer down.
         if (client_key?.Trim() is { Length: > MessageStore.MaxClientKeyChars })
             throw new McpException($"client_key exceeds {MessageStore.MaxClientKeyChars} characters.");
-        var result = store.Post(room_id, me, body, client_key);   // also advances the author's own cursor
+        PostResult result;
+        try { result = store.Post(room_id, me, body, client_key); }
+        catch (ArgumentException e) when (e.ParamName == "body") { throw new McpException(e.Message); }
         if (!result.Deduplicated) signal.Publish(room_id, result.Message);   // a dedup adds no new message to wake/broadcast
         var m = result.Message;
         return JsonSerializer.Serialize(

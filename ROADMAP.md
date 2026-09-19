@@ -7,7 +7,7 @@ Local Windows hub where Yovan, Claude and GPT talk in one thread over MCP, each 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 48 | Governing context survives the window | [ ] | READY | — | A spawn sees the last 60 messages / 24,000 chars with no author filter (SpawnerService.cs:969; the ChopItUp room is 20/28 hub notes). Pin the objective and the latest correction independent of the tail with an explicit omitted statement; tested at both limits with two 11k reviews, a rebuttal and a correction. |
+| 48 | Governing context survives the window | 📝 | READY | docs/superpowers/plans/m48-governing-context.md | [V 2026-09-19 491144ae] Launch reads 60 messages; renderer trims to 24,000 and reports only its own omissions. HIGH plan: accepted owner context survives both limits, provenance and exact omissions; Astra/Sol critique resolved, SHIP 9.0. |
 | 49 | Room modes and on-call answers | [ ] | BACKLOG | — | An un-mentioned message gets a reply: `/mode relay` (default: first answers, second replies having read it), `primary`, `panel` (parallel, blind, then synthesis); mode, participants and per-turn cost visible. |
 | 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
 | 51 | Classes, model and effort in the Roles dialog | [ ] | BACKLOG | — | Classes need `--set-classes` with the hub stopped (HubOptions.cs:114) and are invisible in Roles, while runs dispatch by class (ExchangePolicy.cs:299). |

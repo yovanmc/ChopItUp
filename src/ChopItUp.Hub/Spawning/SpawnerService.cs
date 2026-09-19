@@ -375,6 +375,14 @@ public sealed class SpawnerService : BackgroundService
         // steer inside it reaches a run or the policy. Decided here, at the loop's one message entry,
         // ahead of every branch below.
         if (m.Imported) return;
+        if (_roster.Any(p => p.Id == m.AuthorId && p.Kind == "human") && GoverningCommand.TryParse(m.Body, out var contextCommand))
+        {
+            var action = contextCommand.Text.Length == 0 ? "cleared" : "set";
+            PostNote(m.RoomId, $"Governing {contextCommand.Slot} {action} by message #{m.Id}. "
+                + (contextCommand.Slot == "objective" ? "Earlier objective and correction superseded. " : "Earlier correction superseded. ")
+                + "Applies to future launches; no participant was spawned.");
+            return;
+        }
         var exchanges = ExchangesIn(m.RoomId);
         var newest = Newest(m.RoomId);
         var activeRun = _runs.Active(m.RoomId);
@@ -1010,12 +1018,14 @@ public sealed class SpawnerService : BackgroundService
             // Row 14, task 4 (D-c): read fresh at launch, not from the startup-static _roster, so an
             // owner edit through the API takes effect on the very next spawn with no hub restart (AC7).
             var standing = new SpawnPrompt.StandingText(room?.Persona, _participants.EffectiveRole(request.RoomId, participant.Id));
+            var context = _store.ReadSpawnContext(request.RoomId, _limits.TranscriptMessages);
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
-                participant, request.RoomId, room?.Name ?? request.RoomId, _store.ReadLast(request.RoomId, _limits.TranscriptMessages),
+                participant, request.RoomId, room?.Name ?? request.RoomId, context.Transcript,
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
                 core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: tree, Skill: x.Skill,
                 DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory, Standing: standing,
-                Reason: request.Reason, Addressee: x.Addressee, RefusedAt: request.RefusedAt, LastModelPost: x.LastModelPost), _limits);
+                Reason: request.Reason, Addressee: x.Addressee, RefusedAt: request.RefusedAt, LastModelPost: x.LastModelPost,
+                Governing: context.Governing, RetrievalOmitted: context.RetrievalOmitted), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)

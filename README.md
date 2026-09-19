@@ -76,6 +76,12 @@ won't need to roll back to them.
 
 ## Spawning (M5)
 
+Pin the room's governing work with `/objective <text>` and update its latest correction with
+`/correction <text>`. These explicit owner commands survive the rolling transcript and hub restarts.
+They spawn nobody. Bare `/objective` clears both values, and bare `/correction` clears only the
+correction. Each value accepts up to 6,000 characters. See [governing context](docs/governing-context.md)
+for provenance, supersession and omission accounting.
+
 A spawn starts when an owner message begins with `@id` for a roster row that has a model set (several
 ids may follow each other at the start; after a `/skill` token they still count). An `@id` anywhere
 later in the text is a reference and spawns nothing; the hub says so in a note when a message

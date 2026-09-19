@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 13;
+    public const int LatestSchemaVersion = 14;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -122,6 +122,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 11) ApplyV11(conn);
             if (GetUserVersion(conn) < 12) ApplyV12(conn);
             if (GetUserVersion(conn) < 13) ApplyV13(conn);
+            if (GetUserVersion(conn) < 14) ApplyV14(conn);
             return 0;
         });
     }
@@ -700,6 +701,22 @@ public sealed class ChopDb
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = (hasColumn ? "" : "ALTER TABLE messages ADD COLUMN imported INTEGER NOT NULL DEFAULT 0;\n") + "PRAGMA user_version = 13;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    private static void ApplyV14(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS governing_updates (
+                message_id INTEGER PRIMARY KEY REFERENCES messages(id),
+                slot TEXT NOT NULL CHECK(slot IN ('objective', 'correction'))
+            );
+            PRAGMA user_version = 14;
+            """;
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

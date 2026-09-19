@@ -179,6 +179,20 @@ public sealed class MessageStore(ChopDb db)
             throw new ArgumentException($"Message #{target} is not in room '{roomId}'.", nameof(replyToId));
 
         using var tx = conn.BeginTransaction();
+        GoverningCommand? governing = null;
+        if (!imported && GoverningCommand.TryParse(body, out var parsed))
+        {
+            using var author = conn.CreateCommand();
+            author.Transaction = tx;
+            author.CommandText = "SELECT kind FROM participants WHERE id = $author";
+            author.Parameters.AddWithValue("$author", authorId);
+            if (author.ExecuteScalar() is "human")
+            {
+                if (parsed.Text.Length > GoverningCommand.MaxChars)
+                    throw new ArgumentException($"Governing {parsed.Slot} exceeds {GoverningCommand.MaxChars} characters. Shorten it; nothing was saved.", nameof(body));
+                governing = parsed;
+            }
+        }
         long id;
         try
         {
@@ -218,6 +232,16 @@ public sealed class MessageStore(ChopDb db)
         cursor.Parameters.AddWithValue("$room", roomId);
         cursor.Parameters.AddWithValue("$id", id);
         cursor.ExecuteNonQuery();
+
+        if (governing is not null)
+        {
+            using var pin = conn.CreateCommand();
+            pin.Transaction = tx;
+            pin.CommandText = "INSERT INTO governing_updates (message_id, slot) VALUES ($id, $slot)";
+            pin.Parameters.AddWithValue("$id", id);
+            pin.Parameters.AddWithValue("$slot", governing.Slot);
+            pin.ExecuteNonQuery();
+        }
 
         tx.Commit();
         return new PostResult(new Message(id, roomId, authorId, body, createdAt, replyToId, imported), false);
@@ -290,6 +314,64 @@ public sealed class MessageStore(ChopDb db)
         var rows = new List<Message>(count);
         while (reader.Read()) rows.Add(ReadMessage(reader));
         return rows;
+    }
+
+    internal Action? SnapshotEstablished { get; set; }
+
+    public SpawnContext ReadSpawnContext(string roomId, int count)
+    {
+        count = Math.Clamp(count, 1, MaxLimit);
+        using var conn = db.Open();
+        // A deferred WAL read holds one snapshot without reserving the writer slot.
+        using var tx = conn.BeginTransaction(deferred: true);
+        using var total = conn.CreateCommand();
+        total.Transaction = tx;
+        total.CommandText = "SELECT COUNT(*) FROM messages WHERE room_id = $room";
+        total.Parameters.AddWithValue("$room", roomId);
+        var messageCount = (long)total.ExecuteScalar()!;
+        SnapshotEstablished?.Invoke();
+
+        using var tail = conn.CreateCommand();
+        tail.Transaction = tx;
+        tail.CommandText = """
+            SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM (
+                SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM messages
+                WHERE room_id = $room ORDER BY id DESC LIMIT $limit)
+            ORDER BY id
+            """;
+        tail.Parameters.AddWithValue("$room", roomId);
+        tail.Parameters.AddWithValue("$limit", count);
+        var messages = new List<Message>(count);
+        using (var reader = tail.ExecuteReader())
+            while (reader.Read()) messages.Add(ReadMessage(reader));
+
+        GoverningEntry? ReadEntry(string slot, long after)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                SELECT m.id, m.room_id, m.author_id, m.body, m.created_at, m.reply_to_id, m.imported
+                FROM governing_updates g JOIN messages m ON m.id = g.message_id
+                JOIN participants p ON p.id = m.author_id
+                WHERE m.room_id = $room AND g.slot = $slot AND m.id > $after
+                    AND m.imported = 0 AND p.kind = 'human'
+                ORDER BY m.id DESC LIMIT 1
+                """;
+            cmd.Parameters.AddWithValue("$room", roomId);
+            cmd.Parameters.AddWithValue("$slot", slot);
+            cmd.Parameters.AddWithValue("$after", after);
+            using var reader = cmd.ExecuteReader();
+            if (!reader.Read()) return null;
+            var source = ReadMessage(reader);
+            if (!GoverningCommand.TryParse(source.Body, out var command) || command.Slot != slot || command.Text.Length > GoverningCommand.MaxChars)
+                throw new InvalidOperationException("Invalid accepted governing context record.");
+            return new GoverningEntry(source, command.Text);
+        }
+
+        var objective = ReadEntry("objective", 0);
+        var correction = ReadEntry("correction", objective?.Source.Id ?? 0);
+        tx.Commit();
+        return new SpawnContext(messages, messageCount - messages.Count, new GoverningContext(objective, correction));
     }
 
     public MessagePage Read(string roomId, long afterId, int limit)

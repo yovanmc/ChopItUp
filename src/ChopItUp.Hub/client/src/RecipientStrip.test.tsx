@@ -17,6 +17,18 @@ setRoster([
 const render = (draft: string) => renderToStaticMarkup(<RecipientStrip draft={draft} />);
 
 describe('RecipientStrip', () => {
+  test('context commands describe their effect without advertising a spawn', () => {
+    const markup = render('/objective @opus review this');
+    expect(markup).toContain('Sets the governing objective and clears the earlier correction.');
+    expect(markup).toContain('No participant is spawned.');
+    expect(markup).not.toContain('Sends to');
+    expect(render('/objective')).toContain('Clears the governing objective and correction.');
+    expect(render('/correction updated')).toContain('Replaces the latest correction.');
+    expect(render('/correction')).toContain('Clears the latest correction.');
+    expect(render('/correction ' + 'x'.repeat(6001))).toContain('exceeds 6,000 characters');
+    expect(render('    /objective @opus quoted')).not.toContain('Sets the governing');
+  });
+
   test('leading spawnable ids get one chip each in the host accent and a sends-to preview', () => {
     const markup = render('@opus @gpt-5.6-sol go');
     expect(markup).toContain('role="status"');
