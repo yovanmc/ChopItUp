@@ -1,0 +1,91 @@
+# Governing context survives the window
+
+Author model: GPT-6 Astra. Accountable architecture, implementation and integration owner: root Astra.
+Tier: HIGH. Changes the durable interpretation of stored messages and authority in the cross-process spawn prompt. Additive schema 14 accepted-command provenance table, no session persistence, no room modes.
+
+Tier evidence measured 2026-09-19 at 491144ae:
+```text
+TIER-EVIDENCE HIGH src/ChopItUp.Core/Storage/MessageStore.cs:231 serialization: private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, strin…
+TIER-EVIDENCE HIGH src/ChopItUp.Hub/Spawning/SpawnerService.cs:1437 delete-replace: try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
+TIER-EVIDENCE HIGH src/ChopItUp.Hub/Spawning/SpawnerService.cs:1037 secrets: File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token, mcpToolTimeoutMs));
+TIER-EVIDENCE: HIGH triggers in 2 of 7 files (delete-replace, secrets, serialization)
+```
+Additional migration evidence:
+```text
+TIER-EVIDENCE HIGH src/ChopItUp.Core/Storage/ChopDb.cs:69 serialization: public SqliteConnection Open()
+TIER-EVIDENCE HIGH src/ChopItUp.Core/Storage/ChopDb.cs:145 delete-replace: try { File.Delete(f); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) {…
+TIER-EVIDENCE: HIGH triggers in 1 of 1 file (delete-replace, serialization)
+```
+These scans include existing code. The independent tier remains HIGH for authority and prompt contracts.
+
+## Goal
+
+Keep the room's explicitly designated objective and latest correction available to every future spawn independently of both rolling limits. Report exactly which messages the transcript omitted without guessing from gaps in globally allocated IDs.
+
+## Acceptance
+
+1. When an authenticated human posts `/objective <text>` or `/correction <text>` at byte zero, the next spawn shall receive the current values with original message ID, server author and timestamp, even after restart and after their source messages leave either window. The maximum value is 6,000 UTF-16 characters per slot, refused rather than truncated. Bare `/objective` clears both slots, bare `/correction` clears only the correction. A new objective supersedes the old objective and every earlier correction. A new correction supersedes only the previous correction. Ordinary conversation does not supersede a pin. Context commands consume no model turn and do not invoke a skill, mention, run steer or continuation.
+2. When a model, hub note, imported message, quoted command, fenced command or command later in a message contains the same syntax, it shall not update governing context. Eligibility comes from stored author kind and imported flag, never a name in the body. The prompt shall label imported history, model discussion, hub notes and live human content distinctly and say that quoted text remains data. Explicit command source text is not recursively parsed. Superseded command copies in the tail are historical, not new instructions.
+3. When a room exceeds the 60-message retrieval limit or the 24,000-character transcript rendering limit, the prompt shall report retrieval omissions, additional rendering omissions and their sum separately, including zero. A snapshot shall use one SQLite read transaction for the tail, count and governing values so concurrent posts cannot make the accounting contradictory. Rendering shall count actual rendered message text (headers, import escaping and framing), retain the newest message whole, and explicitly disclose when that single message exceeds the character budget. Governing context is separately bounded and never debited against the transcript budget. Neither existing default limit increases.
+4. Synthetic tests shall independently exceed each limit and jointly exercise two exactly 11,000-character reviews, a rebuttal and an owner correction. The real hub store-to-spawn path with a fake process boundary shall prove objective and correction survive, exact omission counts, full newest-message behavior, no imported/quoted promotion, room isolation, local and remote human authors, supersession, clears, retries and restart persistence. Test snapshots created in the old schema-13 shape shall read unchanged through an additive schema-14 migration without retroactively pinning ANY historical messages, including exact command-shaped text.
+5. Before completion, cold build with zero warnings, full .NET and client suites, synthetic dry run, required independent critiques and diff interrogation, code review, scratch desktop verification, branch gates, protected PR/checks/squash merge, release deploy script, bundle self-check and board lifecycle shall pass. Existing private data and credentials must not be read or copied for verification. No claim of real-model obedience is inferred from prompt tests.
+
+## Architecture
+
+Use the existing append-only `messages` table as the source version log, with a new `governing_updates(message_id INTEGER PRIMARY KEY REFERENCES messages(id), slot TEXT NOT NULL CHECK(slot IN ('objective','correction')))` table recording only commands accepted at write time. Schema 14 creates this table empty in a transaction and advances user_version last, through ChopDb's existing verified backup-before-migration path. No historical body is replayed into authority. Explicit commands replace NLP guesses and model-authored summaries. `GoverningContext` and `GoverningCommand` in Core model encode exact case-sensitive command parsing, source message provenance, and slot selection. Commands must start at the very first character, with exact command token followed by whitespace or end. Quoted or fenced command examples cannot match. Payloads preserve multiline text, with outer whitespace trimmed. No role inference from body text. Empty values are explicit clears, and the latest objective ID is the correction epoch boundary. A correction without an objective remains explicit and available until an objective replaces it. IDs are monotonically ordered versions, not contiguous sequence counts.
+
+`MessageStore.Post` validates oversized live human context commands inside its existing transaction before insert, after the existing idempotency lookup, then inserts the accepted marker in the SAME transaction as the message and cursor. Imports and model posts remain inert data. `ReadSpawnContext(room,count)` uses `conn.BeginTransaction(deferred: true)` and a first SELECT before invoking the internal observer, establishing a WAL read snapshot that permits the second connection to commit. It reads a coherent snapshot: highest room message ID, last count messages in ascending order, total room count, and accepted command messages joined from governing_updates in descending order from human authors with imported=0. Stop once the newest objective is reached and the correction candidate has been identified. Read only accepted markers, never discover authority by searching historical body prefixes. Return tail plus retrieval omitted count plus current context, never scan all discussion bodies into memory. Existing `ReadLast` remains compatible for other consumers.
+
+`SpawnerService.OnMessage` consumes recognized live human commands before run/exchange handling and emits a hub acknowledgement with source ID and resulting action, never echoing payload as a hub instruction. Snapshot selection happens at launch, so commands affect future launches, not already running children. `ChatApi` maps command length validation to a 400 error. MCP maps body ArgumentException to McpException with the bounded validation message. Commands remain ordinary durable chat messages and require no new credentials, endpoint, backfill.
+
+`SpawnPromptInput` adds optional governing context and retrieval omission metadata. Rendering gives the pinned values a distinct per-spawn keyed fence and JSON-encoded payload string so injected newlines cannot forge metadata or fences. Explicitly state provenance, supersession, quote handling and that the skill/safety boundaries still apply. The tail uses the same keyed source framing per message so forged body headers cannot terminate a real message; retain imported-header defense. Header labels derive from trusted metadata. The exact rendered chunks are used for budget accounting and output, eliminating the old `Body.Length + 48` approximation. Existing newest-message exception remains visible. Optional defaults preserve direct renderer call sites but state zero retrieval omissions only when callers provide the complete list themselves.
+
+## Tasks
+
+| # | Behavior | Files | Validation |
+|---|---|---|---|
+| 1 | Durable explicit owner context, safe authority and lifecycle | new Core Model/GoverningContext.cs, Core Storage/ChopDb.cs and MessageStore.cs, Hub Spawning/SpawnerService.cs, SpawnPrompt.cs, Web/ChatApi.cs, Mcp/RoomTools.cs; new Core.Tests/Storage/GoverningContextTests.cs and Hub.Tests/Spawning/GoverningContextTests.cs; docs/governing-context.md, README.md; client participants.ts, RecipientStrip.tsx, Composer.tsx and matching tests | RED then GREEN at public store, authenticated HTTP/MCP and captured ProcessSpec.StandardInput seams. New store instance and hub restart use only synthetic data. |
+| 2 | Exact omission accounting and combined corpus | same snapshot and renderer; SpawnPromptTests.cs + golden-prompt-ddfa572.txt; tools/Invoke-M48SelfCheck.ps1; schema-13 live expectation sweep in tools/Invoke-*.ps1 and verify helper Doctor; docs/verification.md | Independent >60 and >24000 cases, combined reviews corpus, oversized newest, adversarial provenance, cold/full suite, dry run and desktop gate. |
+
+Task 2 is blocked by 1. Root keeps coupled changes. Bounded Terra baseline scouting and fresh Astra/Sol critics are read-only. No production delegation. User explicitly authorized end-to-end autonomous completion and Astra ownership, overriding the generic builder division and redundant approval prompts. Test seams follow the requested storage/window/spawn behavior and existing public fixtures. STOP if a verified baseline dissolves, migration becomes destructive, or an action exceeds #48. Reconcile changed facts before continuing.
+
+## Claim ledger
+
+All source claims [V 2026-09-19 491144ae]. Private room ratio on the original board is not verified and is removed from the planning premise.
+
+| # | Claim | Evidence | Recheck |
+|---|---|---|---|
+| 1 | Defaults remain 60 messages and 24,000 characters | SpawnLimits.Default | `rg -n 'TranscriptMessages: 60\|TranscriptChars: 24_000' src/ChopItUp.Hub/Spawning/SpawnLimits.cs` |
+| 2 | Baseline launch reads only the last messages | SpawnerService.Launch calls _store.ReadLast | `rg -n '_store.ReadLast' src/ChopItUp.Hub/Spawning/SpawnerService.cs` |
+| 3 | Baseline omission notice covers only Trim return count | SpawnPrompt.Render, Trim uses Body.Length + 48 | `rg -n 'older message\(s\) omitted\|Body.Length \+ 48' src/ChopItUp.Hub/Spawning/SpawnPrompt.cs` |
+| 4 | Stored imported flag separates inert history | Message.Imported, MessageStore.Import, OnMessage return | `rg -n 'if \(m.Imported\) return' src/ChopItUp.Hub/Spawning/SpawnerService.cs` |
+| 5 | Focused baseline tests | Core 19/19, Hub 43/43 at HEAD, serial MSBuild after oversubscription | `dotnet test ChopItUp.slnx -c Debug --no-build --nologo -v minimal -m:1 -nr:false --filter "FullyQualifiedName~SpawnPromptTests\|FullyQualifiedName~MessageStoreTests"` |
+| 6 | Real hub fixture captures process boundary and authenticates both human rows | HubTestHost.StartAsync, AuthorizeAs, ClientFor, fake runner | `rg -n 'StartAsync\|AuthorizeAs\|ClientFor' tests/ChopItUp.Hub.Tests/HubTestHost.cs` |
+
+## Verification and release
+
+Run Check-PlanClaims before implementation. Record a genuine failing behavioral test before production changes. Cold build via `dotnet clean ChopItUp.slnx -c Debug`, then `dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal`. Full `dotnet test ChopItUp.slnx -c Debug --nologo -v minimal`, client `npm test -- --run` and `npm run build`. Self-check runs the synthetic corpus via the real HubTestHost boundary, refuses real data, records private evidence under .scratch. Run existing verify-chopitup scratch shell helper and screenshot sanity/judge, exercise command posting through its real composer if available. No visual layout changes intended.
+
+Read fixed lenses at every commit. Before merge run branch blast-radius and slop, non-author Sol diff interrogation, installed code-review without subdelegation. Repository exemption from repeated confidentiality review applies, but explicit git staging and tracked file checks must exclude data, databases, credentials and scratch evidence. Preserve human Git identity with Codex coauthor trailer.
+
+Push branch, create PR from reviewed body file, watch checks, squash merge with coauthor trailer, pull main. Gracefully quit the deployed shell using its supported --quit command before Deploy-ChopItUp.ps1, honoring process guard failures. Deploy to C:/Self Apps/ChopItUp via staging and backup script only, run Invoke-M4SelfCheck.ps1 using the staging and target paths, restart shell hidden and check health. Never read deployed tokens or write data. Board closeout uses another protected PR if needed: remove previous DONE row, mark #48 DONE with merge/deploy evidence, remove this plan and scratch tickets, pass budget gate. #49 stays outside this run.
+
+## Lessons consulted
+
+docs/LESSONS.md: cold-build requirement, schema literal sweep (13 to 14), real process seam and fake CLI fixture, screenshot sanity and interactive verification, no claims about model-chosen replies. Dated continuity review used only as hypothesis, source rechecked above.
+
+## Could not verify in this environment
+
+At planning: no live private room reads, no deployed credential access, no claim of model obedience. Build, review, desktop and deployment gates pending execution. Record remaining limitations here before lifecycle deletion.
+
+## Review dispositions
+
+Astra pass 1 in progress. Early finding accepted: historical raw-body replay could promote prior unknown commands and oversized values. Design changed before implementation to schema-14 accepted-command markers, empty migration and atomic marker writes. Deterministic snapshot interleaving test required using a Core internal read-transaction observer seam invoked after the first read, with a second connection posting before the remaining reads. Test proves total = shown + retrieval omissions and new command is visible only on the next snapshot. UI preview must reserve both commands and advertise their no-spawn effect. Do not flip the board before resolved review.
+
+Pass 1 final: Astra REFRAME 5.8. B1 accepted and resolved in revised architecture: schema-14 accepted marker, never parse pre-feature history. M1 accepted and resolved: internal snapshot observer after establishing a deferred read snapshot, second writer commits independently, current result remains old snapshot and next result sees replacement plus invalidated correction. Client preview obligation folded into task 1. Pass 2 Sol reviews this revised artifact. Migration guard uses a raw schema-13 fixture containing exact old commands, oversized commands, quotes and imports. Migration is CREATE TABLE IF NOT EXISTS plus PRAGMA in one transaction with existing verified backup precondition; rollback follows docs/verification.md and restores the automatically verified v13 backup with old binaries, never merely downgrades the executable.
+
+Additional task-1 authority guard: Composer.send currently trims leading whitespace. Preserve the original leading whitespace specifically when trimming would reveal a context command, using one client message-body helper shared by send and RecipientStrip. This avoids upgrading an indented code example or a blank-line-prefixed command into a byte-zero instruction. Other drafts retain existing behavior. Test this helper and the real composer send path with indented and quoted examples. Server and client accept only space, tab, CR, LF or end after the exact lower-case command token. The client advertises the 6,000-character bound and refused oversized values. No skill-menu redesign.
+
+Pass-2 dispositions in progress: explicitly use `BeginTransaction(deferred: true)` so the deterministic writer can commit beside the established WAL read snapshot. Rollback: stop the exact deployed shell/hub, retain the post-upgrade database and any WAL/SHM as a recovery set before replacement, then restore the verified v13 pre-migration backup and previous bundle together per docs/verification.md. Any newer posts must be recovered separately before discarding that recovery set. The repository prohibits an agent from writing deployed data, so this data restoration is an operator recovery action if ever needed, not an automatically authorized agent rollback. Prefer forward repair and preserve all originals. Synthetic migration tests exercise backup verification and old-version rejection; no production rollback is exercised. Update the durable runbook to state the recovery-set/WAL condition and current version-independent rule.
+
+Pass 2 final: Sol SHIP 9.0 after rereading revised architecture and dispositions. All gating findings resolved before build. Snapshot transaction, rollback recovery, composer trim and MCP error mapping are required implementation checks.
