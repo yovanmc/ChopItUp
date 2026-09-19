@@ -76,15 +76,25 @@ describe('RecipientStrip', () => {
 
     expect(markup).toContain('class="recipient-chip turns"');
     expect(markup).toContain('>3 turns</li>');
-    expect(markup).toContain('Sends to Opus. Sets the exchange to 3 turns.');
+    expect(markup).toContain('Sends to Opus. Asks for 3 turns.');
+  });
+
+  /** The number a draft carries is what it asks the hub for: a reply that joins an open exchange keeps
+   *  the turns that exchange already has, and only `/continue` adds to them. */
+  test('a /continue draft says it adds turns', () => {
+    const markup = render('/continue turns: 2 @opus');
+
+    expect(markup).toContain('>2 turns</li>');
+    expect(markup).toContain('Sends to Opus. Adds 2 turns.');
+    expect(markup).not.toContain('Asks for');
   });
 
   test('an out-of-range turns token warns', () => {
     const markup = render('turns: 99 @opus go');
 
-    expect(markup).toContain('turns: 99 is out of range (1 to 16); the default 8 applies');
+    expect(markup).toContain('turns: must be a whole number from 1 to 16; the default 8 applies.');
     expect(markup).not.toContain('class="recipient-chip turns"');
-    expect(markup).not.toContain('Sets the exchange to');
+    expect(markup).not.toContain('Asks for');
     expect(markup).toContain('Sends to Opus.');
   });
 
@@ -93,7 +103,7 @@ describe('RecipientStrip', () => {
 
     expect(markup).toContain('>5 turns</li>');
     expect(markup).not.toContain('Sends to');
-    expect(markup).not.toContain('Sets the exchange to');
+    expect(markup).not.toContain('Asks for');
   });
 
   test('a turns token after prose adds nothing', () => {

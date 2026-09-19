@@ -1,4 +1,4 @@
-import { hostOf, MAX_TURNS, recipientsOf } from './participants';
+import { hostOf, isContinueDraft, MAX_TURNS, recipientsOf } from './participants';
 import type { Participant } from './types';
 
 /** Row 43 (D5/AC6): who this draft will actually reach, said before it is sent. Only the @id run at
@@ -20,14 +20,15 @@ function nameList(names: string[]): string {
 }
 
 /** Row 44 (D-a, D-b): the budget a `turns:` token outside 1..MAX_TURNS falls back to. Both numbers
- *  mirror the hub's hard-coded caps — they are not configuration on either side — and the sentence
- *  below is the strip's half of the hub's own range note. */
+ *  mirror the hub's hard-coded caps — they are not configuration on either side — and the chip below
+ *  carries the hub's own range note word for word, so the draft and the posted message read alike. */
 const DEFAULT_TURNS = 8;
 
 export default function RecipientStrip({ draft }: { draft: string }) {
   // Trimmed because that is the body `send` posts: a draft indented before its `/skill` or `phase:`
   // token would otherwise preview a prefix the hub never sees.
-  const { recipients, unknown: read, references, turns } = recipientsOf(draft.trim());
+  const body = draft.trim();
+  const { recipients, unknown: read, references, turns } = recipientsOf(body);
   // A word the draft ends with has no separator after it yet, so it is still half-typed. Flagging it
   // would announce "@o matches nobody", then "@op", then "@opu" on the way to a perfectly good @opus.
   const trailing = /@([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(draft);
@@ -46,9 +47,12 @@ export default function RecipientStrip({ draft }: { draft: string }) {
     const verb = passive.length === 1 ? 'reads' : 'read';
     lines.push(`${nameList(passive.map((p) => p.displayName))} ${verb} this from its own app; the hub spawns nothing.`);
   }
-  // Only beside a recipient: the number sets the exchange this draft would open, and a draft that
-  // opens none sets nothing. An out-of-range value says its piece on the chip instead.
-  if (turns !== null && turns.valid && recipients.length > 0) lines.push(`Sets the exchange to ${turns.turns} turns.`);
+  // Only beside a recipient: the number is what this draft asks the hub for, and a draft that reaches
+  // nobody asks for nothing. What the hub then does with it is the hub's: a reply joining an open
+  // exchange keeps the turns it already has, and only `/continue` adds to a budget. An out-of-range
+  // value says its piece on the chip instead.
+  if (turns !== null && turns.valid && recipients.length > 0)
+    lines.push(`${isContinueDraft(body) ? 'Adds' : 'Asks for'} ${turns.turns} turns.`);
   for (const word of unknown) lines.push(`@${word} matches nobody.`);
   if (recipients.length === 0 && references.length > 0) {
     const named = nameList(references.map((p) => `@${p.id}`));
@@ -82,7 +86,7 @@ export default function RecipientStrip({ draft }: { draft: string }) {
             <li role="listitem" className={`recipient-chip ${turns.valid ? 'turns' : 'unknown'}`}>
               {turns.valid
                 ? `${turns.turns} turns`
-                : `turns: ${turns.turns} is out of range (1 to ${MAX_TURNS}); the default ${DEFAULT_TURNS} applies`}
+                : `turns: must be a whole number from 1 to ${MAX_TURNS}; the default ${DEFAULT_TURNS} applies.`}
             </li>
           )}
         </ul>
