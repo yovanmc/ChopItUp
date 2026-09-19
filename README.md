@@ -187,11 +187,19 @@ interrupted spawn (cancelled or timed out), or a run owning the room also keeps 
 each with its own note. A run's own spawns still work in the room directory itself, one at a time
 across the whole room, exactly as before.
 
-The trail: before a spawn, if the tree is dirty, the hub commits the owner's edits as the owner; when
-the spawn ends the hub always commits the tree as that participant (`Name <id@chopitup.local>`,
-committer `ChopItUp hub <hub@chopitup.local>`), with the shell commands it ran listed in the commit
-body. A hub note `Committed <hash> as <id>: …` (or `Not committed for <id>: …`) lands in the room, and
-the Trail button in the header lists the last 20 commits. Nothing is ever pushed.
+The trail: before a spawn, if the tree is dirty, the hub commits any owner edits; when the spawn ends
+the hub always commits the tree for that participant, with the shell commands it ran listed in the
+commit body. Every room commit carries the repository's own configured git identity as author and
+committer (the hub's `ChopItUp hub <hub@chopitup.local>` only when none is configured), the participant
+is named in the subject, and a turn that changed something is credited with
+`Co-authored-by: Codex <noreply@openai.com>` or `Co-authored-by: Claude <noreply@anthropic.com>` as its
+last paragraph; an exchange merge carries the trailers of the commits it merges, and the hub's own
+bookkeeping commits (`Room trail start`, leftovers swept at a close or a restart) carry the same
+repository identity and no trailer. During a run a spawn works in the room directory itself, so an edit
+you make while its turn is running is swept into that turn's commit and shares its trailer. A hub note
+`Committed <hash> for <id>: …`
+(or `Not committed for <id>: …`) lands in the room, and the Trail button in the header lists the last 20
+commits. Nothing is ever pushed.
 
 Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own sandbox
 (workspace-write, network on); Claude Code runs as the owner's own Windows user, confined only by a
