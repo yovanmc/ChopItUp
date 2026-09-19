@@ -423,10 +423,9 @@ public sealed class SpawnerService : BackgroundService
         // outright, through the SAME RunPolicy.Decide path every other transition takes (P7) - never
         // resuming it first (RunPolicy's rows 1/2 are skipped for StopRequested, so a hard-capped
         // park gets End, not Park - the state AC11 most needs this to work on). With no run in this
-        // room, RunCommands.IsStop still matched, but there is nothing to stop, so this falls straight
-        // through to ResolveSkill's ordinary result below - "/stop" was never anything but an
-        // unresolvable skill name before this task (SkillImport refuses to ever install one under
-        // that name), so "no run" behaves exactly as it did before.
+        // room, RunCommands.IsStop still matched but there is nothing to stop; falling through to
+        // ResolveSkill's ordinary result would read as "no skill named '/stop'", which names the
+        // wrong problem - a dedicated note says directly that there was nothing to stop.
         if (RunCommands.IsStop(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var stoppable = activeRun ?? (_runs.Latest(m.RoomId) is { Status: RunStatus.Parked } parkedForStop ? parkedForStop : null);
@@ -435,6 +434,8 @@ public sealed class SpawnerService : BackgroundService
                 DriveRun(stoppable, new RunEvent.StopRequested());
                 return;
             }
+            PostNote(m.RoomId, "Nothing to stop: no run is active or parked in this room.");
+            return;
         }
 
         // Row 19, task 4 (pass 2's F-9), steps 2-3 of the ordered human branch: these two refusals
