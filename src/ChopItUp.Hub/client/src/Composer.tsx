@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as api from './api';
 import { displayName } from './participants';
 import RecipientStrip from './RecipientStrip';
+import { messageBody } from './governing';
 import { replySnippet } from './reply';
 import type { Message, Skill } from './types';
 
@@ -111,7 +112,7 @@ export default function Composer({ roomId, roomName, disabled, draft, onDraftCha
     // The room this message is for, read before the await: another room may be open by the time it
     // resolves, and what is released then is this room's send, not whatever is on screen.
     const room = roomId;
-    const body = draft.trim();
+    const body = messageBody(draft);
     if (!body || sending.has(room) || disabled) return;
     setSending((previous) => new Set(previous).add(room));
     try {
@@ -237,7 +238,7 @@ export default function Composer({ roomId, roomName, disabled, draft, onDraftCha
         <button type="submit" className="send" disabled={disabled || busy || draft.trim().length === 0}>
           {busy ? 'Sending…' : 'Send'}
         </button>
-        <span className="hint">Enter sends · Shift+Enter newline · / for skills</span>
+        <span className="hint">Enter sends · Shift+Enter newline · / for skills · /objective and /correction pin context</span>
       </div>
     </form>
   );

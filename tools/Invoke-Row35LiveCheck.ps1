@@ -228,7 +228,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 13) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 14) -Detail "schema=$($health.schema)"
 
     $room = Invoke-Api POST '/api/rooms' @{ name = 'Row 35 live check'; directory = $RoomDir }
     $roomId = $room.id

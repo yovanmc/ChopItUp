@@ -66,7 +66,7 @@ public static class ChatApi
         var authorId = AuthorId(httpContext, participants);
         Message message;
         try { message = store.Post(roomId, authorId, body.Body, null, body.ReplyToId).Message; }   // no client_key on this surface
-        catch (ArgumentException e) when (e.ParamName == "replyToId") { return Results.BadRequest(new { error = e.Message }); }
+        catch (ArgumentException e) when (e.ParamName is "replyToId" or "body") { return Results.BadRequest(new { error = e.Message }); }
         signal.Publish(roomId, message);
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }

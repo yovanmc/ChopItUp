@@ -199,6 +199,10 @@ shape. The script's default `-CodexParticipant` is now `gpt-5.6-terra`.
 
 ## Deploying a schema change, and rolling one back
 
+For governing context, run `tools/Invoke-M48SelfCheck.ps1` after the Debug build. It uses synthetic
+databases and a fake process boundary, exercises both transcript limits independently and together,
+and records a TRX evidence set. It makes no model calls and reads no deployed room data.
+
 Written before the row 19 deploy, not after it. `ChopDb.EnsureDatabase` **throws** when the database's
 `user_version` is greater than the build's `LatestSchemaVersion`, so the moment the live
 `data\chop.db` is migrated to v8 the previously deployed v7 executable refuses to start. A v8
@@ -219,6 +223,11 @@ database half of the rollback mandatory rather than optional.
    first start, and `ChopDb` writes a pre-migration backup of the database and logs its path.
 
 **Rollback**
+
+Before replacing a post-upgrade database, retain that database and any WAL/SHM sidecars together as
+a recovery set while the hub is stopped. Preserve newer posts separately before discarding that set.
+The binary and database versions must be restored together. Agents must not write the deployed data
+directory, so database restoration is an operator action. Prefer a forward repair when possible.
 
 1. Stop the hub.
 2. Restore the pre-migration backup `ChopDb` wrote over `data\chopitup.db`. `BackupBeforeMigration`

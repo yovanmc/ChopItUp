@@ -1,5 +1,6 @@
 import { hostOf, isContinueDraft, MAX_TURNS, recipientsOf } from './participants';
 import type { Participant } from './types';
+import { governingCommand, messageBody } from './governing';
 
 /** Row 43 (D5/AC6): who this draft will actually reach, said before it is sent. Only the @id run at
  *  the start of a draft addresses anyone, and that rule is invisible while typing — so the strip
@@ -25,9 +26,18 @@ function nameList(names: string[]): string {
 const DEFAULT_TURNS = 8;
 
 export default function RecipientStrip({ draft }: { draft: string }) {
-  // Trimmed because that is the body `send` posts: a draft indented before its `/skill` or `phase:`
-  // token would otherwise preview a prefix the hub never sees.
-  const body = draft.trim();
+  const body = messageBody(draft);
+  const context = governingCommand(body);
+  if (context) {
+    const action = context.text.length > 6000
+      ? 'This context exceeds 6,000 characters and will be refused. Shorten it before sending.'
+      : context.slot === 'objective'
+        ? context.text ? 'Sets the governing objective and clears the earlier correction.' : 'Clears the governing objective and correction.'
+        : context.text ? 'Replaces the latest correction.' : 'Clears the latest correction.';
+    return <div className="recipient-strip" role="status" aria-label="Recipients">
+      <span className="dispatch-preview">{action} No participant is spawned.</span>
+    </div>;
+  }
   const { recipients, unknown: read, references, turns } = recipientsOf(body);
   // A word the draft ends with has no separator after it yet, so it is still half-typed. Flagging it
   // would announce "@o matches nobody", then "@op", then "@opu" on the way to a perfectly good @opus.
