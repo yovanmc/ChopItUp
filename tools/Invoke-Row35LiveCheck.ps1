@@ -30,7 +30,7 @@
     (row 35 left the Codex side of this unverified), not a script defect to chase.
 
     `-SeedOnly` spends no model call: it starts the hub, binds the room, confirms `/health` reports
-    schema 13 and that the hub itself ran `git init` in the room directory (RoomDirectories.cs:36-53),
+    schema 14 and that the hub itself ran `git init` in the room directory (RoomDirectories.cs:36-53),
     then stops. Nothing is posted and no exchange ever opens. `-SkipClaude` / `-SkipCodex` each drop
     one leg (e.g. to re-run only the side that FAILed). Spend: at most one Claude call and one Codex
     call per leg run, never a retry loop inside this script - a FAIL here gets one manual re-run first,

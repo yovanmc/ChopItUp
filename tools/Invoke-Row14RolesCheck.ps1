@@ -41,7 +41,7 @@
     LEGS (mapped to issues/07-self-check.md's acceptance criteria):
       fixture.*      -- build and stamp the v11 database.
       hub.*          -- launch the real exe, wait for /health.
-      migrated.*     -- schema 13, every pre-migration table's row count and room name preserved,
+      migrated.*     -- schema 14, every pre-migration table's row count and room name preserved,
                         the two new columns present and NULL, room_roles present and empty.
       api.*          -- a persona and a role set over the API and read back.
       auth.*         -- each of the three write routes refused with no credential, storage unchanged.

@@ -45,3 +45,4 @@
 2026-09-19	row46-git-attribution	diff	opus	7.4	FIX-THEN-SHIP
 2026-09-19	m48-governing-context	1	gpt-6-astra	5.8	REFRAME
 2026-09-19	m48-governing-context	2	gpt-5.6-sol	9.0	SHIP
+2026-09-19	m48-governing-context	diff	gpt-5.6-sol	9.1	SHIP
