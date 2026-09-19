@@ -10,12 +10,19 @@ interface ExchangeBarProps {
   /** Row 34: the roots whose own stop is in flight. Per root, so pressing one strip greys that strip
    *  and leaves its neighbours pressable. */
   stoppingRoots: ReadonlySet<number>;
+  /** Row 44: the roots whose `/continue` post is in flight, the twin of `stoppingRoots` above. */
+  continuingRoots: ReadonlySet<number>;
   /** A strip's root, or `null` for the room stop an older hub's single strip presses. */
   onStop: (root: number | null) => void;
+  /** Row 44: the root to continue. Always a root — a strip with none offers no Continue. */
+  onContinue: (root: number) => void;
 }
 
 /** What one strip draws from: the fields an `ExchangeView` and the snapshot's top level share. */
-type StripFields = Pick<ExchangeView, 'status' | 'inFlight' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy'>;
+type StripFields = Pick<
+  ExchangeView,
+  'status' | 'inFlight' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy' | 'continuable'
+>;
 
 interface StripControl {
   key: string;
@@ -23,7 +30,9 @@ interface StripControl {
   label: string | null;
   runStoppable: boolean;
   disabled: boolean;
+  continueDisabled: boolean;
   onStop: () => void;
+  onContinue: () => void;
 }
 
 /** The word the marker line leads with once an exchange is over. `idle` renders no bar at all and
@@ -71,7 +80,7 @@ const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
  *  row it always had and the stack reads like `RunBar` above it. That hub sends an empty list exactly
  *  when its top level is idle, so the empty case falls through to the idle branch below. A hub
  *  without `exchanges` renders the one top-level strip with the room stop, as before. */
-function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, onStop }: ExchangeBarProps) {
+function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, continuingRoots, onStop, onContinue }: ExchangeBarProps) {
   const views = exchange?.exchanges ?? [];
   if (views.length > 0) {
     const labelled = views.length > 1;
@@ -83,7 +92,9 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, onStop }
             label: labelled ? `#${view.rootMessageId}` : null,
             runStoppable,
             disabled: stoppingRoots.has(view.rootMessageId),
+            continueDisabled: continuingRoots.has(view.rootMessageId),
             onStop: () => onStop(view.rootMessageId),
+            onContinue: () => onContinue(view.rootMessageId),
           }),
         )}
       </>
@@ -91,7 +102,20 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, onStop }
   }
 
   if (exchange === null || exchange.status === 'idle') return null;
-  return strip(exchange, { key: 'room', label: null, runStoppable, disabled: stopping, onStop: () => onStop(null) });
+  /** Row 44: the top-level strip continues its own root. A snapshot with no root has nothing for the
+   *  `/continue` post to reply to, so that strip offers no Continue however the hub marked it. */
+  const root = exchange.rootMessageId;
+  return strip(root === null ? { ...exchange, continuable: false } : exchange, {
+    key: 'room',
+    label: null,
+    runStoppable,
+    disabled: stopping,
+    continueDisabled: root !== null && continuingRoots.has(root),
+    onStop: () => onStop(null),
+    onContinue: () => {
+      if (root !== null) onContinue(root);
+    },
+  });
 }
 
 /** One strip. A plain function rather than a component, so the element tree the bar returns holds the
@@ -99,8 +123,11 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, onStop }
  *
  *  On a top-level strip `inFlight` is the room's; on a per-exchange strip it is that exchange's own,
  *  which is the truer gate for that strip's Stop. */
-function strip(fields: StripFields, { key, label, runStoppable, disabled, onStop }: StripControl) {
-  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy } = fields;
+function strip(
+  fields: StripFields,
+  { key, label, runStoppable, disabled, continueDisabled, onStop, onContinue }: StripControl,
+) {
+  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy, continuable } = fields;
   const open = status === 'open';
   /** The cause only speaks for a `stopped` exchange: a superseded one carries whatever cause its
    *  last stop left behind, and "Superseded" is still the truer word for it. */
@@ -148,6 +175,21 @@ function strip(fields: StripFields, { key, label, runStoppable, disabled, onStop
           </span>
         ) : (
           working
+        )}
+        {/* Row 44 (D-e/AC5): whether this exchange can be continued is the hub's decision, sent as
+            `continuable`; the client honours only the run gate its Stop already honours, so the two
+            controls never disagree about who owns the room. Explicitly `=== true` because a hub older
+            than this row sends no field, and that hub would refuse the post. */}
+        {continuable === true && !runStoppable && (
+          <button
+            type="button"
+            className="quiet"
+            disabled={continueDisabled}
+            onClick={onContinue}
+            aria-label={label === null ? undefined : `Continue exchange ${label}`}
+          >
+            Continue exchange
+          </button>
         )}
         {stoppable && (
           <button type="button" className="quiet danger" disabled={disabled} onClick={onStop}>

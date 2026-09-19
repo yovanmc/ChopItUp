@@ -49,6 +49,7 @@ export interface Recipients {
   recipients: Participant[];
   unknown: string[];
   references: Participant[];
+  turns: { turns: number; valid: boolean } | null;
 }
 
 const SLASH = /^\/([a-z0-9][a-z0-9-]{0,63})(?=[ \t]|\n|$)/;
@@ -56,6 +57,22 @@ const PHASE = /^phase:[ \t]+(plan|build|critique|verify|ping)(?:\/[a-z0-9][a-z0-
 // Sticky (`y`) is `\G`'s twin; `u` is what makes `\p{L}`/`\p{N}` work. Classes are spelled out in ASCII
 // on purpose: `\w`/`\s` mean different things to V8 and to .NET, and the two readers must agree.
 const TOKEN = /[ \t\r\n\f\v,:;]*@([A-Za-z0-9][A-Za-z0-9_.-]*)(?![\p{L}\p{N}_.-])/uy;
+// Row 44: `turns:` inside the leading run, read in the same sticky walk as TOKEN. Twin of
+// Mentions.Turns: once `turns:` is found the token always matches, capturing the digits and any junk
+// glued to them, so a malformed value is refused rather than left unmatched — an unmatched token used
+// to break the walk where it stood, losing every mention after it (and, at position 0, all of them).
+const TURNS = /[ \t\r\n\f\v,:;]*[Tt][Uu][Rr][Nn][Ss]:[ \t]*([0-9]*)([A-Za-z0-9_.-]*)/y;
+export const MAX_TURNS = 16;
+
+/** The reserved continue command, read with the same slash grammar the leading walk skips. Twin of
+ *  `ExchangeCommands.IsContinue`: the first-line `/continue` form only, lower case, as the hub parses
+ *  it — a draft the hub reads as prose must not preview as a command. */
+const CONTINUE_NAME = 'continue';
+
+export function isContinueDraft(draft: string): boolean {
+  const slash = SLASH.exec(draft.replace(/\r\n/g, '\n'));
+  return slash !== null && slash[1] === CONTINUE_NAME;
+}
 
 /** Twin of `Mentions.Leading` (Core, row 43) — keep the two in step through tests/mention-cases.json.
  *  Only the run of @word tokens at the start of the draft, after an optional `/skill` or `phase:`
@@ -69,8 +86,30 @@ export function recipientsOf(draft: string): Recipients {
   else if (phase) start = phase[0].length;
   const recipients: Participant[] = [];
   const unknown: string[] = [];
-  TOKEN.lastIndex = start;
-  for (let m = TOKEN.exec(text); m !== null; m = TOKEN.exec(text)) {
+  let turns: Recipients['turns'] = null;
+  let at = start;
+  for (;;) {
+    TURNS.lastIndex = at;
+    const t = TURNS.exec(text);
+    if (t !== null) {
+      at = TURNS.lastIndex;
+      if (turns === null) {
+        // Twin of the C# reader: valid only when nothing is glued to the digits and there are between
+        // one and nine of them (nine keeps the value inside what .NET's int parse accepts, so both
+        // sides refuse the same pathologically long number), and the value itself is in range. Every
+        // other shape reports 0, so a refused token looks the same to both readers.
+        const digits = t[1]!;
+        const junk = t[2]!;
+        const n = Number(digits);
+        const valid = junk.length === 0 && digits.length > 0 && digits.length <= 9 && n >= 1 && n <= MAX_TURNS;
+        turns = valid ? { turns: n, valid: true } : { turns: 0, valid: false };
+      }
+      continue;
+    }
+    TOKEN.lastIndex = at;
+    const m = TOKEN.exec(text);
+    if (m === null) break;
+    at = TOKEN.lastIndex;
     const word = m[1]!.replace(/[.,:;!?]+$/, '');
     const p = roster.get(word.toLowerCase());
     if (p && p.kind !== 'system') {
@@ -86,7 +125,7 @@ export function recipientsOf(draft: string): Recipients {
       if (p && !recipients.includes(p) && !references.includes(p)) references.push(p);
     }
   }
-  return { recipients, unknown, references };
+  return { recipients, unknown, references, turns };
 }
 
 /** The host family an id belongs to, for colour: `human`, `claude`, `codex`, or `other`. */

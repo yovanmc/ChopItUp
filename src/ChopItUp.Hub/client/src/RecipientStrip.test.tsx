@@ -68,4 +68,45 @@ describe('RecipientStrip', () => {
     expect(render('')).toBe('');
     expect(render('hello')).toBe('');
   });
+
+  /** Row 44, AC5's second half: the token is part of the leading run the reader already walks, so the
+   *  strip says what it will do to the exchange in the same breath as who it reaches. */
+  test('a turns token adds a turns chip', () => {
+    const markup = render('turns: 3 @opus go');
+
+    expect(markup).toContain('class="recipient-chip turns"');
+    expect(markup).toContain('>3 turns</li>');
+    expect(markup).toContain('Sends to Opus. Asks for 3 turns.');
+  });
+
+  /** The number a draft carries is what it asks the hub for: a reply that joins an open exchange keeps
+   *  the turns that exchange already has, and only `/continue` adds to them. */
+  test('a /continue draft says it adds turns', () => {
+    const markup = render('/continue turns: 2 @opus');
+
+    expect(markup).toContain('>2 turns</li>');
+    expect(markup).toContain('Sends to Opus. Adds 2 turns.');
+    expect(markup).not.toContain('Asks for');
+  });
+
+  test('an out-of-range turns token warns', () => {
+    const markup = render('turns: 99 @opus go');
+
+    expect(markup).toContain('turns: must be a whole number from 1 to 16; the default 8 applies.');
+    expect(markup).not.toContain('class="recipient-chip turns"');
+    expect(markup).not.toContain('Asks for');
+    expect(markup).toContain('Sends to Opus.');
+  });
+
+  test('turns with no recipient still shows the chip and no sends-to line', () => {
+    const markup = render('turns: 5');
+
+    expect(markup).toContain('>5 turns</li>');
+    expect(markup).not.toContain('Sends to');
+    expect(markup).not.toContain('Asks for');
+  });
+
+  test('a turns token after prose adds nothing', () => {
+    expect(render('how many turns: 3 did we burn?')).toBe('');
+  });
 });

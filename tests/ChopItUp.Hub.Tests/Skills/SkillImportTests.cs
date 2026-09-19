@@ -125,6 +125,20 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent(RunCommands.StopName);
     }
 
+    // Row 44: the reserved `/continue` command cannot be shadowed by an installed skill either, checked
+    // the same way and for the same reason as `/stop` above.
+    [Fact]
+    public void Refuses_the_reserved_continue_name()
+    {
+        var source = NewSourceDir(ExchangeCommands.ContinueName, ValidSkillBody);
+
+        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
+
+        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
+        Assert.Contains("reserved", result.Message);
+        AssertTargetAbsent(ExchangeCommands.ContinueName);
+    }
+
     [Fact]
     public void Refuses_a_source_with_no_SKILL_md()
     {

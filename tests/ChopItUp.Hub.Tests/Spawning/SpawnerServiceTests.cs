@@ -146,13 +146,19 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         Assert.Contains("Turn 2 of 4; 2 turn(s) remain after yours.", astra.StandardInput);
         Assert.Contains("message(s) #2 mentioned you", astra.StandardInput);
 
+        // Row 44 (D-c): astra posted last, not the addressee (opus), so the hub queues opus's own
+        // synthesis turn before the exchange can conclude.
+        await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("queuing @opus's synthesis turn"));
+        var synthesis = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(synthesis));
+
         var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Exchange concluded"));
-        Assert.Equal("Exchange concluded: 2 of 4 turns used.", note.Body);
+        Assert.Equal("Exchange concluded: 3 of 4 turns used; the last was @opus's synthesis.", note.Body);
         var snap = await WaitForStatus("concluded");
-        Assert.Equal(2, snap.TurnsUsed);
+        Assert.Equal(3, snap.TurnsUsed);
         Assert.Equal(1, snap.RootMessageId);
         Assert.Empty(Directory.Exists(Path.Combine(_dir, "spawns")) ? Directory.GetDirectories(Path.Combine(_dir, "spawns")) : Array.Empty<string>());
-        Assert.Equal(["owner", "opus", "gpt-6-astra", ChopDb.HubParticipantId], (await Messages()).Select(m => m.Author));
+        Assert.Equal(["owner", "opus", "gpt-6-astra", ChopDb.HubParticipantId, "opus", ChopDb.HubParticipantId], (await Messages()).Select(m => m.Author));
     }
 
     [Fact]
@@ -170,15 +176,125 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         var prompts = new List<string>();
         for (int i = 0; i < 4; i++) prompts.Add((await _runner.NextSpecAsync(Wait)).StandardInput);
         Assert.Contains("Turn 4 of 4; 0 turn(s) remain after yours.", prompts[3]);
-        Assert.Contains("This is the last turn", prompts[3]);
-        Assert.DoesNotContain("This is the last turn", prompts[2]);
+        Assert.Contains("This is the last hand-off turn of the exchange", prompts[3]);
+        Assert.Contains("@opus wraps up for the owner afterwards", prompts[3]);
+        // The non-addressee sentence (D-f) itself says "do not ask ... whether to continue" - it
+        // necessarily contains that wording as part of telling the model not to; the addressee/no-addressee
+        // sentence's own distinct closing clause is what actually distinguishes the two.
+        Assert.DoesNotContain("summarise the exchange in a few lines, and ask the owner whether to continue.", prompts[3]);
+        Assert.DoesNotContain("This is the last", prompts[2]);
 
         var refused = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("not spawning"));
-        Assert.Contains("Budget of 4 turns is used up", refused.Body);
+        Assert.Equal("Budget of 4 turns is used up for the exchange started at #1; not spawning @opus. An owner message that mentions one of them starts a fresh exchange; once it has concluded, /continue extends it.", refused.Body);
+        var queuing = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("queuing @opus's synthesis turn"));
+        Assert.Equal("Exchange started at #1: the hand-offs ended with @sonnet's post; queuing @opus's synthesis turn.", queuing.Body);
+
+        var synthesis = (await _runner.NextSpecAsync(Wait)).StandardInput;
+        Assert.Contains("Turn 5 of 5; 0 turn(s) remain after yours.", synthesis);
+        Assert.Contains("this is your synthesis turn as the participant the owner addressed", synthesis);
+        Assert.DoesNotContain("This is the last", synthesis);
+
         var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Exchange concluded"));
-        Assert.Equal("Exchange concluded: 4 of 4 turns used.", note.Body);
+        Assert.Equal("Exchange concluded: 5 of 5 turns used; the last was @opus's synthesis.", note.Body);
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
-        Assert.Equal(4, _runner.Count);
+        Assert.Equal(5, _runner.Count);
+    }
+
+    // --- Row 44: the addressee's synthesis turn, /continue, the continuable snapshot ---------------
+
+    [Fact]
+    public async Task R44_the_addressee_gets_a_synthesis_turn_and_its_hand_off_is_ignored()
+    {
+        var opusRuns = 0;
+        _runner.Handler = async (spec, _, _) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "opus" when Interlocked.Increment(ref opusRuns) == 1:
+                    await PostAs("opus", "@sonnet your view?");
+                    break;
+                case "opus":
+                    await PostAs("opus", "@sonnet thanks; summary for the owner");
+                    break;
+                case "sonnet":
+                    await PostAs("sonnet", "My view, no hand-off");
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwner("@opus ask sonnet");
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+
+        var queuing = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("queuing @opus's synthesis turn"));
+        Assert.Equal("Exchange started at #1: the hand-offs ended with @sonnet's post; queuing @opus's synthesis turn.", queuing.Body);
+
+        var third = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(third));
+        Assert.Contains("ended with @sonnet's message #", third.StandardInput);
+        Assert.Contains("this is your synthesis turn", third.StandardInput);
+
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Exchange concluded"));
+        Assert.Equal("Exchange concluded: 3 of 4 turns used; the last was @opus's synthesis.", note.Body);
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal(3, _runner.Count);
+    }
+
+    [Fact]
+    public async Task R44_continue_requeues_the_refused_hand_off_and_prompts_it_as_a_continuation()
+    {
+        _runner.Handler = async (spec, _, _) =>
+        {
+            var me = FakeProcessRunner.ParticipantOf(spec);
+            var other = me == "opus" ? "sonnet" : "opus";
+            await PostAs(me, $"@{other} your move");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        // The A2 sequence to its conclusion: messages 1 (root) through 5 (four model posts), then the
+        // refusal note (6), the queuing note (7), opus's synthesis post (8) and the conclusion (9) -
+        // the next owner post is message #10.
+        await PostAsOwner("@opus play ping-pong with sonnet");
+        for (int i = 0; i < 5; i++) await _runner.NextSpecAsync(Wait);   // drain turns 1-5 (opus, sonnet, opus, sonnet, opus's synthesis)
+        await WaitForMessage(m => m.Body == "Exchange concluded: 5 of 5 turns used; the last was @opus's synthesis.");
+        Assert.Equal(5, _runner.Count);
+
+        await PostAsOwner("/continue");
+        var continued = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange started at #1 continued"));
+        Assert.Equal("Exchange started at #1 continued: 4 more turn(s), 9 in all; queued @opus.", continued.Body);
+        var mid = Spawner.Snapshot("general");
+        Assert.Equal(("open", 9), (mid.Status, mid.Budget));
+
+        var sixth = await _runner.NextSpecAsync(Wait);
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(sixth));
+        Assert.Contains("Turn 6 of 9; 3 turn(s) remain after yours.", sixth.StandardInput);
+        Assert.Contains("Why you are here: message #5 mentioned you when the budget was spent; the owner continued this exchange with message #10, so answer that mention now.", sixth.StandardInput);
+
+        for (int i = 0; i < 4; i++) await _runner.NextSpecAsync(Wait);   // drain turns 7-10 (sonnet, opus, sonnet, opus's synthesis)
+        await WaitForMessage(m => m.Body == "Exchange concluded: 10 of 10 turns used; the last was @opus's synthesis.");
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+        Assert.Equal(10, _runner.Count);
+    }
+
+    [Fact]
+    public async Task R44_the_snapshot_says_when_an_exchange_is_continuable_and_a_turns_token_sets_the_budget()
+    {
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"done"}"""));
+
+        await PostAsOwner("turns: 2 @opus hi");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Contains("Turn 1 of 2", first.StandardInput);
+        await WaitForStatus("concluded");
+        var snap = Spawner.Snapshot("general");
+        Assert.True(snap.Continuable);
+        Assert.True(snap.Exchanges!.Single().Continuable);
+
+        await PostAsOwner("turns: 99 @opus hi");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("turns:"));
+        Assert.Equal("turns: must be a whole number from 1 to 16; the default 4 applies.", note.Body);
+        var second = await _runner.NextSpecAsync(Wait);
+        Assert.Contains("Turn 1 of 4", second.StandardInput);
     }
 
     [Fact]
@@ -280,7 +396,10 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         releaseGpt.SetResult();
         var final = await WaitForStatus("concluded");
         Assert.Equal(2, final.RootMessageId);
-        Assert.Equal(2, final.TurnsUsed);
+        // Row 44 (D-c): gpt-5.5 posted last of exchange 2, not its addressee (opus, the first recipient
+        // of message #2), so the hub queued and ran one more turn (opus's own synthesis) before the
+        // exchange could conclude.
+        Assert.Equal(3, final.TurnsUsed);
         Assert.Single(await Messages(), m => m.Body.StartsWith("Exchange concluded"));
     }
 
@@ -548,6 +667,11 @@ public sealed partial class SpawnerServiceTests
         }
         Assert.All(Spawner.Snapshot("general").Exchanges!, e => Assert.Equal("concluded", e.Status));
         Assert.Equal(2, (await Messages()).Count(m => m.Body.StartsWith("Exchange concluded")));
+        // Row 44 (D-c): sonnet's "ok" (no hand-off) left A's addressee (opus) owing a synthesis turn, so
+        // A ran one more spawn before it could conclude; that spec is still sitting unconsumed in the
+        // fake's queue and must be drained here, or the next NextSpecAsync (fable's) would be handed
+        // this stale one instead of fable's own.
+        Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
 
         await PostAsOwner("@fable task C");                                             // opening a third prunes the two closed, spawn-less ones
         Assert.Equal("fable", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));

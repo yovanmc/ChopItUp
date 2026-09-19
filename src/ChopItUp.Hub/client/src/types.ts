@@ -122,6 +122,9 @@ export interface ExchangeSnapshot {
    *  ExchangeBar's marker map is keyed on this union, so a cause added to the hub without a label
    *  here is a compile error rather than a bar that silently blames the owner for it. */
   stoppedBy: 'owner' | 'run' | null;
+  /** Row 44. The `continuable` of the exchange these top-level fields describe (the newest open one,
+   *  else the newest), on the same rule as every other field here. See `ExchangeView` below. */
+  continuable?: boolean;
   /** Row 34. Every exchange the room still holds, oldest first (Spawning/SpawnerService.cs
    *  `ExchangeView`); the top-level fields above describe the newest open one, else the newest.
    *  Optional because a hub older than row 32 does not send it, and that hub is still served. */
@@ -142,6 +145,12 @@ export interface ExchangeView {
   inFlight: string[];
   pending: string[];
   stoppedBy: ExchangeSnapshot['stoppedBy'];
+  /** Row 44 (D-e). The hub's own decision that `/continue` would be accepted for this exchange: it is
+   *  rooted at a human's message, it is no longer open, nothing of its own is in flight, and no run is
+   *  active in the room. The client re-derives none of that — it adds only the live-run gate its Stop
+   *  already honours. Optional because a hub older than this row sends no such field, and a bar that
+   *  read `undefined` as "yes" would offer a button that hub cannot serve. */
+  continuable?: boolean;
 }
 
 /** Who last wrote a path inside a run, read out of the spawn's own git diff (Web/RunsApi.cs). */

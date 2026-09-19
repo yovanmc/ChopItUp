@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ChopItUp.Core.Messaging;
+using ChopItUp.Core.Skills;
 
 namespace ChopItUp.Core.Tests.Messaging;
 
@@ -8,12 +10,19 @@ public sealed class MentionsTests
 {
     private static readonly string[] Ids = ["owner", "claude", "codex", "opus", "sonnet", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "hub"];
 
+    /// <summary>Row 44: what a case's fixture `"turns"` field expects of `LeadingMentions.Turns`/
+    /// `TurnsValue`; absent on a case that asserts nothing about turns.</summary>
+    private sealed record TurnsCase(
+        [property: JsonPropertyName("token")] string Token,
+        [property: JsonPropertyName("value")] int Value);
+
     private sealed record MentionCase(
         string Name,
         string Body,
         [property: JsonPropertyName("recipients")] string[] Recipients,
         [property: JsonPropertyName("unknown")] string[] Unknown,
-        [property: JsonPropertyName("references")] string[] References);
+        [property: JsonPropertyName("references")] string[] References,
+        [property: JsonPropertyName("turns")] TurnsCase? Turns = null);
 
     private sealed record MentionCasesFile(string[] Roster, MentionCase[] Cases);
 
@@ -36,20 +45,39 @@ public sealed class MentionsTests
     {
         var file = JsonSerializer.Deserialize<MentionCasesFile>(File.ReadAllText(FixturePath()), JsonOptions)!;
         foreach (var c in file.Cases)
-            yield return [c.Name, file.Roster, c.Body, c.Recipients, c.Unknown, c.References];
+            yield return [c.Name, file.Roster, c.Body, c.Recipients, c.Unknown, c.References, c.Turns?.Token!, c.Turns?.Value ?? 0];
     }
 
     [Theory]
     [MemberData(nameof(Cases))]
     public void Leading_and_the_reference_remainder_match_the_shared_fixture(
-        string name, string[] roster, string body, string[] recipients, string[] unknown, string[] references)
+        string name, string[] roster, string body, string[] recipients, string[] unknown, string[] references, string? turnsToken, int turnsValue)
     {
         Assert.False(string.IsNullOrWhiteSpace(name));
         var m = new Mentions(roster);
+        // Standards S1 (hub F10): the timing bound guards the catastrophic-backtracking canary only
+        // (B1) - applying it to every case made the whole theory flaky under load for no reason the
+        // other 47 cases need.
+        var watch = Stopwatch.StartNew();
         var leading = m.Leading(body);
+        watch.Stop();
+        if (name.StartsWith("perf canary", StringComparison.Ordinal))
+            Assert.True(watch.ElapsedMilliseconds < 200, $"'{name}' took {watch.ElapsedMilliseconds} ms");
         Assert.Equal(recipients, leading.Recipients);
         Assert.Equal(unknown, leading.Unknown);
         Assert.Equal(references, m.Find(body).Except(leading.Recipients));
+        if (turnsToken is not null)
+        {
+            var expectedToken = turnsToken switch
+            {
+                "valid" => TurnsToken.Valid,
+                "out-of-range" => TurnsToken.OutOfRange,
+                "none" => TurnsToken.None,
+                _ => throw new InvalidOperationException($"Unknown turns token '{turnsToken}' in case '{name}'."),
+            };
+            Assert.Equal(expectedToken, leading.Turns);
+            Assert.Equal(turnsValue, leading.TurnsValue);
+        }
     }
 
     [Fact]

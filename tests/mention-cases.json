@@ -32,6 +32,22 @@
     { "name": "non-ascii letter",          "body": "@opüs hi",                                            "recipients": [],                       "unknown": [],           "references": [] },
     { "name": "bom before at",             "body": "\uFEFF@opus hi",                                      "recipients": [],                       "unknown": [],           "references": ["opus"] },
     { "name": "email without tld",         "body": "me@opus writes",                                      "recipients": [],                       "unknown": [],           "references": [] },
-    { "name": "astral letter",             "body": "@opus𝐀 hi",                                "recipients": [],                       "unknown": [],           "references": ["opus"] }
+    { "name": "astral letter",             "body": "@opus𝐀 hi",                                "recipients": [],                       "unknown": [],           "references": ["opus"] },
+    { "name": "turns before the mentions",        "body": "turns: 3 @opus @sonnet go",                  "recipients": ["opus", "sonnet"], "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 3 } },
+    { "name": "turns between mentions, no space",  "body": "@opus turns:3 @sonnet go",                   "recipients": ["opus", "sonnet"], "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 3 } },
+    { "name": "turns after a slash token",         "body": "/grill turns: 5 @opus what about X",         "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 5 } },
+    { "name": "turns on the next line of the run", "body": "@opus,\nturns: 3 @sonnet go",                "recipients": ["opus", "sonnet"], "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 3 } },
+    { "name": "turns out of range still skipped",  "body": "turns: 99 @opus go",                          "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "out-of-range" } },
+    { "name": "turns zero is out of range",        "body": "Turns:0 @opus",                               "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "out-of-range" } },
+    { "name": "turns glued to a word is prose",    "body": "@opus xturns:3 @sonnet",                       "recipients": ["opus"],           "unknown": [],       "references": ["sonnet"], "turns": { "token": "none" } },
+    { "name": "turns after prose is prose",        "body": "@opus how many turns: 16 did we burn?",        "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "none" } },
+    { "name": "first turns token wins",            "body": "turns: 2 turns: 9 @opus",                      "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 2 } },
+    { "name": "continue with a mention and turns", "body": "/continue @sonnet turns: 2 more",             "recipients": ["sonnet"],         "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 2 } },
+    { "name": "perf canary: 14 mentions with punctuation runs", "body": "@nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, go", "recipients": [], "unknown": ["nobody"], "references": [], "turns": { "token": "none" } },
+    { "name": "turns way out of range is still read",    "body": "turns: 1000 @opus go",                     "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
+    { "name": "turns extra whitespace is tolerated",      "body": "turns:  3 @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 3 } },
+    { "name": "turns with a letter glued on is refused",  "body": "turns:16x @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
+    { "name": "turns at the ceiling",                     "body": "turns: 16 @opus",                         "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 16 } },
+    { "name": "turns one past the ceiling",                "body": "turns: 17 @opus",                        "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } }
   ]
 }

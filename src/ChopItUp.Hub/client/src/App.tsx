@@ -40,8 +40,9 @@ function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnaps
   return current;
 }
 
-/** Row 34: a copy of the per-root stopping set with `root` added or removed. A copy because it is React
- *  state, and one root's release must never drop a neighbour that is still pending. */
+/** Row 34: a copy of a per-root pending set with `root` added or removed. A copy because it is React
+ *  state, and one root's release must never drop a neighbour that is still pending. Row 44 gives the
+ *  Continue presses a second set of the same shape, which this serves too. */
 export function withStopping(current: ReadonlySet<number>, root: number, on: boolean): ReadonlySet<number> {
   const next = new Set(current);
   if (on) next.add(root);
@@ -69,6 +70,34 @@ export async function stopExchangeAt(roomId: string, root: number, hooks: Exchan
     hooks.apply(await api.stopOneExchange(roomId, root));
   } catch (failure) {
     if (!hooks.refused(failure, 'That exchange was not stopped.')) hooks.fail(api.describeError(failure));
+  } finally {
+    hooks.end();
+  }
+}
+
+/** What `continueExchangeAt` reports back to App. `apply` takes the posted message rather than a
+ *  snapshot: D-e routes Continue through the ordinary message endpoint, so what comes back is the
+ *  posted `/continue` message itself, and the hub's answer to it arrives over the socket like any
+ *  other message does. */
+export interface ExchangeContinueHooks {
+  begin: () => void;
+  apply: (messages: Message[]) => void;
+  refused: (failure: unknown, didNotHappen: string) => boolean;
+  fail: (message: string) => void;
+  end: () => void;
+}
+
+/** Row 44, AC5: the strip's Continue, which posts `/continue` as a reply to that exchange's root. The
+ *  button and a phone typing the same command share one code path and leave one visible trail, which
+ *  is why this is a post and not an endpoint of its own (D-e). `end` is in `finally`, so a refused
+ *  continue releases its strip as surely as an accepted one. Outside the component for the same reason
+ *  `stopExchangeAt` is: this client has no DOM to press the button in. */
+export async function continueExchangeAt(roomId: string, root: number, hooks: ExchangeContinueHooks): Promise<void> {
+  hooks.begin();
+  try {
+    hooks.apply([await api.postMessage(roomId, '/continue', root)]);
+  } catch (failure) {
+    if (!hooks.refused(failure, 'The exchange was not continued.')) hooks.fail(api.describeError(failure));
   } finally {
     hooks.end();
   }
@@ -153,6 +182,9 @@ export default function App() {
   /** Row 34: the exchange roots whose own stop is in flight, so one strip greys and its neighbours stay
    *  pressable. `stopping` above stays the room stop's, which `RunBar` shares. */
   const [stoppingRoots, setStoppingRoots] = useState<ReadonlySet<number>>(() => new Set());
+  /** Row 44: the same, for the roots whose `/continue` post is in flight. Its own set, because one
+   *  strip can be stopping while another is being continued. */
+  const [continuingRoots, setContinuingRoots] = useState<ReadonlySet<number>>(() => new Set());
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
   const [skillProposals, setSkillProposals] = useState<SkillProposal[]>([]);
@@ -586,6 +618,25 @@ export default function App() {
     [roomId, stop, refused],
   );
 
+  /** Row 44, AC5: the bar's Continue. The composer's reply state is deliberately untouched — a reply
+   *  may be half composed down there, and this press is not that reply. */
+  const continueFromBar = useCallback(
+    (root: number) => {
+      if (!roomId) return;
+      void continueExchangeAt(roomId, root, {
+        begin: () => setContinuingRoots((previous) => withStopping(previous, root, true)),
+        apply: (messages) => {
+          merge(messages);
+          setError(null);
+        },
+        refused,
+        fail: setError,
+        end: () => setContinuingRoots((previous) => withStopping(previous, root, false)),
+      });
+    },
+    [roomId, merge, refused],
+  );
+
   // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
   // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
   const decide = useCallback(
@@ -765,7 +816,9 @@ export default function App() {
               runStoppable={runStoppable}
               stopping={stopping}
               stoppingRoots={stoppingRoots}
+              continuingRoots={continuingRoots}
               onStop={stopFromBar}
+              onContinue={continueFromBar}
             />
             <Composer
               roomName={activeRoom.name}

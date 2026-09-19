@@ -27,7 +27,11 @@ public sealed record SpawnPromptInput(
     string? DirectoryCheckoutOf = null,
     RunView? Run = null,
     RoomMemory? RoomMemory = null,
-    SpawnPrompt.StandingText? Standing = null);
+    SpawnPrompt.StandingText? Standing = null,
+    SpawnReason Reason = SpawnReason.Mention,
+    string? Addressee = null,
+    long? RefusedAt = null,
+    (string AuthorId, long MessageId)? LastModelPost = null);
 
 /// <summary>Row 18 (L7, decision 8): the room's own memory topic, injected only in a directory
 /// room. <c>Text</c> is already cut at <see cref="MemoryStore.RoomChars"/> and may be empty
@@ -93,9 +97,37 @@ public static class SpawnPrompt
         sb.Append("You are ").Append(input.Self.DisplayName).Append(" (participant id `").Append(input.Self.Id).Append("`) in the Chop It Up room \"")
           .Append(input.RoomName).Append("\" (room_id `").Append(input.RoomId).Append("`). ").Append(humanClause).Append("; `hub` is the hub itself: it posts exchange notes and relays memory proposals, quoting the proposer's text, which is that participant's and not the hub's.\n");
         sb.Append("Participants you can hand the turn to: ").Append(string.Join(", ", peers)).Append('\n');
-        sb.Append("Why you are here: message(s) ").Append(string.Join(", ", input.TriggerIds.Select(id => "#" + id))).Append(" mentioned you. This exchange started at message #")
-          .Append(input.RootMessageId).Append(". Turn ").Append(input.TurnNumber).Append(" of ").Append(input.Budget).Append("; ").Append(input.RemainingAfter).Append(" turn(s) remain after yours.\n");
-        if (input.RemainingAfter == 0)
+        // Row 44 (D-f): the why-line is a three-way choice on Reason, all on the same line as the
+        // started-at sentence and the turn line below (the golden capture pins the Mention/default shape
+        // byte-for-byte, so that append chain is untouched).
+        switch (input.Reason)
+        {
+            case SpawnReason.Synthesis:
+                // I-m6 (hub F7): named by LastModelPost (the exchange's own record of who posted last),
+                // never by TriggerIds[^1] - a debounce-merged owner reply after the synthesis was queued
+                // can no longer change who this sentence names.
+                var lastPoster = input.LastModelPost is { } lmp ? $"@{lmp.AuthorId}" : "a participant";
+                var lastPostId = input.LastModelPost?.MessageId ?? input.TriggerIds[^1];
+                sb.Append("Why you are here: the hand-offs of this exchange ended with ").Append(lastPoster).Append("'s message #").Append(lastPostId)
+                  .Append("; this is your synthesis turn as the participant the owner addressed. Answer the owner on the original ask (message #").Append(input.RootMessageId)
+                  .Append(") in a few lines; a mention in this reply hands nothing on. ");
+                break;
+            // I-m6 (hub F7): fires on RefusedAt, the exchange's own record of a replayed hand-off's
+            // original refusal - never on trigger count, which a debounce merge could change for
+            // reasons unrelated to a replay.
+            case SpawnReason.Continuation when input.RefusedAt is { } refusingId:
+                sb.Append("Why you are here: message #").Append(refusingId).Append(" mentioned you when the budget was spent; the owner continued this exchange with message #")
+                  .Append(input.TriggerIds[^1]).Append(", so answer that mention now. ");
+                break;
+            case SpawnReason.Continuation:
+                sb.Append("Why you are here: the owner continued this exchange with message #").Append(input.TriggerIds[^1]).Append(" after it ended; pick up where it left off. ");
+                break;
+            default:
+                sb.Append("Why you are here: message(s) ").Append(string.Join(", ", input.TriggerIds.Select(id => "#" + id))).Append(" mentioned you. ");
+                break;
+        }
+        sb.Append("This exchange started at message #").Append(input.RootMessageId).Append(". Turn ").Append(input.TurnNumber).Append(" of ").Append(input.Budget).Append("; ").Append(input.RemainingAfter).Append(" turn(s) remain after yours.\n");
+        if (input.RemainingAfter == 0 && input.Reason != SpawnReason.Synthesis)
         {
             // Row 20, task 3 (ledger 23, pass-1 M7): the conductor's own single-turn exchange
             // (ExchangePolicy.OpenForConductor's Budget = 1) always hits this branch, so without this
@@ -103,6 +135,12 @@ public static class SpawnPrompt
             // only ever stops on its own ping post, a cap, or /stop.
             if (input.Run is { SelfIsConductor: true })
                 sb.Append("This is your one turn in this phase: end it with a phase: post as described in the run section. Never ask the owner whether to continue; a run only stops on your phase: ping post, a cap, or the owner's /stop.\n");
+            // Row 44 (D-f): a non-addressee holding the last hand-off turn defers the human-facing
+            // wrap-up to the addressee's own synthesis turn rather than asking here too, so only one
+            // wrap-up ever reaches the room.
+            else if (input.Addressee is { } addressee && addressee != input.Self.Id)
+                sb.Append("This is the last hand-off turn of the exchange: give your findings in a few lines; @").Append(addressee)
+                  .Append(" wraps up for the owner afterwards, so do not ask the owner whether to continue.\n");
             else
                 sb.Append("This is the last turn of the exchange: conclude on the original ask (message #").Append(input.RootMessageId)
                   .Append("), summarise the exchange in a few lines, and ask the owner whether to continue.\n");

@@ -1,8 +1,15 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { stopExchangeAt, TokenGate, withStopping, type ExchangeStopHooks } from './App';
+import {
+  continueExchangeAt,
+  stopExchangeAt,
+  TokenGate,
+  withStopping,
+  type ExchangeContinueHooks,
+  type ExchangeStopHooks,
+} from './App';
 import { isCredentialRefusal } from './api';
-import type { ExchangeSnapshot } from './types';
+import type { ExchangeSnapshot, Message } from './types';
 
 /** Row 28, AC5's first half. A deliberate action the hub refused for want of a credential has to say
  *  what did not happen and give the owner somewhere to put the token — "Send" that silently ate the
@@ -119,6 +126,66 @@ describe('stopping one exchange from its strip', () => {
     await stopExchangeAt('lab', 57, hooks);
 
     expect(events).toContain('fail: A run owns this room; stop the run instead.');
+    expect(events).not.toContain('apply');
+    expect(events.at(-1)).toBe('end');
+  });
+});
+
+/** Row 44, AC5: App's half of the Continue button, lifted out of the component for the same reason the
+ *  stop above is — there is no DOM here to press in. D-e routes the press through the ordinary message
+ *  endpoint rather than an endpoint of its own, so what this pins is the body and the reply target: a
+ *  Continue that posted anything else would leave the hub nothing to read the command from. */
+describe('continuing one exchange from its strip', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const POSTED = { id: 91, roomId: 'lab', authorId: 'owner', body: '/continue' } as unknown as Message;
+
+  function json(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+  }
+
+  function record(reply: () => Response) {
+    const events: string[] = [];
+    const bodies: unknown[] = [];
+    const applied: Message[][] = [];
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      events.push(`${init?.method ?? 'GET'} ${url}`);
+      bodies.push(typeof init?.body === 'string' ? JSON.parse(init.body) : null);
+      return Promise.resolve(reply());
+    });
+    const hooks: ExchangeContinueHooks = {
+      begin: () => events.push('begin'),
+      apply: (messages) => {
+        events.push('apply');
+        applied.push(messages);
+      },
+      refused: (failure, didNotHappen) => {
+        events.push(`refused? ${didNotHappen}`);
+        return isCredentialRefusal(failure);
+      },
+      fail: (message) => events.push(`fail: ${message}`),
+      end: () => events.push('end'),
+    };
+    return { events, bodies, applied, hooks };
+  }
+
+  test('it posts /continue as a reply to that root and merges the message the hub answered with', async () => {
+    const { events, bodies, applied, hooks } = record(() => json(POSTED));
+
+    await continueExchangeAt('lab', 57, hooks);
+
+    expect(events).toEqual(['begin', 'POST /api/rooms/lab/messages', 'apply', 'end']);
+    expect(bodies[0]).toEqual({ body: '/continue', replyToId: 57 });
+    expect(applied[0]?.[0]?.id).toBe(91);
+  });
+
+  test('a credential refusal says what did not happen, and the strip is released either way', async () => {
+    const { events, hooks } = record(() => json({ error: 'unauthorized' }, 401));
+
+    await continueExchangeAt('lab', 57, hooks);
+
+    expect(events).toContain('refused? The exchange was not continued.');
+    expect(events.some((e) => e.startsWith('fail'))).toBe(false);
     expect(events).not.toContain('apply');
     expect(events.at(-1)).toBe('end');
   });
