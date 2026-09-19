@@ -98,12 +98,23 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
         // Drain. After a tree kill the pipes close promptly; the grace only matters for a grandchild
         // that survived (not expected) and would otherwise hold the read open forever.
         string outText = "", errText = "";
-        try { await Task.WhenAll(stdout, stderr).WaitAsync(DrainGrace); }
-        catch (TimeoutException) { errText = "(output pipes did not close within the drain grace)"; }
-        catch (Exception e) when (e is not OperationCanceledException) { errText = "(output pipes failed: " + e.GetBaseException().Message + ")"; }
-        // Row 46, R11: a process that started always yields a result, so its turn commit can credit it.
-        if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
-        if (stderr.IsCompletedSuccessfully) errText = stderr.Result;
+        try
+        {
+            await Task.WhenAll(stdout, stderr).WaitAsync(DrainGrace);
+            outText = stdout.Result;
+            errText = stderr.Result;
+        }
+        catch (TimeoutException)
+        {
+            errText = "(output pipes did not close within the drain grace)";
+            if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Row 46, R11: a process that started always yields a result, so its turn commit can credit it.
+            errText = "(output pipes failed: " + e.GetBaseException().Message + ")";
+            if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
+        }
 
         int? exitCode = null;
         try { if (process.HasExited) exitCode = process.ExitCode; } catch (InvalidOperationException) { }

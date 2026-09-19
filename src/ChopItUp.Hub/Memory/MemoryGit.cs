@@ -17,5 +17,5 @@ public sealed class MemoryGit(string root, Func<ResolvedCli>? resolve = null, IP
     /// new commit, or the unchanged HEAD when there was nothing to commit - or null with
     /// <see cref="GitTrail.Reason"/> set. Serialised: two approvals never race inside one repository.</summary>
     public async Task<string?> CommitAsync(string message, CancellationToken cancellation = default) =>
-        (await CommitAllAsync(message, Hub, allowEmpty: false, cancellation)).Hash;
+        (await CommitAllAsync(message, Hub, allowEmpty: false, cancellation: cancellation)).Hash;
 }

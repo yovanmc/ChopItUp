@@ -236,7 +236,7 @@ public class GitTrail
     /// Windows command line is capped at 32,767 characters. Initialises the repository if it is missing.
     /// With <paramref name="allowEmpty"/> false, "nothing to commit" is not a failure: the outcome is
     /// HEAD with <see cref="CommitOutcome.Created"/> false.</summary>
-    public async Task<CommitOutcome> CommitAllAsync(string message, GitIdentity? author, bool allowEmpty, CancellationToken cancellation = default, IReadOnlyList<string>? trailers = null)
+    public async Task<CommitOutcome> CommitAllAsync(string message, GitIdentity? author, bool allowEmpty, IReadOnlyList<string>? trailers = null, CancellationToken cancellation = default)
     {
         await _gate.WaitAsync(cancellation);
         try

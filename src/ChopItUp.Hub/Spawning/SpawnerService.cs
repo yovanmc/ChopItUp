@@ -1087,7 +1087,7 @@ public sealed class SpawnerService : BackgroundService
                         // in the room directory itself whether or not this spawn runs in a worktree.
                         var roomGit = _trails.For(directory);
                         if (await roomGit.IsDirtyAsync(CancellationToken.None))
-                            owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), author: null, allowEmpty: false, CancellationToken.None);
+                            owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), author: null, allowEmpty: false, cancellation: CancellationToken.None);
                         if (inWorktree)
                         {
                             var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None, continueBranch);
@@ -1118,8 +1118,8 @@ public sealed class SpawnerService : BackgroundService
                         // trailer only when its process actually launched (R11) and the turn changed
                         // something (CommitAllAsync decides that part).
                         var trailer = launched ? RoomCommits.CoAuthorTrailer(host) : null;
-                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true, CancellationToken.None,
-                            trailers: trailer is null ? null : [trailer]);
+                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true,
+                            trailers: trailer is null ? null : [trailer], cancellation: CancellationToken.None);
                         trail = new TrailReport(owner, agent, commands.Count, headMoved, leased);
 
                         // Row 19, task 5c (P4): artifact authorship, from the SPAWN'S WHOLE DIFF - not

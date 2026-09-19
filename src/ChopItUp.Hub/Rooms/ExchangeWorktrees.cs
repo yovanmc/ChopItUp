@@ -68,7 +68,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         {
             // The caller already committed the owner's dirty tree before this call; nothing new is
             // staged here, so this is an empty commit purely to give the room a HEAD a worktree can fork.
-            var start = await main.CommitAllAsync("Room trail start", author: null, allowEmpty: true, cancellation);
+            var start = await main.CommitAllAsync("Room trail start", author: null, allowEmpty: true, cancellation: cancellation);
             if (start.Hash is null) return new(null, "the room directory has no commit and one could not be made: " + start.Reason);
         }
 
@@ -118,7 +118,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         {
             var w = trails.ForWorktree(roomDirectory, path);
             if (await w.IsDirtyAsync(cancellation))
-                await w.CommitAllAsync($"Uncommitted at the close of exchange #{root}", author: null, allowEmpty: false, cancellation);
+                await w.CommitAllAsync($"Uncommitted at the close of exchange #{root}", author: null, allowEmpty: false, cancellation: cancellation);
             var failed = await main.RemoveWorktreeAsync(path, cancellation);
             if (failed is not null) removal = $" Its worktree at {path} was not removed: {failed}";
             else trails.Forget(path);
@@ -148,7 +148,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
 
         if (await main.IsDirtyAsync(cancellation))
         {
-            var oc = await main.CommitAllAsync(ownerMessage, author: null, allowEmpty: false, cancellation);
+            var oc = await main.CommitAllAsync(ownerMessage, author: null, allowEmpty: false, cancellation: cancellation);
             if (oc.Hash is null) return Keep($"the owner's edits could not be committed first: {oc.Reason}");
         }
 
@@ -196,7 +196,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
             {
                 var w = trails.ForWorktree(roomDirectory, path);
                 if (await w.IsDirtyAsync(cancellation))
-                    await w.CommitAllAsync("Uncommitted when the hub restarted", author: null, allowEmpty: false, cancellation);
+                    await w.CommitAllAsync("Uncommitted when the hub restarted", author: null, allowEmpty: false, cancellation: cancellation);
             }
             var branch = "chopitup/" + Path.GetFileName(path);
             var removeFailed = await main.RemoveWorktreeAsync(path, cancellation);

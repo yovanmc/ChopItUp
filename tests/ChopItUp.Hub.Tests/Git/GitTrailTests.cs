@@ -355,7 +355,7 @@ public sealed class GitTrailTests : IDisposable
         var git = new GitTrail(_dir);
         Assert.True(await git.InitAsync());
         await ConfigureRoomOwner(_dir);
-        await git.CommitAllAsync("Room trail start", GitTrail.Hub, allowEmpty: true);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
 
         var wt = _dir + "_wt";
         Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x7", newBranch: true));
