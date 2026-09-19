@@ -104,7 +104,17 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             outText = stdout.Result;
             errText = stderr.Result;
         }
-        catch (TimeoutException) { errText = "(output pipes did not close within the drain grace)"; }
+        catch (TimeoutException)
+        {
+            errText = "(output pipes did not close within the drain grace)";
+            if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            // Row 46, R11: a process that started always yields a result, so its turn commit can credit it.
+            errText = "(output pipes failed: " + e.GetBaseException().Message + ")";
+            if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
+        }
 
         int? exitCode = null;
         try { if (process.HasExited) exitCode = process.ExitCode; } catch (InvalidOperationException) { }

@@ -366,7 +366,7 @@ public static class SpawnPrompt
     public static string DirectoryRules(string directory, string? checkoutOf = null)
     {
         var text = $"Stay inside your working directory, {directory}: do not read, list, create or change anything outside this directory, and do not touch its .git folder. "
-            + "Do not run git commands that write (commit, add, checkout, reset, stash, push and the like); the hub commits your work under your name when you finish and records every shell command you run in the room's commit trail. git log, git status and git diff are fine. "
+            + "Do not run git commands that write (commit, add, checkout, reset, stash, push and the like); the hub commits your work when you finish, crediting you as co-author, and records every shell command you run in the room's commit trail. If you commit anyway, end the message with a Co-authored-by: trailer naming you. git log, git status and git diff are fine. "
             + "Do not call the hub's HTTP API or read its data folder; the chopitup MCP tools you were given are your only channel to the hub.";
         if (checkoutOf is not null && checkoutOf != directory)
             text += $" This folder is a git worktree: the room directory {checkoutOf} is checked out for you at {directory}. A path under {checkoutOf} in the conversation means the same relative path under {directory}. Never write under {checkoutOf}. Gitignored files (dependencies, build output, local settings) are not in this checkout; recreate what you need here.";

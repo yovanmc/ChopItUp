@@ -40,7 +40,7 @@ None of the four lines is touched by this plan (they are pre-existing code in to
 - **AC2** WHEN git at the room directory cannot resolve a set identity (`git -c user.useConfigOnly=true var GIT_COMMITTER_IDENT` exits non-zero: no config, half a config, or only a guessable name or `EMAIL`), THE SYSTEM SHALL commit as `ChopItUp hub <hub@chopitup.local>` for both author and committer.
 - **AC3** WHEN a spawn whose process was launched ends and its turn commit contains at least one staged change, THE SYSTEM SHALL end the commit message with a paragraph holding exactly `Co-authored-by: Codex <noreply@openai.com>` for a `codex` host or `Co-authored-by: Claude <noreply@anthropic.com>` for a `claude` host, readable by `git log -1 --format=%(trailers:key=Co-authored-by,valueonly)`.
 - **AC4** WHEN a turn commit is empty, or the spawn's process never launched, or the commit is the owner's `edits before the next spawn`, THE SYSTEM SHALL write no `Co-authored-by` trailer.
-- **AC5** WHEN the hub merges an exchange branch, THE SYSTEM SHALL author the merge commit under AC1/AC2 and append, as its last paragraph, the distinct `Co-authored-by` trailers of the commits being merged, and none when they carry none.
+- **AC5** WHEN the hub merges an exchange branch, THE SYSTEM SHALL author the merge commit under AC1/AC2 and append, as its last paragraph, the distinct host `Co-authored-by` trailers of the commits being merged (only the two values the hub itself emits, `Codex <noreply@openai.com>` and `Claude <noreply@anthropic.com>`; any other value on a branch commit is dropped), and none when they carry none.
 - **AC6** WHEN the hub makes a `Room trail start`, `Uncommitted at the close of exchange #N` or `Uncommitted when the hub restarted` commit, THE SYSTEM SHALL author and commit it under AC1/AC2 and write no trailer.
 - **AC7** WHEN the memory store commits an approval, THE SYSTEM SHALL keep `ChopItUp hub <hub@chopitup.local>` as both author and committer, whatever the machine's git config says.
 - **AC8** WHEN the hub posts the trail note for a turn, THE SYSTEM SHALL word it `Committed <hash> for <id>: …`; the spawn prompt SHALL no longer say `under your name`; and README's trail paragraph SHALL contain the literal `Co-authored-by: Codex <noreply@openai.com>` and no longer `id@chopitup.local`.
@@ -74,8 +74,8 @@ None of the four lines is touched by this plan (they are pre-existing code in to
 | 22 | `tools/Invoke-M9RoomCheck.ps1` (a live check that spends real Claude and Codex calls; `docs/verification.md:50`, `README.md:210`) asserts the old identities: `:133` note `*as $Participant*`, `:135` `$ExpectAuthor\|ChopItUp hub\|…`, `:142`/`:147` `-ExpectAuthor 'Sonnet'`/`'GPT-6 Astra'`, `:144` `$authors[1] -eq 'Owner'`, `:154` `* <*@chopitup.local>`; its room directory is `$roomDir = Join-Path $RoomsRoot 'live-check'` (`:85`) and no other file under `tools/` names an expected author | 7065938 | `pwsh -c "if ((git grep -n -E 'ExpectAuthor\|authors\[1\] -eq\|as .Participant' -- tools \| Measure-Object).Count -eq 6) { exit 0 } else { exit 1 }"` |
 | 23 | `SpawnPrompt.cs:369` says `the hub commits your work under your name when you finish`; the byte-for-byte golden capture `tests/ChopItUp.Hub.Tests/Spawning/golden-prompt-ddfa572.txt` carries the same sentence (its path is fixed in `SpawnPromptTests.cs:562`; a `.gitattributes` marks it `-text`) | 7065938 | `pwsh -c "if ((git grep -n 'commits your work under your name' -- src tests \| Measure-Object).Count -eq 2) { exit 0 } else { exit 1 }"` |
 | 24 | `ExchangeWorktreesTests.RoomWithCommit` (`:41-48`) seeds with the explicit `Owner` identity and no local config; the file asserts no `%an`/`%cn`; one test mentions `Uncommitted` | 7065938 | `pwsh -c "$f = 'tests/ChopItUp.Hub.Tests/Rooms/ExchangeWorktreesTests.cs'; if ((git grep -n 'CommitAllAsync(\"seed\", Owner' -- $f \| Measure-Object).Count -eq 1 -and (git grep -c 'Uncommitted' -- $f) -match ':1$') { exit 0 } else { exit 1 }"` |
-| 18 | git ≥ 2.32 on this machine (2.45.2 measured): `GIT_CONFIG_GLOBAL=<missing file>` + `GIT_CONFIG_NOSYSTEM=1` makes `git config --get user.name` exit 1; `git diff --cached --quiet` exits 1 with staged changes and 0 clean; `%(trailers:key=Co-authored-by,valueonly)` prints one value per line, key matched case-insensitively; two `-m` on `git merge` become two paragraphs | 7065938 | `pwsh -c "$v = (git --version) -replace '[^0-9.]',''; if ([version]($v.Substring(0, $v.LastIndexOf('.'))) -ge [version]'2.32') { exit 0 } else { exit 1 }"` |
-| 19 | The same git facts hold on the CI runner (`windows-latest`) | — (unautomatable here; the PR's CI run is the check) |
+| 18 | git ≥ 2.32 on this machine (2.45.2 measured): `GIT_CONFIG_GLOBAL=<missing file>` + `GIT_CONFIG_NOSYSTEM=1` makes `git config --get user.name` exit 1; `git diff --cached --quiet` exits 1 with staged changes and 0 clean; `%(trailers:key=Co-authored-by,valueonly)` prints one value per line, key matched case-insensitively; two `-m` on `git merge` become two paragraphs | 7065938 | `pwsh -c "$m = [regex]::Match((git --version), '\d+\.\d+\.\d+'); if ($m.Success -and [version]$m.Value -ge [version]'2.32') { exit 0 } else { exit 1 }"` |
+| 19 | The same git facts hold on the CI runner (`windows-latest`) | — | — (unautomatable here; the PR's CI run is the check) |
 | 20 | `tools\Invoke-Row43MentionCheck.ps1` is the scaffold: scratch root under `$env:TEMP`, `stub\` first on a stripped PATH, `ChopTokenHelpers.ps1` for the owner bearer, `Add-Check`/`Invoke-Api`/`Wait-HubNotePrefix` helpers, hub started by PID and killed by `taskkill /T /F /PID`; `tools\Invoke-Row35LiveCheck.ps1:100-101` says a typed directory's PARENT must exist and the hub `git init`s the room directory itself | 7065938 | `pwsh -c "if ((git grep -n -E 'function (Add-Check\|Invoke-Api\|Wait-HubNotePrefix)' -- tools/Invoke-Row43MentionCheck.ps1 \| Measure-Object).Count -eq 3 -and (git grep -n 'PARENT to already exist' -- tools/Invoke-Row35LiveCheck.ps1 \| Measure-Object).Count -eq 1) { exit 0 } else { exit 1 }"` |
 | 21 | The live room clone's newest commit is the defect: `git -C "C:\Agent Projects\ChopItUp-room" log -1` shows author `Opus <opus@chopitup.local>`, committer `ChopItUp hub <hub@chopitup.local>`, in a repository whose other commits are `yovanmc` | 5c924f0 (room clone) | — (read-only fact about a live directory; not rechecked by preflight) |
 
@@ -175,7 +175,7 @@ Then the tests (names are the acceptance ids):
         Assert.Equal(1, real.FilesChanged);
         Assert.Equal("Codex <noreply@openai.com>", (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
         var body = (await GitOut(_dir, "log", "-1", "--format=%B")).Replace("\r\n", "\n");
-        Assert.EndsWith("  1. dir\n\nCo-authored-by: Codex <noreply@openai.com>\n", body);
+        Assert.EndsWith("  1. dir\n\nCo-authored-by: Codex <noreply@openai.com>", body.TrimEnd('\n'));   // %B appends its own newline after the message
     }
 
     [Fact]
@@ -458,7 +458,7 @@ Line 132: `"for sonnet: 1 file(s) changed, 2 shell command(s)."`. Lines 140-144 
 (keep whatever turn/budget literal the line has at HEAD — the subject is not this row's). After the existing `body` assertion at `:146` add:
 
 ```csharp
-        Assert.EndsWith("\n\nCo-authored-by: Claude <noreply@anthropic.com>\n", body.Replace("\r\n", "\n"));   // sonnet is a claude host and changed a file
+        Assert.EndsWith("\n\nCo-authored-by: Claude <noreply@anthropic.com>", body.Replace("\r\n", "\n").TrimEnd('\n'));   // sonnet is a claude host and changed a file
         Assert.Equal("Claude <noreply@anthropic.com>", (await GitLog(dir, "%(trailers:key=Co-authored-by,valueonly)", 1)).Trim());   // the merge carries it
         Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1, skip: 2));                             // the owner's own commit credits no model
 ```
@@ -622,7 +622,7 @@ exit /b 0
    Expected: 11 PASS / 0 FAIL. The orchestrator then runs the mutation (AC9): `CoAuthorTrailer` returning null, rebuild, re-run — expected c, e, f, g FAIL (4/11 fail), then restore.
 4. **Never touches** `C:\Self Apps` or any real data directory; every path is under `$ScratchRoot`; the header comment says so like row 43's does.
 
-**`tools/Invoke-M9RoomCheck.ps1`** (ledger 22; a live check that spends real calls, so it is edited here and run by the orchestrator in Phase B only if `claude auth status` reports logged in): right after `$roomDir` exists as a repository (the hub `git init`s it on room creation; find the room-creation call after `:85` and the first `Test-Spawn` at `:142`) run `& git -C $roomDir config user.name 'Live Check'` and `& git -C $roomDir config user.email 'live-check@example.test'` (each checked for exit 0 with an `Add-Check 'git.identity-configured'`). `Test-Spawn` gains `[string]$ExpectTrailer` and: `:133` expects `*for $Participant*`; `:135` becomes `Add-Check -Name "$Prefix.git.author-is-repo-identity" -Passed ("$top" -like "Live Check|Live Check|$Participant`: turn *")`; a new check `"$Prefix.git.co-author"` reads `& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)'` and expects `-eq $ExpectTrailer`; `:142` passes `-ExpectTrailer 'Claude <noreply@anthropic.com>'`, `:147` passes `-ExpectTrailer 'Codex <noreply@openai.com>'`; `:144` expects `$authors[1] -eq 'Live Check'`; `:154` expects `$commits[0].author -eq 'Live Check <live-check@example.test>'`. Nothing else in the script changes.
+**`tools/Invoke-M9RoomCheck.ps1`** (ledger 22; a live check that spends real calls, so it is edited here and run by the orchestrator in Phase B only if `claude auth status` reports logged in): right after `$roomDir` exists as a repository (the hub `git init`s it on room creation; find the room-creation call after `:85` and the first `Test-Spawn` at `:142`) run `& git -C $roomDir config user.name 'Live Check'` and `& git -C $roomDir config user.email 'live-check@example.test'` (each checked for exit 0 with an `Add-Check 'git.identity-configured'`). `Test-Spawn` gains `[string]$ExpectTrailer` and: `:133` expects `*for $Participant*`; `:135` becomes `Add-Check -Name "$Prefix.git.author-is-repo-identity" -Passed ("$top" -like "Live Check|Live Check|$Participant`: turn *")`; a new check `"$Prefix.git.co-author"` reads `& git -C $roomDir log -1 --format='%(trailers:key=Co-authored-by,valueonly)'` and expects `-eq $ExpectTrailer`; `:142` passes `-ExpectTrailer 'Claude <noreply@anthropic.com>'`, `:147` passes `-ExpectTrailer 'Codex <noreply@openai.com>'`; `:144` expects `$authors[1] -eq 'Live Check'`; `:154` expects `$commits[0].author -eq 'Live Check <live-check@example.test>'`. Phase B measured (2026-09-19, two real runs) that after the exchange merge HEAD is the merge commit, so the turn-commit reads (`author-is-repo-identity`, `co-author`, `shell-log`) take `HEAD^2`, a `merge-co-author` check reads the merge's own trailer, and `git.owner-commit-first` expects three repository-identity commits (merge, turn, owner edit); commit `4a47cc8`. Nothing else in the script changes.
 
 Run: `pwsh -NoProfile -File tools\Invoke-Row46AttributionCheck.ps1` after `dotnet build src/ChopItUp.Hub -c Debug -v minimal` — expected `Row 46 attribution check: 11 PASS / 0 FAIL`. Paste the summary line and the three `git log` triples in the report. If the hub refuses the room directory or the stubs are not launched (no `Committed ` note within `$TimeoutSeconds`), STOP with the hub's stderr tail — do not loosen the check.
 
@@ -639,6 +639,8 @@ Commit: `Row 46 task 3: README and verification.md describe the identity rule; I
 - Codex committing on its own inside a worktree (`HEAD moved`) uses Codex's identity and its own `AGENTS.md` trailer, outside the hub's hands; the hub's turn commit after it credits only what it sweeps up.
 - The live hub's room clone `C:\Agent Projects\ChopItUp-room` is only touched by the deployed hub; the deploy step ships the new behaviour, the next real turn there is the first live proof.
 - A machine whose process environment sets `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL` (or the author pair) makes `NoIdentity` unable to reproduce "nothing set" (the fixture blocks config files only); this machine and CI do not, unverified for other owners' machines.
+- Task 4c: a `git log` failure on the merge's trailer scan that is not a missing branch cannot be provoked from a test without breaking the repository; the rule (silent only on `unknown revision`) is read, not tested.
+- Task 4d: a real child's output pipe cannot be faulted from a test cheaply; the drain's fault-to-result path is read, not tested (`ProcessRunnerTests` stay green).
 - The edited `tools/Invoke-M9RoomCheck.ps1` is run in Phase B only when `claude auth status` reports logged in (2 real calls with `-IncludeCodex`); otherwise its edit is proof-read against the new `git log` shapes and stays listed here.
 
 ## Critique dispositions
@@ -660,3 +662,61 @@ Commit: `Row 46 task 3: README and verification.md describe the identity rule; I
 | 2 | F4 `AGENTS.md` line 8 (prompts for sub-agents that commit carry the trailer requirement) unmet for a self-committing Codex | Fixed: one sentence appended to the `DirectoryRules` clause and the golden capture |
 | 2 | F5 a missing branch logs `git log` then `git merge` failures | Fixed: `logFailure: false` from the merge |
 | 2 | framing: `git commit --trailer` could replace `WithTrailers`; commit under `useConfigOnly` and retry on 128 could replace the probe | Declined: the staged-changes decision still needs the `diff --cached` call, and the probe is two read-only calls with a fully specified test; noted as a later simplification |
+
+## Interrogation dispositions (diff pass, opus, 7.4 FIX-THEN-SHIP, 2026-09-19)
+
+| Finding | Disposition |
+|---|---|
+| MAJOR 1: the merge union re-emits any `Co-authored-by` value found on the branch, including one a self-committing model wrote, and the new prompt sentence invites such trailers | Fixed in Task 4 (whitelist: the union keeps only the two host values the hub itself can produce; a foreign value is dropped). The prompt sentence stays: it is critique pass 2's F4 disposition (folder `AGENTS.md` line 8) and, with the whitelist, a model-written trailer can no longer reach a first-parent merge. |
+| MAJOR 2a: the identity probe falls back to the hub on any non-zero exit with no log line | Fixed in Task 4 (`IdentityFallbackReason`, logged once per trail). |
+| MAJOR 2b: the merge's trailer scan is silent on every failure, not only a missing branch | Fixed in Task 4 (silent only when git's stderr says `unknown revision`, measured 2026-09-19 on 2.45.2: `fatal: ambiguous argument 'HEAD..chopitup/nope': unknown revision or path not in the working tree.`; every other failure is logged through `Fail`). |
+| MAJOR 3: `launched` is true only when `RunAsync` returned; a post-start throw (a faulted output pipe at the drain) drops a deserved trailer | Fixed in Task 4 (the runner's drain converts any pipe fault into a result with the fault in `StandardError`, so a started process always yields a result; `jobs.Track` failing still throws, by row 29's design, and that process was killed before it could work). No unit test can fault a real child's pipe cheaply: listed under "Could not verify". |
+| MINOR 4: `git commit --trailer` could replace `WithTrailers` | Declined again (plan pass 2 framing): the staged-changes decision still needs `diff --cached`; a later simplification. |
+| MINOR 5: the `BaseOptions` comment claims "no CRLF rewriting on any commit" while `add`/`diff --cached` run without `core.autocrlf=false` | Fixed in Task 4 (comment reworded to what the options reach: the commit and merge calls). |
+| MINOR 6: `Test-Spawn -ExpectAuthor` is dead and the scratch identity is spelled three times in `tools/Invoke-M9RoomCheck.ps1` | Fixed in Task 4 (parameter and both arguments removed; name and address hoisted to two variables). |
+| MINOR 7: `tools/Invoke-Row46AttributionCheck.ps1` deletes its scratch root without asserting it lies under `$env:TEMP`; the `.log` sibling is kept | Fixed in Task 4 for the containment assert; the log is kept on purpose (it is the run's evidence, named in the script header). |
+
+## Task 4 — interrogation fixes (sonnet; blocked by 3)
+
+Written for builder-subagent execution; if something doesn't match, STOP and report rather than guess. Each fix below is RED first (the named test fails for the stated reason), then GREEN.
+
+### 4a. Whitelisted merge union (MAJOR 1)
+
+`src/ChopItUp.Hub/Git/GitTrail.cs`: beside `CoAuthorKey` add
+
+```csharp
+/// <summary>The only co-author values a hub commit or merge may carry: the two hosts the spawner
+/// starts. A merge re-emits a branch trailer only when its value is one of these, so a trailer a
+/// self-committing model wrote never reaches the room's first-parent history (interrogation, MAJOR 1).</summary>
+public const string CodexCoAuthor = "Codex <noreply@openai.com>";
+public const string ClaudeCoAuthor = "Claude <noreply@anthropic.com>";
+private static readonly string[] KnownCoAuthors = [CodexCoAuthor, ClaudeCoAuthor];
+```
+
+In `CoAuthorTrailersUnlocked`, keep a value only when `KnownCoAuthors.Contains(value, StringComparer.Ordinal)` (the `seen` loop gains that condition). `src/ChopItUp.Hub/Spawning/RoomCommits.cs`: `CodexTrailer` and `ClaudeTrailer` become `GitTrail.CoAuthorKey + ": " + GitTrail.CodexCoAuthor` / `ClaudeCoAuthor` (both stay `public const string`; `const` concatenation of consts is legal).
+
+RED test in `tests/ChopItUp.Hub.Tests/Git/GitTrailTests.cs`, using the file's existing `RoomOwner`-style fixture and raw git helper: seed a room, create branch `chopitup/x9`, on it commit one file with the message `"x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>"` (raw `git commit -F -` under an explicit `-c user.name/-c user.email`), back on the default branch call `MergeAsync("chopitup/x9", "Merge exchange #9 (lab)")`, then assert `git log -1 --format=%(trailers:key=Co-authored-by,valueonly)` trimmed equals exactly `Claude <noreply@anthropic.com>`. A second test: the branch commit carries only the foreign line; the merge body (`%B`, trimmed) equals `Merge exchange #9 (lab)` with no trailer paragraph. Name them `Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values` and `Row46_I1_merge_carries_nothing_when_the_branch_trailers_are_all_foreign`. Expected RED: the first asserts one value and gets two lines; the second gets a trailer paragraph.
+
+### 4b. Logged identity fallback (MAJOR 2a)
+
+`GitTrail.cs`: add `public string? IdentityFallbackReason { get; private set; }` (doc: "Why the last commit or merge fell back to the hub's identity: git's failing probe, exit code and first stderr line; null when git resolved a set identity or this trail commits as the hub"). `ConfiguredIdentityUnlocked` returns a private record `IdentityProbe(GitIdentity? Identity, string? Failure)` where `Failure` is `$"git var {name} exited {code}: {first stderr line}"` for whichever probe failed. `ConfiguredIdentityAsync` returns `.Identity`. `IdentityEnvUnlocked`: when not `CommitsAsHub` and the probe has no identity, set `IdentityFallbackReason = probe.Failure` and, once per trail instance (a private `bool _fallbackLogged`), `Console.Error.WriteLine($"{LogName}: {probe.Failure}; committing as {Hub}")`; when the probe resolves, set `IdentityFallbackReason = null`.
+
+RED test in `GitTrailTests.cs`: under the existing `NoIdentity` fixture, after `CommitAllAsync("x", author: null, allowEmpty: true)` assert `IdentityFallbackReason` is not null and contains `exited 128`; under the `RoomOwner` fixture assert it is null after a commit. Name: `Row46_I2_identity_fallback_is_recorded_and_absent_when_git_resolves_one`. Expected RED: compile error, no such member.
+
+### 4c. Merge scan logs every failure but a missing branch (MAJOR 2b)
+
+`GitTrail.cs` `CoAuthorTrailersUnlocked`: replace the `logFailure` parameter with a single rule: on a non-zero exit, call `Fail("git log", r)` unless `r.StandardError` contains `"unknown revision"` (the missing-branch text, measured above); `MergeAsync` and `CoAuthorTrailersAsync` call it without the flag. Keep the merge's own failure logging unchanged. No new test (a `git log` failure that is not a bad revision cannot be provoked from a test without breaking the repository); list under "Could not verify". The existing missing-branch merge test must stay green and still log the merge failure once.
+
+### 4d. A started process always yields a result (MAJOR 3)
+
+`src/ChopItUp.Hub/Spawning/ProcessRunner.cs`, the drain block: change `catch (TimeoutException) { errText = "(output pipes did not close within the drain grace)"; }` to also catch any other exception from the drain (`catch (Exception e) when (e is not OperationCanceledException)`) with `errText = "(output pipes failed: " + e.GetBaseException().Message + ")"`, with the two reads inside the `try` after `WhenAll` succeeds; each catch sets `errText` to its fault text and then reads `outText` from `stdout` only when `stdout.IsCompletedSuccessfully` (never `errText` from `stderr` in a catch: the fault text is the diagnostic the spawner shows). Add one comment line: `// Row 46, R11: a process that started always yields a result, so its turn commit can credit it.` No new test (a real child's pipe cannot be faulted from a test cheaply); list under "Could not verify". The existing `ProcessRunner` tests must stay green.
+
+### 4e. Comment, live-check hygiene, containment (MINOR 5, 6, 7)
+
+- `GitTrail.cs` `BaseOptions` comment: "No signing and no CRLF rewriting on the commit and merge calls: an owner with commit.gpgsign configured has no agent prompt to answer here." (The `add` and `diff --cached` calls run without these options, as before this row.)
+- `tools/Invoke-M9RoomCheck.ps1`: remove the `-ExpectAuthor` parameter from `Test-Spawn` and both call sites; add `$identityName = 'Live Check'` and `$identityEmail = 'live-check@example.test'` next to the `git.identity-configured` check and use them in that check, in the `author-is-repo-identity` pattern, in `git.owner-commit-first` and in `trail.endpoint`. Parse-check with `[System.Management.Automation.Language.Parser]::ParseFile`; do not run the script (real model calls).
+- `tools/Invoke-Row46AttributionCheck.ps1`: immediately before the `Remove-Item -Recurse -Force $ScratchRoot` in the `finally`, add `if (-not $ScratchRoot.StartsWith($env:TEMP, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to remove $ScratchRoot: not under TEMP" }`. Re-run the script once: 11 PASS / 0 FAIL expected.
+
+### 4f. Finish
+
+`dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal` (0 warnings); `dotnet test tests/ChopItUp.Hub.Tests -c Debug --nologo -v minimal` fully green; `Check-Slop.ps1 -Base main` exit 0. One commit: `Row 46 task 4: merge union whitelisted to the hosts' values, identity fallback and scan failures logged, a started process always yields a result`.

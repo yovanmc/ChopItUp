@@ -38,6 +38,36 @@ public sealed class GitTrailTests : IDisposable
             TimeSpan.FromSeconds(30), CancellationToken.None);
     }
 
+    /// <summary>The real runner with extra environment entries on every spec. The "no git identity
+    /// anywhere" case is reproduced by pointing git's global config at a file that does not exist and
+    /// skipping the system one, without touching this process's environment (tests run in parallel).</summary>
+    private sealed class EnvRunner(IReadOnlyDictionary<string, string> extra) : IProcessRunner
+    {
+        private readonly ProcessRunner _inner = new();
+        public Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
+        {
+            var env = new Dictionary<string, string>(spec.Environment);
+            foreach (var (k, v) in extra) env[k] = v;
+            return _inner.RunAsync(spec with { Environment = env }, timeout, cancellation);
+        }
+    }
+
+    private static readonly IReadOnlyDictionary<string, string> NoIdentity = new Dictionary<string, string>
+    {
+        ["GIT_CONFIG_GLOBAL"] = Path.Combine(Path.GetTempPath(), "chopitup-no-such-gitconfig"),
+        ["GIT_CONFIG_NOSYSTEM"] = "1",
+    };
+
+    private static readonly GitIdentity RoomOwner = new("Room Owner", "room-owner@example.test");
+
+    /// <summary>A repository at <paramref name="dir"/> whose own config names <see cref="RoomOwner"/>:
+    /// what an owner's real repository looks like from the hub's side.</summary>
+    private static async Task ConfigureRoomOwner(string dir)
+    {
+        Assert.Equal(0, (await RawGit(dir, "config", "user.name", RoomOwner.Name)).ExitCode);
+        Assert.Equal(0, (await RawGit(dir, "config", "user.email", RoomOwner.Email)).ExitCode);
+    }
+
     // A repository with one commit, ready to grow worktrees off of.
     private static async Task<GitTrail> RepoWithCommit(string dir, IProcessRunner? runner = null)
     {
@@ -70,6 +100,8 @@ public sealed class GitTrailTests : IDisposable
         var git = new GitTrail(_dir);
         Assert.True(git.IsAvailable());
         Assert.Null(await git.HeadAsync());
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
         File.WriteAllText(Path.Combine(_dir, "a.txt"), "a");
         File.WriteAllText(Path.Combine(_dir, "b.txt"), "b");
 
@@ -81,7 +113,7 @@ public sealed class GitTrailTests : IDisposable
         Assert.Equal(first.Hash, await git.HeadAsync());
 
         var line = (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%s")).Trim();
-        Assert.Equal("Opus <opus@chopitup.local>|ChopItUp hub <hub@chopitup.local>|opus: turn 1/4 in room lab", line);
+        Assert.Equal("Opus <opus@chopitup.local>|Room Owner <room-owner@example.test>|opus: turn 1/4 in room lab", line);
         var body = await GitOut(_dir, "log", "-1", "--format=%B");
         Assert.Contains("Shell commands run (1):", body);
         Assert.Contains("  1. dir", body);
@@ -257,6 +289,198 @@ public sealed class GitTrailTests : IDisposable
         var b = trails.For(@"c:\rooms\LAB");
         Assert.Same(a, b);
         Assert.NotSame(a, trails.For(@"C:\Rooms\other"));
+    }
+
+    // --- Row 46: the identity rule, trailers, the merge union ---------------------------------------
+
+    [Fact]
+    public async Task Row46_A1_a_configured_repository_identity_is_author_and_committer_and_the_hub_never_overrides_it()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        File.WriteAllText(Path.Combine(_dir, "a.txt"), "a");
+
+        var c = await git.CommitAllAsync("owner: edits before the next spawn in room lab\n", author: null, allowEmpty: false);
+        Assert.True(c.Created);
+        Assert.Equal(RoomOwner, await git.ConfiguredIdentityAsync());
+        var line = (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim();
+        Assert.Equal("Room Owner <room-owner@example.test>|Room Owner <room-owner@example.test>", line);
+    }
+
+    [Fact]
+    public async Task Row46_A2_no_identity_anywhere_or_half_an_identity_falls_back_to_the_hub_for_both()
+    {
+        var git = new GitTrail(_dir, runner: new EnvRunner(NoIdentity));
+        Assert.True(await git.InitAsync());
+        Assert.Null(await git.ConfiguredIdentityAsync());
+        var c = await git.CommitAllAsync("opus: turn 1/8 in room lab\n", author: null, allowEmpty: true);
+        Assert.True(c.Created);
+        Assert.Equal("ChopItUp hub <hub@chopitup.local>|ChopItUp hub <hub@chopitup.local>",
+            (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
+
+        // Half an identity (a name, no address) is no identity: still the hub for both.
+        Assert.Equal(0, (await RawGit(_dir, "config", "user.name", "Half")).ExitCode);
+        Assert.Null(await git.ConfiguredIdentityAsync());
+        await git.CommitAllAsync("opus: turn 2/8 in room lab\n", author: null, allowEmpty: true);
+        Assert.Equal("ChopItUp hub <hub@chopitup.local>|ChopItUp hub <hub@chopitup.local>",
+            (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
+    }
+
+    [Fact]
+    public async Task Row46_A3_A4_trailers_are_the_last_paragraph_and_only_when_something_is_staged()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        string[] codex = ["Co-authored-by: Codex <noreply@openai.com>"];
+
+        var empty = await git.CommitAllAsync("gpt-6-astra: turn 1/8 in room lab\n\nShell commands run: none.\n", author: null, allowEmpty: true, trailers: codex);
+        Assert.True(empty.Created);
+        Assert.Equal(0, empty.FilesChanged);
+        Assert.Equal("", (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
+        Assert.DoesNotContain("Co-authored-by", await GitOut(_dir, "log", "-1", "--format=%B"));
+
+        File.WriteAllText(Path.Combine(_dir, "a.txt"), "a");
+        var real = await git.CommitAllAsync("gpt-6-astra: turn 2/8 in room lab\n\nShell commands run (1):\n  1. dir\n", author: null, allowEmpty: true, trailers: codex);
+        Assert.Equal(1, real.FilesChanged);
+        Assert.Equal("Codex <noreply@openai.com>", (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
+        var body = (await GitOut(_dir, "log", "-1", "--format=%B")).Replace("\r\n", "\n");
+        Assert.EndsWith("  1. dir\n\nCo-authored-by: Codex <noreply@openai.com>", body.TrimEnd('\n'));   // %B appends its own newline after the message
+    }
+
+    [Fact]
+    public async Task Row46_A5_a_merge_carries_the_distinct_trailers_of_the_commits_it_merges_and_none_when_there_are_none()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+
+        var wt = _dir + "_wt";
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x7", newBranch: true));
+        var w = git.WithRoot(wt);
+        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
+        await w.CommitAllAsync("gpt-6-astra: turn 1/8 in room lab\n", author: null, allowEmpty: false, trailers: ["Co-authored-by: Codex <noreply@openai.com>"]);
+        File.WriteAllText(Path.Combine(wt, "two.txt"), "2");
+        await w.CommitAllAsync("opus: turn 2/8 in room lab\n", author: null, allowEmpty: false, trailers: ["Co-authored-by: Claude <noreply@anthropic.com>"]);
+        File.WriteAllText(Path.Combine(wt, "three.txt"), "3");
+        await w.CommitAllAsync("gpt-6-astra: turn 3/8 in room lab\n", author: null, allowEmpty: false, trailers: ["Co-authored-by: Codex <noreply@openai.com>"]);
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+
+        Assert.Equal(["Co-authored-by: Claude <noreply@anthropic.com>", "Co-authored-by: Codex <noreply@openai.com>"],
+            (await git.CoAuthorTrailersAsync("HEAD..chopitup/x7")).Order());
+        var m = await git.MergeAsync("chopitup/x7", "Merge exchange #7 (lab)");
+        Assert.Equal(MergeResult.Merged, m.Result);
+        Assert.Equal("Room Owner <room-owner@example.test>|Room Owner <room-owner@example.test>|Merge exchange #7 (lab)",
+            (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>|%s")).Trim());
+        var values = (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)"))
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Order().ToArray();
+        Assert.Equal(["Claude <noreply@anthropic.com>", "Codex <noreply@openai.com>"], values);
+
+        // A branch whose commits carry no trailers: the merge carries none either.
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x8", newBranch: true));
+        File.WriteAllText(Path.Combine(wt, "four.txt"), "4");
+        await git.WithRoot(wt).CommitAllAsync("owner: edits before the next spawn in room lab\n", author: null, allowEmpty: false);
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+        Assert.Empty(await git.CoAuthorTrailersAsync("HEAD..chopitup/x8"));
+        Assert.Equal(MergeResult.Merged, (await git.MergeAsync("chopitup/x8", "Merge exchange #8 (lab)")).Result);
+        Assert.DoesNotContain("Co-authored-by", await GitOut(_dir, "log", "-1", "--format=%B"));
+    }
+
+    // A raw commit whose message travels on stdin (`-F -`), for a message that itself contains a
+    // literal Co-authored-by trailer this test injects (row 46, interrogation MAJOR 1: only known
+    // trailers survive a merge's union - a self-committing model cannot invent one).
+    private static async Task<int> RawCommitViaStdin(string dir, string message)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName,
+                ["-c", "user.name=Evil", "-c", "user.email=evil@attacker.test", "-c", "commit.gpgsign=false", "commit", "-q", "-F", "-"],
+                new Dictionary<string, string>(), dir, message, "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        return r.ExitCode ?? -1;
+    }
+
+    [Fact]
+    public async Task Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+
+        var wt = _dir + "_wt";
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
+        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
+        Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
+        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>";
+        Assert.Equal(0, await RawCommitViaStdin(wt, message));
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+
+        var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
+        Assert.Equal(MergeResult.Merged, m.Result);
+        Assert.Equal("Claude <noreply@anthropic.com>",
+            (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
+    }
+
+    [Fact]
+    public async Task Row46_I1_merge_carries_nothing_when_the_branch_trailers_are_all_foreign()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+
+        var wt = _dir + "_wt";
+        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
+        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
+        Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
+        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>";
+        Assert.Equal(0, await RawCommitViaStdin(wt, message));
+        Assert.Null(await git.RemoveWorktreeAsync(wt));
+
+        var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
+        Assert.Equal(MergeResult.Merged, m.Result);
+        Assert.Equal("Merge exchange #9 (lab)", (await GitOut(_dir, "log", "-1", "--format=%B")).Trim());
+    }
+
+    [Fact]
+    public async Task Row46_I2_identity_fallback_is_recorded_and_absent_when_git_resolves_one()
+    {
+        var git = new GitTrail(_dir, runner: new EnvRunner(NoIdentity));
+        Assert.True(await git.InitAsync());
+        await git.CommitAllAsync("x", author: null, allowEmpty: true);
+        Assert.NotNull(git.IdentityFallbackReason);
+        Assert.Contains("exited 128", git.IdentityFallbackReason);
+
+        var owned = new GitTrail(_dir + "_owner");
+        Assert.True(await owned.InitAsync());
+        await ConfigureRoomOwner(_dir + "_owner");
+        await owned.CommitAllAsync("x", author: null, allowEmpty: true);
+        Assert.Null(owned.IdentityFallbackReason);
+    }
+
+    [Fact]
+    public async Task Row46_A6_a_bookkeeping_commit_carries_the_repository_identity_and_no_trailer_and_an_explicit_author_still_wins()
+    {
+        var git = new GitTrail(_dir);
+        Assert.True(await git.InitAsync());
+        await ConfigureRoomOwner(_dir);
+        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
+        Assert.Equal("Room Owner <room-owner@example.test>|Room Owner <room-owner@example.test>",
+            (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
+        Assert.DoesNotContain("Co-authored-by", await GitOut(_dir, "log", "-1", "--format=%B"));
+
+        // The explicit-author branch (the memory store, tests): the author is kept, the committer
+        // still follows the repository - and it wins even over the hub's injected environment.
+        await git.CommitAllAsync("seed", Opus, allowEmpty: true);
+        Assert.Equal("Opus <opus@chopitup.local>|Room Owner <room-owner@example.test>",
+            (await GitOut(_dir, "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
+        var bare = new GitTrail(_dir + "_owner", runner: new EnvRunner(NoIdentity));
+        Assert.True(await bare.InitAsync());
+        await bare.CommitAllAsync("seed", Opus, allowEmpty: true);
+        Assert.Equal("Opus <opus@chopitup.local>|ChopItUp hub <hub@chopitup.local>",
+            (await GitOut(_dir + "_owner", "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
     }
 
     // --- Row 35: worktree, merge and branch primitives ----------------------------------------------

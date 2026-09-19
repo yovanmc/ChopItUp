@@ -32,11 +32,11 @@ public sealed class MemoryGitTests : IDisposable
 
         // The trail is two commits, made with the fixed identity, whatever this machine's git config says.
         var log = await new ProcessRunner().RunAsync(
-            new ProcessSpec(CliResolver.Resolve("git").FileName, ["log", "--format=%an <%ae> %s"], new Dictionary<string, string>(), _dir, "", "log"),
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["log", "--format=%an <%ae>|%cn <%ce> %s"], new Dictionary<string, string>(), _dir, "", "log"),
             TimeSpan.FromSeconds(30), CancellationToken.None);
         var lines = log.StandardOutput.Trim().Split('\n');
         Assert.Equal(2, lines.Length);
-        Assert.All(lines, l => Assert.StartsWith("ChopItUp hub <hub@chopitup.local> Approve memory proposal", l));
+        Assert.All(lines, l => Assert.StartsWith("ChopItUp hub <hub@chopitup.local>|ChopItUp hub <hub@chopitup.local> Approve memory proposal", l));
     }
 
     [Fact]

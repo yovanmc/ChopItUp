@@ -27,6 +27,8 @@ public sealed partial class SpawnerServiceTests
     {
         var dir = Path.Combine(_host.RoomsRoot, id);
         Assert.True(await new GitTrail(dir).InitAsync());
+        await GitConfig(dir, "user.name", "Room Owner");
+        await GitConfig(dir, "user.email", "room-owner@example.test");
         _host.Services.GetRequiredService<MessageStore>().CreateRoom(id, id.ToUpperInvariant(), dir);
         return dir;
     }
@@ -100,6 +102,14 @@ public sealed partial class SpawnerServiceTests
         return r.StandardOutput.Trim();
     }
 
+    private static async Task GitConfig(string dir, string key, string value)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["config", key, value], new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, r.ExitCode);
+    }
+
     [Fact]
     public async Task M9_A6_A8_A9_A10_a_directory_room_spawn_runs_in_the_room_with_settings_in_scratch_and_the_hub_commits_owner_then_agent()
     {
@@ -129,7 +139,7 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
 
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
-        Assert.Contains("as sonnet: 1 file(s) changed, 2 shell command(s).", note.Body);
+        Assert.Contains("for sonnet: 1 file(s) changed, 2 shell command(s).", note.Body);
         Assert.Contains("Your edits were committed first as", note.Body);
         Assert.Contains("\"Bash(git commit *)\"", settingsAtLaunch);
 
@@ -138,12 +148,15 @@ public sealed partial class SpawnerServiceTests
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var roomLog = (await GitLog(dir, "%an <%ae>|%cn|%s", 3)).Split('\n');
         Assert.Equal([
-            $"ChopItUp hub <hub@chopitup.local>|ChopItUp hub|Merge exchange #{root} (lab)",
-            "Sonnet <sonnet@chopitup.local>|ChopItUp hub|sonnet: turn 1/4 in room lab",
-            "Owner <owner@chopitup.local>|ChopItUp hub|owner: edits before the next spawn in room lab",
+            $"Room Owner <room-owner@example.test>|Room Owner|Merge exchange #{root} (lab)",
+            "Room Owner <room-owner@example.test>|Room Owner|sonnet: turn 1/4 in room lab",
+            "Room Owner <room-owner@example.test>|Room Owner|owner: edits before the next spawn in room lab",
         ], roomLog);
         var body = await GitLog(dir, "%B", 1, skip: 1);                                       // the agent's own commit, one below the merge
         Assert.Contains("Shell commands run (2):\n  1. echo hello\n  2. git commit -m nope [denied]", body.Replace("\r\n", "\n"));
+        Assert.EndsWith("\n\nCo-authored-by: Claude <noreply@anthropic.com>", body.Replace("\r\n", "\n").TrimEnd('\n'));   // sonnet is a claude host and changed a file
+        Assert.Equal("Claude <noreply@anthropic.com>", (await GitLog(dir, "%(trailers:key=Co-authored-by,valueonly)", 1)).Trim());   // the merge carries it
+        Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1, skip: 2));                             // the owner's own commit credits no model
         Assert.True(File.Exists(Path.Combine(dir, "hello.txt")));                             // merged into the room directory
         Assert.True(File.Exists(Path.Combine(dir, "notes.md")));
         Assert.False(Directory.Exists(tree));                                                 // the worktree is gone after the merge
@@ -230,7 +243,7 @@ public sealed partial class SpawnerServiceTests
         var second = await _runner.NextSpecAsync(Wait);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
         Assert.Equal(tree, second.WorkingDirectory);                                          // same exchange, same worktree
-        Assert.Equal("Opus", (await GitLog(dir, "%an", 1, ExchangeWorktrees.Branch(root))).Trim());   // opus's own commit already landed on the branch
+        Assert.Equal("Room Owner", (await GitLog(dir, "%an", 1, ExchangeWorktrees.Branch(root))).Trim());   // opus's own commit already landed on the branch
         Assert.Equal(headBefore, await new GitTrail(dir).HeadAsync());                        // the room directory's own HEAD never moved
 
         release.SetResult();
@@ -541,16 +554,18 @@ public sealed partial class SpawnerServiceTests
         Assert.DoesNotContain("--skip-git-repo-check", args);
         Assert.StartsWith(Path.Combine(_dir, "spawns"), args[args.IndexOf("-o") + 1]);
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
-        Assert.Contains("as gpt-6-astra: 0 file(s) changed, 0 shell command(s).", note.Body);   // empty commit, empty log
+        Assert.Contains("for gpt-6-astra: 0 file(s) changed, 0 shell command(s).", note.Body);   // empty commit, empty log
         // Row 35: wait for the close's merge note, then read the merged history in dir itself -
         // the branch is deleted once the merge lands.
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var log = (await GitLog(dir, "%an <%ae>", 3)).Split('\n');
         Assert.Equal([
-            "ChopItUp hub <hub@chopitup.local>",
-            "GPT-6 Astra <gpt-6-astra@chopitup.local>",
-            "ChopItUp hub <hub@chopitup.local>",
+            "Room Owner <room-owner@example.test>",
+            "Room Owner <room-owner@example.test>",
+            "Room Owner <room-owner@example.test>",
         ], log);
+        Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1, skip: 1));   // an empty turn credits nobody
+        Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1));            // so the merge carries nothing either
         Assert.False(await new GitTrail(dir).BranchExistsAsync(ExchangeWorktrees.Branch(root)));
     }
 
@@ -574,10 +589,29 @@ public sealed partial class SpawnerServiceTests
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var log = (await GitLog(dir, "%an|%s", 4)).Split('\n');
         Assert.Equal(4, log.Length);
-        Assert.Equal($"ChopItUp hub|Merge exchange #{root} (lab)", log[0]);
-        Assert.Equal("Sonnet|sonnet: turn 1/4 in room lab", log[1]);
+        Assert.Equal($"Room Owner|Merge exchange #{root} (lab)", log[0]);
+        Assert.Equal("Room Owner|sonnet: turn 1/4 in room lab", log[1]);
         Assert.Equal("Rogue|rogue", log[2]);
-        Assert.Equal("ChopItUp hub|Room trail start", log[3]);
+        Assert.Equal("Room Owner|Room trail start", log[3]);
+    }
+
+    [Fact]
+    public async Task Row46_R11_a_spawn_that_never_launched_credits_no_host_even_when_the_tree_changed()
+    {
+        var dir = await MakeRoom("lab");
+        _runner.Handler = (spec, _, _) =>
+        {
+            File.WriteAllText(Path.Combine(spec.WorkingDirectory, "during.txt"), "owner edit while nothing ran");
+            throw new InvalidOperationException("launch failed on purpose");
+        };
+        await PostAsOwnerIn("lab", "@sonnet hello");
+        await _runner.NextSpecAsync(Wait);
+        var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
+        Assert.Contains("for sonnet: 1 file(s) changed", note.Body);
+        var root = Spawner.Snapshot("lab").RootMessageId!.Value;
+        await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
+        Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1, skip: 1));   // the turn commit
+        Assert.DoesNotContain("Co-authored-by", await GitLog(dir, "%B", 1));            // the merge
     }
 
     [Fact]

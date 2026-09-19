@@ -215,15 +215,18 @@ public sealed class RoomsApiTests : IAsyncLifetime
         Assert.Equal(directory, fresh.GetProperty("directory").GetString());
         Assert.Empty(fresh.GetProperty("commits").EnumerateArray());
 
+        await GitConfig(directory, "user.name", "Room Owner");
+        await GitConfig(directory, "user.email", "room-owner@example.test");
         var trail = _host.Services.GetRequiredService<RoomTrails>().For(directory);
         File.WriteAllText(Path.Combine(directory, "a.txt"), "a");
-        await trail.CommitAllAsync("owner: edits before the next spawn in room lab", new GitIdentity("Owner", "owner@chopitup.local"), allowEmpty: false);
-        await trail.CommitAllAsync("opus: turn 1/4 in room lab\n\nShell commands run: none.\n", new GitIdentity("Opus", "opus@chopitup.local"), allowEmpty: true);
+        await trail.CommitAllAsync("owner: edits before the next spawn in room lab", author: null, allowEmpty: false);
+        File.WriteAllText(Path.Combine(directory, "b.txt"), "b");
+        await trail.CommitAllAsync("opus: turn 1/4 in room lab\n\nShell commands run: none.\n", author: null, allowEmpty: true, trailers: [RoomCommits.ClaudeTrailer]);
 
         var commits = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/lab/trail")).RootElement.GetProperty("commits").EnumerateArray().ToList();
         Assert.Equal(2, commits.Count);
         Assert.Equal("opus: turn 1/4 in room lab", commits[0].GetProperty("subject").GetString());
-        Assert.Equal("Opus <opus@chopitup.local>", commits[0].GetProperty("author").GetString());
+        Assert.Equal("Room Owner <room-owner@example.test>", commits[0].GetProperty("author").GetString());
         Assert.Equal("owner: edits before the next spawn in room lab", commits[1].GetProperty("subject").GetString());
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.GetAsync("api/rooms/nope/trail")).StatusCode);
     }
@@ -276,5 +279,13 @@ public sealed class RoomsApiTests : IAsyncLifetime
         var bind = await host.Client.PostAsJsonAsync("api/rooms/general/directory", new { directory = "" });
         Assert.Equal(HttpStatusCode.BadRequest, bind.StatusCode);
         Assert.Null(host.Services.GetRequiredService<MessageStore>().GetRoom("general")!.Directory);
+    }
+
+    private static async Task GitConfig(string dir, string key, string value)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, ["config", key, value], new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, r.ExitCode);
     }
 }
