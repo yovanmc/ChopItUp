@@ -305,6 +305,8 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         Assert.Equal("idle", Spawner.Snapshot("general").Status);
 
         await PostAs("codex", "@opus please weigh in");   // a window's mention with no open exchange (D2)
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("nothing was spawned"));
+        Assert.Equal("@codex mentioned @opus, but no exchange is open for it to join and only a human post opens one; nothing was spawned.", note.Body);
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
         Assert.Equal("idle", Spawner.Snapshot("general").Status);
     }
@@ -347,6 +349,21 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("exited with code 1"));
         Assert.Contains("Error: boom", note.Body);
         Assert.DoesNotContain(esc, note.Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A4_c_a_codex_turn_failed_event_in_stdout_names_the_reason_in_the_exit_note()
+    {
+        const string stdout = """
+            {"type":"thread.started","thread_id":"t"}
+            {"type":"turn.failed","error":{"message":"context deadline exceeded"}}
+            """;
+        _runner.Handler = (_, _, _) => Task.FromResult(new ProcessResult(1, false, false, stdout, "", TimeSpan.Zero));
+        await PostAsOwner("@gpt-5.5 crash");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("exited with code 1"));
+        Assert.Contains("Codex reported:", note.Body);
+        Assert.Contains("context deadline exceeded", note.Body);
+        Assert.DoesNotContain("\"type\":\"turn.failed\"", note.Body);
     }
 
     [Fact]

@@ -88,7 +88,11 @@ public sealed class ExchangePolicy
         if (author.Kind != "human")
         {
             // A model, spawn row or app-backed window, never opens an exchange.
-            if (target is not { Status: ExchangeStatus.Open }) return (null, notes);
+            if (target is not { Status: ExchangeStatus.Open })
+            {
+                if (mentioned.Count > 0) notes.Add(StrayMentionNote(author.Id, mentioned));
+                return (null, notes);
+            }
             target.MessageIds.Add(message.Id);
             // I-M2 (hub F2): only a spawnable author's post can buy the addressee a synthesis turn - an
             // app-backed window's stray post into an open exchange must never read as "someone else
@@ -238,6 +242,12 @@ public sealed class ExchangePolicy
         x.TurnsCommitted--;
         x.SynthesisGrewBudget = false;
     }
+
+    /// <summary>A non-human post led with a mention of a spawnable participant, but there is no open
+    /// exchange for that mention to join - only a human post opens one (D2). Named so nothing here
+    /// hardcodes which participant it happened to be.</summary>
+    private static string StrayMentionNote(string authorId, IReadOnlyList<string> mentioned) =>
+        $"@{authorId} mentioned {string.Join(", ", mentioned.Select(m => "@" + m))}, but no exchange is open for it to join and only a human post opens one; nothing was spawned.";
 
     /// <summary>Row 43 (D-b), extracted for row 44's F11 (Standards): a leading word that matched
     /// nobody is noted once per word, in <see cref="OnRoomMessage"/> and in <see cref="Continue"/>

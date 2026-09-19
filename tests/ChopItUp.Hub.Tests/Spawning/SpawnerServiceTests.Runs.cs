@@ -1029,11 +1029,12 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
-    public async Task Run13_stop_with_no_run_in_the_room_behaves_exactly_as_before()
+    public async Task Run13_stop_with_no_run_in_the_room_says_there_is_nothing_to_stop()
     {
-        await PostAsOwner("/stop");   // "general": no skills installed, no run ever started here
-        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("No skill named"));
-        Assert.Equal("No skill named '/stop'; this hub has no skills installed. Import one with --import-skill.", note.Body);
+        await PostAsOwner("/stop");   // "general": no run ever started here
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Nothing to stop"));
+        Assert.Equal("Nothing to stop: no run is active or parked in this room.", note.Body);
+        Assert.DoesNotContain(await Messages(), m => m.Body.Contains("No skill named"));
         Assert.Null(Runs.Latest("general"));
     }
 

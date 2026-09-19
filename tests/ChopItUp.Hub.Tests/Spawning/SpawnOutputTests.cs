@@ -69,6 +69,60 @@ public sealed class SpawnOutputTests
         Assert.Null(SpawnOutput.ClaudeFinalText(junk));
     }
 
+    private const string CodexTurnFailedWrappedJson = """
+        {"type":"thread.started","thread_id":"t"}
+        {"type":"turn.started"}
+        {"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"status\":400,\"error\":{\"type\":\"invalid_request_error\",\"message\":\"The 'gpt-bogus-model' model is not supported for this request.\"}}"}}
+        """;
+
+    private const string CodexTurnFailedPlain = """
+        {"type":"turn.failed","error":{"message":"context deadline exceeded"}}
+        """;
+
+    private const string CodexErrorLineOnly = """
+        {"type":"thread.started","thread_id":"t"}
+        {"type":"error","message":"stream disconnected"}
+        """;
+
+    private const string CodexTurnCompletedNoFailure = """
+        {"type":"thread.started","thread_id":"t"}
+        {"type":"turn.completed","usage":{"input_tokens":1}}
+        """;
+
+    [Fact]
+    public void codex_failure_unwraps_a_turn_failed_message_that_is_itself_a_json_error_envelope()
+    {
+        Assert.Equal(
+            "The 'gpt-bogus-model' model is not supported for this request.",
+            SpawnOutput.CodexFailure(CodexTurnFailedWrappedJson));
+    }
+
+    [Fact]
+    public void codex_failure_returns_a_plain_turn_failed_message_as_is()
+    {
+        Assert.Equal("context deadline exceeded", SpawnOutput.CodexFailure(CodexTurnFailedPlain));
+    }
+
+    [Fact]
+    public void codex_failure_falls_back_to_an_error_line_when_no_turn_failed_event_exists()
+    {
+        Assert.Equal("stream disconnected", SpawnOutput.CodexFailure(CodexErrorLineOnly));
+    }
+
+    [Fact]
+    public void codex_failure_is_null_when_the_turn_completed_without_failing()
+    {
+        Assert.Null(SpawnOutput.CodexFailure(CodexTurnCompletedNoFailure));
+    }
+
+    [Fact]
+    public void codex_failure_is_null_for_junk_or_empty_stdout()
+    {
+        const string junk = "not json\n{\"type\":\"turn.failed\"}\n{\"error\":5}\n[1,2]\n";
+        Assert.Null(SpawnOutput.CodexFailure(junk));
+        Assert.Null(SpawnOutput.CodexFailure(""));
+    }
+
     [Fact]
     public void M9_A9_flatten_folds_line_breaks_caps_at_400_characters_and_the_list_caps_at_50()
     {

@@ -37,9 +37,13 @@ public sealed class ExchangePolicyTests
         var p = Policy();
         var (x, notes) = p.OnMessage(null, Msg(10, "codex", "@opus what do you think?"), T0);
         Assert.Null(x);
-        Assert.Empty(notes);
-        var (c, _) = p.OnMessage(null, Msg(11, "opus", "@sonnet"), T0);
+        Assert.Equal(["@codex mentioned @opus, but no exchange is open for it to join and only a human post opens one; nothing was spawned."], notes);
+        var (c, notes2) = p.OnMessage(null, Msg(11, "opus", "@sonnet"), T0);
         Assert.Null(c);
+        Assert.Equal(["@opus mentioned @sonnet, but no exchange is open for it to join and only a human post opens one; nothing was spawned."], notes2);
+        var (d, notes3) = p.OnMessage(null, Msg(12, "codex", "@owner @claude neither is spawnable"), T0);
+        Assert.Null(d);
+        Assert.Empty(notes3);
     }
 
     [Fact]
@@ -459,7 +463,7 @@ public sealed class ExchangePolicyTests
         // own human-only gate is what guarantees it, and that is worth pinning directly.
         var (x, notes) = Policy().OnMessage(null, Msg(1, "codex", "/demo @sonnet"), T0, skill: new SkillResolution.Found(DemoSkill, ""));
         Assert.Null(x);
-        Assert.Empty(notes);
+        Assert.Equal(["@codex mentioned @sonnet, but no exchange is open for it to join and only a human post opens one; nothing was spawned."], notes);
     }
 
     [Fact]
