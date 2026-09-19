@@ -350,6 +350,21 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A4_c_a_codex_turn_failed_event_in_stdout_names_the_reason_in_the_exit_note()
+    {
+        const string stdout = """
+            {"type":"thread.started","thread_id":"t"}
+            {"type":"turn.failed","error":{"message":"context deadline exceeded"}}
+            """;
+        _runner.Handler = (_, _, _) => Task.FromResult(new ProcessResult(1, false, false, stdout, "", TimeSpan.Zero));
+        await PostAsOwner("@gpt-5.5 crash");
+        var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("exited with code 1"));
+        Assert.Contains("Codex reported:", note.Body);
+        Assert.Contains("context deadline exceeded", note.Body);
+        Assert.DoesNotContain("\"type\":\"turn.failed\"", note.Body);
+    }
+
+    [Fact]
     public async Task A6_an_overlapping_owner_message_mid_exchange_lets_the_running_spawn_finish_ignores_its_mentions_and_re_roots()
     {
         var releaseOpus = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
