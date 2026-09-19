@@ -1130,7 +1130,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal(T0.AddSeconds(8) + Limits.Debounce, p.NextWake(x, T0.AddSeconds(8), NoStarts, Nobody));   // claim 19: the timer launches it
         Assert.Empty(p.Due(x, T0.AddSeconds(9), NoStarts, Nobody));
         var due = p.Due(x, T0.AddSeconds(20), NoStarts, Nobody).Single();
-        Assert.Equal((SpawnReason.Synthesis, 3, 1), (due.Reason, due.TurnNumber, due.RemainingAfter));
+        Assert.Equal((SpawnReason.Synthesis, 3, 0), (due.Reason, due.TurnNumber, due.RemainingAfter));   // I-m8 (hub F9): a synthesis is unconditionally the last turn
         ExchangePolicy.Started(x, due);
         p.OnMessage(x, Msg(4, "opus", "summary for the owner"), T0.AddSeconds(21));
         var (end, done) = ExchangePolicy.Finished(x, "opus", T0.AddSeconds(22));
@@ -1160,7 +1160,7 @@ public sealed class ExchangePolicyTests
         Assert.Contains("queuing @opus's synthesis turn", note);
         Assert.Equal((3, 3, true), (y!.Budget, y.TurnsCommitted, y.SynthesisGrewBudget));   // no free turn: one added
         Assert.Equal("Exchange stopped by the owner: 2 of 2 turns used.", ExchangePolicy.Stop(y, ExchangeStopCause.Owner));   // the pending synthesis is dropped and its turn taken back
-        Assert.Equal((2, false), (y.Budget, y.SynthesisGrewBudget));
+        Assert.Equal((2, 2, false), (y.Budget, y.TurnsCommitted, y.SynthesisGrewBudget));   // I-m7 (hub F8): TurnsCommitted goes back with Budget
 
         var (z, _) = p.OnMessage(null, Msg(6, "owner", "turns: 2 @opus @sonnet both"), T0);
         ExchangePolicy.Started(z!, p.Due(z!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus"));
@@ -1322,5 +1322,96 @@ public sealed class ExchangePolicyTests
         Assert.Equal("Exchange started at #1 continued: 4 more turn(s), 5 in all; queued @fable, @sonnet.", Assert.Single(n2));
         Assert.Equal([2L, 4L], x.Pending["fable"].TriggerIds);
         Assert.Equal([3L, 4L], x.Pending["sonnet"].TriggerIds);
+    }
+
+    // --- Interrogation and review dispositions (Phase B): I-M1, I-M2, I-m1, I-m3 --------------------
+
+    [Fact]
+    public void I_M1_continue_overflow_keeps_the_original_refusing_id_not_the_continue_message()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "turns: 1 @opus @sonnet @fable @gpt-6-astra hi"), T0);
+        Assert.Equal(["opus"], x!.Pending.Keys);
+        ExchangePolicy.Started(x, p.Due(x, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        p.OnMessage(x, Msg(2, "opus", "done, no hand-off"), T0);
+        Assert.Equal(("Exchange concluded: 1 of 1 turns used.", true), ExchangePolicy.Finished(x, "opus", T0));
+        Assert.Equal(["sonnet", "fable", "gpt-6-astra"], x.Refused.Keys);
+        Assert.Equal([1L, 1L, 1L], x.Refused.Values);
+
+        // Only one more turn fits: sonnet is queued, fable and gpt-6-astra are refused again - but they
+        // must keep message #1 (their ORIGINAL refusal), never message #3 (this /continue).
+        var (o1, n1) = p.Continue(x, Msg(3, "owner", "/continue turns: 1"), T0);
+        Assert.Equal(ContinueOutcome.Continued, o1);
+        Assert.Contains(n1, note => note.Contains("not spawning @fable, @gpt-6-astra"));
+        Assert.Equal(["sonnet"], x.Pending.Keys);
+        Assert.Equal(["fable", "gpt-6-astra"], x.Refused.Keys);
+        Assert.Equal([1L, 1L], x.Refused.Values);
+        var due = p.Due(x, T0.AddSeconds(2), NoStarts, Nobody).Single();
+        Assert.Equal(1L, due.RefusedAt);
+        Assert.Equal([1L, 3L], due.TriggerIds);
+
+        ExchangePolicy.Started(x, due);
+        p.OnMessage(x, Msg(4, "sonnet", "done, no hand-off"), T0);
+        var (queuing, _) = ExchangePolicy.Finished(x, "sonnet", T0);   // sonnet posted last: a synthesis for opus
+        Assert.Contains("queuing @opus's synthesis turn", queuing);
+        ExchangePolicy.Started(x, p.Due(x, T0.AddSeconds(6), NoStarts, Nobody).Single());
+        p.OnMessage(x, Msg(5, "opus", "wrap-up"), T0);
+        Assert.True(ExchangePolicy.Finished(x, "opus", T0).Concluded);
+
+        // A second /continue: gpt-6-astra is still refused, still citing the very first refusal (#1),
+        // never a later /continue's own id (#3 or #6).
+        var (o2, n2) = p.Continue(x, Msg(6, "owner", "/continue turns: 1"), T0);
+        Assert.Equal(ContinueOutcome.Continued, o2);
+        Assert.Equal(["fable"], x.Pending.Keys);
+        Assert.Equal(["gpt-6-astra"], x.Refused.Keys);
+        Assert.Equal([1L], x.Refused.Values);
+        var due2 = p.Due(x, T0.AddSeconds(2), NoStarts, Nobody).Single();
+        Assert.Equal(1L, due2.RefusedAt);
+        Assert.Equal([1L, 6L], due2.TriggerIds);
+    }
+
+    [Fact]
+    public void I_M2_an_app_backed_post_after_the_addressee_never_buys_a_synthesis_turn()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus hi"), T0);
+        ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        p.OnMessage(x, Msg(2, "opus", "done, no hand-off"), T0);   // the addressee's own post: LastModelPost = opus
+        Assert.Equal(("opus", 2L), x!.LastModelPost);
+
+        p.OnMessage(x, Msg(3, "claude", "an app-backed aside"), T0);   // claude is not spawnable (Model is null)
+        Assert.Equal(("opus", 2L), x.LastModelPost);   // untouched: claude never overwrites it
+
+        var (note, concluded) = ExchangePolicy.Finished(x, "opus", T0);
+        Assert.True(concluded);
+        Assert.Equal("Exchange concluded: 1 of 4 turns used.", note);   // no synthesis: the addressee genuinely posted last
+    }
+
+    [Fact]
+    public void I_m1_continuable_is_gated_by_a_run_blocking_the_room()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus hi"), T0);
+        ExchangePolicy.Started(x!, p.Due(x!, T0.AddSeconds(2), NoStarts, Nobody).Single());
+        p.OnMessage(x, Msg(2, "opus", "done, no hand-off"), T0);
+        Assert.True(ExchangePolicy.Finished(x!, "opus", T0).Concluded);
+
+        Assert.True(ExchangePolicy.Continuable(x!, runBlocks: false));
+        Assert.False(ExchangePolicy.Continuable(x!, runBlocks: true));   // an active OR parked run in the room blocks /continue
+    }
+
+    [Fact]
+    public void I_m3_continue_posts_the_unknown_word_note_even_when_refused_by_state()
+    {
+        var p = Policy();
+        var (x, _) = p.OnMessage(null, Msg(1, "owner", "@opus hi"), T0);   // still open: Budget 4, TurnsCommitted 1
+
+        var (o1, n1) = p.Continue(x!, Msg(2, "owner", "/continue @sonet more"), T0);
+
+        Assert.Equal(ContinueOutcome.StillOpen, o1);
+        Assert.Equal(2, n1.Count);
+        Assert.StartsWith("No participant named @sonet. Address one of: ", n1[0]);
+        Assert.Equal("Exchange started at #1 is still open with 3 turn(s) left; /continue once it has concluded.", n1[1]);
+        Assert.DoesNotContain(2L, x!.MessageIds);   // a refused /continue never joins the exchange
     }
 }

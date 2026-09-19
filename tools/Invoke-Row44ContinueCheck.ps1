@@ -230,12 +230,18 @@ exit /b 0
 
     # 4. continue.open-refused -- root2's exchange is still open (gpt-5.6-terra still held in flight
     # by the stub): /continue as a reply to it is refused with the still-open note, and Refused/Pending
-    # are untouched, so no new spawn appears anywhere in the room.
+    # are untouched, so no new spawn appears anywhere in the room. I-m2 (hub F5): asserted directly --
+    # inFlight still gpt-5.6-terra, pending empty, exchanges.Count unchanged -- not a budget number that
+    # would hold true even if the refusal had silently re-recorded something.
+    $exchangesBeforeLeg4 = (Get-Exchanges).Count
     $post3 = Invoke-Api -Method Post -Path '/api/rooms/general/messages' -Headers $ownerAuth -Body @{ body = '/continue'; replyToId = $root2 }
     $note4 = Wait-HubNotePrefix -AfterId $post3.Body.id -Prefix "Exchange started at #$root2 is still open with 1 turn(s) left; /continue once it has concluded." -Seconds $TimeoutSeconds
-    $stillTwo = Wait-ExchangeState -RootMessageId $root2 -Seconds 3 -Predicate { param($e) $e.budget -eq 2 }
-    Add-Check -Name 'continue.open-refused' -Passed ($post3.Status -eq 201 -and $null -ne $note4 -and $null -ne $stillTwo) `
-        -Detail "note=$($note4.body ?? '<none>') budget=$($stillTwo.budget)"
+    $stillOpen = Wait-ExchangeState -RootMessageId $root2 -Seconds 3 -Predicate {
+        param($e) ((@($e.inFlight | ForEach-Object { $_ })) -contains 'gpt-5.6-terra') -and (@($e.pending | ForEach-Object { $_ })).Count -eq 0
+    }
+    $exchangesAfterLeg4 = (Get-Exchanges).Count
+    Add-Check -Name 'continue.open-refused' -Passed ($post3.Status -eq 201 -and $null -ne $note4 -and $null -ne $stillOpen -and $exchangesAfterLeg4 -eq $exchangesBeforeLeg4) `
+        -Detail "note=$($note4.body ?? '<none>') inFlight=$(($stillOpen.inFlight | ForEach-Object { $_ }) -join ',') pending=$(($stillOpen.pending | ForEach-Object { $_ }) -join ',') exchanges=$exchangesBeforeLeg4->$exchangesAfterLeg4"
 
     # 5. continue.after-stop -- stopping root2's exchange ends the in-flight gpt-5.6-terra spawn and
     # marks the entry continuable; /continue against it then adds the default budget (8) to what was

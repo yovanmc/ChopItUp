@@ -1014,7 +1014,7 @@ public sealed class SpawnerService : BackgroundService
                 request.TriggerIds, request.RootMessageId, request.TurnNumber, x.Budget, request.RemainingAfter, spawnId, _roster,
                 core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: tree, Skill: x.Skill,
                 DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory, Standing: standing,
-                Reason: request.Reason, Addressee: x.Addressee), _limits);
+                Reason: request.Reason, Addressee: x.Addressee, RefusedAt: request.RefusedAt, LastModelPost: x.LastModelPost), _limits);
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -1336,28 +1336,30 @@ public sealed class SpawnerService : BackgroundService
     private ExchangeSnapshot Publish(string roomId)
     {
         CloseIdleWorktrees(roomId);
-        // Row 44 (D-e): read once per publish - a run active in the room gates Continuable the same way
-        // for every exchange's own view and for the top-level field below.
-        var runActive = _runs.Active(roomId) is not null;
+        // I-m1 (hub F4): read once per publish - a run active OR parked in the room gates Continuable
+        // the same way for every exchange's own view and for the top-level field below (a parked run
+        // resumes on ANY human post, /continue included, so a /continue there would really steer the
+        // run rather than reopen the exchange).
+        var runBlocks = _runs.Active(roomId) is not null || _runs.Latest(roomId) is { Status: RunStatus.Parked };
         // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the newest
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
-        var views = ExchangesIn(roomId).Select(x => View(x, runActive)).ToList();
+        var views = ExchangesIn(roomId).Select(x => View(x, runBlocks)).ToList();
         var snapshot = (Displayed(roomId) is { } x
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
                 Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
                 StoppedBy: x.StopCause?.ToString().ToLowerInvariant(),
-                Continuable: x.Joinable && x.Status != ExchangeStatus.Open && x.InFlight.Count == 0 && !runActive)
+                Continuable: ExchangePolicy.Continuable(x, runBlocks))
             : Idle(roomId)) with { Seq = ++_seq, Exchanges = views };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);
         return snapshot;
     }
 
-    private static ExchangeView View(Exchange x, bool runActive) => new(
+    private static ExchangeView View(Exchange x, bool runBlocks) => new(
         x.RootMessageId, x.Status.ToString().ToLowerInvariant(), x.Budget, x.TurnsStarted, x.TurnsCommitted,
         Math.Max(0, x.Budget - x.TurnsCommitted), x.InFlight.Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
         x.StopCause?.ToString().ToLowerInvariant(),
-        x.Joinable && x.Status != ExchangeStatus.Open && x.InFlight.Count == 0 && !runActive);
+        ExchangePolicy.Continuable(x, runBlocks));
 
     private async void BroadcastAsync(string roomId, ExchangeSnapshot snapshot)
     {

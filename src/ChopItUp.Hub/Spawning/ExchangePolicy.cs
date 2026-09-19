@@ -90,7 +90,10 @@ public sealed class ExchangePolicy
             // A model, spawn row or app-backed window, never opens an exchange.
             if (target is not { Status: ExchangeStatus.Open }) return (null, notes);
             target.MessageIds.Add(message.Id);
-            target.LastModelPost = (message.AuthorId, message.Id);
+            // I-M2 (hub F2): only a spawnable author's post can buy the addressee a synthesis turn - an
+            // app-backed window's stray post into an open exchange must never read as "someone else
+            // posted last" to Finished.
+            if (IsSpawnable(author)) target.LastModelPost = (message.AuthorId, message.Id);
             Accept(target, mentioned, message.Id, now, notes);
             return (null, notes);
         }
@@ -146,18 +149,9 @@ public sealed class ExchangePolicy
                 return (null, notes);
         }
 
-        // Row 44 (D-b): the turns token is read for every human prompt that may open an exchange; a
-        // wrong number is noted once and the default applies, so the message still dispatches.
-        if (leading.Turns == TurnsToken.OutOfRange)
-            notes.Add($"turns: must be a whole number from 1 to {ExchangeCommands.MaxTurns}; the default {_limits.Budget} applies.");
-        var budget = leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
-
         // Row 43 (D-b): a leading word that matched nobody is noted once per word, whatever else this
         // post did or refused; the mentioned recipients above still act.
-        foreach (var word in leading.Unknown)
-            notes.Add(word.Equals("hub", StringComparison.OrdinalIgnoreCase)
-                ? "The hub cannot be addressed; it only posts notes."
-                : $"No participant named @{word}. Address one of: {_addressable}.");
+        NoteUnknownLeadingWords(leading, notes);
 
         // Row 43 (D-c): with no leading recipient at all (spawnable or not) and no unknown leading
         // word, which already got its own note, a spawnable id elsewhere in the body is a reference,
@@ -194,6 +188,11 @@ public sealed class ExchangePolicy
         if (startsRun)
             foreach (var x in open.Where(x => x.Status == ExchangeStatus.Open)) Supersede(x);
 
+        // Row 44 (D-b), Spec a2 (hub F12): read only now that every early return above has already
+        // passed - a turns: N on a message that opens nothing (no skill, nobody mentioned, a refused
+        // run-start) is prose the hub never remarks on.
+        var budget = TurnsOrDefault(leading, notes);
+
         var found = skill as SkillResolution.Found;
         var next = new Exchange
         {
@@ -228,13 +227,44 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>Row 44: a synthesis still pending is being dropped with the rest of the queue; if it had
-    /// grown the budget, that turn goes back, so the stop note and /continue count only real turns.</summary>
+    /// grown the budget, that turn goes back, so the stop note and /continue count only real turns.
+    /// I-m7 (hub F8): <see cref="Exchange.TurnsCommitted"/> goes back with it - <see cref="Finished"/>
+    /// increments both together when it grows the budget, so undoing only one would leave
+    /// TurnsCommitted greater than Budget on the wire.</summary>
     private static void DropQueuedSynthesis(Exchange x)
     {
         if (!x.SynthesisGrewBudget || !x.Pending.Values.Any(p => p.Reason == SpawnReason.Synthesis)) return;
         x.Budget--;
+        x.TurnsCommitted--;
         x.SynthesisGrewBudget = false;
     }
+
+    /// <summary>Row 43 (D-b), extracted for row 44's F11 (Standards): a leading word that matched
+    /// nobody is noted once per word, in <see cref="OnRoomMessage"/> and in <see cref="Continue"/>
+    /// alike.</summary>
+    private void NoteUnknownLeadingWords(Mentions.LeadingMentions leading, List<string> notes)
+    {
+        foreach (var word in leading.Unknown)
+            notes.Add(word.Equals("hub", StringComparison.OrdinalIgnoreCase)
+                ? "The hub cannot be addressed; it only posts notes."
+                : $"No participant named @{word}. Address one of: {_addressable}.");
+    }
+
+    /// <summary>Row 44 (D-b), extracted for row 44's F11 (Standards): the leading run's own token if
+    /// valid, else the hub's default, noting the refusal once when the token was out of range.</summary>
+    private int TurnsOrDefault(Mentions.LeadingMentions leading, List<string> notes)
+    {
+        if (leading.Turns == TurnsToken.OutOfRange)
+            notes.Add($"turns: must be a whole number from 1 to {ExchangeCommands.MaxTurns}; the default {_limits.Budget} applies.");
+        return leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
+    }
+
+    /// <summary>Row 44 (D-e), extracted for I-m1 (hub F4): the wire's <c>continuable</c> field, used by
+    /// both an exchange's own view and the snapshot's top level. <paramref name="runBlocks"/> is the
+    /// service's own read of whether the room's run would resume on a /continue - active, or parked
+    /// (row 19's AC15 resumes a parked run on any human post, /continue included).</summary>
+    public static bool Continuable(Exchange x, bool runBlocks) =>
+        x.Joinable && x.Status != ExchangeStatus.Open && x.InFlight.Count == 0 && !runBlocks;
 
     /// <summary>Row 36: an owner reply lands in <paramref name="x"/> and nothing is superseded. Open: its
     /// mentions are accepted against the exchange's own remaining budget. Closed with nothing in flight:
@@ -267,7 +297,13 @@ public sealed class ExchangePolicy
         x.Refused.Clear();
     }
 
-    private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes, SpawnReason reason = SpawnReason.Mention)
+    /// <paramref name="refusedAt"/> (row 44, I-M1/I-m6, hub F1/F7): for a <see cref="SpawnReason.Continuation"/>
+    /// call only, the ORIGINAL message that refused each replayed id - carried into the fresh
+    /// <see cref="PendingSpawn.RefusedAt"/> and prepended to its <see cref="PendingSpawn.TriggerIds"/>,
+    /// so a hand-off /continue could not fit this time keeps citing the refusal that actually happened
+    /// to it, never this /continue message's own id.
+    private static void Accept(Exchange x, IReadOnlyList<string> mentioned, long messageId, DateTimeOffset now, List<string> notes,
+        SpawnReason reason = SpawnReason.Mention, IReadOnlyDictionary<string, long>? refusedAt = null)
     {
         var refused = new List<string>();
         foreach (var id in mentioned)
@@ -278,8 +314,18 @@ public sealed class ExchangePolicy
                 pending.LastTriggerAt = now;
                 continue;
             }
-            if (x.TurnsCommitted >= x.Budget) { refused.Add(id); x.Refused.TryAdd(id, messageId); continue; }
-            var fresh = new PendingSpawn { LastTriggerAt = now, Reason = reason };
+            if (x.TurnsCommitted >= x.Budget)
+            {
+                refused.Add(id);
+                // I-M1 (hub F1): a /continue's own overflow is re-recorded by the caller, which still
+                // has each id's ORIGINAL refusing message; recording it here would overwrite that with
+                // this /continue message's own id.
+                if (reason != SpawnReason.Continuation) x.Refused.TryAdd(id, messageId);
+                continue;
+            }
+            var refusingId = refusedAt is not null && refusedAt.TryGetValue(id, out var r) ? r : (long?)null;
+            var fresh = new PendingSpawn { LastTriggerAt = now, Reason = reason, RefusedAt = refusingId };
+            if (refusingId is { } ra) fresh.TriggerIds.Add(ra);
             fresh.TriggerIds.Add(messageId);
             x.Pending[id] = fresh;
             x.Participants.Add(id);
@@ -401,7 +447,11 @@ public sealed class ExchangePolicy
             if (inFlightInRoom.Contains(id)) continue;
             if (now - pending.LastTriggerAt < _limits.Debounce) continue;
             if (lastStartByParticipant.TryGetValue(id, out var last) && now - last < _limits.MinSpacing) continue;
-            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, x.Budget - x.TurnsCommitted, pending.Reason));
+            // I-m8 (hub F9): a synthesis spawn is unconditionally the exchange's last - the plain
+            // Budget - TurnsCommitted arithmetic can read nonzero here (a free turn was left when it was
+            // queued), which would wrongly tell it another turn follows.
+            var remainingAfter = pending.Reason == SpawnReason.Synthesis ? 0 : x.Budget - x.TurnsCommitted;
+            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, remainingAfter, pending.Reason, pending.RefusedAt));
             if (exclusive) break;
         }
         return due;
@@ -465,19 +515,21 @@ public sealed class ExchangePolicy
     /// token (else the default) to the budget, reopens, and queues: the message's own spawnable leading
     /// mentions if any, else the hand-offs the budget refused (each triggered by the message that made
     /// it and by this one), else the addressee. A message that named someone but nobody spawnable
-    /// queues nothing. Pure: the service resolved which exchange this is and posts the notes.</summary>
+    /// queues nothing. Pure: the service resolved which exchange this is and posts the notes.
+    /// I-m3 (hub F6): the unknown-word notes are read before the RunExchange/StillOpen/StillFinishing
+    /// guards, so a /continue naming a typo still draws its row 43 note even when the state below
+    /// refuses it outright; a refused /continue never becomes a member of the exchange (it did nothing
+    /// to it).</summary>
     public (ContinueOutcome Outcome, IReadOnlyList<string> Notes) Continue(Exchange x, Message message, DateTimeOffset now)
     {
         var notes = new List<string>();
+        var leading = _mentions.Leading(message.Body);
+        NoteUnknownLeadingWords(leading, notes);
+
         if (!x.Joinable) { notes.Add($"Exchange started at #{x.RootMessageId} belongs to a run and cannot be continued."); return (ContinueOutcome.RunExchange, notes); }
         if (x.Status == ExchangeStatus.Open) { notes.Add($"Exchange started at #{x.RootMessageId} is still open with {Math.Max(0, x.Budget - x.TurnsCommitted)} turn(s) left; /continue once it has concluded."); return (ContinueOutcome.StillOpen, notes); }
         if (x.InFlight.Count > 0) { notes.Add($"Exchange started at #{x.RootMessageId} is still finishing {string.Join(", ", x.InFlight.Order(StringComparer.Ordinal).Select(id => "@" + id))}; /continue again once it has."); return (ContinueOutcome.StillFinishing, notes); }
 
-        var leading = _mentions.Leading(message.Body);
-        foreach (var word in leading.Unknown)
-            notes.Add(word.Equals("hub", StringComparison.OrdinalIgnoreCase)
-                ? "The hub cannot be addressed; it only posts notes."
-                : $"No participant named @{word}. Address one of: {_addressable}.");
         var mentioned = leading.Recipients
             .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
         if (mentioned.Count == 0 && (leading.Recipients.Count > 0 || leading.Unknown.Count > 0))
@@ -485,9 +537,7 @@ public sealed class ExchangePolicy
             notes.Add("/continue named nobody the hub can spawn; nothing was queued.");
             return (ContinueOutcome.NobodySpawnable, notes);
         }
-        if (leading.Turns == TurnsToken.OutOfRange)
-            notes.Add($"turns: must be a whole number from 1 to {ExchangeCommands.MaxTurns}; the default {_limits.Budget} applies.");
-        var extra = leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
+        var extra = TurnsOrDefault(leading, notes);
 
         var replayed = mentioned.Count == 0 ? x.Refused.ToList() : [];
         List<string> queue = mentioned.Count > 0 ? mentioned
@@ -504,9 +554,13 @@ public sealed class ExchangePolicy
         x.LastModelPost = null;
         x.Refused.Clear();
         x.MessageIds.Add(message.Id);
-        Accept(x, queue, message.Id, now, notes, SpawnReason.Continuation);
+        var refusedAt = replayed.Count > 0 ? replayed.ToDictionary(kv => kv.Key, kv => kv.Value) : null;
+        Accept(x, queue, message.Id, now, notes, SpawnReason.Continuation, refusedAt);
+        // I-M1 (hub F1): whatever this leg still could not fit keeps the ORIGINAL refusing id - Accept
+        // skips recording refusals for a Continuation, so nothing here overwrites it with this
+        // /continue message's own id.
         foreach (var (id, refusingId) in replayed)
-            if (x.Pending.TryGetValue(id, out var pending)) pending.TriggerIds.Insert(0, refusingId);
+            if (!x.Pending.ContainsKey(id)) x.Refused.TryAdd(id, refusingId);
         notes.Add($"Exchange started at #{x.RootMessageId} continued: {extra} more turn(s), {x.Budget} in all; queued {string.Join(", ", x.Pending.Keys.Select(id => "@" + id))}.");
         return (ContinueOutcome.Continued, notes);
     }

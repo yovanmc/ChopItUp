@@ -43,6 +43,11 @@
     { "name": "turns after prose is prose",        "body": "@opus how many turns: 16 did we burn?",        "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "none" } },
     { "name": "first turns token wins",            "body": "turns: 2 turns: 9 @opus",                      "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 2 } },
     { "name": "continue with a mention and turns", "body": "/continue @sonnet turns: 2 more",             "recipients": ["sonnet"],         "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 2 } },
-    { "name": "perf canary: 14 mentions with punctuation runs", "body": "@nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, go", "recipients": [], "unknown": ["nobody"], "references": [], "turns": { "token": "none" } }
+    { "name": "perf canary: 14 mentions with punctuation runs", "body": "@nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, @nobody,,,,,, go", "recipients": [], "unknown": ["nobody"], "references": [], "turns": { "token": "none" } },
+    { "name": "turns way out of range is still read",    "body": "turns: 1000 @opus go",                     "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
+    { "name": "turns extra whitespace is tolerated",      "body": "turns:  3 @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 3 } },
+    { "name": "turns with a letter glued on is refused",  "body": "turns:16x @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
+    { "name": "turns at the ceiling",                     "body": "turns: 16 @opus",                         "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 16 } },
+    { "name": "turns one past the ceiling",                "body": "turns: 17 @opus",                        "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } }
   ]
 }

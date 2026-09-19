@@ -55,10 +55,14 @@ public sealed class MentionsTests
     {
         Assert.False(string.IsNullOrWhiteSpace(name));
         var m = new Mentions(roster);
+        // Standards S1 (hub F10): the timing bound guards the catastrophic-backtracking canary only
+        // (B1) - applying it to every case made the whole theory flaky under load for no reason the
+        // other 47 cases need.
         var watch = Stopwatch.StartNew();
         var leading = m.Leading(body);
         watch.Stop();
-        Assert.True(watch.ElapsedMilliseconds < 200, $"'{name}' took {watch.ElapsedMilliseconds} ms");
+        if (name.StartsWith("perf canary", StringComparison.Ordinal))
+            Assert.True(watch.ElapsedMilliseconds < 200, $"'{name}' took {watch.ElapsedMilliseconds} ms");
         Assert.Equal(recipients, leading.Recipients);
         Assert.Equal(unknown, leading.Unknown);
         Assert.Equal(references, m.Find(body).Except(leading.Recipients));

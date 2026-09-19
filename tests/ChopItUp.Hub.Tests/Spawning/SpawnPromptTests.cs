@@ -611,13 +611,15 @@ public sealed class SpawnPromptTests
     [Fact]
     public void R44_synthesis_and_continuation_spawns_get_their_own_why_line_on_the_same_line_as_the_turn_count()
     {
-        var synthesis = SpawnPrompt.Render(Input(3, 0, SpawnReason.Synthesis, "opus", Msg(1, "owner", "@opus hi"), Msg(2, "sonnet", "my view")), SpawnLimits.Default);
+        var synthesis = SpawnPrompt.Render(Input(3, 0, SpawnReason.Synthesis, "opus", Msg(1, "owner", "@opus hi"), Msg(2, "sonnet", "my view")) with { LastModelPost = ("sonnet", 2L) }, SpawnLimits.Default);
         Assert.Contains("Why you are here: the hand-offs of this exchange ended with @sonnet's message #2; this is your synthesis turn as the participant the owner addressed. Answer the owner on the original ask (message #1) in a few lines; a mention in this reply hands nothing on. This exchange started at message #1. Turn 3 of 4; 0 turn(s) remain after yours.\n", synthesis);
         Assert.DoesNotContain("mentioned you", synthesis);
         Assert.DoesNotContain("This is the last", synthesis);
         var continued = SpawnPrompt.Render(Input(4, 4, SpawnReason.Continuation, "opus", Msg(1, "owner", "@opus hi"), Msg(5, "owner", "/continue")), SpawnLimits.Default);
         Assert.Contains("Why you are here: the owner continued this exchange with message #5 after it ended; pick up where it left off. This exchange started at message #1. Turn 4 of 4; 4 turn(s) remain after yours.\n", continued);
-        var replayed = SpawnPrompt.Render(Input(4, 4, SpawnReason.Continuation, "opus", Msg(1, "owner", "@opus hi"), Msg(3, "sonnet", "@opus back"), Msg(5, "owner", "/continue")) with { TriggerIds = [3, 5] }, SpawnLimits.Default);
+        // I-m6 (hub F7): the replayed why-line fires on RefusedAt, the exchange's own record of a
+        // replayed hand-off's original refusal, never on trigger count.
+        var replayed = SpawnPrompt.Render(Input(4, 4, SpawnReason.Continuation, "opus", Msg(1, "owner", "@opus hi"), Msg(3, "sonnet", "@opus back"), Msg(5, "owner", "/continue")) with { RefusedAt = 3L }, SpawnLimits.Default);
         Assert.Contains("Why you are here: message #3 mentioned you when the budget was spent; the owner continued this exchange with message #5, so answer that mention now. This exchange started at message #1.", replayed);
         var plain = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi"), Msg(2, "codex", "x")), SpawnLimits.Default);
         Assert.Contains("Why you are here: message(s) #2 mentioned you. This exchange started at message #1. Turn 1 of 4; 3 turn(s) remain after yours.\n", plain);

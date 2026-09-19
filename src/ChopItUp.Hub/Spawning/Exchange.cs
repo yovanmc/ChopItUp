@@ -20,6 +20,12 @@ public sealed class PendingSpawn
     public List<long> TriggerIds { get; } = new();
     public DateTimeOffset LastTriggerAt { get; set; }
     public SpawnReason Reason { get; init; } = SpawnReason.Mention;
+
+    /// <summary>Row 44 (I-M1/I-m6, hub F1/F7): for a hand-off /continue re-queued after the budget
+    /// refused it, the ORIGINAL message that refused it - carried into the launched
+    /// <see cref="SpawnRequest"/> and cited by the prompt's replayed-continuation why-line; null for
+    /// every other spawn, including a plain (non-replayed) continuation.</summary>
+    public long? RefusedAt { get; init; }
 }
 
 /// <summary>One room's exchange (D5): rooted in an owner message, a budget of model turns, then a
@@ -107,4 +113,4 @@ public sealed class Exchange
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two
 /// numbers the prompt states.</summary>
-public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter, SpawnReason Reason = SpawnReason.Mention);
+public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter, SpawnReason Reason = SpawnReason.Mention, long? RefusedAt = null);

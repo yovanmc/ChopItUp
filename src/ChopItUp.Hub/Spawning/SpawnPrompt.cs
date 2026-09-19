@@ -29,7 +29,9 @@ public sealed record SpawnPromptInput(
     RoomMemory? RoomMemory = null,
     SpawnPrompt.StandingText? Standing = null,
     SpawnReason Reason = SpawnReason.Mention,
-    string? Addressee = null);
+    string? Addressee = null,
+    long? RefusedAt = null,
+    (string AuthorId, long MessageId)? LastModelPost = null);
 
 /// <summary>Row 18 (L7, decision 8): the room's own memory topic, injected only in a directory
 /// room. <c>Text</c> is already cut at <see cref="MemoryStore.RoomChars"/> and may be empty
@@ -101,12 +103,20 @@ public static class SpawnPrompt
         switch (input.Reason)
         {
             case SpawnReason.Synthesis:
-                sb.Append("Why you are here: the hand-offs of this exchange ended with ").Append(LastPoster(input)).Append("'s message #").Append(input.TriggerIds[^1])
+                // I-m6 (hub F7): named by LastModelPost (the exchange's own record of who posted last),
+                // never by TriggerIds[^1] - a debounce-merged owner reply after the synthesis was queued
+                // can no longer change who this sentence names.
+                var lastPoster = input.LastModelPost is { } lmp ? $"@{lmp.AuthorId}" : "a participant";
+                var lastPostId = input.LastModelPost?.MessageId ?? input.TriggerIds[^1];
+                sb.Append("Why you are here: the hand-offs of this exchange ended with ").Append(lastPoster).Append("'s message #").Append(lastPostId)
                   .Append("; this is your synthesis turn as the participant the owner addressed. Answer the owner on the original ask (message #").Append(input.RootMessageId)
                   .Append(") in a few lines; a mention in this reply hands nothing on. ");
                 break;
-            case SpawnReason.Continuation when input.TriggerIds.Count > 1:
-                sb.Append("Why you are here: message #").Append(input.TriggerIds[0]).Append(" mentioned you when the budget was spent; the owner continued this exchange with message #")
+            // I-m6 (hub F7): fires on RefusedAt, the exchange's own record of a replayed hand-off's
+            // original refusal - never on trigger count, which a debounce merge could change for
+            // reasons unrelated to a replay.
+            case SpawnReason.Continuation when input.RefusedAt is { } refusingId:
+                sb.Append("Why you are here: message #").Append(refusingId).Append(" mentioned you when the budget was spent; the owner continued this exchange with message #")
                   .Append(input.TriggerIds[^1]).Append(", so answer that mention now. ");
                 break;
             case SpawnReason.Continuation:
@@ -336,18 +346,6 @@ public static class SpawnPrompt
     }
 
     private static string FormatDuration(TimeSpan t) => t.TotalHours >= 1 ? $"{t.TotalHours:0.#}h" : $"{t.TotalMinutes:0.#}m";
-
-    /// <summary>Row 44 (D-f): who the synthesis why-line names as the last hand-off's poster - the
-    /// transcript message whose id is the last trigger, read by author. "a participant" when the
-    /// transcript window has already dropped it (the trim in <see cref="Trim"/> keeps the newest
-    /// message, but the synthesis trigger is the SECOND-to-last member's post, which can fall outside
-    /// a very small window).</summary>
-    private static string LastPoster(SpawnPromptInput input)
-    {
-        var id = input.TriggerIds[^1];
-        var msg = input.Transcript.FirstOrDefault(m => m.Id == id);
-        return msg is null ? "a participant" : "@" + msg.AuthorId;
-    }
 
     /// <summary>Row 20, task 3 (AC4b): a roster row's classes as shown beside its id in the peers line
     /// of an in-run prompt - comma-space joined in <see cref="ParticipantClasses.All"/> order, or

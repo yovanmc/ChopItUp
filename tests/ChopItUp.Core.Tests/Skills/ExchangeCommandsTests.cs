@@ -18,10 +18,15 @@ public sealed class ExchangeCommandsTests
     [InlineData("turns: 0 @opus", TurnsToken.OutOfRange, 0)]
     [InlineData("turns: 17 @opus", TurnsToken.OutOfRange, 0)]
     [InlineData("turns: 999 @opus", TurnsToken.OutOfRange, 0)]
+    [InlineData("turns: 1000000000 @opus", TurnsToken.OutOfRange, 0)]   // I-M3: 10 digits, refused before int.TryParse ever sees it
     [InlineData("@opus go\nturns: 3", TurnsToken.None, 0)]
     [InlineData("@opus xturns: 3", TurnsToken.None, 0)]
-    [InlineData("@opus turns:  3", TurnsToken.None, 0)]
-    [InlineData("@opus turns: 3x", TurnsToken.None, 0)]
+    // I-M3 (hub F3): the tolerant regex always matches once `turns:` is found, so extra whitespace
+    // before the digits is now read (Valid), and a letter glued to the digits is now refused
+    // (OutOfRange) rather than both silently breaking the walk into None the way the old, stricter
+    // regex did.
+    [InlineData("@opus turns:  3", TurnsToken.Valid, 3)]
+    [InlineData("@opus turns: 3x", TurnsToken.OutOfRange, 0)]
     [InlineData("@opus how many turns: 16 did we burn?", TurnsToken.None, 0)]
     [InlineData("/Grill turns: 3", TurnsToken.None, 0)]
     [InlineData("turns: 2 turns: 9", TurnsToken.Valid, 2)]
