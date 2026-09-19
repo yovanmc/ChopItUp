@@ -83,9 +83,10 @@ addresses nobody but names someone inline, and when a leading `@word` matches no
 spawned model hands the turn on the same way, starting its reply with another spawnable id while
 turns remain.
 
-Caps, all hard-coded: 4 turns per exchange, a 2 second debounce on repeated mentions, at least 10
-seconds between two spawns of the same participant across rooms, a 5 minute wall clock per spawn,
-and never two spawns of one participant in flight in the same room at once.
+Caps, all hard-coded: 8 turns per exchange by default (a `turns: N` token among the leading mentions
+sets 1 to 16), a 2 second debounce on repeated mentions, at least 10 seconds between two spawns of
+the same participant across rooms, a 5 minute wall clock per spawn, and never two spawns of one
+participant in flight in the same room at once.
 
 The hub posts its own notes as `hub` (kind `system`, badge `HU`): a spawn that times out, one that
 exits without posting, a turn skipped for lack of budget, and the exchange's conclusion all land in
@@ -110,6 +111,13 @@ again. A reply that invokes a skill, or a reply with a mention to a hub note, a 
 exchange from before a hub restart, is handled as a new prompt, and the hub posts a note saying so.
 While a run is going, a reply is handled like any other post in the run. The hub remembers the last
 50 exchanges per room for this.
+
+The participant the owner addressed first gets a synthesis turn when another model posted last (a
+free turn if one is left, else one more). `/continue` (typed, or the strip's Continue button, which
+posts it as a reply to the exchange's root) reopens a concluded or stopped exchange with 8 more turns
+(`/continue turns: N` for another number), re-running the hand-offs the budget refused, or the
+mentions the `/continue` message carries, or the addressee. A hub restart forgets exchanges, so
+`/continue` after one says so.
 
 A `claude` spawn runs `claude.exe -p` with the prompt on stdin and its token in a per-spawn
 `mcp.json`, never `--bare`, which switches auth to an API key. A `codex` spawn runs `codex.cmd exec`

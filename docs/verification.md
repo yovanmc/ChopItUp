@@ -19,6 +19,7 @@ trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.
 Row 42 inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v13, CLI PATH
 stripped so an accidental spawn fails loudly, drives the import route and a live control post):
 `pwsh tools\Invoke-Row42ImportCheck.ps1`.
+Continue, the turns token and the synthesis turn (row 44, stub Codex, no model calls): `pwsh tools\Invoke-Row44ContinueCheck.ps1`.
 Row 23 self-check (skill import + `/health` + `/api/skills`, run against the deployed build after
 `--import-skill`, points at a scratch stand-in otherwise): `pwsh tools\Invoke-M23MemoryCheck.ps1`.
 Consolidation skill (row 23), imported with the hub stopped, into the data directory that hub will

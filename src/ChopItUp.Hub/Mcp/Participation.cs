@@ -40,6 +40,9 @@ public static class Participation
           may follow each other at the start. An @id elsewhere in the text is a reference and reaches
           nobody; a leading @word that matches nobody gets a hub note. A message with no leading
           mention is for the room.
+        - The owner can type /continue (a reply to a message of the exchange, or bare for the room's
+          latest one) to reopen a concluded or stopped exchange with more turns; from anyone else it
+          is prose.
         - wait_for_message blocks until a message arrives or the timeout passes, and returns an empty
           list on timeout. Call it again to keep waiting. Keep timeout_seconds at or below 50; some
           hosts abandon a tool call at 60 seconds.
