@@ -89,6 +89,42 @@ public static class SpawnOutput
         return last;
     }
 
+    /// <summary>Codex: why a turn failed, from the last <c>turn.failed</c> event's <c>error.message</c>,
+    /// or else the last top-level <c>{"type":"error","message":…}</c> line. Codex sometimes wraps the
+    /// real cause as a JSON string holding another <c>error.message</c> (a re-serialized API error);
+    /// when the message itself parses that way, the inner string is returned instead of the envelope.
+    /// Null when neither shape appears.</summary>
+    public static string? CodexFailure(string stdout)
+    {
+        string? failed = null;
+        string? error = null;
+        foreach (var root in Lines(stdout))
+        {
+            var type = Str(root, "type");
+            if (type == "turn.failed" && root.TryGetProperty("error", out var e) && Str(e, "message") is { } m)
+                failed = m;
+            else if (type == "error" && Str(root, "message") is { } em)
+                error = em;
+        }
+        var message = failed ?? error;
+        return message is null ? null : Innermost(message);
+    }
+
+    private static string Innermost(string message)
+    {
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(message); }
+        catch (JsonException) { return message; }   // not JSON: the message stays literal
+        using (doc)
+        {
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("error", out var inner)
+                && Str(inner, "message") is { } m
+                ? m
+                : message;
+        }
+    }
+
     /// <summary>One line, at most <see cref="MaxCommandChars"/> characters; a line break becomes ` ⏎ `.</summary>
     public static string Flatten(string command)
     {
