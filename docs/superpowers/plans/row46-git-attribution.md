@@ -660,3 +660,61 @@ Commit: `Row 46 task 3: README and verification.md describe the identity rule; I
 | 2 | F4 `AGENTS.md` line 8 (prompts for sub-agents that commit carry the trailer requirement) unmet for a self-committing Codex | Fixed: one sentence appended to the `DirectoryRules` clause and the golden capture |
 | 2 | F5 a missing branch logs `git log` then `git merge` failures | Fixed: `logFailure: false` from the merge |
 | 2 | framing: `git commit --trailer` could replace `WithTrailers`; commit under `useConfigOnly` and retry on 128 could replace the probe | Declined: the staged-changes decision still needs the `diff --cached` call, and the probe is two read-only calls with a fully specified test; noted as a later simplification |
+
+## Interrogation dispositions (diff pass, opus, 7.4 FIX-THEN-SHIP, 2026-09-19)
+
+| Finding | Disposition |
+|---|---|
+| MAJOR 1: the merge union re-emits any `Co-authored-by` value found on the branch, including one a self-committing model wrote, and the new prompt sentence invites such trailers | Fixed in Task 4 (whitelist: the union keeps only the two host values the hub itself can produce; a foreign value is dropped). The prompt sentence stays: it is critique pass 2's F4 disposition (folder `AGENTS.md` line 8) and, with the whitelist, a model-written trailer can no longer reach a first-parent merge. |
+| MAJOR 2a: the identity probe falls back to the hub on any non-zero exit with no log line | Fixed in Task 4 (`IdentityFallbackReason`, logged once per trail). |
+| MAJOR 2b: the merge's trailer scan is silent on every failure, not only a missing branch | Fixed in Task 4 (silent only when git's stderr says `unknown revision`, measured 2026-09-19 on 2.45.2: `fatal: ambiguous argument 'HEAD..chopitup/nope': unknown revision or path not in the working tree.`; every other failure is logged through `Fail`). |
+| MAJOR 3: `launched` is true only when `RunAsync` returned; a post-start throw (a faulted output pipe at the drain) drops a deserved trailer | Fixed in Task 4 (the runner's drain converts any pipe fault into a result with the fault in `StandardError`, so a started process always yields a result; `jobs.Track` failing still throws, by row 29's design, and that process was killed before it could work). No unit test can fault a real child's pipe cheaply: listed under "Could not verify". |
+| MINOR 4: `git commit --trailer` could replace `WithTrailers` | Declined again (plan pass 2 framing): the staged-changes decision still needs `diff --cached`; a later simplification. |
+| MINOR 5: the `BaseOptions` comment claims "no CRLF rewriting on any commit" while `add`/`diff --cached` run without `core.autocrlf=false` | Fixed in Task 4 (comment reworded to what the options reach: the commit and merge calls). |
+| MINOR 6: `Test-Spawn -ExpectAuthor` is dead and the scratch identity is spelled three times in `tools/Invoke-M9RoomCheck.ps1` | Fixed in Task 4 (parameter and both arguments removed; name and address hoisted to two variables). |
+| MINOR 7: `tools/Invoke-Row46AttributionCheck.ps1` deletes its scratch root without asserting it lies under `$env:TEMP`; the `.log` sibling is kept | Fixed in Task 4 for the containment assert; the log is kept on purpose (it is the run's evidence, named in the script header). |
+
+## Task 4 — interrogation fixes (sonnet; blocked by 3)
+
+Written for builder-subagent execution; if something doesn't match, STOP and report rather than guess. Each fix below is RED first (the named test fails for the stated reason), then GREEN.
+
+### 4a. Whitelisted merge union (MAJOR 1)
+
+`src/ChopItUp.Hub/Git/GitTrail.cs`: beside `CoAuthorKey` add
+
+```csharp
+/// <summary>The only co-author values a hub commit or merge may carry: the two hosts the spawner
+/// starts. A merge re-emits a branch trailer only when its value is one of these, so a trailer a
+/// self-committing model wrote never reaches the room's first-parent history (interrogation, MAJOR 1).</summary>
+public const string CodexCoAuthor = "Codex <noreply@openai.com>";
+public const string ClaudeCoAuthor = "Claude <noreply@anthropic.com>";
+private static readonly string[] KnownCoAuthors = [CodexCoAuthor, ClaudeCoAuthor];
+```
+
+In `CoAuthorTrailersUnlocked`, keep a value only when `KnownCoAuthors.Contains(value, StringComparer.Ordinal)` (the `seen` loop gains that condition). `src/ChopItUp.Hub/Spawning/RoomCommits.cs`: `CodexTrailer` and `ClaudeTrailer` become `GitTrail.CoAuthorKey + ": " + GitTrail.CodexCoAuthor` / `ClaudeCoAuthor` (both stay `public const string`; `const` concatenation of consts is legal).
+
+RED test in `tests/ChopItUp.Hub.Tests/Git/GitTrailTests.cs`, using the file's existing `RoomOwner`-style fixture and raw git helper: seed a room, create branch `chopitup/x9`, on it commit one file with the message `"x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>"` (raw `git commit -F -` under an explicit `-c user.name/-c user.email`), back on the default branch call `MergeAsync("chopitup/x9", "Merge exchange #9 (lab)")`, then assert `git log -1 --format=%(trailers:key=Co-authored-by,valueonly)` trimmed equals exactly `Claude <noreply@anthropic.com>`. A second test: the branch commit carries only the foreign line; the merge body (`%B`, trimmed) equals `Merge exchange #9 (lab)` with no trailer paragraph. Name them `Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values` and `Row46_I1_merge_carries_nothing_when_the_branch_trailers_are_all_foreign`. Expected RED: the first asserts one value and gets two lines; the second gets a trailer paragraph.
+
+### 4b. Logged identity fallback (MAJOR 2a)
+
+`GitTrail.cs`: add `public string? IdentityFallbackReason { get; private set; }` (doc: "Why the last commit or merge fell back to the hub's identity: git's failing probe, exit code and first stderr line; null when git resolved a set identity or this trail commits as the hub"). `ConfiguredIdentityUnlocked` returns a private record `IdentityProbe(GitIdentity? Identity, string? Failure)` where `Failure` is `$"git var {name} exited {code}: {first stderr line}"` for whichever probe failed. `ConfiguredIdentityAsync` returns `.Identity`. `IdentityEnvUnlocked`: when not `CommitsAsHub` and the probe has no identity, set `IdentityFallbackReason = probe.Failure` and, once per trail instance (a private `bool _fallbackLogged`), `Console.Error.WriteLine($"{LogName}: {probe.Failure}; committing as {Hub}")`; when the probe resolves, set `IdentityFallbackReason = null`.
+
+RED test in `GitTrailTests.cs`: under the existing `NoIdentity` fixture, after `CommitAllAsync("x", author: null, allowEmpty: true)` assert `IdentityFallbackReason` is not null and contains `exited 128`; under the `RoomOwner` fixture assert it is null after a commit. Name: `Row46_I2_identity_fallback_is_recorded_and_absent_when_git_resolves_one`. Expected RED: compile error, no such member.
+
+### 4c. Merge scan logs every failure but a missing branch (MAJOR 2b)
+
+`GitTrail.cs` `CoAuthorTrailersUnlocked`: replace the `logFailure` parameter with a single rule: on a non-zero exit, call `Fail("git log", r)` unless `r.StandardError` contains `"unknown revision"` (the missing-branch text, measured above); `MergeAsync` and `CoAuthorTrailersAsync` call it without the flag. Keep the merge's own failure logging unchanged. No new test (a `git log` failure that is not a bad revision cannot be provoked from a test without breaking the repository); list under "Could not verify". The existing missing-branch merge test must stay green and still log the merge failure once.
+
+### 4d. A started process always yields a result (MAJOR 3)
+
+`src/ChopItUp.Hub/Spawning/ProcessRunner.cs`, the drain block: change `catch (TimeoutException) { errText = "(output pipes did not close within the drain grace)"; }` to also catch any other exception from the drain (`catch (Exception e) when (e is not OperationCanceledException)`) with `errText = "(output pipes failed: " + e.GetBaseException().Message + ")"`, and read `outText` from `stdout` only when it completed successfully (`stdout.IsCompletedSuccessfully ? stdout.Result : ""`, same for stderr, before the catch). Add one comment line: `// Row 46, R11: a process that started always yields a result, so its turn commit can credit it.` No new test (a real child's pipe cannot be faulted from a test cheaply); list under "Could not verify". The existing `ProcessRunner` tests must stay green.
+
+### 4e. Comment, live-check hygiene, containment (MINOR 5, 6, 7)
+
+- `GitTrail.cs` `BaseOptions` comment: "No signing and no CRLF rewriting on the commit and merge calls: an owner with commit.gpgsign configured has no agent prompt to answer here." (The `add` and `diff --cached` calls run without these options, as before this row.)
+- `tools/Invoke-M9RoomCheck.ps1`: remove the `-ExpectAuthor` parameter from `Test-Spawn` and both call sites; add `$identityName = 'Live Check'` and `$identityEmail = 'live-check@example.test'` next to the `git.identity-configured` check and use them in that check, in the `author-is-repo-identity` pattern, in `git.owner-commit-first` and in `trail.endpoint`. Parse-check with `[System.Management.Automation.Language.Parser]::ParseFile`; do not run the script (real model calls).
+- `tools/Invoke-Row46AttributionCheck.ps1`: immediately before the `Remove-Item -Recurse -Force $ScratchRoot` in the `finally`, add `if (-not $ScratchRoot.StartsWith($env:TEMP, [StringComparison]::OrdinalIgnoreCase)) { throw "refusing to remove $ScratchRoot: not under TEMP" }`. Re-run the script once: 11 PASS / 0 FAIL expected.
+
+### 4f. Finish
+
+`dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal` (0 warnings); `dotnet test tests/ChopItUp.Hub.Tests -c Debug --nologo -v minimal` fully green; `Check-Slop.ps1 -Base main` exit 0. One commit: `Row 46 task 4: merge union whitelisted to the hosts' values, identity fallback and scan failures logged, a started process always yields a result`.
