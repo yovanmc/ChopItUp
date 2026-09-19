@@ -31,8 +31,9 @@ public enum MergeResult { Merged, Conflict, Failed }
 public sealed record MergeOutcome(MergeResult Result, string? Hash, IReadOnlyList<string> Conflicts, string? Reason, string? Before = null);
 
 /// <summary>One git working tree the hub commits into - the memory store (D15) and every room
-/// directory (D11). Generalised from M10's MemoryGit: the committer is always the hub, the author is
-/// whoever the caller says (a spawned model, the owner). git is resolved directly (a real git.exe on
+/// directory (D11). Generalised from M10's MemoryGit: the author and committer are the identity git
+/// itself resolves at the root, the hub's only when git resolves none; a caller may still name an
+/// explicit author (the memory store does) — row 46. git is resolved directly (a real git.exe on
 /// PATH), not through the spawner's CliLocator seam, so hub tests exercise the real trail (M10
 /// decision 4). Nothing here throws: a failure is a null/false/empty result with <see cref="Reason"/>
 /// set and one line in the hub log. Serialised per repository - every trail made by <see cref="WithRoot"/>
@@ -41,12 +42,22 @@ public class GitTrail
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
     public static readonly GitIdentity Hub = new("ChopItUp hub", "hub@chopitup.local");
+    public const string CoAuthorKey = "Co-authored-by";
     private const char FieldSep = (char)0x1F;
     // LC_ALL=C: the no-op detection reads git's English "nothing to commit" (M10 critique, P2-7).
     private static readonly IReadOnlyDictionary<string, string> Env = new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "0", ["LC_ALL"] = "C" };
-    // A fixed committer and no signing: an unconfigured machine (or a CI runner) must still commit.
-    private static readonly string[] Committer =
-        ["-c", "user.name=" + Hub.Name, "-c", "user.email=" + Hub.Email, "-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"];
+    // No signing and no CRLF rewriting on any commit the hub makes: an owner with commit.gpgsign
+    // configured has no agent prompt to answer here.
+    private static readonly string[] BaseOptions = ["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"];
+    // The hub's own identity, injected through the environment (which beats every config and any
+    // stray single GIT_* variable) only when git resolves no set identity of its own (row 46, R4):
+    // an unconfigured machine or a CI runner must still commit, a configured owner identity is
+    // git's to apply and the hub never overrides it.
+    private static readonly IReadOnlyDictionary<string, string> HubIdentityEnv = new Dictionary<string, string>
+    {
+        ["GIT_AUTHOR_NAME"] = Hub.Name, ["GIT_AUTHOR_EMAIL"] = Hub.Email,
+        ["GIT_COMMITTER_NAME"] = Hub.Name, ["GIT_COMMITTER_EMAIL"] = Hub.Email,
+    };
 
     private readonly Func<ResolvedCli> _resolve;
     private readonly IProcessRunner _runner;
@@ -81,6 +92,49 @@ public class GitTrail
 
     /// <summary>Prefix of this trail's hub-log lines.</summary>
     protected virtual string LogName => "room";
+
+    /// <summary>True for a trail whose every commit is the hub's own (the memory store): author and
+    /// committer stay <see cref="Hub"/> whatever the machine's git config says. A room trail is false:
+    /// its commits belong to that room's own repository and carry that repository's identity (row 46).</summary>
+    protected virtual bool CommitsAsHub => false;
+
+    /// <summary>The identity git itself would commit with at <see cref="Root"/> - `git var
+    /// GIT_COMMITTER_IDENT` under <c>user.useConfigOnly</c>, so only an identity someone set counts
+    /// (repository, global or system config, or the GIT_* environment) and git's own guesses from the
+    /// account name, the host name or EMAIL never do - or null when git cannot resolve one (nothing
+    /// set, or only a name or only an address). Null, quietly, when git is unavailable.</summary>
+    public async Task<GitIdentity?> ConfiguredIdentityAsync(CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !Directory.Exists(Root)) return null;
+        return await ConfiguredIdentityUnlocked(git, cancellation);
+    }
+
+    private async Task<GitIdentity?> ConfiguredIdentityUnlocked(ResolvedCli git, CancellationToken cancellation)
+    {
+        // Both roles: a GIT_COMMITTER_* pair alone lets the committer resolve while `git commit`
+        // still dies on the author, and the reverse (row 46, critique pass 2).
+        var author = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_AUTHOR_IDENT"], "", cancellation);
+        if (author.ExitCode != 0) return null;
+        var r = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_COMMITTER_IDENT"], "", cancellation);
+        if (r.ExitCode != 0) return null;
+        var ident = r.StandardOutput.Trim();                 // "Name <address> 1726700000 -0400"
+        var close = ident.LastIndexOf('>');
+        var open = close < 0 ? -1 : ident.LastIndexOf(" <", close, StringComparison.Ordinal);
+        if (open <= 0) return null;
+        return new GitIdentity(ident[..open], ident[(open + 2)..close]);
+    }
+
+    /// <summary>The environment a hub commit or merge runs with: the hub's identity in
+    /// <see cref="HubIdentityEnv"/> when this trail commits as the hub or git resolves no set identity
+    /// at <see cref="Root"/>; otherwise nothing beyond <see cref="Env"/>, and git's own resolution applies.</summary>
+    private async Task<IReadOnlyDictionary<string, string>?> IdentityEnvUnlocked(ResolvedCli git, CancellationToken cancellation) =>
+        CommitsAsHub || await ConfiguredIdentityUnlocked(git, cancellation) is null ? HubIdentityEnv : null;
+
+    /// <summary>The message with <paramref name="trailers"/> as its own final paragraph: git reads
+    /// trailers only from the last paragraph, and only when a blank line separates it from the body.</summary>
+    internal static string WithTrailers(string message, IReadOnlyList<string> trailers) =>
+        message.TrimEnd('\r', '\n') + "\n\n" + string.Join("\n", trailers) + "\n";
 
     /// <summary>True when git.exe was found (resolved once; a miss is remembered for this instance).</summary>
     public bool IsAvailable() => Resolve() is not null;
@@ -136,12 +190,16 @@ public class GitTrail
         return r.StandardOutput.Trim().Length > 0;
     }
 
-    /// <summary>`git add -A` then a commit authored by <paramref name="author"/>; the committer is the
-    /// hub. The message travels on stdin (`-F -`): a room commit carries a shell log, and a Windows
-    /// command line is capped at 32,767 characters. Initialises the repository if it is missing. With
-    /// <paramref name="allowEmpty"/> false, "nothing to commit" is not a failure: the outcome is HEAD
-    /// with <see cref="CommitOutcome.Created"/> false.</summary>
-    public async Task<CommitOutcome> CommitAllAsync(string message, GitIdentity author, bool allowEmpty, CancellationToken cancellation = default)
+    /// <summary>`git add -A` then a commit. <paramref name="author"/> null means the repository's own
+    /// configured identity for both author and committer (the hub's when it has none, see
+    /// <see cref="ConfiguredIdentityAsync"/>); an explicit author is kept while the committer still
+    /// follows the repository. <paramref name="trailers"/> (e.g. <c>Co-authored-by: …</c> lines) become
+    /// the message's last paragraph only when something is staged: an empty commit credits nobody
+    /// (row 46). The message travels on stdin (`-F -`): a room commit carries a shell log, and a
+    /// Windows command line is capped at 32,767 characters. Initialises the repository if it is missing.
+    /// With <paramref name="allowEmpty"/> false, "nothing to commit" is not a failure: the outcome is
+    /// HEAD with <see cref="CommitOutcome.Created"/> false.</summary>
+    public async Task<CommitOutcome> CommitAllAsync(string message, GitIdentity? author, bool allowEmpty, CancellationToken cancellation = default, IReadOnlyList<string>? trailers = null)
     {
         await _gate.WaitAsync(cancellation);
         try
@@ -162,10 +220,16 @@ public class GitTrail
             }
             var add = await Run(git, ["add", "-A", "--", "."], "", cancellation);
             if (add.ExitCode != 0) return new(null, false, 0, Fail("git add", add));
+            var staged = await Run(git, ["diff", "--cached", "--quiet"], "", cancellation);   // 1 = something is staged, 0 = nothing
+            if (staged.ExitCode is not (0 or 1)) return new(null, false, 0, Fail("git diff --cached", staged));
+            var text = staged.ExitCode == 1 && trailers is { Count: > 0 } ? WithTrailers(message, trailers) : message;
 
-            var args = new List<string>(Committer) { "commit", "-q", "--author=" + author, "-F", "-" };
-            if (allowEmpty) args.Insert(args.Count - 2, "--allow-empty");
-            var commit = await Run(git, args, message, cancellation);
+            var identityEnv = await IdentityEnvUnlocked(git, cancellation);
+            var args = new List<string>(BaseOptions) { "commit", "-q" };
+            if (author is not null) args.Add("--author=" + author);     // an explicit author (the memory store) beats the environment: command line wins in git
+            if (allowEmpty) args.Add("--allow-empty");
+            args.Add("-F"); args.Add("-");
+            var commit = await Run(git, args, text, cancellation, identityEnv);
             if (commit.ExitCode != 0)
             {
                 if (!allowEmpty && (commit.StandardOutput + commit.StandardError).Contains("nothing to commit", StringComparison.Ordinal))
@@ -237,6 +301,29 @@ public class GitTrail
         if (r.ExitCode != 0) { Fail("git show", r); return []; }
         Reason = null;
         return r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    /// <summary>The distinct <c>Co-authored-by</c> trailer lines on the commits in <paramref name="range"/>
+    /// (e.g. <c>"HEAD..chopitup/x7"</c>), newest first, re-emitted as full <c>Co-authored-by: …</c>
+    /// lines - what an exchange merge carries (row 46). Empty on failure, with <see cref="Reason"/> set.</summary>
+    public async Task<IReadOnlyList<string>> CoAuthorTrailersAsync(string range, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return [];
+        return await CoAuthorTrailersUnlocked(git, range, logFailure: true, cancellation);
+    }
+
+    /// <param name="logFailure">False from a merge: a missing branch fails the merge itself a moment
+    /// later with its own reason, and one failure should be logged once (critique pass 2, F5).</param>
+    private async Task<IReadOnlyList<string>> CoAuthorTrailersUnlocked(ResolvedCli git, string range, bool logFailure, CancellationToken cancellation)
+    {
+        var r = await Run(git, ["log", "--format=%(trailers:key=" + CoAuthorKey + ",valueonly)", range], "", cancellation);
+        if (r.ExitCode != 0) { if (logFailure) Fail("git log", r); return []; }
+        var seen = new List<string>();
+        foreach (var value in r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            if (!seen.Contains(value, StringComparer.Ordinal)) seen.Add(value);
+        Reason = null;
+        return seen.Select(v => CoAuthorKey + ": " + v).ToList();
     }
 
     // --- Row 35: worktree, merge and branch primitives ----------------------------------------------
@@ -415,8 +502,8 @@ public class GitTrail
         finally { _gate.Release(); }
     }
 
-    /// <summary>Merges <paramref name="branch"/> into HEAD with `--no-ff`, committed as the hub
-    /// (<see cref="Committer"/>). A conflicting or otherwise-failing merge is aborted before returning,
+    /// <summary>Merges <paramref name="branch"/> into HEAD with `--no-ff`, committed under the identity
+    /// rule (<see cref="ConfiguredIdentityAsync"/>). A conflicting or otherwise-failing merge is aborted before returning,
     /// so <see cref="Root"/>'s HEAD and working tree are exactly what they were before the call. Refuses
     /// (<see cref="MergeResult.Failed"/>) rather than merging when the tree already has uncommitted
     /// tracked changes right before the merge itself starts - checked from inside this same gated call,
@@ -436,8 +523,14 @@ public class GitTrail
             var status = await Run(git, ["status", "--porcelain", "--untracked-files=no"], "", cancellation);
             if (status.ExitCode == 0 && status.StandardOutput.Trim().Length > 0)
                 return new(MergeResult.Failed, null, [], "the room directory has uncommitted changes", before);
-            var args = new List<string>(Committer) { "merge", "--no-ff", "-m", message, branch };
-            var r = await Run(git, args, "", cancellation);
+            // Row 46: the merge is authored under the identity rule and its last paragraph carries
+            // every distinct Co-authored-by line on the commits being merged, so the room's
+            // first-parent history says who contributed without opening the branch.
+            var trailers = await CoAuthorTrailersUnlocked(git, "HEAD.." + branch, logFailure: false, cancellation);
+            var args = new List<string>(BaseOptions) { "merge", "--no-ff", "-m", message };
+            if (trailers.Count > 0) { args.Add("-m"); args.Add(string.Join("\n", trailers)); }
+            args.Add(branch);
+            var r = await Run(git, args, "", cancellation, await IdentityEnvUnlocked(git, cancellation));
             if (r.ExitCode == 0)
             {
                 Reason = null;
@@ -543,8 +636,12 @@ public class GitTrail
         }
     }
 
-    private Task<ProcessResult> Run(ResolvedCli git, IReadOnlyList<string> args, string stdin, CancellationToken cancellation) =>
-        _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], Env, Root, stdin, LogName + "-git"), Timeout, cancellation);
+    private Task<ProcessResult> Run(ResolvedCli git, IReadOnlyList<string> args, string stdin, CancellationToken cancellation, IReadOnlyDictionary<string, string>? extraEnv = null)
+    {
+        // Env and HubIdentityEnv share no key, so Concat cannot throw on a duplicate.
+        var env = extraEnv is null ? Env : new Dictionary<string, string>(Env).Concat(extraEnv).ToDictionary(kv => kv.Key, kv => kv.Value);
+        return _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], env, Root, stdin, LogName + "-git"), Timeout, cancellation);
+    }
 
     private string Fail(string step, ProcessResult r)
     {
