@@ -39,14 +39,19 @@ describe('reply-to', () => {
   });
 
   test('the composer shows a cancellable chip while replying and none otherwise', () => {
-    const replying = renderToStaticMarkup(
-      <Composer roomName="General" disabled={false} onSend={async () => undefined} replyTo={root} onCancelReply={() => undefined} />,
-    );
+    const props = {
+      roomId: 'general',
+      roomName: 'General',
+      disabled: false,
+      draft: '',
+      onDraftChange: () => undefined,
+      onCancelReply: () => undefined,
+      onSend: async () => undefined,
+    };
+    const replying = renderToStaticMarkup(<Composer {...props} replyTo={root} />);
     expect(replying).toContain('reply-chip');
     expect(replying).toContain('aria-label="Cancel reply"');
-    const idle = renderToStaticMarkup(
-      <Composer roomName="General" disabled={false} onSend={async () => undefined} replyTo={null} onCancelReply={() => undefined} />,
-    );
+    const idle = renderToStaticMarkup(<Composer {...props} replyTo={null} />);
     expect(idle).not.toContain('reply-chip');
   });
 
