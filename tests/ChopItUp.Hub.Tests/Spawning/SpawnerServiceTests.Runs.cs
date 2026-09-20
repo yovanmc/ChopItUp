@@ -549,6 +549,65 @@ public sealed partial class SpawnerServiceTests
     private static readonly SpawnLimits Instant = new(Budget: 4, Debounce: TimeSpan.Zero, MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
 
     [Fact]
+    public async Task M57_outside_directory_spawns_get_thirty_minutes_while_plain_spawns_keep_five()
+    {
+        var limits = SpawnLimits.Default with { Debounce = TimeSpan.Zero, MinSpacing = TimeSpan.Zero };
+        var (host, runner, room) = await StartRunHostAsync(limits, RunLimits.Default);
+        await using var _ = host;
+        var directoryTimeout = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var plainTimeout = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Handler = (spec, timeout, _) =>
+        {
+            (spec.RoomId == room ? directoryTimeout : plainTimeout).TrySetResult(timeout);
+            return Task.FromResult(FakeProcessRunner.Ok("""{"result":"done"}"""));
+        };
+
+        Assert.Equal(System.Net.HttpStatusCode.Created,
+            (await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@sonnet directory work" })).StatusCode);
+        Assert.Equal(TimeSpan.FromMinutes(30), await directoryTimeout.Task.WaitAsync(Wait));
+
+        Assert.Equal(System.Net.HttpStatusCode.Created,
+            (await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus plain reply" })).StatusCode);
+        Assert.Equal(TimeSpan.FromMinutes(5), await plainTimeout.Task.WaitAsync(Wait));
+    }
+
+    [Fact]
+    public async Task M57_directory_timeout_note_names_the_captured_limit_and_stop_still_cancels()
+    {
+        var limits = SpawnLimits.Default with
+        {
+            Debounce = TimeSpan.Zero, MinSpacing = TimeSpan.Zero, Timeout = TimeSpan.FromSeconds(1),
+            OutsideDirectoryTimeout = TimeSpan.FromSeconds(2),
+        };
+        var (host, runner, room) = await StartRunHostAsync(limits, RunLimits.Default);
+        await using var _ = host;
+        var call = 0;
+        var stoppedResult = new TaskCompletionSource<ProcessResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Handler = async (_, timeout, ct) =>
+        {
+            var n = Interlocked.Increment(ref call);
+            var result = await FakeProcessRunner.HangUntilKilled(timeout, ct);
+            if (n == 2) stoppedResult.TrySetResult(result);
+            return result;
+        };
+
+        Assert.Equal(System.Net.HttpStatusCode.Created,
+            (await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@sonnet time out" })).StatusCode);
+        await runner.NextSpecAsync(Wait);
+        var note = await WaitForNoteContaining(host, room, "did not reply within 2 second(s)");
+        Assert.Contains("and was stopped", note.Body);
+
+        Assert.Equal(System.Net.HttpStatusCode.Created,
+            (await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@opus stop me" })).StatusCode);
+        await runner.NextSpecAsync(Wait);
+        Assert.Equal(System.Net.HttpStatusCode.OK,
+            (await host.Client.PostAsync($"api/rooms/{room}/exchange/stop", null)).StatusCode);
+        var stopped = await stoppedResult.Task.WaitAsync(Wait);
+        Assert.True(stopped.Cancelled);
+        Assert.False(stopped.TimedOut);
+    }
+
+    [Fact]
     public async Task Run09_9c_a_spawn_inside_an_active_run_gets_the_30_minute_run_timeout_not_the_5_minute_default()
     {
         WriteSkill("build-thing", RunSkillMd);

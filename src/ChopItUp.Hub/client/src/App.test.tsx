@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  applyExchangeFromRequest,
   continueExchangeAt,
   stopExchangeAt,
   TokenGate,
@@ -59,6 +60,23 @@ describe('TokenGate', () => {
 
   test('the owner can put it away without pasting anything', () => {
     expect(render()).toContain('Not now');
+  });
+});
+
+describe('M57 exchange replies across reconnect and room switch', () => {
+  const oldStop = { roomId: 'lab', seq: 900, inFlight: ['sonnet'], inFlightStartedAt: { sonnet: '2026-09-20T12:00:00Z' } } as unknown as ExchangeSnapshot;
+  const fresh = { roomId: 'lab', seq: 2, inFlight: [] } as unknown as ExchangeSnapshot;
+  const otherRoom = { roomId: 'general', seq: 3, inFlight: [] } as unknown as ExchangeSnapshot;
+
+  test('a delayed Stop reply from the old connection cannot outrank the new hub sequence', () => {
+    const afterReconnect = applyExchangeFromRequest(null, oldStop, 'lab', 1, 'lab', 2);
+    expect(afterReconnect).toBeNull();
+    expect(applyExchangeFromRequest(afterReconnect, fresh, 'lab', 2, 'lab', 2)).toBe(fresh);
+  });
+
+  test('a delayed Stop or GET reply for the room just left cannot replace the current room', () => {
+    expect(applyExchangeFromRequest(otherRoom, oldStop, 'lab', 2, 'general', 2)).toBe(otherRoom);
+    expect(applyExchangeFromRequest(otherRoom, oldStop, 'lab', 2, 'lab', 2)).toBe(oldStop);
   });
 });
 

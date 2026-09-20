@@ -980,6 +980,10 @@ input {
   border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
+.exchange-elapsed {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Queued spawns are waiting on the one ahead of them: same shape, no fill and no pulse, so the eye
    lands on whoever is actually talking. */
 .exchange-chip.queued {

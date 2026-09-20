@@ -1,7 +1,7 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, test } from 'vitest';
-import ExchangeBar from './ExchangeBar';
+import { describe, expect, test, vi } from 'vitest';
+import ExchangeBar, { workingElapsed } from './ExchangeBar';
 import { setRoster } from './participants';
 import type { ExchangeSnapshot, ExchangeView } from './types';
 
@@ -132,6 +132,34 @@ const TWO: ExchangeSnapshot = {
 };
 
 describe('ExchangeBar', () => {
+  test('M57 elapsed formatting guards unknown, invalid and future starts', () => {
+    const now = Date.parse('2026-09-20T12:00:00Z');
+    expect(workingElapsed(undefined, now)).toBeNull();
+    expect(workingElapsed('invalid', now)).toBeNull();
+    expect(workingElapsed('2026-09-20T12:00:03Z', now)).toBeNull();
+    expect(workingElapsed('2026-09-20T12:00:01Z', now)).toBe('0:00');
+    expect(workingElapsed('2026-09-20T10:58:59Z', now)).toBe('1:01:01');
+  });
+
+  test('M57 shows elapsed working time from the hub timestamp and removes it with the chip', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-20T12:01:05Z'));
+      const timed = { ...BASE, inFlightStartedAt: { sonnet: '2026-09-20T12:00:00Z' } };
+      expect(render(timed)).toContain('1:05');
+      expect(render({ ...timed, inFlight: [] })).not.toContain('1:05');
+      expect(render(BASE)).not.toContain('exchange-elapsed');
+      const disconnected = renderToStaticMarkup(
+        <ExchangeBar exchange={timed} connected={false} runStoppable={false} stopping={false}
+          stoppingRoots={NONE} continuingRoots={NONE} onStop={() => undefined} onContinue={() => undefined} />,
+      );
+      expect(disconnected).toContain('last known');
+      expect(disconnected).not.toContain('1:05');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test('an open exchange with no run offers its own stop', () => {
     expect(render(BASE)).toContain('>Stop exchange</button>');
   });
@@ -199,6 +227,19 @@ describe('ExchangeBar', () => {
 });
 
 describe('ExchangeBar with one strip per exchange', () => {
+  test('M57 each concurrent strip uses its own working start', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-09-20T12:02:00Z'));
+      const older = { ...OLDER, inFlightStartedAt: { sonnet: '2026-09-20T12:00:00Z' } };
+      const newer = { ...NEWER, inFlight: ['codex'], pending: [], inFlightStartedAt: { codex: '2026-09-20T12:01:30Z' } };
+      const markup = render({ ...TWO, exchanges: [older, newer] });
+      expect(markup).toContain('Sonnet<span class="exchange-elapsed" aria-hidden="true"> · 2:00</span>');
+      expect(markup).toContain('Codex<span class="exchange-elapsed" aria-hidden="true"> · 0:30</span>');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   /** AC1: one strip per entry, oldest first, each drawn from its own fields. */
   test('two exchanges render two strips, oldest first', () => {
     const markup = render(TWO);

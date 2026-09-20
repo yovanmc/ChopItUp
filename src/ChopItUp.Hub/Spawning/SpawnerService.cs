@@ -25,7 +25,8 @@ namespace ChopItUp.Hub.Spawning;
 /// snapshot's room-wide list.</summary>
 public sealed record ExchangeView(
     long RootMessageId, string Status, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
-    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, string? StoppedBy, bool Continuable = false);
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, string? StoppedBy, bool Continuable = false,
+    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null);
 
 /// <summary>What a per-exchange stop found. The API maps NotFound to 404, NothingToStop and
 /// RunOwnsRoom to 409, Stopped to 200 with the snapshot.</summary>
@@ -40,7 +41,8 @@ public enum ExchangeStopOutcome { Stopped, NotFound, NothingToStop, RunOwnsRoom 
 /// the newest.</summary>
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
-    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null, bool Continuable = false);
+    IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null, bool Continuable = false,
+    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null);
 
 /// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
 /// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
@@ -80,6 +82,9 @@ public sealed class SpawnerService : BackgroundService
         // park or end while its spawn is still alive, and the two "did not reply in time" notes at
         // OnFinished must describe the SAME timeout the spawn was actually given.
         public required TimeSpan Timeout { get; init; }
+        // The chip becomes "working" at Launch, before optional git preparation. This is elapsed
+        // working time, not a claim about model execution or billable time.
+        public required DateTimeOffset StartedAt { get; init; }
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
         // Row 35: true when this spawn runs in its exchange's own worktree rather than the room
@@ -970,12 +975,7 @@ public sealed class SpawnerService : BackgroundService
         var workDir = Path.GetFullPath(Path.Combine(_options.DataDir, "spawns", spawnId));
         ExchangePolicy.Started(x, request);
         _lastStart[participant.Id] = now;
-        // Row 19, task 9c: captured HERE, at launch - not re-read inside the spawn's own task body
-        // or at OnFinished - because a run can park or end while this spawn is still alive, and both
-        // the timeout actually given to IProcessRunner and the notes OnFinished writes about it must
-        // agree on the SAME value.
         var activeRun = _runs.Active(request.RoomId);
-        var timeout = activeRun is not null ? _runLimits.SpawnTimeout : _limits.Timeout;
         // Row 19, task 11 (AC7/D10): a conductor thinks harder about its own loop, and a judge about
         // what it is asked to judge; everyone else, and anything outside a run, gets no effort flag
         // at all rather than an explicit default. Never xhigh or max. The rule itself is
@@ -991,6 +991,10 @@ public sealed class SpawnerService : BackgroundService
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
+            // Capture the same selected limit for the runner and its timeout note. An active run
+            // always wins, even when its room has a directory; plain outside-run rooms keep D7.
+            var timeout = activeRun is not null ? _runLimits.SpawnTimeout
+                : directory is not null ? _limits.EffectiveOutsideDirectoryTimeout : _limits.Timeout;
             // Row 35: outside a run, a directory room's spawn edits its exchange's own worktree, not
             // the room directory itself - each exchange got its own in-flight set from LaunchDue's
             // exclusiveOver on the same test (UsesWorktrees), so the two must never disagree.
@@ -1076,7 +1080,7 @@ public sealed class SpawnerService : BackgroundService
             var handle = new SpawnHandle
             {
                 Request = request, Exchange = x, Participant = participant, SpawnId = spawnId, WorkDir = workDir, Token = token,
-                Cancel = new CancellationTokenSource(), Directory = tree, InWorktree = inWorktree, Timeout = timeout,
+                Cancel = new CancellationTokenSource(), Directory = tree, InWorktree = inWorktree, Timeout = timeout, StartedAt = now,
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
@@ -1367,22 +1371,26 @@ public sealed class SpawnerService : BackgroundService
         // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the newest
         // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
         var views = ExchangesIn(roomId).Select(x => View(x, runBlocks)).ToList();
+        var starts = _inFlight.Values.Where(h => h.Request.RoomId == roomId)
+            .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal);
         var snapshot = (Displayed(roomId) is { } x
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
                 Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
                 StoppedBy: x.StopCause?.ToString().ToLowerInvariant(),
-                Continuable: ExchangePolicy.Continuable(x, runBlocks))
+                Continuable: ExchangePolicy.Continuable(x, runBlocks), InFlightStartedAt: starts)
             : Idle(roomId)) with { Seq = ++_seq, Exchanges = views };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);
         return snapshot;
     }
 
-    private static ExchangeView View(Exchange x, bool runBlocks) => new(
+    private ExchangeView View(Exchange x, bool runBlocks) => new(
         x.RootMessageId, x.Status.ToString().ToLowerInvariant(), x.Budget, x.TurnsStarted, x.TurnsCommitted,
         Math.Max(0, x.Budget - x.TurnsCommitted), x.InFlight.Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
         x.StopCause?.ToString().ToLowerInvariant(),
-        ExchangePolicy.Continuable(x, runBlocks));
+        ExchangePolicy.Continuable(x, runBlocks),
+        _inFlight.Values.Where(h => ReferenceEquals(h.Exchange, x))
+            .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal));
 
     private async void BroadcastAsync(string roomId, ExchangeSnapshot snapshot)
     {

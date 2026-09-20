@@ -1,9 +1,11 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { displayName } from './participants';
 import type { ExchangeSnapshot, ExchangeView } from './types';
 
 interface ExchangeBarProps {
   exchange: ExchangeSnapshot | null;
+  /** False while a socket is disconnected; a cached snapshot cannot prove a spawn is still running. */
+  connected?: boolean;
   runStoppable: boolean;
   /** The room stop in flight: the only stop a hub without `exchanges` offers, shared with `RunBar`. */
   stopping: boolean;
@@ -21,7 +23,7 @@ interface ExchangeBarProps {
 /** What one strip draws from: the fields an `ExchangeView` and the snapshot's top level share. */
 type StripFields = Pick<
   ExchangeView,
-  'status' | 'inFlight' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy' | 'continuable'
+  'status' | 'inFlight' | 'inFlightStartedAt' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy' | 'continuable'
 >;
 
 interface StripControl {
@@ -31,6 +33,7 @@ interface StripControl {
   runStoppable: boolean;
   disabled: boolean;
   continueDisabled: boolean;
+  connected: boolean;
   onStop: () => void;
   onContinue: () => void;
 }
@@ -64,6 +67,42 @@ const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
   run: 'Stopped by the run',
 };
 
+/** Elapsed since the hub first marked this spawn working. Missing, invalid and implausibly future
+ *  instants have no clock label; a small clock difference is clamped to zero. */
+export function workingElapsed(startedAt: string | undefined, nowMs: number): string | null {
+  if (!startedAt || !Number.isFinite(nowMs)) return null;
+  const startedMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedMs) || startedMs > nowMs + 2_000) return null;
+  const seconds = Math.max(0, Math.floor((nowMs - startedMs) / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  const tail = String(seconds % 60).padStart(2, '0');
+  return minutes >= 60
+    ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${tail}`
+    : `${minutes}:${tail}`;
+}
+
+/** A local clock updates only this chip, without new server events or changing the parent status
+ *  region's accessible text once a second. */
+function WorkingChip({ id, startedAt, connected }: { id: string; startedAt?: string; connected: boolean }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!connected || !startedAt || !Number.isFinite(Date.parse(startedAt))) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [connected, startedAt]);
+  const elapsed = connected ? workingElapsed(startedAt, nowMs) : null;
+  const name = displayName(id);
+  return (
+    <span className="exchange-chip working" title={connected ? `${name} is replying` : `${name} was working when the connection was lost`}>
+      <span className="dot" aria-hidden="true" />
+      {name}
+      {elapsed !== null && <span className="exchange-elapsed" aria-hidden="true"> · {elapsed}</span>}
+      {!connected && <span aria-hidden="true"> · last known</span>}
+    </span>
+  );
+}
+
 /** One compact strip above the composer, and nothing at all when the room is idle: a room that has
  *  never run an exchange should look exactly as it did before this row shipped.
  *
@@ -80,7 +119,7 @@ const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
  *  row it always had and the stack reads like `RunBar` above it. That hub sends an empty list exactly
  *  when its top level is idle, so the empty case falls through to the idle branch below. A hub
  *  without `exchanges` renders the one top-level strip with the room stop, as before. */
-function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, continuingRoots, onStop, onContinue }: ExchangeBarProps) {
+function ExchangeBar({ exchange, connected = true, runStoppable, stopping, stoppingRoots, continuingRoots, onStop, onContinue }: ExchangeBarProps) {
   const views = exchange?.exchanges ?? [];
   if (views.length > 0) {
     const labelled = views.length > 1;
@@ -93,6 +132,7 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, continui
             runStoppable,
             disabled: stoppingRoots.has(view.rootMessageId),
             continueDisabled: continuingRoots.has(view.rootMessageId),
+            connected,
             onStop: () => onStop(view.rootMessageId),
             onContinue: () => onContinue(view.rootMessageId),
           }),
@@ -111,6 +151,7 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, continui
     runStoppable,
     disabled: stopping,
     continueDisabled: root !== null && continuingRoots.has(root),
+    connected,
     onStop: () => onStop(null),
     onContinue: () => {
       if (root !== null) onContinue(root);
@@ -125,9 +166,9 @@ function ExchangeBar({ exchange, runStoppable, stopping, stoppingRoots, continui
  *  which is the truer gate for that strip's Stop. */
 function strip(
   fields: StripFields,
-  { key, label, runStoppable, disabled, continueDisabled, onStop, onContinue }: StripControl,
+  { key, label, runStoppable, disabled, continueDisabled, connected, onStop, onContinue }: StripControl,
 ) {
-  const { status, inFlight, pending, budget, remaining, turnsUsed, stoppedBy, continuable } = fields;
+  const { status, inFlight, inFlightStartedAt, pending, budget, remaining, turnsUsed, stoppedBy, continuable } = fields;
   const open = status === 'open';
   /** The cause only speaks for a `stopped` exchange: a superseded one carries whatever cause its
    *  last stop left behind, and "Superseded" is still the truer word for it. */
@@ -143,10 +184,7 @@ function strip(
   /** Rendered in the lead while the exchange is open and in the tail after it closed, so a spawn that
    *  outlives its exchange stays visible beside the marker that explains why it is alone. */
   const working = inFlight.map((id) => (
-    <span key={`w:${id}`} className="exchange-chip working" title={`${displayName(id)} is replying`}>
-      <span className="dot" aria-hidden="true" />
-      {displayName(id)}
-    </span>
+    <WorkingChip key={`w:${id}:${inFlightStartedAt?.[id] ?? ''}`} id={id} startedAt={inFlightStartedAt?.[id]} connected={connected} />
   ));
 
   return (
