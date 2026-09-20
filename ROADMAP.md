@@ -7,10 +7,9 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 48 | Governing context survives the window | ✅ | DONE | — | DONE 2026-09-19: 47847e6 (#131), schema 14 deployed. CI 1,373 .NET + 266 client; synthetic 12/12, UIA 14/14 + visual, release 29/29. Evidence: .scratch/m48-governing-context/verification.md. Bugs 62/63 queued. |
 | 49 | Room modes and on-call answers | [ ] | READY | — | An un-mentioned message gets a reply: `/mode relay` (default: first answers, second replies having read it), `primary`, `panel` (parallel, blind, then synthesis); mode, participants and per-turn cost visible. |
 | 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
-| 51 | Classes, model and effort in the Roles dialog | 🔨 | READY | [note](docs/superpowers/plans/m51-roles-metadata.md) | Classes need `--set-classes` with the hub stopped (HubOptions.cs:114) and were invisible in Roles, while runs dispatch by class (ExchangePolicy.cs:299). Building 2026-09-20: read-only model, classes and run effort per card, from the roster and `EffortPolicy`. |
+| 51 | Classes, model and effort in the Roles dialog | ✅ | DONE | [note](docs/superpowers/plans/m51-roles-metadata.md) | DONE 2026-09-20: d02f853 (#133), deployed and UI verified. Roles displays configured model, classes and run effort from the authoritative roster; editing and dispatch remain intact. |
 | 52 | Research tools in plain rooms | [ ] | BACKLOG | — | Web search and fetch for plain-room spawns with honest unavailable-tool messages; files and shell stay directory-room only (SpawnCommands.cs:26-34). |
 | 53 | Task usage telemetry | [ ] | BACKLOG | — | Model, effort, duration, tool and retry counts, termination reason, token metrics when reported (else unknown), per task. |
 | 54 | Joined hosts with bounded delegation | [ ] | BACKLOG | — | A `claude-code` row and a mention-capable `codex` row for the native sessions, bounded delegation per room, never an owner credential in a worker; README.md:21 rewritten. |
