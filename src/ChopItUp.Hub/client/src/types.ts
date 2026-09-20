@@ -38,21 +38,33 @@ export interface Room {
  *  is this room's override, `null` when none is stored and `''` when the room stores the "no role
  *  here" sentinel — a stored row, not the absence of one; `effectiveRole` is what the hub actually
  *  renders into the prompt, `COALESCE(roomRole, role)`, computed by the server and never re-derived
- *  here. */
+ *  here.
+ *
+ *  Milestone 51: the three read-only roster fields. `model` is the name the host CLI is launched
+ *  with (never null on a listed row: unspawnable rows are not listed). `classes` is the normalised
+ *  set the dispatcher applies (`ParticipantClasses.Parse`), empty when the row has none. `effort` is
+ *  the flag those classes earn inside a run, or null for "no flag, the CLI's default" — the server's
+ *  `EffortPolicy.ForClasses`, never a rule re-derived here. */
 export interface RoleRow {
   id: string;
   displayName: string;
   role: string | null;
   roomRole: string | null;
   effectiveRole: string | null;
+  model: string;
+  classes: string[];
+  effort: string | null;
 }
 
 /** Mirrors `GET /api/rooms/{id}/roles` and the answer to every write on it. `participants` holds only
  *  the rows the hub can actually spawn (`ExchangePolicy.IsSpawnable`), so the app-backed `claude` and
- *  `codex` rows are absent — a role stored on them could never render. */
+ *  `codex` rows are absent — a role stored on them could never render. `conductorEffort` (milestone
+ *  51) is the effort a run's conductor is spawned at whatever its classes, sent so the dialog can say
+ *  so without carrying the value itself. */
 export interface RoomRoles {
   roomId: string;
   persona: string | null;
+  conductorEffort: string;
   participants: RoleRow[];
 }
 
