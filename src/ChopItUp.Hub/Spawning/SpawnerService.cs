@@ -978,9 +978,9 @@ public sealed class SpawnerService : BackgroundService
         var timeout = activeRun is not null ? _runLimits.SpawnTimeout : _limits.Timeout;
         // Row 19, task 11 (AC7/D10): a conductor thinks harder about its own loop, and a judge about
         // what it is asked to judge; everyone else, and anything outside a run, gets no effort flag
-        // at all rather than an explicit default. Never xhigh or max.
-        var effort = activeRun is not null && (participant.Id == activeRun.ConductorId || ParticipantClasses.Has(participant, ParticipantClasses.Judge))
-            ? "high" : null;
+        // at all rather than an explicit default. Never xhigh or max. The rule itself is
+        // EffortPolicy's (milestone 51), so the Roles dialog shows the same one this site applies.
+        var effort = EffortPolicy.AtLaunch(participant, inRun: activeRun is not null, conductor: activeRun is not null && participant.Id == activeRun.ConductorId);
         try
         {
             // Row 19, task 9d: counted before anything below can throw - a spawn that fails even to

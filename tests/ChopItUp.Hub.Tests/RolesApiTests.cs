@@ -330,4 +330,64 @@ public sealed class RolesApiTests : IAsyncLifetime
         var r = await anon.GetAsync("api/rooms/general/roles");
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
+
+    // -- Milestone 51: the roster's classes, model and effort are shown beside each row, read-only. --
+
+    private static List<string?> Strs(JsonElement e, string prop) =>
+        e.GetProperty(prop).EnumerateArray().Select(x => x.GetString()).ToList();
+
+    /// <summary>Milestone 51: every listed row carries the model name its host is launched with, its
+    /// normalised class set and the effort flag those classes earn inside a run (<c>judge</c> gets
+    /// <c>high</c>, anyone else gets no flag, so null). The seed roster is the fixture: opus is
+    /// visible+judge, sonnet is plumbing, gpt-5.5 has no classes at all.</summary>
+    [Fact]
+    public async Task GET_reports_model_classes_and_run_effort_for_every_row()
+    {
+        var roles = await GetRoles();
+
+        var opus = Row(roles, "opus");
+        Assert.Equal("opus", Str(opus, "model"));
+        Assert.Equal(["visible", "judge"], Strs(opus, "classes"));
+        Assert.Equal("high", Str(opus, "effort"));
+
+        var sonnet = Row(roles, "sonnet");
+        Assert.Equal("sonnet", Str(sonnet, "model"));
+        Assert.Equal(["plumbing"], Strs(sonnet, "classes"));
+        Assert.Null(Str(sonnet, "effort"));
+
+        var bare = Row(roles, "gpt-5.5");
+        Assert.Equal("gpt-5.5", Str(bare, "model"));
+        Assert.Empty(Strs(bare, "classes"));
+        Assert.Null(Str(bare, "effort"));
+
+        Assert.Equal("high", roles.GetProperty("conductorEffort").GetString());
+    }
+
+    /// <summary>The metadata is read off the live roster like the role text is, never a startup
+    /// snapshot: a class set on the store is in the next GET. (Dispatch itself snapshots the roster
+    /// at start, which is why <c>--set-classes</c> refuses to run under a live hub; this test drives
+    /// the store directly to prove where the API reads from.)</summary>
+    [Fact]
+    public async Task A_class_set_on_the_store_is_reflected_in_the_next_GET()
+    {
+        Assert.True(Participants.SetClasses("gpt-5.5", "judge"));
+
+        var row = Row(await GetRoles(), "gpt-5.5");
+        Assert.Equal(["judge"], Strs(row, "classes"));
+        Assert.Equal("high", Str(row, "effort"));
+    }
+
+    /// <summary>A write's answer is the same shape as the read, metadata included, so the dialog does
+    /// not lose the line after a save.</summary>
+    [Fact]
+    public async Task A_write_answers_with_the_metadata_too()
+    {
+        var r = await SetRoomRole("general", "opus", "Local reviewer");
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+
+        var row = Row(await r.Content.ReadFromJsonAsync<JsonElement>(), "opus");
+        Assert.Equal("opus", Str(row, "model"));
+        Assert.Equal(["visible", "judge"], Strs(row, "classes"));
+        Assert.Equal("high", Str(row, "effort"));
+    }
 }

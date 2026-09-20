@@ -2300,6 +2300,29 @@ input {
   color: var(--dim);
 }
 
+/* Milestone 51: what the roster says about the row (model, classes, effort). Under the head and above
+   the in-force line: it is context the boxes cannot change, so it sits with the identity, not with
+   the editing. Same --dim at 12px as the in-force line, for the same WCAG reason. */
+.roles-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.roles-model,
+.roles-classes {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.roles-classes-empty {
+  font-style: italic;
+}
+
 /* The line that answers "what is this one actually told here". Above both boxes on purpose: it is the
    answer, and the boxes are only how the answer gets changed. --dim, not --faint: at 12px this has to
    clear WCAG AA. */

@@ -2,6 +2,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as api from './api';
 import {
+  describeClasses,
+  describeEffort,
   draftKey,
   OVERRIDE_OPS,
   PERSONA_KEY,
@@ -48,24 +50,57 @@ function json(body: unknown, status = 200): Response {
 afterEach(() => vi.unstubAllGlobals());
 
 /** One row per state of D-b's four-state space, in the order the table in the plan lists them. */
-const PLANNER: RoleRow = { id: 'opus', displayName: 'Opus', role: 'You plan.', roomRole: null, effectiveRole: 'You plan.' };
+/** Milestone 51: each fixture also carries what the roster says about the row (model, classes and
+ *  the effort its classes earn in a run), exactly as `RolesApi` now sends it. */
+const PLANNER: RoleRow = {
+  id: 'opus',
+  displayName: 'Opus',
+  role: 'You plan.',
+  roomRole: null,
+  effectiveRole: 'You plan.',
+  model: 'opus',
+  classes: ['visible', 'judge'],
+  effort: 'high',
+};
 const SCRIBE: RoleRow = {
   id: 'gpt-5.6-sol',
   displayName: 'GPT-5.6 Sol',
   role: 'You review.',
   roomRole: 'You keep the notes here.',
   effectiveRole: 'You keep the notes here.',
+  model: 'gpt-5.6-sol',
+  classes: [],
+  effort: null,
 };
-const SILENT: RoleRow = { id: 'sonnet', displayName: 'Sonnet', role: 'You build.', roomRole: '', effectiveRole: '' };
-const BLANK: RoleRow = { id: 'fable', displayName: 'Fable', role: null, roomRole: null, effectiveRole: null };
+const SILENT: RoleRow = {
+  id: 'sonnet',
+  displayName: 'Sonnet',
+  role: 'You build.',
+  roomRole: '',
+  effectiveRole: '',
+  model: 'sonnet',
+  classes: ['plumbing'],
+  effort: null,
+};
+const BLANK: RoleRow = {
+  id: 'fable',
+  displayName: 'Fable',
+  role: null,
+  roomRole: null,
+  effectiveRole: null,
+  model: 'fable',
+  classes: ['judge'],
+  effort: 'high',
+};
 
 const ROLES: RoomRoles = {
   roomId: 'lab',
   persona: 'This room ships the migration.',
+  conductorEffort: 'high',
   participants: [PLANNER, SCRIBE, SILENT, BLANK],
 };
 
-const EMPTY: RoomRoles = { roomId: 'lab', persona: null, participants: [BLANK] };
+const EMPTY: RoomRoles = { roomId: 'lab', persona: null, conductorEffort: 'high', participants: [BLANK] };
 
 const NOOP = () => undefined;
 
@@ -103,6 +138,55 @@ describe('what the dialog shows', () => {
   });
 });
 
+/** Milestone 51. Classes decide who a run dispatches to (ExchangePolicy) and what effort a row is
+ *  spawned at (EffortPolicy), and until now the only way to see them was the roster's own SQL. The
+ *  dialog shows what the hub sent, read-only: the model name the host is launched with, the class
+ *  set, and the effort the classes earn. What these cases bind is honesty at the edges: a row with no
+ *  classes says so, a row that earns no flag says the CLI decides, and no value is invented locally. */
+describe('what the roster says about each row', () => {
+  test('every row shows the model name its host is launched with', () => {
+    const markup = render();
+
+    for (const row of ROLES.participants) expect(markup).toContain(`roles-model">${row.model}<`);
+  });
+
+  test('a row with classes lists them in the roster order', () => {
+    expect(describeClasses(PLANNER)).toBe('visible, judge');
+    expect(render()).toContain('visible, judge');
+  });
+
+  test('a row with no classes says so instead of showing nothing', () => {
+    expect(describeClasses(SCRIBE)).toBe('none');
+    const markup = render({ roomId: 'lab', persona: null, conductorEffort: 'high', participants: [SCRIBE] });
+    expect(markup).toContain('roles-classes-empty');
+  });
+
+  test('a judge row says what effort it earns in a run, and that outside one the CLI decides', () => {
+    const text = describeEffort(PLANNER, ROLES.conductorEffort);
+    expect(text).toContain('high in a run');
+    expect(text).toContain('CLI default');
+    expect(render()).toContain(text);
+  });
+
+  test('a row that earns no flag says the CLI default applies, and names the conductor exception', () => {
+    const text = describeEffort(SILENT, ROLES.conductorEffort);
+    expect(text).toContain('CLI default');
+    expect(text).not.toContain('high in a run');
+    expect(text).toContain('high when it conducts a run');
+  });
+
+  test('the effort values shown are the server values, never a literal of this file', () => {
+    const custom = describeEffort({ ...PLANNER, effort: 'SERVER-SAID' }, 'CONDUCTOR-SAID');
+    expect(custom).toContain('SERVER-SAID in a run');
+    expect(describeEffort(SILENT, 'CONDUCTOR-SAID')).toContain('CONDUCTOR-SAID when it conducts a run');
+  });
+
+  test('the note says the metadata is read-only and where classes are set', () => {
+    const markup = render();
+    expect(markup).toContain('--set-classes');
+  });
+});
+
 /** AC3 is entirely about which text is in force; a dialog showing two textareas makes the owner
  *  work that out by hand. The text shown is the SERVER's `effectiveRole`, never a precedence this
  *  file recomputes — which is why the fixture below carries an `effectiveRole` that matches neither
@@ -112,7 +196,8 @@ describe('which text is actually in force', () => {
     const markup = render({
       roomId: 'lab',
       persona: null,
-      participants: [{ id: 'opus', displayName: 'Opus', role: 'the global one', roomRole: null, effectiveRole: 'WHAT THE HUB RENDERS' }],
+      conductorEffort: 'high',
+      participants: [{ ...PLANNER, role: 'the global one', roomRole: null, effectiveRole: 'WHAT THE HUB RENDERS' }],
     });
 
     expect(markup).toContain('WHAT THE HUB RENDERS');
@@ -127,7 +212,7 @@ describe('which text is actually in force', () => {
   });
 
   test('a suppressed row says so rather than presenting the global role as in force', () => {
-    const markup = render({ roomId: 'lab', persona: null, participants: [SILENT] });
+    const markup = render({ roomId: 'lab', persona: null, conductorEffort: 'high', participants: [SILENT] });
 
     expect(markup).toContain(SOURCE_LABEL.suppressed);
     // The in-force text element is absent entirely: there is no text in force, and the global role

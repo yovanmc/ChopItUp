@@ -80,11 +80,20 @@ public static class RolesApi
     /// (<see cref="ParticipantStore.List"/>) — never the startup-static singleton — restricted to
     /// <see cref="ExchangePolicy.IsSpawnable"/> rows: <c>claude</c> and <c>codex</c> are kind 'model'
     /// with a NULL model and are never spawned, so listing them here would show role text that can
-    /// never render (D-g).</summary>
+    /// never render (D-g). Milestone 51 adds what the roster says about each row, read-only: the
+    /// <c>model</c> its host is launched with (never null on a spawnable row), its normalised
+    /// <c>classes</c> (<see cref="ParticipantClasses.Parse"/>, so a mistyped token the dispatcher
+    /// would drop is not shown as though it applied) and the <c>effort</c> those classes earn inside a
+    /// run (<see cref="EffortPolicy.ForClasses"/>: <c>high</c> for a judge, null for "no flag, the
+    /// CLI's default"). <c>conductorEffort</c> is the run conductor's, whatever its classes, so the
+    /// dialog can say so without a literal of its own. Nothing here is a resolved runtime value: the
+    /// dispatcher snapshots the roster at start, and <c>--set-classes</c> refuses to run under a live
+    /// hub, so the live read and the snapshot agree unless the database was edited by hand.</summary>
     private static object BuildRoomRoles(string roomId, string? persona, ParticipantStore participants) => new
     {
         roomId,
         persona,
+        conductorEffort = EffortPolicy.Raised,
         participants = participants.List().Where(ExchangePolicy.IsSpawnable).Select(p => new
         {
             p.Id,
@@ -92,6 +101,9 @@ public static class RolesApi
             role = p.Role,
             roomRole = participants.RoomRole(roomId, p.Id),
             effectiveRole = participants.EffectiveRole(roomId, p.Id),
+            model = p.Model,
+            classes = ParticipantClasses.Parse(p.Classes),
+            effort = EffortPolicy.ForClasses(p),
         }),
     };
 

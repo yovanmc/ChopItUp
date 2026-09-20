@@ -22,6 +22,21 @@ export function sourceOf(row: RoleRow): RoleSource {
   return row.role !== null && row.role.length > 0 ? 'global' : 'none';
 }
 
+/** Milestone 51: the roster's class set as one line, or the word for having none. Order is the
+ *  server's (`ParticipantClasses.All`), never re-sorted here. */
+export function describeClasses(row: RoleRow): string {
+  return row.classes.length === 0 ? 'none' : row.classes.join(', ');
+}
+
+/** Milestone 51: what effort this row is spawned at, in words the owner can act on. Both values are
+ *  the server's (`EffortPolicy`): `row.effort` is what the row's classes earn inside a run, null when
+ *  they earn no flag and the CLI's own default applies; `conductorEffort` is what conducting a run
+ *  gives any row. Nothing here guesses what a particular spawn resolved to. */
+export function describeEffort(row: RoleRow, conductorEffort: string): string {
+  if (row.effort !== null) return `${row.effort} in a run (from its classes), the CLI default outside one`;
+  return `the CLI default (no flag), ${conductorEffort} when it conducts a run`;
+}
+
 /** The two operations that are NOT "save what I typed", and are not each other either (D-b).
  *
  *  Clearing an override deletes the row, so the participant goes back to carrying its global role
@@ -187,7 +202,8 @@ export function RolesEditor({
         The hub renders this text into every spawn it starts in this room. Your messages in the room, and
         the skill in force, outrank it. Saving an empty persona or global role box clears that text. For
         this room, Clear override brings the global role back, and an empty save or No role in this room
-        leaves no role here.
+        leaves no role here. Model, classes and effort are the roster&apos;s and are only shown here:
+        classes change with <code>--set-classes</code> while the hub is stopped.
       </p>
 
       <label className="field-label" htmlFor="roles-persona">
@@ -226,6 +242,23 @@ export function RolesEditor({
                 <span className="roles-name">{row.displayName}</span>
                 <code className="roles-id">{row.id}</code>
               </div>
+
+              {/* Milestone 51: what the roster says about this row. Read-only, and every value is the
+                  server's: the dialog neither re-derives the class rule nor guesses a spawn's effort. */}
+              <p className="roles-meta">
+                <span>
+                  Model <code className="roles-model">{row.model}</code>
+                </span>
+                <span>
+                  Classes{' '}
+                  {row.classes.length === 0 ? (
+                    <em className="roles-classes-empty">{describeClasses(row)}</em>
+                  ) : (
+                    <code className="roles-classes">{describeClasses(row)}</code>
+                  )}
+                </span>
+                <span>Effort {describeEffort(row, roles.conductorEffort)}</span>
+              </p>
 
               {/* What is actually in force, and where it came from. The hub computed both halves of
                   this; the dialog is not the place the owner should have to work out precedence. */}
