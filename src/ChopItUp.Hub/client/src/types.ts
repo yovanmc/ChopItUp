@@ -126,6 +126,9 @@ export interface ExchangeSnapshot {
   turnsCommitted: number;
   remaining: number;
   inFlight: string[];
+  /** M57. Working-chip start instants, keyed only for the live participants above. Optional so a
+   *  client talking to an older hub still shows names without inventing an elapsed time. */
+  inFlightStartedAt?: Record<string, string>;
   pending: string[];
   seq: number;
   /** Row 27. The wire name of the `ExchangeStopCause` that stopped this exchange
@@ -155,6 +158,7 @@ export interface ExchangeView {
   turnsCommitted: number;
   remaining: number;
   inFlight: string[];
+  inFlightStartedAt?: Record<string, string>;
   pending: string[];
   stoppedBy: ExchangeSnapshot['stoppedBy'];
   /** Row 44 (D-e). The hub's own decision that `/continue` would be accepted for this exchange: it is

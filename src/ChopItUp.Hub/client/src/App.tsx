@@ -41,6 +41,18 @@ function applyExchange(current: ExchangeSnapshot | null, incoming: ExchangeSnaps
   return current;
 }
 
+/** HTTP replies can arrive after a room switch or a reconnect that reset the hub's seq space.
+ *  Check the boundary inside the React state updater, including Stop replies, before comparing seq. */
+export function applyExchangeFromRequest(
+  current: ExchangeSnapshot | null, incoming: ExchangeSnapshot,
+  requestedRoom: string, requestedGeneration: number,
+  activeRoom: string | null, activeGeneration: number,
+): ExchangeSnapshot | null {
+  if (requestedRoom !== activeRoom || requestedGeneration !== activeGeneration || incoming.roomId !== requestedRoom)
+    return current;
+  return applyExchange(current, incoming);
+}
+
 /** Row 34: a copy of a per-root pending set with `root` added or removed. A copy because it is React
  *  state, and one root's release must never drop a neighbour that is still pending. Row 44 gives the
  *  Continue presses a second set of the same shape, which this serves too. */
@@ -217,6 +229,9 @@ export default function App() {
 
   const hub = useRef<HubConnection | null>(null);
   const currentRoom = useRef<string | null>(null);
+  /** A reconnect can reset the hub's snapshot sequence. Reject GETs from the old connection before
+   *  its old, larger seq can replace the new hub's truthful state. */
+  const exchangeGeneration = useRef(0);
   const lastId = useRef(0);
   const showArchivedRef = useRef(false);
   const readTimer = useRef<number | null>(null);
@@ -439,9 +454,19 @@ export default function App() {
       // Inside a run the counters move with the exchanges, and the run's own park lands on one.
       refreshRun(snapshot.roomId).catch(() => undefined);
     });
-    connection.onreconnecting(() => setLiveness('connecting'));
-    connection.onclose(() => setLiveness('offline'));
+    connection.onreconnecting(() => {
+      exchangeGeneration.current++;
+      setLiveness('connecting');
+    });
+    connection.onclose(() => {
+      exchangeGeneration.current++;
+      setLiveness('offline');
+    });
     connection.onreconnected(() => {
+      const generation = ++exchangeGeneration.current;
+      // A restarted hub has a new seq space. Do this before joining, so fresh socket events cannot
+      // be hidden by a larger seq from the previous connection.
+      setExchange(null);
       setLiveness('live');
       // A reconnect is a new connection id, so every group membership went with the old one.
       joinedGroups.current.clear();
@@ -457,7 +482,10 @@ export default function App() {
         .then(() =>
           Promise.all([
             api.readMessages(room, lastId.current).then(merge),
-            api.getExchange(room).then((snapshot) => setExchange((previous) => applyExchange(previous, snapshot))),
+            api.getExchange(room).then((snapshot) => {
+              setExchange((previous) => applyExchangeFromRequest(
+                previous, snapshot, room, generation, currentRoom.current, exchangeGeneration.current));
+            }),
             refreshRun(room),
             loadProposals(room),
             loadSkillProposals(room),
@@ -495,6 +523,7 @@ export default function App() {
     setSkillRefusals({});
     if (!roomId) return;
     const abort = new AbortController();
+    const generation = exchangeGeneration.current;
     // Usually already joined (the `rooms` effect subscribes to everything); this covers the room
     // that is opened before its list arrives.
     const joined = joinGroups([roomId]).catch(() => setLiveness('offline'));
@@ -505,7 +534,8 @@ export default function App() {
           .getExchange(roomId, abort.signal)
           .then((snapshot) => {
             if (abort.signal.aborted) return;
-            setExchange((previous) => applyExchange(previous, snapshot));
+            setExchange((previous) => applyExchangeFromRequest(
+              previous, snapshot, roomId, generation, currentRoom.current, exchangeGeneration.current));
           })
           .catch((failure) => {
             if (!abort.signal.aborted) setError(api.describeError(failure));
@@ -590,10 +620,12 @@ export default function App() {
   // only ends the current one. The banner is the existing error surface; nothing new for failures.
   const stop = useCallback(async () => {
     if (!roomId) return;
+    const generation = exchangeGeneration.current;
     setStopping(true);
     try {
       const snapshot = await api.stopExchange(roomId);
-      setExchange((previous) => applyExchange(previous, snapshot));
+      setExchange((previous) => applyExchangeFromRequest(
+        previous, snapshot, roomId, generation, currentRoom.current, exchangeGeneration.current));
       setError(null);
       // Row 22: this call ends the RUN when there is one, and the run strip has no socket event of
       // its own — it rides `ExchangeChanged` and the hub's note. Both are round trips that may not
@@ -616,10 +648,12 @@ export default function App() {
         return;
       }
       if (!roomId) return;
+      const generation = exchangeGeneration.current;
       void stopExchangeAt(roomId, root, {
         begin: () => setStoppingRoots((previous) => withStopping(previous, root, true)),
         apply: (snapshot) => {
-          setExchange((previous) => applyExchange(previous, snapshot));
+          setExchange((previous) => applyExchangeFromRequest(
+            previous, snapshot, roomId, generation, currentRoom.current, exchangeGeneration.current));
           setError(null);
         },
         refused,
@@ -825,6 +859,7 @@ export default function App() {
             <RunBar run={run} stopping={stopping} onStop={stop} />
             <ExchangeBar
               exchange={exchange}
+              connected={liveness === 'live'}
               runStoppable={runStoppable}
               stopping={stopping}
               stoppingRoots={stoppingRoots}

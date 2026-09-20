@@ -73,6 +73,9 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         var open = await Get("general");
         Assert.Equal("open", open.GetProperty("status").GetString());
         Assert.Equal(["fable"], open.GetProperty("inFlight").EnumerateArray().Select(e => e.GetString()));
+        var started = open.GetProperty("inFlightStartedAt").GetProperty("fable").GetDateTimeOffset();
+        Assert.InRange(started, DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow);
+        Assert.Equal(started, open.GetProperty("exchanges")[0].GetProperty("inFlightStartedAt").GetProperty("fable").GetDateTimeOffset());
         Assert.Equal(3, open.GetProperty("remaining").GetInt32());
 
         var stop = await _host.Client.PostAsync("api/rooms/general/exchange/stop", null);
@@ -93,6 +96,10 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Contains((ChopDb.HubParticipantId, "Exchange stopped by the owner: 1 of 4 turns used."), bodies);
         Assert.DoesNotContain(bodies, b => b.Item2!.Contains("did not reply"));      // cancelled, not timed out
         Assert.DoesNotContain(bodies, b => b.Item2!.Contains("Exchange concluded"));
+
+        for (var i = 0; i < 100 && (await Get("general")).GetProperty("inFlight").GetArrayLength() > 0; i++)
+            await Task.Delay(50);
+        Assert.Empty((await Get("general")).GetProperty("inFlightStartedAt").EnumerateObject());
 
         Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);   // nothing open now
         Assert.Equal("stopped", (await Get("general")).GetProperty("status").GetString());
@@ -161,6 +168,9 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal(2, exchanges.Count);
         var rootA = exchanges[0].GetProperty("rootMessageId").GetInt64();
         Assert.Equal(["fable"], exchanges[0].GetProperty("inFlight").EnumerateArray().Select(e => e.GetString()));
+        Assert.Equal(snap.GetProperty("inFlightStartedAt").GetProperty("fable").GetDateTimeOffset(),
+            exchanges[0].GetProperty("inFlightStartedAt").GetProperty("fable").GetDateTimeOffset());
+        Assert.False(exchanges[1].GetProperty("inFlightStartedAt").TryGetProperty("fable", out _));
         Assert.Equal(snap.GetProperty("rootMessageId").GetInt64(), exchanges[1].GetProperty("rootMessageId").GetInt64());   // top level = newest
 
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsync("api/rooms/general/exchanges/999999/stop", null)).StatusCode);
@@ -180,6 +190,7 @@ public sealed class ExchangeApiTests : IAsyncLifetime
             await Task.Delay(50);
         }
         Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync($"api/rooms/general/exchanges/{rootA}/stop", null)).StatusCode);
+        Assert.False((await Get("general")).GetProperty("inFlightStartedAt").TryGetProperty("fable", out _));
         Assert.Equal(HttpStatusCode.OK, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);   // room-level stop still stops the rest
     }
 }
