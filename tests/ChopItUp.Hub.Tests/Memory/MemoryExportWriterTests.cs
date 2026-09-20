@@ -410,32 +410,38 @@ public sealed class MemoryExportWriterTests : IDisposable
 
     // ---- 15. UniqueTimestampedPrevious itself disambiguates a forced, real collision --------
     //          (not a lucky same-second race between two full Run() calls like T14 above; this
-    //          pre-creates the exact name the function just returned, so the collision is real by
-    //          construction and the test fails deterministically if the dedup loop is reverted).
+    //          fixes the UTC second and pre-creates the exact returned names, so the collision
+    //          is real even if the wall clock rolls over while the test runs).
 
     [Fact]
     public void T3_UniqueTimestampedPrevious_disambiguates_a_forced_collision_on_the_name_it_just_returned()
     {
         var targetDir = NewDir("t15-target", create: false);
         var prefix = targetDir + ".chopitup-export-previous-";
+        var timestamp = new DateTime(2026, 9, 20, 7, 51, 14, DateTimeKind.Utc);
 
         // Nothing present yet: returns the plain timestamped name.
-        var plain = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
-        Assert.StartsWith(prefix, plain);
+        var plain = MemoryExportWriter.UniqueTimestampedPrevious(targetDir, timestamp);
+        Assert.Equal(prefix + "20260920T075114Z", plain);
         Assert.False(Directory.Exists(plain));
 
         // Pre-create exactly the name just returned - a guaranteed collision, not a guess at the clock.
         Directory.CreateDirectory(plain);
-        var second = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
+        var second = MemoryExportWriter.UniqueTimestampedPrevious(targetDir, timestamp);
         Assert.StartsWith(prefix, second);
         Assert.NotEqual(plain, second);
         Assert.Equal(plain + "-2", second);
 
         // Pre-create the "-2" name too: the next call must skip past it to "-3".
         Directory.CreateDirectory(second);
-        var third = MemoryExportWriter.UniqueTimestampedPrevious(targetDir);
+        var third = MemoryExportWriter.UniqueTimestampedPrevious(targetDir, timestamp);
         Assert.StartsWith(prefix, third);
         Assert.Equal(plain + "-3", third);
+
+        // A later export gets the new second's plain name; the fixed-time checks above
+        // only pin this test's collision sequence, not production rollover behavior.
+        var nextSecond = MemoryExportWriter.UniqueTimestampedPrevious(targetDir, timestamp.AddSeconds(1));
+        Assert.Equal(prefix + "20260920T075115Z", nextSecond);
     }
 
     // ---- 13. a target that is a file, not a directory, refuses cleanly -----------------------

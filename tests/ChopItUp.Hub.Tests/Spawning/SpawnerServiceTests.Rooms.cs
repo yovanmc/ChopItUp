@@ -58,6 +58,19 @@ public sealed partial class SpawnerServiceTests
         throw new TimeoutException($"No matching message in '{room}' within {Wait}");
     }
 
+    private async Task<ExchangeView> WaitForExchangeStatusIn(string room, long root, string status)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            var exchange = Spawner.Snapshot(room).Exchanges?.SingleOrDefault(e => e.RootMessageId == root);
+            if (exchange?.Status == status) return exchange;
+            await Task.Delay(50);
+        }
+        var last = Spawner.Snapshot(room).Exchanges?.SingleOrDefault(e => e.RootMessageId == root)?.Status ?? "missing";
+        throw new TimeoutException($"Exchange #{root} in '{room}' never reached '{status}'; last was '{last}'.");
+    }
+
     /// <summary>A room's git trail whose `git merge` call (and only that call - never `merge-base`,
     /// `worktree add`, a commit, and so on) blocks until <see cref="Hold"/> is released, so a test can
     /// deterministically catch a worktree close mid-merge. <see cref="MergeAttempted"/> completes the
@@ -383,7 +396,8 @@ public sealed partial class SpawnerServiceTests
 
         await PostAsOwnerIn("lab", "/nope @opus");                                            // supersedes; opus is still running
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.Contains("No skill named"));
-        Assert.Equal("superseded", Spawner.Snapshot("lab").Exchanges!.Single(e => e.RootMessageId == root).Status);
+        // The note is persisted before the spawner publishes its refreshed snapshot.
+        Assert.Equal("superseded", (await WaitForExchangeStatusIn("lab", root, "superseded")).Status);
 
         hold.SetResult();
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
