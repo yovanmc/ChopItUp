@@ -85,11 +85,23 @@ public sealed class GitTrailTests : IDisposable
         private readonly object _lock = new();
         private int _current;
         public int Peak { get; private set; }
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool HoldNext { get; set; }
 
         public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
         {
             lock (_lock) { _current++; if (_current > Peak) Peak = _current; }
-            try { return await _inner.RunAsync(spec, timeout, cancellation); }
+            try
+            {
+                if (HoldNext)
+                {
+                    HoldNext = false;
+                    Entered.TrySetResult();
+                    await Release.Task.WaitAsync(cancellation);
+                }
+                return await _inner.RunAsync(spec, timeout, cancellation);
+            }
             finally { lock (_lock) { _current--; } }
         }
     }
@@ -674,19 +686,26 @@ public sealed class GitTrailTests : IDisposable
         Assert.Null(await main.AddWorktreeAsync(wt, "chopitup/xG", newBranch: true));
         var w = main.WithRoot(wt);
 
+        File.WriteAllText(Path.Combine(_dir, "main.txt"), "main");
+        File.WriteAllText(Path.Combine(wt, "worktree.txt"), "worktree");
+        runner.HoldNext = true;
         var tasks = new List<Task<CommitOutcome>>();
-        for (int i = 0; i < 10; i++)
+        try
         {
-            File.WriteAllText(Path.Combine(_dir, $"m{i}.txt"), i.ToString());
-            tasks.Add(main.CommitAllAsync($"main {i}", Owner, allowEmpty: true));
+            tasks.Add(main.CommitAllAsync("main", Owner, allowEmpty: true));
+            await runner.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            tasks.Add(w.CommitAllAsync("worktree", Owner, allowEmpty: true));
+            // Both calls reached their first await. The second must be waiting on the shared gate,
+            // not invoking Git. A WithRoot with its own gate deterministically raises Peak to two.
+            Assert.Equal(1, runner.Peak);
         }
-        for (int i = 0; i < 10; i++)
+        finally
         {
-            File.WriteAllText(Path.Combine(wt, $"w{i}.txt"), i.ToString());
-            tasks.Add(w.CommitAllAsync($"wt {i}", Owner, allowEmpty: true));
+            runner.Release.TrySetResult();
+            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(30));
         }
-        await Task.WhenAll(tasks);
-
+        var outcomes = await Task.WhenAll(tasks);
+        Assert.All(outcomes, outcome => Assert.True(outcome.Created, outcome.Reason));
         Assert.Equal(1, runner.Peak);
     }
 

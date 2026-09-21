@@ -244,8 +244,10 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
     [Fact]
     public async Task R44_continue_requeues_the_refused_hand_off_and_prompts_it_as_a_continuation()
     {
-        _runner.Handler = async (spec, _, _) =>
+        var resumeSixth = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, _, cancellation) =>
         {
+            if (_runner.Count == 6) await resumeSixth.Task.WaitAsync(cancellation);
             var me = FakeProcessRunner.ParticipantOf(spec);
             var other = me == "opus" ? "sonnet" : "opus";
             await PostAs(me, $"@{other} your move");
@@ -263,13 +265,14 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         await PostAsOwner("/continue");
         var continued = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange started at #1 continued"));
         Assert.Equal("Exchange started at #1 continued: 4 more turn(s), 9 in all; queued @opus.", continued.Body);
-        var mid = Spawner.Snapshot("general");
+        var sixth = await _runner.NextSpecAsync(Wait);
+        var mid = await WaitForStatus("open"); // sixth launch is held until its published state is observed
         Assert.Equal(("open", 9), (mid.Status, mid.Budget));
 
-        var sixth = await _runner.NextSpecAsync(Wait);
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(sixth));
         Assert.Contains("Turn 6 of 9; 3 turn(s) remain after yours.", sixth.StandardInput);
         Assert.Contains("Why you are here: message #5 mentioned you when the budget was spent; the owner continued this exchange with message #10, so answer that mention now.", sixth.StandardInput);
+        resumeSixth.TrySetResult();
 
         for (int i = 0; i < 4; i++) await _runner.NextSpecAsync(Wait);   // drain turns 7-10 (sonnet, opus, sonnet, opus's synthesis)
         await WaitForMessage(m => m.Body == "Exchange concluded: 10 of 10 turns used; the last was @opus's synthesis.");
@@ -895,11 +898,13 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
     private static readonly SpawnLimits Timed = new(Budget: 4, Debounce: TimeSpan.FromSeconds(2), MinSpacing: TimeSpan.FromSeconds(1), Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
     private static readonly TimeSpan Wait = TimeSpan.FromSeconds(20);
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_spawntime_" + Guid.NewGuid().ToString("N"));
-    private readonly FakeProcessRunner _runner = new();
+    private readonly ObservedClock _clock = new();
+    private FakeProcessRunner _runner = null!;
     private HubTestHost _host = null!;
 
     public async Task InitializeAsync()
     {
+        _runner = new FakeProcessRunner(_clock);
         Directory.CreateDirectory(_dir);
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
@@ -910,7 +915,7 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
             cmd.ExecuteNonQuery();
         }
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Timed);
+        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Timed, clock: _clock);
         _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
     }
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -921,15 +926,56 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
         Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
     }
 
+    private async Task Advance(TimeSpan elapsed, TimeSpan? expectedWake = null)
+    {
+        var spawner = _host.Services.GetRequiredService<SpawnerService>();
+        var version = _clock.TimerVersion;
+        await spawner.InLoopAsync(() => { _clock.Advance(elapsed); return true; });
+        // Invoke completion itself is NOT a pass barrier. ArmWake registers its timer after
+        // LaunchDue, so pending-deadline negatives wait for that observable at this fake time.
+        if (expectedWake is { } due) await _clock.WaitForTimer(version, due);
+    }
+
+    private sealed class ObservedClock : TimeProvider
+    {
+        private readonly Microsoft.Extensions.Time.Testing.FakeTimeProvider _inner = new(DateTimeOffset.Parse("2026-01-01T00:00:00Z"));
+        private readonly global::System.Threading.Channels.Channel<(long Version, DateTimeOffset At, TimeSpan Due)> _timers =
+            global::System.Threading.Channels.Channel.CreateUnbounded<(long, DateTimeOffset, TimeSpan)>();
+        private long _version;
+        public long TimerVersion => Interlocked.Read(ref _version);
+        public override DateTimeOffset GetUtcNow() => _inner.GetUtcNow();
+        public void Advance(TimeSpan elapsed) => _inner.Advance(elapsed);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = _inner.CreateTimer(callback, state, dueTime, period);
+            _timers.Writer.TryWrite((Interlocked.Increment(ref _version), GetUtcNow(), dueTime));
+            return timer;
+        }
+        public async Task WaitForTimer(long afterVersion, TimeSpan due)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            while (true)
+            {
+                var timer = await _timers.Reader.ReadAsync(timeout.Token);
+                if (timer.Version > afterVersion && timer.At == GetUtcNow() && timer.Due == due) return;
+            }
+        }
+    }
+
     [Fact]
     public async Task A5_two_owner_messages_inside_the_debounce_window_start_one_spawn_citing_the_second()
     {
         await PostAsOwner("general", "@opus first");
         await PostAsOwner("general", "@opus and second");
+        await Advance(TimeSpan.FromMilliseconds(1999), TimeSpan.FromMilliseconds(10));
+        Assert.Equal(0, _runner.Count);
+        await Advance(TimeSpan.FromMilliseconds(1));
         var spec = await _runner.NextSpecAsync(Wait);
         Assert.Contains("message(s) #2 mentioned you", spec.StandardInput);
         Assert.Contains("@opus first", spec.StandardInput);                          // still in the transcript
-        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(3)));
+        await Advance(TimeSpan.FromSeconds(3));
+        Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(50)));
+        Assert.Equal(1, _runner.Count);
     }
 
     [Fact]
@@ -937,12 +983,16 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
     {
         await PostAsOwner("general", "@sonnet here");
         await PostAsOwner("second", "@sonnet and here");
+        await Advance(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(1));
         var first = await _runner.NextSpecAsync(Wait);
+        await Advance(TimeSpan.FromMilliseconds(999), TimeSpan.FromMilliseconds(10));
+        Assert.Equal(1, _runner.Count);
+        await Advance(TimeSpan.FromMilliseconds(1));
         var second = await _runner.NextSpecAsync(Wait);
         Assert.All(new[] { first, second }, s => Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(s)));
         var runs = _runner.Runs;
         Assert.Equal(2, runs.Count);
-        Assert.True(runs[1].At - runs[0].At >= TimeSpan.FromMilliseconds(900), $"gap was {runs[1].At - runs[0].At}");
+        Assert.Equal(TimeSpan.FromSeconds(1), runs[1].At - runs[0].At);
         Assert.NotEqual(first.WorkingDirectory, second.WorkingDirectory);
     }
 }

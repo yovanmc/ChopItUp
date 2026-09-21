@@ -94,8 +94,10 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
 
     public DeployScriptTests(DeployScriptFixture fixture) => _fixture = fixture;
 
-    [Fact]
-    public void Deploy_never_touches_an_existing_data_directory()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Deploy_never_touches_an_existing_data_directory(bool forwardSlashes)
     {
         string target = NewScratchPath("target");
         Directory.CreateDirectory(target);
@@ -105,12 +107,15 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         byte[] tokenBytes = DeployScriptFixture.KnownBytes(256, seed: 102);
         File.WriteAllBytes(Path.Combine(dataDir, "chopitup.db"), dbBytes);
         File.WriteAllBytes(Path.Combine(dataDir, "tokens.json"), tokenBytes);
+        Directory.CreateDirectory(Path.Combine(target, "wwwroot"));
+        File.WriteAllText(Path.Combine(target, "wwwroot", "obsolete.js"), "old");
         try
         {
-            var result = RunDeploy(target, _fixture.StagingDir);
+            var result = RunDeploy(forwardSlashes ? target.Replace('\\', '/') : target, _fixture.StagingDir);
             Assert.Equal(0, result.ExitCode);
             Assert.Equal(dbBytes, File.ReadAllBytes(Path.Combine(dataDir, "chopitup.db")));
             Assert.Equal(tokenBytes, File.ReadAllBytes(Path.Combine(dataDir, "tokens.json")));
+            Assert.False(File.Exists(Path.Combine(target, "wwwroot", "obsolete.js")));
         }
         finally
         {
@@ -145,8 +150,10 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
     }
 
-    [Fact]
-    public void Deploy_aborts_and_changes_nothing_when_a_process_is_running_from_the_target()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Deploy_aborts_and_changes_nothing_when_a_process_is_running_from_the_target(bool forwardSlashes)
     {
         string target = NewScratchPath("target");
         Directory.CreateDirectory(target);
@@ -174,7 +181,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
 
             string[] before = SnapshotRecursive(target);
 
-            var result = RunDeploy(target, _fixture.StagingDir);
+            var result = RunDeploy(forwardSlashes ? target.Replace('\\', '/') : target, _fixture.StagingDir);
 
             Assert.NotEqual(0, result.ExitCode);
             Assert.Contains("DEPLOY_FAILED", result.Stderr);
@@ -492,6 +499,19 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     // --- helpers ---------------------------------------------------------------------------------
 
     private const string SelfAppsDir = @"C:\Self Apps";
+
+    [Fact]
+    public void Deploy_rejects_ambiguous_paths_and_volume_or_share_roots_before_writes()
+    {
+        foreach (var target in new[] { "", "relative", @"C:relative", @"\relative", @"C:\", @"C:\child\..",
+                     @"\\server\share", @"\\?\C:\install", @"\\.\C:\install", @"FileSystem::C:\install", @"HKLM:\Software" })
+        {
+            var result = RunDeploy(target, _fixture.StagingDir);
+            Assert.NotEqual(0, result.ExitCode);
+            Assert.Contains("invalid -TargetDir", result.Stderr);
+            Assert.DoesNotContain("Process guard clear", result.Stdout);
+        }
+    }
 
     private DeployRunResult RunDeploy(string targetDir, string stagingDir)
         => RunScript(targetDir, stagingDir: stagingDir, restoreFrom: null, exeFloors: DeployScriptFixture.TestExeFloors);

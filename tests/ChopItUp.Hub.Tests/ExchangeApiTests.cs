@@ -38,15 +38,10 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal("idle", idle.GetProperty("status").GetString());
         Assert.Equal(JsonValueKind.Null, idle.GetProperty("rootMessageId").ValueKind);
         Assert.Equal(0, idle.GetProperty("remaining").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);
         Assert.Equal(JsonValueKind.Null, idle.GetProperty("stoppedBy").ValueKind);   // row 27, task 2: Idle sends null
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.GetAsync("api/rooms/nope/exchange")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsync("api/rooms/nope/exchange/stop", null)).StatusCode);
-    }
-
-    [Fact]
-    public async Task A6_stop_on_an_idle_room_is_409()
-    {
-        Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);
     }
 
     [Fact]
@@ -70,7 +65,8 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         var spec = await _runner.NextSpecAsync(TimeSpan.FromSeconds(15));
         Assert.Equal("fable", FakeProcessRunner.ParticipantOf(spec));
 
-        var open = await Get("general");
+        // Seeing the CLI launch is earlier than publication. Await the stable in-flight state.
+        var open = await WaitForSnapshot(_host, "general", s => s.GetProperty("inFlight").GetArrayLength() == 1);
         Assert.Equal("open", open.GetProperty("status").GetString());
         Assert.Equal(["fable"], open.GetProperty("inFlight").EnumerateArray().Select(e => e.GetString()));
         var started = open.GetProperty("inFlightStartedAt").GetProperty("fable").GetDateTimeOffset();
@@ -82,6 +78,8 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
         using var stopDoc = JsonDocument.Parse(await stop.Content.ReadAsStringAsync());
         Assert.Equal("stopped", stopDoc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("owner", stopDoc.RootElement.GetProperty("stoppedBy").GetString());
+        Assert.Equal("owner", (await Get("general")).GetProperty("stoppedBy").GetString());
         Assert.Equal(1, stopDoc.RootElement.GetProperty("turnsUsed").GetInt32());
 
         await stopped.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -103,24 +101,6 @@ public sealed class ExchangeApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);   // nothing open now
         Assert.Equal("stopped", (await Get("general")).GetProperty("status").GetString());
-    }
-
-    /// <summary>Row 27, task 2: the cause on the wire, owner arm. Same fixture as A6/A7 above.</summary>
-    [Fact]
-    public async Task A7_row27_an_owner_stop_marks_stoppedBy_owner_on_the_wire()
-    {
-        _runner.Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct);
-
-        var post = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@fable think for a long time" });
-        Assert.Equal(HttpStatusCode.Created, post.StatusCode);
-        await _runner.NextSpecAsync(TimeSpan.FromSeconds(15));
-
-        var stop = await _host.Client.PostAsync("api/rooms/general/exchange/stop", null);
-        Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
-        using var stopDoc = JsonDocument.Parse(await stop.Content.ReadAsStringAsync());
-        Assert.Equal("owner", stopDoc.RootElement.GetProperty("stoppedBy").GetString());
-
-        Assert.Equal("owner", (await Get("general")).GetProperty("stoppedBy").GetString());
     }
 
     /// <summary>Row 27, task 2: the cause on the wire, run arm. Same hard-cap-park setup as
@@ -145,9 +125,20 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         await runner.NextSpecAsync(TimeSpan.FromSeconds(15));
 
         await WaitForNoteContaining(host, room, "parked");
+        var snapshot = await WaitForSnapshot(host, room, s => s.GetProperty("status").GetString() == "stopped");
+        Assert.Equal("run", snapshot.GetProperty("stoppedBy").GetString());
+    }
 
-        using var snapDoc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/exchange"));
-        Assert.Equal("run", snapDoc.RootElement.GetProperty("stoppedBy").GetString());
+    private static async Task<JsonElement> WaitForSnapshot(HubTestHost host, string room, Func<JsonElement, bool> ready)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
+        do
+        {
+            using var document = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/exchange"));
+            if (ready(document.RootElement)) return document.RootElement.Clone();
+            await Task.Delay(10);
+        } while (DateTimeOffset.UtcNow < deadline);
+        throw new TimeoutException($"Expected published exchange state was not observed in room {room}.");
     }
 
     [Fact]

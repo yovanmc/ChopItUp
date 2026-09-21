@@ -110,7 +110,25 @@ if ($RestoreFrom -and -not (Test-Path -LiteralPath $RestoreFrom -PathType Contai
     exit 1
 }
 
-$targetDir = $TargetDir.TrimEnd('\')
+# Normalize before process/containment checks. GetFullPath alone silently accepts drive-relative,
+# rooted-relative and provider-looking inputs, so reject those before resolving anything.
+try {
+    $driveAbsolute = $TargetDir -match '^[A-Za-z]:[\\/]'
+    $uncAbsolute = $TargetDir -match '^[\\/]{2}[^\\/]+[\\/][^\\/]+(?:[\\/]|$)'
+    $devicePath = $TargetDir -match '^[\\/]{2}[?.][\\/]'
+    if ([string]::IsNullOrWhiteSpace($TargetDir) -or $devicePath -or -not ($driveAbsolute -or $uncAbsolute)) {
+        throw 'Use an absolute non-root filesystem directory (drive or UNC), not a relative, provider or device path.'
+    }
+    $normalizedTarget = [IO.Path]::GetFullPath($TargetDir.Replace('/', '\'))
+    $targetRoot = [IO.Path]::GetPathRoot($normalizedTarget)
+    if ($normalizedTarget.TrimEnd('\') -eq $targetRoot.TrimEnd('\')) {
+        throw 'Use an absolute non-root filesystem directory; a volume or share root is not an install directory.'
+    }
+    $targetDir = $normalizedTarget.TrimEnd('\')
+} catch {
+    [Console]::Error.WriteLine("DEPLOY_FAILED: invalid -TargetDir: $($_.Exception.Message)")
+    exit 1
+}
 $isRestore = [bool]$RestoreFrom
 
 function Test-NoProcessRunningFromTarget {
