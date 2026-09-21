@@ -27,6 +27,15 @@ export function selectTests(root, config, files, forcedReason = '') {
   let full = false, client = false, sourceGuards = false;
   const all = reason => { full = true; reasons.push(reason); };
   const projects = config.projects;
+  const solutionPath = resolve(root, config.solution);
+  if (existsSync(solutionPath)) {
+    const solution = readFileSync(solutionPath, 'utf8');
+    const members = [...solution.matchAll(/<Project\b[^>]*\bPath\s*=\s*(['"])(.*?)\1/g)].map(m => slash(m[2]));
+    const unmapped = members.filter(path => !projects.some(p => p.path === path));
+    // Running only the old manifest after adding a test project is NOT a full
+    // fallback. Require registering its runner/count guard before accepting it.
+    if (unmapped.length) throw new Error(`Update the affected-test map for solution projects: ${unmapped.join(', ')}`);
+  }
   const graph = new Map();
   // Read actual references; a newly introduced or unmodelled reference falls back
   // to the solution gate instead of trusting a stale hand-maintained graph.
@@ -82,6 +91,7 @@ export function selectTests(root, config, files, forcedReason = '') {
       }
       continue;
     }
+    if (/\.test\.[cm]?js$/.test(path)) throw new Error(`Register the new Node test before verification: ${path}`);
     all(`Unmapped path: ${path}`);
   }
   if (full) {

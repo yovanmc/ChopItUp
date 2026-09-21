@@ -70,6 +70,14 @@ test('a new project reference cannot silently escape the map', () => {
     assert.equal(selectTests(temp, c, ['README.md']).mode, 'full');
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
+test('a new solution test project cannot green with only the old suite list', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'affected solution '));
+  try {
+    writeFileSync(join(temp, config.solution), '<Solution><Project Path="tests/New.Tests/New.Tests.csproj" /></Solution>');
+    assert.throws(() => selectTests(temp, config, ['README.md']), /Update the affected-test map/);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+  assert.throws(() => choose(['verify/new.test.mjs']), /Register the new Node test/);
+});
 test('Git range includes every branch commit, dirty index/worktree, deletes, renames and Unicode', () => {
   const temp = mkdtempSync(join(tmpdir(), 'affected git '));
   const git = args => execFileSync('git', ['-C', temp, ...args], { encoding: 'utf8' }).trim();

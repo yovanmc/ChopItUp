@@ -1,18 +1,22 @@
 [CmdletBinding()]
 param(
-    [string]$Base = 'main', [string]$Head = 'HEAD',
+    [string]$Base = 'main',
     [switch]$CommittedOnly, [switch]$Full, [switch]$PlanOnly,
     [string]$LogDir = (Join-Path $env:TEMP ('chop-affected-' + [guid]::NewGuid().ToString('N')))
 )
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$arguments = @((Join-Path $PSScriptRoot 'affected-tests.mjs'), '--root', $repo, '--base', $Base, '--head', $Head)
+$arguments = @((Join-Path $PSScriptRoot 'affected-tests.mjs'), '--root', $repo, '--base', $Base)
 if ($CommittedOnly) { $arguments += '--committed-only' }
 if ($Full) { $arguments += '--full' }
 $json = & node @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Test selection failed' }
 $plan = ($json -join "`n") | ConvertFrom-Json
 if ($PlanOnly) { $json; exit 0 }
+if ($CommittedOnly) {
+    $dirty = & git -C $repo status --porcelain --untracked-files=normal
+    if ($LASTEXITCODE -ne 0 -or $dirty) { throw '-CommittedOnly execution requires a clean checkout; omit it for local changes' }
+}
 $null = New-Item -ItemType Directory -Force -Path $LogDir
 $json | Set-Content -LiteralPath (Join-Path $LogDir 'selection.json')
 Write-Host "Verification: $($plan.mode); suites=$($plan.suites -join ', '); client=$($plan.client). Plan: $LogDir/selection.json"
