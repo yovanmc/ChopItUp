@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 14;
+    public const int LatestSchemaVersion = 15;
 
     /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
     /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
@@ -123,6 +123,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 12) ApplyV12(conn);
             if (GetUserVersion(conn) < 13) ApplyV13(conn);
             if (GetUserVersion(conn) < 14) ApplyV14(conn);
+            if (GetUserVersion(conn) < 15) ApplyV15(conn);
             return 0;
         });
     }
@@ -721,8 +722,31 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>Only NULL is filled: a class the owner set by hand is never replaced (the same rule
-    /// <see cref="BackfillNotes"/> follows for notes).</summary>
+    /// <summary>Add persistent room modes, retaining the established repair path for missing stamps.</summary>
+    private static void ApplyV15(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        foreach (var (name, definition) in new[]
+        {
+            ("mode", "TEXT NOT NULL DEFAULT 'relay' CHECK(mode IN ('primary','relay','panel'))"),
+            ("mode_first", "TEXT NOT NULL DEFAULT 'gpt-6-astra'"),
+            ("mode_second", "TEXT DEFAULT 'opus'"),
+            ("mode_revision", "INTEGER NOT NULL DEFAULT 0"),
+        })
+        {
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('rooms') WHERE name = '{name}'";
+            if (Convert.ToInt64(cmd.ExecuteScalar()) != 0) continue;
+            cmd.CommandText = $"ALTER TABLE rooms ADD COLUMN {name} {definition};";
+            cmd.ExecuteNonQuery();
+        }
+        cmd.CommandText = "CREATE INDEX IF NOT EXISTS idx_messages_author_key ON messages(author_id, client_key) WHERE client_key IS NOT NULL; PRAGMA user_version = 15;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Only NULL is filled: an owner-set class is never replaced.</summary>
     private static void BackfillClasses(SqliteConnection conn, SqliteTransaction tx)
     {
         using var cmd = conn.CreateCommand();

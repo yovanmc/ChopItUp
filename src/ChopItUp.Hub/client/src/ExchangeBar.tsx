@@ -23,7 +23,7 @@ interface ExchangeBarProps {
 /** What one strip draws from: the fields an `ExchangeView` and the snapshot's top level share. */
 type StripFields = Pick<
   ExchangeView,
-  'status' | 'inFlight' | 'inFlightStartedAt' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy' | 'continuable'
+  'status' | 'inFlight' | 'inFlightStartedAt' | 'pending' | 'budget' | 'remaining' | 'turnsUsed' | 'stoppedBy' | 'continuable' | 'mode' | 'modeParticipants' | 'preparing'
 >;
 
 interface StripControl {
@@ -190,6 +190,7 @@ function strip(
   return (
     <div key={key} className={`exchange exchange-${status}`} role="status" aria-live="polite">
       <div className="exchange-lead">
+        {fields.mode && <span className="exchange-turns">{fields.mode} · {fields.modeParticipants?.map(displayName).join(' → ')} · {turnsUsed}/{budget} started{fields.preparing ? ' · preparing snapshot' : ''}</span>}
         {label !== null && <span className="exchange-turns">{label}</span>}
         {open ? (
           <>
@@ -226,7 +227,7 @@ function strip(
             onClick={onContinue}
             aria-label={label === null ? undefined : `Continue exchange ${label}`}
           >
-            Continue exchange
+            Continue exchange{fields.mode ? ` · ${fields.mode === 'primary' ? 1 : fields.mode === 'relay' ? 2 : 3} more turns` : ''}
           </button>
         )}
         {stoppable && (

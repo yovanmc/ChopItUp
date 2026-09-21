@@ -753,8 +753,9 @@ public sealed partial class SpawnerServiceTests
     {
         var dir = await MakeRoom("lab");
         Assert.True((await new GitTrail(dir).CommitAllAsync("seed", GitTrail.Hub, allowEmpty: true)).Created);
-        var probe = await _host.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "no mention, no exchange" });
-        var root = JsonDocument.Parse(await probe.Content.ReadAsStringAsync()).RootElement.GetProperty("id").GetInt64() + 1;
+        // Reserve a history id without dispatch: M49 ordinary owner HTTP posts now start on-call work.
+        var probe = _host.Services.GetRequiredService<MessageStore>().Post("lab", "claude", "branch collision id probe", null);
+        var root = probe.Message.Id + 1;
         var made = await new ProcessRunner().RunAsync(
             new ProcessSpec(CliResolver.Resolve("git").FileName, ["branch", ExchangeWorktrees.Branch(root)], new Dictionary<string, string>(), dir, "", "test-git"),
             TimeSpan.FromSeconds(30), CancellationToken.None);

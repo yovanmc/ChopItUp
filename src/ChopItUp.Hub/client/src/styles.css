@@ -2394,3 +2394,12 @@ input {
   color: var(--accent-owner);
   word-break: break-all;
 }
+
+.mode-controls { flex-basis: 100%; padding: .45rem .6rem; border: 1px solid var(--border, #45434b); border-radius: .4rem; }
+.mode-controls summary { cursor: pointer; }
+.mode-controls label { display: inline-flex; gap: .4rem; align-items: center; margin: .5rem .8rem .5rem 0; }
+.mode-controls select { max-width: 18rem; background: var(--bg, #1c1c22); color: inherit; border: 1px solid var(--border, #555); padding: .3rem; }
+.mode-controls p, .dispatch-preview { font-size: .8rem; line-height: 1.4; }
+.mode-controls p { max-width: 65ch; }
+.dispatch-preview { max-width: 34ch; padding-bottom: .4rem; overflow-wrap: anywhere; }
+.room-head { flex-wrap: wrap; }

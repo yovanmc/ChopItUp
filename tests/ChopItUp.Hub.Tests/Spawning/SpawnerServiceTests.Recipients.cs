@@ -41,11 +41,13 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
-    public async Task Row43_AC2_an_inline_owner_mention_posts_the_reference_note_and_no_spawn()
+    public async Task M49_inline_reference_uses_the_configured_oncall_not_the_referenced_model()
     {
+        Mode("primary", "sonnet", null);
         await PostAsOwner("please ask @opus about X");
-        await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Nobody was addressed: @opus"));
-        Assert.Equal(0, _runner.Count);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
+        await WaitForStatus("concluded");
+        Assert.Equal(1, _runner.Count);
     }
 
     [Fact]

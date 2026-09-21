@@ -294,6 +294,7 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal(root.GetProperty("id").GetInt64(), reply.GetProperty("replyToId").GetInt64());
         using var list = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0"));
         var ids = list.RootElement.GetProperty("messages").EnumerateArray()
+            .Where(m => m.GetProperty("authorId").GetString() == "owner")
             .Select(m => m.GetProperty("replyToId").ValueKind == JsonValueKind.Null ? (long?)null : m.GetProperty("replyToId").GetInt64()).ToList();
         Assert.Equal([null, root.GetProperty("id").GetInt64()], ids);
     }

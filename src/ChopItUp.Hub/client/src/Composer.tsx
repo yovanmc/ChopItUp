@@ -4,7 +4,7 @@ import { displayName } from './participants';
 import RecipientStrip from './RecipientStrip';
 import { messageBody } from './governing';
 import { replySnippet } from './reply';
-import type { Message, Skill } from './types';
+import type { DispatchPreview, Message, Skill } from './types';
 
 const MAX_HEIGHT_PX = 200;
 
@@ -27,10 +27,31 @@ interface Props {
    *  send and keeps it after a failed one. */
   replyTo: Message | null;
   onCancelReply: () => void;
-  onSend: (body: string, replyToId: number | null) => Promise<void>;
+  onSend: (body: string, replyToId: number | null, admission?: { quote: string; clientKey: string }) => Promise<void>;
+  previewEpoch?: string;
+  onPreviewError?: (error: unknown) => void;
 }
 
-export default function Composer({ roomId, roomName, disabled, draft, onDraftChange, replyTo, onCancelReply, onSend }: Props) {
+export default function Composer({ roomId, roomName, disabled, draft, onDraftChange, replyTo, onCancelReply, onSend, previewEpoch, onPreviewError }: Props) {
+  const [preview, setPreview] = useState<{ identity: string; value: DispatchPreview } | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const retry = useRef<{ identity: string; key: string } | null>(null);
+  const identity = JSON.stringify([roomId, messageBody(draft), replyTo?.id ?? null]);
+  useEffect(() => {
+    const abort = new AbortController();
+    let current = true;
+    setPreview(null);
+    setPreviewError('');
+    if (!messageBody(draft) || disabled) return () => abort.abort();
+    const timer = setTimeout(() => {
+      api.dispatchPreview(roomId, messageBody(draft), replyTo?.id ?? null, abort.signal)
+        .then(value => { if (current) setPreview({ identity, value }); })
+        .catch(error => { if (current) { setPreviewError(api.describeError(error)); onPreviewError?.(error); } });
+    }, 200);
+    return () => { current = false; clearTimeout(timer); abort.abort(); };
+  }, [identity, roomId, draft, replyTo?.id, disabled, previewEpoch, refresh, onPreviewError]);
+  const ready = preview?.identity === identity && !preview.value.error;
   /** The rooms whose send is in flight. A set rather than a flag: a slow send in the room just left
    *  must not grey the Send button of the room now open. */
   const [sending, setSending] = useState<ReadonlySet<string>>(() => new Set());
@@ -113,14 +134,19 @@ export default function Composer({ roomId, roomName, disabled, draft, onDraftCha
     // resolves, and what is released then is this room's send, not whatever is on screen.
     const room = roomId;
     const body = messageBody(draft);
-    if (!body || sending.has(room) || disabled) return;
+    if (!body || sending.has(room) || disabled || !ready || !preview) return;
+    if (retry.current?.identity !== identity) retry.current = { identity, key: crypto.randomUUID() };
     setSending((previous) => new Set(previous).add(room));
     try {
       // The draft is App's, cleared there on success so a failed send leaves the words to retry.
-      await onSend(body, replyTo?.id ?? null);
+      await onSend(body, replyTo?.id ?? null, { quote: preview.value.quote, clientKey: retry.current.key });
+      retry.current = null;
       setHighlight(0);
       setDismissed(false);
       box.current?.focus();
+    } catch {
+      // App retains the draft and reports the failure. A changed quote requires a new click.
+      setRefresh(previous => previous + 1);
     } finally {
       setSending((previous) => {
         const next = new Set(previous);
@@ -235,7 +261,13 @@ export default function Composer({ roomId, roomName, disabled, draft, onDraftCha
         </div>
       </div>
       <div className="composer-side">
-        <button type="submit" className="send" disabled={disabled || busy || draft.trim().length === 0}>
+        <div className="dispatch-preview" aria-live="polite">
+          {preview?.identity === identity ? preview.value.error ?? (preview.value.turns != null
+            ? `${preview.value.mode}: ${preview.value.participants.join(' → ')} · ${preview.value.turns} planned model turns · money/tokens unknown${preview.value.commit ? ` · snapshot ${preview.value.commit.slice(0, 12)}` : ''}`
+            : 'Explicit recipients or command; existing dispatch rules apply.') : previewError || (draft.trim() ? 'Checking recipients and turn count…' : '')}
+          {(previewError || preview?.value.error) && <button type="button" onClick={() => setRefresh(value => value + 1)}>Refresh preview</button>}
+        </div>
+        <button type="submit" className="send" disabled={disabled || busy || draft.trim().length === 0 || !ready}>
           {busy ? 'Sending…' : 'Send'}
         </button>
         <span className="hint">Enter sends · Shift+Enter newline · / for skills · /objective and /correction pin context</span>

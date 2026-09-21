@@ -105,10 +105,16 @@ export interface ExchangeContinueHooks {
  *  is why this is a post and not an endpoint of its own (D-e). `end` is in `finally`, so a refused
  *  continue releases its strip as surely as an accepted one. Outside the component for the same reason
  *  `stopExchangeAt` is: this client has no DOM to press the button in. */
-export async function continueExchangeAt(roomId: string, root: number, hooks: ExchangeContinueHooks): Promise<void> {
+export async function continueExchangeAt(roomId: string, root: number, hooks: ExchangeContinueHooks,
+  expected?: { mode: string; participants: string[] }): Promise<void> {
   hooks.begin();
   try {
-    hooks.apply([await api.postMessage(roomId, '/continue', root)]);
+    if (expected) {
+      const preview = await api.dispatchPreview(roomId, '/continue', root);
+      if (preview.error || preview.mode !== expected.mode || JSON.stringify(preview.participants) !== JSON.stringify(expected.participants))
+        throw new Error(preview.error ?? 'This exchange changed. Check its updated mode and press Continue again.');
+      hooks.apply([await api.postMessage(roomId, '/continue', root, undefined, { quote: preview.quote, clientKey: crypto.randomUUID() })]);
+    } else hooks.apply([await api.postMessage(roomId, '/continue', root)]);
   } catch (failure) {
     if (!hooks.refused(failure, 'The exchange was not continued.')) hooks.fail(api.describeError(failure));
   } finally {
@@ -351,6 +357,7 @@ export default function App() {
     setTokenNotice(`${didNotHappen} ${api.describeError(failure)}`);
     return true;
   }, []);
+  const previewRefused = useCallback((failure: unknown) => { refused(failure, 'The recipient preview needs your owner token.'); }, [refused]);
 
   /** Row 28, the quiet half of AC5. `markRead` is a background write on every room open, so its
    *  refusal must NOT raise the prompt — that would pop the moment the owner opened a room and again
@@ -448,6 +455,9 @@ export default function App() {
         ),
       );
     });
+    connection.on('RoomModeChanged', (change: { roomId: string; settings: Room['modeSettings'] }) => {
+      setRooms(previous => previous.map(room => room.id === change.roomId ? { ...room, modeSettings: change.settings } : room));
+    });
     connection.on('ExchangeChanged', (snapshot: ExchangeSnapshot) => {
       if (snapshot.roomId !== currentRoom.current) return;
       setExchange((previous) => applyExchange(previous, snapshot));
@@ -463,6 +473,7 @@ export default function App() {
       setLiveness('offline');
     });
     connection.onreconnected(() => {
+      void refreshRooms().catch(() => undefined);
       const generation = ++exchangeGeneration.current;
       // A restarted hub has a new seq space. Do this before joining, so fresh socket events cannot
       // be hidden by a larger seq from the previous connection.
@@ -597,10 +608,10 @@ export default function App() {
   );
 
   const send = useCallback(
-    async (body: string, replyToId: number | null) => {
+    async (body: string, replyToId: number | null, admission?: { quote: string; clientKey: string }) => {
       if (!roomId) return;
       try {
-        const posted = await api.postMessage(roomId, body, replyToId);
+        const posted = await api.postMessage(roomId, body, replyToId, undefined, admission);
         // A send clears the room it was written in, whichever room is open by the time it lands;
         // the thread only takes the post while that room is still the one on screen.
         if (currentRoom.current === roomId) merge([posted]);
@@ -669,6 +680,7 @@ export default function App() {
   const continueFromBar = useCallback(
     (root: number) => {
       if (!roomId) return;
+      const view = exchange?.exchanges?.find(item => item.rootMessageId === root) ?? exchange;
       void continueExchangeAt(roomId, root, {
         begin: () => setContinuingRoots((previous) => withStopping(previous, root, true)),
         apply: (messages) => {
@@ -678,9 +690,9 @@ export default function App() {
         refused,
         fail: setError,
         end: () => setContinuingRoots((previous) => withStopping(previous, root, false)),
-      });
+      }, view?.mode ? { mode: view.mode, participants: view.modeParticipants ?? [] } : undefined);
     },
-    [roomId, merge, refused],
+    [roomId, merge, refused, exchange],
   );
 
   // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
@@ -821,6 +833,7 @@ export default function App() {
         {activeRoom ? (
           <>
             <RoomHeader
+              onModeSaved={() => { void refreshRooms(); }}
               room={activeRoom}
               loadedCount={messages.length}
               busy={roomBusy}
@@ -868,6 +881,8 @@ export default function App() {
               onContinue={continueFromBar}
             />
             <Composer
+              onPreviewError={previewRefused}
+              previewEpoch={`${exchange?.seq}:${ownerToken}`}
               roomId={activeRoom.id}
               roomName={activeRoom.name}
               disabled={false}

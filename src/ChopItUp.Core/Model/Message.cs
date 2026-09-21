@@ -20,7 +20,10 @@ public sealed record PostResult(Message Message, bool Deduplicated);
 /// prompt in this room, or null.</summary>
 public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long LastMessageId, int MessageCount,
     string? Directory = null, DateTimeOffset? ArchivedAt = null, DateTimeOffset? LastActivityAt = null, long Unread = 0,
-    string? Persona = null);
+    string? Persona = null, RoomModeSettings? ModeSettings = null)
+{
+    public RoomModeSettings EffectiveMode => ModeSettings ?? new();
+}
 
 /// <summary>A page of messages in ascending id order. <see cref="NextAfterId"/> is the value to pass
 /// as <c>afterId</c> to continue; it equals the request's afterId when the page is empty.

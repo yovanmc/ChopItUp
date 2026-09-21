@@ -12,11 +12,13 @@ public sealed record ProcessSpec(
     string StandardInput,
     string Label,
     string? RoomId = null,
-    string? ParticipantId = null);
+    string? ParticipantId = null,
+    IReadOnlyList<string>? RemoveEnvironmentPrefixes = null,
+    int? OutputLimitBytes = null);
 
 /// <summary><see cref="ExitCode"/> is null when the process was killed. Exactly one of
 /// <see cref="TimedOut"/>/<see cref="Cancelled"/> is true for a killed run; both false otherwise.</summary>
-public sealed record ProcessResult(int? ExitCode, bool TimedOut, bool Cancelled, string StandardOutput, string StandardError, TimeSpan Elapsed, int ProcessId = 0);
+public sealed record ProcessResult(int? ExitCode, bool TimedOut, bool Cancelled, string StandardOutput, string StandardError, TimeSpan Elapsed, int ProcessId = 0, bool OutputLimitExceeded = false);
 
 public interface IProcessRunner
 {
@@ -45,6 +47,13 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             WorkingDirectory = spec.WorkingDirectory,
         };
         foreach (var a in spec.Arguments) psi.ArgumentList.Add(a);
+        if (spec.OutputLimitBytes is <= 0) throw new ArgumentOutOfRangeException(nameof(spec));
+        if (spec.RemoveEnvironmentPrefixes is { } prefixes)
+        {
+            bool Removed(string name) => prefixes.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+            if (spec.Environment.Keys.Any(Removed)) throw new ArgumentException("A removed environment variable cannot be restored by the spawn overlay.", nameof(spec));
+            foreach (var key in psi.Environment.Keys.Where(Removed).ToArray()) psi.Environment.Remove(key);
+        }
         foreach (var (k, v) in spec.Environment) psi.Environment[k] = v;
 
         var clock = Stopwatch.StartNew();
@@ -66,11 +75,17 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
         bool timedOut = false, cancelled = false;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         linked.CancelAfter(timeout);
+        int outputLimit = 0;
+        void Overflow()
+        {
+            Interlocked.Exchange(ref outputLimit, 1);
+            try { linked.Cancel(); } catch (ObjectDisposedException) { /* a late pipe close after drain grace */ }
+        }
 
         // Readers first, then stdin: a child that fills its stdout pipe before reading stdin would
         // otherwise deadlock against a writer waiting on a full pipe.
-        var stdout = process.StandardOutput.ReadToEndAsync();
-        var stderr = process.StandardError.ReadToEndAsync();
+        var stdout = spec.OutputLimitBytes is { } outCap ? ReadCappedAsync(process.StandardOutput.BaseStream, outCap, Overflow) : process.StandardOutput.ReadToEndAsync();
+        var stderr = spec.OutputLimitBytes is { } errCap ? ReadCappedAsync(process.StandardError.BaseStream, errCap, Overflow) : process.StandardError.ReadToEndAsync();
         try
         {
             try
@@ -84,7 +99,7 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
         catch (OperationCanceledException)
         {
             cancelled = cancellation.IsCancellationRequested;
-            timedOut = !cancelled;
+            timedOut = !cancelled && Volatile.Read(ref outputLimit) == 0;
             try { process.Kill(entireProcessTree: true); }
             catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { /* already gone */ }
             try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(DrainGrace); }
@@ -118,8 +133,24 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
 
         int? exitCode = null;
         try { if (process.HasExited) exitCode = process.ExitCode; } catch (InvalidOperationException) { }
-        if (timedOut || cancelled) exitCode = null;
+        if (timedOut || cancelled || outputLimit != 0) exitCode = null;
 
-        return new ProcessResult(exitCode, timedOut, cancelled, outText, errText, clock.Elapsed, process.Id);
+        return new ProcessResult(exitCode, timedOut, cancelled, outText, errText, clock.Elapsed, process.Id, outputLimit != 0);
+    }
+
+    private static async Task<string> ReadCappedAsync(Stream stream, int cap, Action overflow)
+    {
+        using var retained = new MemoryStream(Math.Min(cap, 8192));
+        var buffer = new byte[8192];
+        bool exceeded = false;
+        int count;
+        while ((count = await stream.ReadAsync(buffer)) != 0)
+        {
+            var keep = Math.Min(count, cap - (int)retained.Length);
+            if (keep > 0) retained.Write(buffer, 0, keep);
+            if (keep < count && !exceeded) { exceeded = true; overflow(); }
+        }
+        // Discard partial output on overflow; it is never a successful model answer.
+        return exceeded ? "" : System.Text.Encoding.UTF8.GetString(retained.GetBuffer(), 0, (int)retained.Length);
     }
 }

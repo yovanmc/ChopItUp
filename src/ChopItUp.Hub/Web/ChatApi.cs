@@ -4,6 +4,7 @@ using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
@@ -29,6 +30,8 @@ public static class ChatApi
         api.MapGet("/rooms", GetRooms);
         api.MapGet("/rooms/{roomId}/messages", GetMessages);
         api.MapPost("/rooms/{roomId}/messages", PostMessage);
+        api.MapPost("/rooms/{roomId}/dispatch-preview", Preview);
+        api.MapPost("/rooms/{roomId}/mode", SetMode);
         api.MapPost("/rooms/{roomId}/import", PostImport);
         api.MapGet("/rooms/{roomId}/export", GetExport);
         api.MapGet("/participants", GetParticipants);
@@ -59,15 +62,15 @@ public static class ChatApi
     /// client_key on this surface — a browser POST has no story for "was this delivered", unlike an
     /// MCP tool call. Row 36: <c>replyToId</c> must name a message of the same room (400 otherwise);
     /// the spawner reads it to decide which exchange the post joins.</summary>
-    private static IResult PostMessage(string roomId, PostBody body, HttpContext httpContext, MessageStore store, MessageSignal signal, ParticipantStore participants)
+    private static async Task<IResult> PostMessage(string roomId, PostBody body, HttpContext httpContext, MessageStore store, MessageSignal signal, ParticipantStore participants, SpawnerService spawner)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
         if (string.IsNullOrWhiteSpace(body.Body)) return Results.BadRequest(new { error = "body is empty." });
         var authorId = AuthorId(httpContext, participants);
         Message message;
-        try { message = store.Post(roomId, authorId, body.Body, null, body.ReplyToId).Message; }   // no client_key on this surface
-        catch (ArgumentException e) when (e.ParamName is "replyToId" or "body") { return Results.BadRequest(new { error = e.Message }); }
-        signal.Publish(roomId, message);
+        try { message = (await spawner.AdmitOwnerAsync(roomId, authorId, body.Body, body.ClientKey, body.ReplyToId, body.Quote, httpContext.RequestAborted)).Message; }
+        catch (StaleDispatchException e) { return Results.Conflict(new { error = e.Message }); }
+        catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
         return Results.Json(MapMessage(message), statusCode: StatusCodes.Status201Created);
     }
 
@@ -161,8 +164,21 @@ public static class ChatApi
     }
 
     private static object MapMessage(Message m) => new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, m.ReplyToId, m.Imported };
-    internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread, r.Persona };
+    internal static object MapRoom(Room r) => new { r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory, r.ArchivedAt, r.LastActivityAt, r.Unread, r.Persona, ModeSettings = r.EffectiveMode };
 
-    internal sealed record PostBody(string? Body, long? ReplyToId = null);
+    private static async Task<IResult> Preview(string roomId, PostBody body, HttpContext httpContext, ParticipantStore participants, SpawnerService spawner)
+    {
+        try { return Results.Json(await spawner.PreviewAsync(roomId, AuthorId(httpContext, participants), body.Body ?? "", body.ReplyToId, httpContext.RequestAborted)); }
+        catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+    }
+
+    private static async Task<IResult> SetMode(string roomId, ModeBody body, SpawnerService spawner)
+    {
+        try { return Results.Json(await spawner.SetModeAsync(roomId, body.Mode, body.First, body.Second)); }
+        catch (ArgumentException e) { return Results.BadRequest(new { error = e.Message }); }
+    }
+
+    internal sealed record ModeBody(string Mode, string First, string? Second);
+    internal sealed record PostBody(string? Body, long? ReplyToId = null, string? ClientKey = null, string? Quote = null);
     internal sealed record ImportBody(string? Text);
 }

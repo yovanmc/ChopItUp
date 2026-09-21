@@ -185,6 +185,9 @@ public sealed class RoomsApiTests : IAsyncLifetime
     [Fact]
     public async Task M9_A3_A5_unread_is_what_lies_past_the_owners_cursor_and_mark_read_zeroes_it()
     {
+        // M49 ordinary owner posts start on-call work. Hold the synthetic answer so this
+        // cursor test observes only the explicitly posted messages, not a racing completion note.
+        _runner.Handler = (_, _, cancel) => FakeProcessRunner.HangUntilKilled(TimeSpan.FromSeconds(30), cancel);
         await using var claude = await _host.ClientFor("claude");
         foreach (var body in new[] { "one", "two" })
             HubTestHost.Json(await claude.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));

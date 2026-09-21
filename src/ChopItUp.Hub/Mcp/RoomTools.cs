@@ -5,6 +5,7 @@ using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Security;
+using ChopItUp.Hub.Spawning;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 
@@ -13,7 +14,7 @@ namespace ChopItUp.Hub.Mcp;
 /// <summary>The room contract every host is configured against (M2). Results are JSON text so any
 /// client renders them; the author of a post is always the authenticated participant.</summary>
 [McpServerToolType]
-public sealed class RoomTools(MessageStore store, ParticipantStore participants, MessageSignal signal, IHttpContextAccessor http)
+public sealed class RoomTools(MessageStore store, ParticipantStore participants, MessageSignal signal, IHttpContextAccessor http, SpawnerService spawner)
 {
     public const int MaxBodyChars = 20_000;
     public const int DefaultWaitSeconds = 25;
@@ -44,6 +45,7 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         var rooms = store.ListRooms().Select(r => new
         {
             r.Id, r.Name, r.CreatedAt, r.MessageCount, r.LastMessageId, r.Directory,
+            ModeSettings = r.EffectiveMode,
             UnreadCount = r.MessageCount == 0 ? 0 : CountUnread(r, me),
         });
         return JsonSerializer.Serialize(
@@ -68,10 +70,10 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
 
     [McpServerTool(Name = "post_message", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false),
      Description("Post a message to a room as yourself. The hub records you as the author; you cannot post as anyone else. Mention a participant with @ and its id (list_rooms returns the roster) when the message is for them.")]
-    public string PostMessage(
+    public async Task<string> PostMessage(
         [Description("Room id, e.g. \"general\".")] string room_id,
         [Description("Message text (markdown allowed, up to 20000 characters).")] string body,
-        [Description("Optional retry key for this one attempt - omit it and the message still posts. Any string you will never reuse works; write one out rather than calling a UUID API that may not exist in your runtime. Reuse it ONLY when repeating a call that failed without telling you whether it landed: the hub stores the message once and returns the original with deduplicated=true. Reusing a key from an earlier message discards the new text and returns the old message.")] string? client_key = null)
+        [Description("Optional retry key for this one attempt - omit it and the message still posts. Any string you will never reuse works; write one out rather than calling a UUID API that may not exist in your runtime. Reuse it ONLY when repeating a call that failed without telling you whether it landed: the hub stores the message once and returns the original with deduplicated=true. For model callers, reusing a room key returns the old message. Owner retries must keep the original room and body; changed retries are refused.")] string? client_key = null)
     {
         var me = Caller;
         RequireRoom(room_id);
@@ -82,9 +84,10 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         if (client_key?.Trim() is { Length: > MessageStore.MaxClientKeyChars })
             throw new McpException($"client_key exceeds {MessageStore.MaxClientKeyChars} characters.");
         PostResult result;
-        try { result = store.Post(room_id, me, body, client_key); }
-        catch (ArgumentException e) when (e.ParamName == "body") { throw new McpException(e.Message); }
-        if (!result.Deduplicated) signal.Publish(room_id, result.Message);   // a dedup adds no new message to wake/broadcast
+        var owner = participants.List().Any(p => p.Id == me && p.Kind == "human");
+        try { result = owner ? await spawner.AdmitOwnerAsync(room_id, me, body, client_key, null) : store.Post(room_id, me, body, client_key); }
+        catch (Exception e) when (e is ArgumentException or StaleDispatchException) { throw new McpException(e.Message); }
+        if (!owner && !result.Deduplicated) signal.Publish(room_id, result.Message);
         var m = result.Message;
         return JsonSerializer.Serialize(
             new { m.Id, m.RoomId, m.AuthorId, m.Body, m.CreatedAt, Deduplicated = result.Deduplicated ? true : (bool?)null },

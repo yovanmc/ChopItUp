@@ -986,7 +986,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         var before = new MessageStore(db).Read("general", 0, 200).Messages;
         db.EnsureDatabase();
-        Assert.Equal(14, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v13.", db.LastBackupPath);
         Assert.Equal(13, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
         Assert.Equal(before.Count, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));

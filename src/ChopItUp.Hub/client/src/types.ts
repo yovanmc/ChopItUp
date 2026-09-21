@@ -14,6 +14,7 @@ export interface Message {
 }
 
 export interface Room {
+  modeSettings?: RoomModeSettings;
   id: string;
   name: string;
   createdAt: string;
@@ -28,6 +29,22 @@ export interface Room {
   unread: number;
   /** Row 14: the room-wide text the hub renders into every spawn here, or null. */
   persona: string | null;
+}
+
+export interface RoomModeSettings {
+  mode: 'primary' | 'relay' | 'panel';
+  first: string;
+  second: string | null;
+  revision: number;
+}
+
+export interface DispatchPreview {
+  quote: string;
+  mode: string;
+  participants: string[];
+  turns: number | null;
+  commit: string | null;
+  error?: string | null;
 }
 
 /** One participant's standing text in one room, as `RolesApi` builds it. Mirrors the server shape
@@ -118,6 +135,9 @@ export interface Skill {
  *  whatever `ExchangeChanged` delivers over the socket — never render one with a lower `seq` than
  *  what is already shown for the same room. */
 export interface ExchangeSnapshot {
+  mode?: string | null;
+  modeParticipants?: string[] | null;
+  preparing?: boolean;
   roomId: string;
   status: 'idle' | 'open' | 'concluded' | 'superseded' | 'stopped';
   rootMessageId: number | null;
@@ -151,6 +171,9 @@ export interface ExchangeSnapshot {
  *  to stop. `status` and `stoppedBy` reuse the snapshot's unions so ExchangeBar's total maps cover
  *  both shapes with one declaration each. */
 export interface ExchangeView {
+  mode?: string | null;
+  modeParticipants?: string[] | null;
+  preparing?: boolean;
   rootMessageId: number;
   status: ExchangeSnapshot['status'];
   budget: number;
