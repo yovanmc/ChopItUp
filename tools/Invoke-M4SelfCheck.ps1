@@ -25,7 +25,7 @@
               directory (ContentRoot). The different working directory matters because ContentRoot
               *is* the working directory -- a same-directory launch would never notice future drift
               from BaseDirectory to a ContentRoot-relative path.
-        C3 -- /health reports schema 4; an MCP post_message (via `tools/ChopItUp.Corpus --mcp-check`,
+        C3 -- /health reports schema 15; an MCP post_message (via `tools/ChopItUp.Corpus --mcp-check`,
               never a hand-rolled transport) lands and reads back, a repeat with the same client_key
               deduplicates; the web shell is fetched AND the script it references is fetched too and
               asserted to be real JavaScript, not the shell again -- see
@@ -347,7 +347,7 @@ try {
     Add-Check -Name 'c2.no-database-in-working-directory' -Passed (-not (Test-Path -LiteralPath (Join-Path $workDir 'data'))) -Detail (Join-Path $workDir 'data')
 
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
-    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 14) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
     # Row 28: tokens.json (which the hub's own start-up migration already rewrote to the hashed
     # shape by now -- /health above only answers once startup finishes) no longer holds a plaintext

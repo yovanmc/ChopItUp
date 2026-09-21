@@ -168,7 +168,7 @@ try {
     # than becoming another Add-Check, so a broken build fails loudly instead of quietly costing one
     # more FAIL in the tally.
     if ($null -eq $health) { throw "hub on port $Port did not become healthy (pid=$($hub.Id))" }
-    if ($health.schema -ne 14) { throw "hub schema is $($health.schema), expected 13" }
+    if ($health.schema -ne 15) { throw "hub schema is $($health.schema), expected 15" }
 
     # 1. list.order-and-caps
     $r1 = Invoke-Api -Method Get -Path '/api/memory/topics'
