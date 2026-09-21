@@ -1,6 +1,6 @@
 # Chop It Up — agent/developer contract
 
-State lives in `ROADMAP.md` (whitelist-v3 board). Durable lessons → `docs/LESSONS.md`. Open decisions → `.scratch/decisions/` (gitignored) · declined ideas → `.out-of-scope/`. This file is the how-to-work-here layer; keep it under 4 KB.
+State: `ROADMAP.md` (whitelist-v3). Lessons: `docs/LESSONS.md`. Decisions: `.scratch/decisions/` (gitignored). Declined: `.out-of-scope/`. Keep this contract under 4 KB.
 
 ## What this is
 Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop) and GPT (Codex UI in the ChatGPT desktop app) talk in one thread. Every model joins through **MCP on its own subscription**. One long-running .NET process owns SQLite, the MCP Streamable HTTP endpoint and the web UI; hosts reach it over loopback (Claude Desktop via `mcp-remote`, Codex UI by URL).
@@ -17,14 +17,15 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 ## Git flow
 `main` is protected: branch → PR → `gh pr checks --watch` → `gh pr merge --squash --delete-branch` → `git pull`. Commit as the repo-configured identity, plain `git commit`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (folder `AGENTS.md`).
 
-## Layout + commands (created in M1; keep in sync)
+## Layout + commands
 ```powershell
-dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal   # 0 warnings
-dotnet test ChopItUp.slnx -c Debug --nologo -v minimal
+pwsh -File tools/Invoke-AffectedTests.ps1  # local affected gate; -PlanOnly / -Full
 dotnet run --project src/ChopItUp.Hub -- --data .data --print-config      # host configs into .data\host-configs\
 dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 ```
 `src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · `src/ChopItUp.Desktop` (WPF + WebView2 shell, row 12; dev: `dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe`).
+
+Affected checks are the default; CI is the final gate. Full fallback/reuse: `docs/affected-tests.md` (owner policy 2026-09-21).
 
 ## Deploy
 Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
