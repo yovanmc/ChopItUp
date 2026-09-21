@@ -27,8 +27,8 @@ describe('composer draft', () => {
     expect(render('half a thought')).toContain('half a thought</textarea>');
   });
 
-  test('Send is live for a written draft and dead for a blank one', () => {
-    expect(sendButton(render('ready'))).not.toContain('disabled');
+  test('Send waits for a server preview and remains disabled for a blank draft', () => {
+    expect(sendButton(render('ready'))).toContain('disabled');
     expect(sendButton(render('   '))).toContain('disabled');
   });
 });

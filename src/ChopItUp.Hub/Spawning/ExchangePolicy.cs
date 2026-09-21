@@ -223,7 +223,7 @@ public sealed class ExchangePolicy
 
     /// <summary>The running spawn finishes (its completion lands on this object, which
     /// is no longer open, so it cannot conclude or spawn); everything queued is dropped.</summary>
-    private static void Supersede(Exchange x)
+    internal static void Supersede(Exchange x)
     {
         x.Status = ExchangeStatus.Superseded;
         DropQueuedSynthesis(x);

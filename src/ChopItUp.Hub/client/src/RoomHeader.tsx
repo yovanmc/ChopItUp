@@ -1,8 +1,10 @@
 import { memo } from 'react';
 import { exportUrl } from './api';
 import type { Room } from './types';
+import ModeControls from './ModeControls';
 
 interface Props {
+  onModeSaved?: () => void;
   room: Room;
   loadedCount: number;
   /** An archive/unarchive/bind call is in flight. */
@@ -31,10 +33,12 @@ function RoomHeader({
   onTrail,
   onRoles,
   onMemory,
+  onModeSaved,
 }: Props) {
   const archived = room.archivedAt !== null;
   return (
     <header className="room-head">
+      <ModeControls key={room.id} room={room} onSaved={onModeSaved} />
       <div className="room-title">
         <h1>
           {room.name}

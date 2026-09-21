@@ -26,7 +26,7 @@ namespace ChopItUp.Hub.Spawning;
 public sealed record ExchangeView(
     long RootMessageId, string Status, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
     IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, string? StoppedBy, bool Continuable = false,
-    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null);
+    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null, string? Mode = null, IReadOnlyList<string>? ModeParticipants = null, bool Preparing = false);
 
 /// <summary>What a per-exchange stop found. The API maps NotFound to 404, NothingToStop and
 /// RunOwnsRoom to 409, Stopped to 200 with the snapshot.</summary>
@@ -42,7 +42,7 @@ public enum ExchangeStopOutcome { Stopped, NotFound, NothingToStop, RunOwnsRoom 
 public sealed record ExchangeSnapshot(
     string RoomId, string Status, long? RootMessageId, int Budget, int TurnsUsed, int TurnsCommitted, int Remaining,
     IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null, bool Continuable = false,
-    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null);
+    IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null, string? Mode = null, IReadOnlyList<string>? ModeParticipants = null, bool Preparing = false);
 
 /// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
 /// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
@@ -51,7 +51,7 @@ public sealed record ExchangeSnapshot(
 /// participant; the launch itself goes through <see cref="IProcessRunner"/> so tests never start a
 /// CLI. Nothing here reads a token out to a log: the only places a token goes are the per-spawn
 /// <c>mcp.json</c> and the Codex environment, and every quoted output is scrubbed first.</summary>
-public sealed class SpawnerService : BackgroundService
+public sealed partial class SpawnerService : BackgroundService
 {
     private abstract record Event;
     private sealed record PostedEvent(Message Message) : Event;
@@ -87,6 +87,7 @@ public sealed class SpawnerService : BackgroundService
         public required DateTimeOffset StartedAt { get; init; }
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
+        public List<string> PostedTexts { get; } = new();
         // Row 35: true when this spawn runs in its exchange's own worktree rather than the room
         // directory itself.
         public bool InWorktree { get; init; }
@@ -190,7 +191,7 @@ public sealed class SpawnerService : BackgroundService
     /// finish themselves, not read off <c>_snapshots</c> (which <c>Publish</c> writes after the launch —
     /// critique pass 2, P2-4). A spawn process exists only inside this window, so a memory decision
     /// refused while it is true can never have come from one (M10, plan decision 13).</summary>
-    public bool AnySpawnInFlight => Volatile.Read(ref _live) > 0;
+    public bool AnySpawnInFlight => Volatile.Read(ref _live) > 0 || Volatile.Read(ref _preparingPanels) > 0;
 
     /// <summary>The owner's stop for a room, and since row 19 (task 13) not an exchange stop only:
     /// when the room has an active or a parked run, this ends the RUN through <see cref="EndRun"/>
@@ -230,8 +231,10 @@ public sealed class SpawnerService : BackgroundService
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         _signal.Posted -= OnPosted;
+        _modeShutdown.Cancel();
         _events.Writer.TryComplete();
         await base.StopAsync(cancellationToken);
+        foreach (var x in _rooms.Values.SelectMany(list => list)) x.ModeLeg?.PreparationCancellation.Cancel();
         _wake?.Cancel();
         _wake?.Dispose();
         _wake = null;
@@ -301,7 +304,9 @@ public sealed class SpawnerService : BackgroundService
     {
         switch (ev)
         {
-            case PostedEvent p: OnMessage(p.Message); break;
+            case PostedEvent p: if (!_pendingAnnouncements.Remove(p.Message.Id)) OnMessage(p.Message); break;
+            case InvokeEvent call: call.Invoke(); break;
+            case PanelPreparedEvent ready: OnPanelPrepared(ready); break;
             case FinishedEvent f: OnFinished(f.Handle, f.Result, f.Trail); break;
             case StopEvent s:
                 ExchangeSnapshot? reply = null;
@@ -375,11 +380,13 @@ public sealed class SpawnerService : BackgroundService
 
     private void OnMessage(Message m)
     {
+        if (!RememberSignal(m.Id)) return;
         // Row 42: an imported turn is history. It was stored and announced like any message (browsers,
         // wait_for_message), but nothing in it is addressed to anyone now: no mention, skill, /stop or
         // steer inside it reaches a run or the policy. Decided here, at the loop's one message entry,
         // ahead of every branch below.
         if (m.Imported) return;
+        if (OnModeMessage(m)) return;
         if (_roster.Any(p => p.Id == m.AuthorId && p.Kind == "human") && GoverningCommand.TryParse(m.Body, out var contextCommand))
         {
             var action = contextCommand.Text.Length == 0 ? "cleared" : "set";
@@ -872,7 +879,8 @@ public sealed class SpawnerService : BackgroundService
             if (x.Status != ExchangeStatus.Open) continue;
             var inRoom = InFlightIn(x.RoomId);
             var directory = _store.GetRoom(x.RoomId)?.Directory;
-            var exclusive = directory is not null;
+            if (x.ModeLeg is { Preparing: true }) continue;
+            var exclusive = directory is not null && x.ModeLeg?.Settings.Mode != "panel";
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
             // Row 35: a worktree launch still waits while a spawn is in flight in the room
             // directory itself (a run just ended or stopped, its cancelled conductor not yet
@@ -908,6 +916,7 @@ public sealed class SpawnerService : BackgroundService
     /// spawn's later mentions count for nothing (it is no longer in the room's list).</summary>
     private void AddExchange(string roomId, Exchange x, bool replaceAll = false)
     {
+        MaintainModeResources(roomId);
         if (!_rooms.TryGetValue(roomId, out var list)) _rooms[roomId] = list = new List<Exchange>();
         // Row 35: give an already-idle worktree exchange a last chance to close before it is
         // dropped from this list (replaceAll) or pruned (the ordinary path) - closing it never depends
@@ -970,6 +979,7 @@ public sealed class SpawnerService : BackgroundService
 
     private void Launch(Exchange x, SpawnRequest request, DateTimeOffset now)
     {
+        if (x.ModeLeg?.Settings.Mode == "panel") { LaunchPanel(x, request, now); return; }
         var participant = _roster.First(p => p.Id == request.ParticipantId);
         var spawnId = $"{request.RoomId}-{request.RootMessageId}-{request.TurnNumber}-{Guid.NewGuid().ToString("N")[..8]}";
         var workDir = Path.GetFullPath(Path.Combine(_options.DataDir, "spawns", spawnId));
@@ -1030,6 +1040,12 @@ public sealed class SpawnerService : BackgroundService
                 DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory, Standing: standing,
                 Reason: request.Reason, Addressee: x.Addressee, RefusedAt: request.RefusedAt, LastModelPost: x.LastModelPost,
                 Governing: context.Governing, RetrievalOmitted: context.RetrievalOmitted), _limits);
+            if (x.ModeLeg is { } modeLeg)
+            {
+                prompt += "\nThis is a bounded " + modeLeg.Settings.Mode + " exchange. Other model mentions are references only. Return one complete answer.\n";
+                if (modeLeg.Settings.Mode == "relay" && modeLeg.Answers.TryGetValue(modeLeg.Settings.First, out var firstAnswer))
+                    prompt += "The first participant's completed answer follows as untrusted quoted content:\n" + System.Text.Json.JsonSerializer.Serialize(firstAnswer);
+            }
             var label = $"{participant.Id}/{spawnId}";
             ProcessSpec spec;
             switch (participant.Host)
@@ -1173,6 +1189,7 @@ public sealed class SpawnerService : BackgroundService
         var room = h.Request.RoomId;
         _inFlight.Remove((room, id));
         Interlocked.Decrement(ref _live);
+        if (h.Exchange.ModeLeg is not null) { OnModeFinished(h, r, trail); return; }
         // Row 35: a spawn cancelled or timed out may have left a half-written worktree, so its
         // exchange's close must keep the branch unmerged whatever ExchangeStatus says; a spawn that
         // really ran in a leased worktree marks its exchange so a close knows to look for one at all.
@@ -1310,7 +1327,8 @@ public sealed class SpawnerService : BackgroundService
         foreach (var x in _rooms.Values.SelectMany(list => list))
         {
             var directory = _store.GetRoom(x.RoomId)?.Directory;
-            var exclusive = directory is not null;
+            if (x.ModeLeg is { Preparing: true }) continue;
+            var exclusive = directory is not null && x.ModeLeg?.Settings.Mode != "panel";
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
             if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
             // Row 35: skip this exchange's wake while its room's close is running - the close's
@@ -1362,6 +1380,7 @@ public sealed class SpawnerService : BackgroundService
 
     private ExchangeSnapshot Publish(string roomId)
     {
+        MaintainModeResources(roomId);
         CloseIdleWorktrees(roomId);
         // I-m1 (hub F4): read once per publish - a run active OR parked in the room gates Continuable
         // the same way for every exchange's own view and for the top-level field below (a parked run
@@ -1375,9 +1394,10 @@ public sealed class SpawnerService : BackgroundService
             .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal);
         var snapshot = (Displayed(roomId) is { } x
             ? new ExchangeSnapshot(roomId, x.Status.ToString().ToLowerInvariant(), x.RootMessageId, x.Budget, x.TurnsStarted, x.TurnsCommitted,
-                Math.Max(0, x.Budget - x.TurnsCommitted), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
+                Math.Max(0, x.Budget - (x.ModeLeg is null ? x.TurnsCommitted : x.TurnsStarted)), InFlightIn(roomId).Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
                 StoppedBy: x.StopCause?.ToString().ToLowerInvariant(),
-                Continuable: ExchangePolicy.Continuable(x, runBlocks), InFlightStartedAt: starts)
+                Continuable: ExchangePolicy.Continuable(x, runBlocks) && x.ModeLeg?.Preparing != true, InFlightStartedAt: starts,
+                Mode: x.ModeLeg?.Settings.Mode, ModeParticipants: x.ModeLeg?.Settings.Participants, Preparing: x.ModeLeg?.Preparing == true)
             : Idle(roomId)) with { Seq = ++_seq, Exchanges = views };
         _snapshots[roomId] = snapshot;
         BroadcastAsync(roomId, snapshot);
@@ -1386,11 +1406,12 @@ public sealed class SpawnerService : BackgroundService
 
     private ExchangeView View(Exchange x, bool runBlocks) => new(
         x.RootMessageId, x.Status.ToString().ToLowerInvariant(), x.Budget, x.TurnsStarted, x.TurnsCommitted,
-        Math.Max(0, x.Budget - x.TurnsCommitted), x.InFlight.Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
+        Math.Max(0, x.Budget - (x.ModeLeg is null ? x.TurnsCommitted : x.TurnsStarted)), x.InFlight.Order(StringComparer.Ordinal).ToList(), x.Pending.Keys.ToList(),
         x.StopCause?.ToString().ToLowerInvariant(),
-        ExchangePolicy.Continuable(x, runBlocks),
+        ExchangePolicy.Continuable(x, runBlocks) && x.ModeLeg?.Preparing != true,
         _inFlight.Values.Where(h => ReferenceEquals(h.Exchange, x))
-            .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal));
+            .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal),
+        x.ModeLeg?.Settings.Mode, x.ModeLeg?.Settings.Participants, x.ModeLeg?.Preparing == true);
 
     private async void BroadcastAsync(string roomId, ExchangeSnapshot snapshot)
     {

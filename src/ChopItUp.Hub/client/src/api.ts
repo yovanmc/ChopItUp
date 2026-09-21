@@ -11,6 +11,8 @@ import type {
   Participant,
   RoleUpdate,
   Room,
+  RoomModeSettings,
+  DispatchPreview,
   RoomRoles,
   RunSnapshot,
   Skill,
@@ -252,15 +254,28 @@ export async function postMessage(
   body: string,
   replyToId?: number | null,
   signal?: AbortSignal,
+  admission?: { quote?: string; clientKey: string },
 ): Promise<Message> {
   return unwrap<Message>(
     await write(`/api/rooms/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(replyToId == null ? { body } : { body, replyToId }),
+      body: JSON.stringify({ body, ...(replyToId == null ? {} : { replyToId }), ...admission }),
       signal,
     }),
   );
+}
+
+export async function dispatchPreview(roomId: string, body: string, replyToId: number | null, signal?: AbortSignal): Promise<DispatchPreview> {
+  return unwrap<DispatchPreview>(await write(`/api/rooms/${encodeURIComponent(roomId)}/dispatch-preview`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ body, replyToId }), signal,
+  }));
+}
+
+export async function setRoomMode(roomId: string, settings: RoomModeSettings): Promise<RoomModeSettings> {
+  return unwrap<RoomModeSettings>(await write(`/api/rooms/${encodeURIComponent(roomId)}/mode`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(settings),
+  }));
 }
 
 /** D1: the hub authors every imported line as `owner` and leaves the original speaker inside the

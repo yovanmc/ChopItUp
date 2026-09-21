@@ -17,7 +17,7 @@ public sealed class MessageStore(ChopDb db)
                    SELECT COUNT(*) FROM messages u
                    WHERE u.room_id = r.id
                      AND u.id > COALESCE((SELECT c.last_read_id FROM read_cursors c WHERE c.participant_id = $p AND c.room_id = r.id), 0)) END,
-               r.persona
+               r.persona, r.mode, r.mode_first, r.mode_second, r.mode_revision
         FROM rooms r LEFT JOIN messages m ON m.room_id = r.id
         WHERE {0}
         GROUP BY r.id
@@ -59,7 +59,33 @@ public sealed class MessageStore(ChopDb db)
         r.IsDBNull(6) ? null : Timestamps.Parse(r.GetString(6)),
         Timestamps.Parse(r.GetString(7)),
         r.GetInt64(8),
-        r.IsDBNull(9) ? null : r.GetString(9));
+        r.IsDBNull(9) ? null : r.GetString(9),
+        new RoomModeSettings(r.GetString(10), r.GetString(11), r.IsDBNull(12) ? null : r.GetString(12), r.GetInt64(13)));
+
+    public bool SetMode(string roomId, RoomModeSettings settings, IReadOnlyList<Participant> roster)
+    {
+        settings.Validate(roster);
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE rooms SET mode=$mode, mode_first=$first, mode_second=$second, mode_revision=mode_revision+1 WHERE id=$id AND mode_revision=$revision";
+        cmd.Parameters.AddWithValue("$id", roomId);
+        cmd.Parameters.AddWithValue("$mode", settings.Mode);
+        cmd.Parameters.AddWithValue("$first", settings.First);
+        cmd.Parameters.AddWithValue("$second", (object?)settings.Second ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$revision", settings.Revision);
+        return cmd.ExecuteNonQuery() == 1;
+    }
+
+    public Message? FindClientMessage(string authorId, string clientKey)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, room_id, author_id, body, created_at, reply_to_id, imported FROM messages WHERE author_id=$author AND client_key=$key ORDER BY id LIMIT 1";
+        cmd.Parameters.AddWithValue("$author", authorId);
+        cmd.Parameters.AddWithValue("$key", clientKey);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? ReadMessage(reader) : null;
+    }
 
     /// <summary>Inserts a room. The id is the caller's (<see cref="RoomIds"/>); the primary key is the
     /// arbiter for a duplicate, surfaced as <see cref="ArgumentException"/>. <paramref name="directory"/>

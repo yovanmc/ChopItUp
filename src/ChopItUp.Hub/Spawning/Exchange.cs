@@ -35,6 +35,7 @@ public sealed class PendingSpawn
 /// counts launches. <see cref="Pending"/> keeps insertion order — that IS mention order (A1).</summary>
 public sealed class Exchange
 {
+    public ModeLeg? ModeLeg { get; set; }
     public required string RoomId { get; init; }
     public required long RootMessageId { get; init; }
 
@@ -91,7 +92,7 @@ public sealed class Exchange
     /// <summary>Row 44: the first spawnable participant the root message addressed, for an
     /// exchange an owner prompt opened outside a run; null for run and conductor exchanges. Gets one
     /// synthesis turn when another participant's post would otherwise have been the last.</summary>
-    public string? Addressee { get; init; }
+    public string? Addressee { get; set; }
 
     /// <summary>Row 44: hand-offs the budget refused, in refusal order, each with the message that made
     /// it; what /continue re-queues when nobody was named. Cleared by a continue, and by a reply
@@ -109,6 +110,23 @@ public sealed class Exchange
     /// <summary>Row 44: the last model post that landed in this exchange (author and id), read by
     /// <see cref="ExchangePolicy.Finished"/> to decide whether the addressee still owes a wrap-up.</summary>
     public (string AuthorId, long MessageId)? LastModelPost { get; set; }
+}
+
+public sealed class ModeLeg
+{
+    public required ChopItUp.Core.Model.RoomModeSettings Settings { get; init; }
+    public required long TriggerId { get; init; }
+    public required string FrozenContext { get; init; }
+    public required IReadOnlyDictionary<string, string?> Roles { get; init; }
+    public Dictionary<string, string?> Answers { get; } = new(StringComparer.Ordinal);
+
+    public string? SnapshotRoot { get; set; }
+    public string? Commit { get; set; }
+    public bool Preparing { get; set; }
+    public bool Synthesis { get; set; }
+    public bool FirstPassPublished { get; set; }
+    public int Number { get; init; }
+    public CancellationTokenSource PreparationCancellation { get; } = new();
 }
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two

@@ -207,6 +207,14 @@ describe('continuing one exchange from its strip', () => {
     expect(events).not.toContain('apply');
     expect(events.at(-1)).toBe('end');
   });
+
+  test('a mode Continue checks the displayed pair before any paid post', async () => {
+    const { events, hooks } = record(() => json({ quote: 'changed', mode: 'panel', participants: ['opus', 'sonnet'], turns: 3 }));
+    await continueExchangeAt('lab', 57, hooks, { mode: 'primary', participants: ['sonnet'] });
+    expect(events).toContain('POST /api/rooms/lab/dispatch-preview');
+    expect(events).not.toContain('POST /api/rooms/lab/messages');
+    expect(events.some(e => e.startsWith('fail:'))).toBe(true);
+  });
 });
 
 describe('the per-root stopping set', () => {
