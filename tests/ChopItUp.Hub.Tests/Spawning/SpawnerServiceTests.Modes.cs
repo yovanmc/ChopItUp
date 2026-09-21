@@ -96,11 +96,14 @@ public sealed partial class SpawnerServiceTests
         Mode("panel");
         await PostAsOwner("Panel with a spaced second pass");
         await _runner.NextSpecAsync(Wait);
+        // The fake runner can expose the launch before LaunchDue publishes its updated snapshot.
+        // Drain that loop pass and distinguish completed sonnet from the pre-launch pending state.
+        await Spawner.InLoopAsync(() => true);
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
         while (DateTimeOffset.UtcNow < deadline)
         {
             var state = Spawner.Snapshot("general");
-            if (state.Pending.Contains("opus") && state.InFlight.Count == 0) break;
+            if (state.Pending.Contains("opus") && !state.Pending.Contains("sonnet") && state.InFlight.Count == 0) break;
             await Task.Delay(10);
         }
         Assert.Contains("opus", Spawner.Snapshot("general").Pending);
