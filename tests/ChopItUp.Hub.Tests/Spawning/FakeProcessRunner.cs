@@ -7,7 +7,7 @@ namespace ChopItUp.Hub.Tests.Spawning;
 /// spec (the prompt is <c>StandardInput</c>), post into the hub through a real MCP client with the
 /// participant's token, return a result. Every spec is recorded and also queued, so a test can await
 /// "the next spawn" instead of sleeping.</summary>
-public sealed class FakeProcessRunner : IProcessRunner
+public sealed class FakeProcessRunner(TimeProvider? clock = null) : IProcessRunner
 {
     private readonly Channel<ProcessSpec> _seen = Channel.CreateUnbounded<ProcessSpec>();
     private readonly List<(ProcessSpec Spec, DateTimeOffset At)> _runs = new();
@@ -32,7 +32,7 @@ public sealed class FakeProcessRunner : IProcessRunner
         var mcp = i >= 0 && i + 1 < args.Count && File.Exists(args[i + 1]) ? File.ReadAllText(args[i + 1]) : null;
         lock (_runs)
         {
-            _runs.Add((spec, DateTimeOffset.UtcNow));
+            _runs.Add((spec, (clock ?? TimeProvider.System).GetUtcNow()));
             if (mcp is not null) _mcpJson[spec] = mcp;
         }
         _seen.Writer.TryWrite(spec);

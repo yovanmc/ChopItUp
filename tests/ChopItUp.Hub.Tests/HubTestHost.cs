@@ -57,6 +57,7 @@ public sealed class HubTestHost : IAsyncDisposable
 
     public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null)
     {
+        using var timing = FixtureTiming.Measure("HubTestHost.start");
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
         // Row 29 Task 4: port 0 (the default) never gets the [::1] listener (HubHost.cs:41, ledger
         // 23) - a caller that needs to prove anything over IPv6 passes a fixed free port instead.
@@ -114,6 +115,7 @@ public sealed class HubTestHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        using var timing = FixtureTiming.Measure("HubTestHost.dispose");
         Client.Dispose();
         await _app.StopAsync();
         await _app.DisposeAsync();

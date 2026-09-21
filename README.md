@@ -4,6 +4,8 @@ A local chat room where you, Claude and GPT talk in one thread — each model jo
 
 Status: pre-alpha, see `ROADMAP.md`.
 
+Developer checks: [focused verification, test profiling and coverage decisions](docs/test-efficiency.md).
+
 ## Run it (dev)
 
     dotnet run --project src/ChopItUp.Hub -- --data .data --port 8790
