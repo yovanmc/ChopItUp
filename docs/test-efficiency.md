@@ -1,6 +1,6 @@
 # Test timing and coverage
 
-## Run focused checks before the full gate
+## Run affected checks
 
 Build once after code changes, then exercise the changed behavior. For scheduler/snapshot or deployment changes:
 
@@ -9,7 +9,7 @@ dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal
 dotnet test tests/ChopItUp.Hub.Tests --no-build --filter 'FullyQualifiedName~SpawnerTimingTests|FullyQualifiedName~R44_continue_requeues|FullyQualifiedName~ExchangeApiTests|FullyQualifiedName~WithRoot_shares_the_gate|FullyQualifiedName~DeployScriptTests'
 ```
 
-This is an editing loop, not a replacement for the full solution and client gates in `CLAUDE.md` and CI. Run the required full gates once the focused regressions stabilize; rerun after relevant changes or an unresolved failure. Keep complete output and TRX so a failed test name is never lost to output filtering.
+Use [affected verification](affected-tests.md) for the final gate. CI and local execution share the selector; full runs are reserved for its explicit broad/unknown triggers. Keep complete output and TRX so a failed test name is never lost to output filtering.
 
 ## Profile a complete run
 

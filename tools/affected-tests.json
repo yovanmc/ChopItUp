@@ -1,0 +1,41 @@
+{
+  "kind": "chopitup",
+  "projects": [
+    {
+      "path": "src/ChopItUp.Core/ChopItUp.Core.csproj",
+      "suite": null
+    },
+    {
+      "path": "src/ChopItUp.Desktop/ChopItUp.Desktop.csproj",
+      "suite": null
+    },
+    {
+      "path": "src/ChopItUp.Hub/ChopItUp.Hub.csproj",
+      "suite": null
+    },
+    {
+      "path": "tests/ChopItUp.Core.Tests/ChopItUp.Core.Tests.csproj",
+      "suite": "ChopItUp.Core.Tests"
+    },
+    {
+      "path": "tests/ChopItUp.Desktop.Tests/ChopItUp.Desktop.Tests.csproj",
+      "suite": "ChopItUp.Desktop.Tests"
+    },
+    {
+      "path": "tests/ChopItUp.Hub.Tests/ChopItUp.Hub.Tests.csproj",
+      "suite": "ChopItUp.Hub.Tests"
+    },
+    {
+      "path": "tools/ChopItUp.Corpus/ChopItUp.Corpus.csproj",
+      "suite": null
+    }
+  ],
+  "nodes": [],
+  "solution": "ChopItUp.slnx",
+  "clientOwners": [
+    "src/ChopItUp.Core/ChopItUp.Core.csproj",
+    "src/ChopItUp.Hub/ChopItUp.Hub.csproj"
+  ],
+  "nodeFiles": {},
+  "defaultBase": "main"
+}
