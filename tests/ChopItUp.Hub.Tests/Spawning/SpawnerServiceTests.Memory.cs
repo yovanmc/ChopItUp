@@ -4,7 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceMemoryTests : SpawnerServiceTestBase
 {
     [Fact]
     public async Task A2_a_spawn_prompt_carries_the_core_written_on_disk_and_the_widened_claude_allow_list()

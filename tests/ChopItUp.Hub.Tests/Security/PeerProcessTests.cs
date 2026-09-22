@@ -15,6 +15,7 @@ namespace ChopItUp.Hub.Tests.Security;
 /// default) test project as a platform-compat warning, which is an error under -warnaserror. CI is
 /// windows-latest only (D12), so this test class never needs to run anywhere else.</summary>
 [SupportedOSPlatform("windows")]
+[Collection(ProcessStateCollection.Name)]
 public sealed class PeerProcessTests
 {
     private static (TcpListener listener, TcpClient client, TcpClient accepted) Connect(IPAddress loopback)

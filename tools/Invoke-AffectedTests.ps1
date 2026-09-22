@@ -39,7 +39,7 @@ try {
         }
     }
     # Each selected suite retains its count guard; an empty/partial green run is not evidence.
-    $floors = @{ 'ChopItUp.Core.Tests' = 341; 'ChopItUp.Hub.Tests' = 983; 'ChopItUp.Desktop.Tests' = 108 }
+    $floors = @{ 'ChopItUp.Core.Tests' = 341; 'ChopItUp.Hub.Tests' = 1000; 'ChopItUp.Desktop.Tests' = 108 }
     foreach ($suite in $plan.suites) {
         $results = Join-Path $LogDir ($suite + '-' + [guid]::NewGuid().ToString('N'))
         & dotnet test "tests/$suite/$suite.csproj" -c Debug --no-build --nologo -v minimal --logger 'trx;LogFileName=result.trx' --results-directory $results

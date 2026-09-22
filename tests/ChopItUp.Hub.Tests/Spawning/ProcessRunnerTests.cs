@@ -3,6 +3,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
+[Collection(ProcessStateCollection.Name)]
 public sealed class ProcessRunnerTests
 {
     private static readonly string Cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");

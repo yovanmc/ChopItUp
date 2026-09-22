@@ -2,6 +2,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
+[Collection(ProcessStateCollection.Name)]
 public sealed class SpawnJobsTests
 {
     private static readonly string Cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");

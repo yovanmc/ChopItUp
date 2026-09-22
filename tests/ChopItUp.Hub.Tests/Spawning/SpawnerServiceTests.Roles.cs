@@ -6,7 +6,7 @@ namespace ChopItUp.Hub.Tests.Spawning;
 /// <summary>Row 14, task 4: the spawner reads role and persona text fresh from the stores at launch
 /// time rather than off the startup-static <c>_roster</c> — this is what makes an owner's edit through
 /// the (future, task 5) API take effect on the next spawn with no hub restart (D-c, AC7).</summary>
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
 {
     [Fact]
     public async Task Row14_T4_a_global_role_is_rendered_into_the_spawned_prompt()

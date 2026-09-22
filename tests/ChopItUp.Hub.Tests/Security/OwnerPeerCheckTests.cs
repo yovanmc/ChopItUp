@@ -18,6 +18,7 @@ namespace ChopItUp.Hub.Tests.Security;
 /// Marked <see cref="SupportedOSPlatform"/>("windows") like <see cref="PeerProcessTests"/>: this
 /// exercises the real Windows peer-table lookup, not a fake.</summary>
 [SupportedOSPlatform("windows")]
+[Collection(ProcessStateCollection.Name)]
 public sealed class OwnerPeerCheckTests
 {
     private static readonly string Cmd = Path.Combine(Environment.SystemDirectory, "cmd.exe");

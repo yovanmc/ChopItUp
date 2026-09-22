@@ -2,6 +2,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
+[Collection(ProcessStateCollection.Name)]
 public sealed class PanelProcessTests
 {
     [Theory]
