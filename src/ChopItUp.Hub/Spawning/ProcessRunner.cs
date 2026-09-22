@@ -42,6 +42,10 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             UseShellExecute = false,
             CreateNoWindow = true,
             RedirectStandardInput = true,
+            // Pinned: unset, .NET picks the console code page, and a hub started without a console (the
+            // Desktop shell) falls back to ANSI, where U+2013 leaves as the single byte 0x96 and Codex
+            // refuses the prompt as invalid UTF-8 (2026-09-22). Both CLIs read stdin as UTF-8.
+            StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             WorkingDirectory = spec.WorkingDirectory,
