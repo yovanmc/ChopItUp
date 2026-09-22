@@ -117,6 +117,24 @@ The SpawnerService tests were one partial class of 126 cases and 205 s, which xU
 
 Totals: 74 classes, 65 `parallel`, 9 `process-state`. R1 is left out of the table because it is inert.
 
+## Measured
+
+CI runner (`windows-latest`, `Environment.ProcessorCount` 4), one clean runner per arm, three repetitions, 1000 tests each:
+
+| Collections at once | Wall per run (s) | Median |
+|---|---|---|
+| serial | 811, 723, 757 | 757 |
+| 2 | 310, 356, 394 | 356 |
+| 4 | 401, 316, 293 | 316 |
+
+2 and 4 are the same within the spread, and both are about 2.3 times faster than serial. The compiled default is 2: the extra speed at 4 is inside the noise, while the one crash this suite suffers (a host start failing with WSAENOBUFS) grows with the number of hubs alive at once.
+
+One failure in nine arm runs, at 2: `DeployScriptTests` read a starting process's module path as `ntdll.dll` (`docs/BUGS.md` 71). It is a race in the test, not interference between classes, so the class stays parallel; if it repeats, it moves into `ProcessStateCollection` and this line says so.
+
+Controls, each an attempt count rather than a proven rate. Seeded shuffle: 2 runs, 1 failure (a room archive returning 409, not reproducible with the same seed when the class runs alone). A looping build on the other cores: 1 run, 5 failures, all fixed-wait timeouts or temp-directory cleanup (`docs/BUGS.md` 68). Cancellation mid-run and a forced test-host kill: 1 run each, no test host or vstest process alive 30 s later, 8 and 6 GUID temp directories left behind, which is what a killed run is expected to leave.
+
+The desk (16 cores, arms pinned to 4) could not produce a quiet venue: an unrelated test suite and ordinary desktop applications moved serial runs between 568 s and 2538 s and aborted two runs outright. Those numbers are kept in the pilot's scratch record but the CI numbers above are the ones that decide.
+
 ## Known hazards under concurrency
 
 - R10 is the one that bites. On a busy desk a host start can fail with `SocketException (10055)`, "the system lacked sufficient buffer space". Hosting raises it on its own thread, so the test host dies and the whole run aborts. Measured at serial, at 2 and at 4 parallel collections, so it follows the machine's socket budget rather than the cap, and TIME_WAIT never rose above 190 while it happened. Queued as `docs/BUGS.md` 67.
