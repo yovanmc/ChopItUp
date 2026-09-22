@@ -775,10 +775,20 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent("demo");
     }
 
+    /// <summary>The wait the shipped hub uses is policy, not a test knob: the tests below shorten it
+    /// per call, so this reads the default back and pins it at the 10 s SkillStore.Read/List also
+    /// wait (M-4). It never contends for the mutex, so it never waits.</summary>
     [Fact]
-    public void Validate_refuses_with_IoFailure_when_the_store_mutex_is_held_by_another_import()
+    public void The_default_store_mutex_wait_is_ten_seconds()
     {
-        var source = NewSourceDir("demo", ValidSkillBody);
+        Assert.Equal(TimeSpan.FromSeconds(10), SkillImport.DefaultMutexTimeout);
+    }
+
+    /// <summary>Takes the store's real named mutex, calls <see cref="SkillImport.Validate"/> from a
+    /// second thread while it is held, and reports what that call answered and how long it waited.
+    /// <paramref name="mutexWait"/> null means the shipped default.</summary>
+    private (SkillImportResult Result, TimeSpan Elapsed) ValidateWhileTheStoreMutexIsHeld(string source, TimeSpan? mutexWait)
+    {
         // Same literal prefix SkillImport and SkillStore both key their mutex on (M-4) - duplicated
         // here on purpose, the way SkillStore.cs already duplicates it rather than exposing it.
         var mutexName = PathMutex.Name("Global\\ChopItUp.Skills.", _skillsRoot);
@@ -787,14 +797,14 @@ public sealed class SkillImportTests : IDisposable
         // all), so the holder must be a genuinely different OS thread - a plain Thread, not
         // Task.Run/await, which can also resume a continuation on a different pool thread than the
         // one that started it and make ReleaseMutex throw "unsynchronized block of code" (also
-        // measured this session).
+        // measured this session). A fake lock is not a substitute: it has neither of those semantics.
         using var external = new Mutex(initiallyOwned: true, mutexName);
         SkillImportResult? result = null;
         Exception? workerException = null;
         var sw = Stopwatch.StartNew();
         var worker = new Thread(() =>
         {
-            try { result = SkillImport.Validate(source, _skillsRoot, force: false); }
+            try { result = SkillImport.Validate(source, _skillsRoot, force: false, mutexTimeout: mutexWait); }
             catch (Exception e) { workerException = e; }
         });
         worker.Start();
@@ -804,9 +814,36 @@ public sealed class SkillImportTests : IDisposable
 
         Assert.Null(workerException);
         Assert.NotNull(result);
-        Assert.Equal(SkillImportOutcome.IoFailure, result!.Outcome);
+        return (result!, sw.Elapsed);
+    }
+
+    [Fact]
+    public void Validate_refuses_with_IoFailure_when_the_store_mutex_is_held_by_another_import()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+
+        var (result, elapsed) = ValidateWhileTheStoreMutexIsHeld(source, TimeSpan.FromSeconds(1));
+
+        Assert.Equal(SkillImportOutcome.IoFailure, result.Outcome);
         Assert.Contains("busy", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(9), $"Elapsed {sw.Elapsed} - Validate should have waited out the same 10s mutex timeout Run uses.");
+        AssertTargetAbsent("demo");
+        Assert.True(elapsed < TimeSpan.FromSeconds(3), $"Elapsed {elapsed} - the injected 1s wait should have been the one that expired, not the shipped default.");
+    }
+
+    /// <summary>The same contention against the shipped default, asserting the real wall wait and
+    /// nothing the fast test above already covers. Its trait keeps it out of ordinary affected runs and
+    /// leaves it to the periodic whole-suite run (`docs/affected-tests.md`), so the refusal stays proven
+    /// at the duration the hub actually uses without every run paying 10 s for it.</summary>
+    [Fact]
+    [Trait("Category", "RealDuration")]
+    public void Validate_on_the_default_wait_refuses_only_after_the_full_ten_seconds()
+    {
+        var source = NewSourceDir("demo", ValidSkillBody);
+
+        var (result, elapsed) = ValidateWhileTheStoreMutexIsHeld(source, mutexWait: null);
+
+        Assert.Equal(SkillImportOutcome.IoFailure, result.Outcome);
+        Assert.True(elapsed >= TimeSpan.FromSeconds(9), $"Elapsed {elapsed} - Validate should have waited out the same 10s mutex timeout Run uses.");
     }
 
     [Fact]
