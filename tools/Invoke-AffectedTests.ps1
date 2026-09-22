@@ -31,6 +31,12 @@ try {
             & dotnet build "tests/$suite/$suite.csproj" -c Debug -warnaserror -v minimal
             if ($LASTEXITCODE -ne 0) { throw "Build failed: $suite" }
         }
+        # A client-only change still builds the project whose ClientBuild target typechecks and bundles it.
+        foreach ($project in @($plan.builds)) {
+            if (-not $project) { continue }
+            & dotnet build $project -c Debug -warnaserror -v minimal
+            if ($LASTEXITCODE -ne 0) { throw "Build failed: $project" }
+        }
     }
     # Each selected suite retains its count guard; an empty/partial green run is not evidence.
     $floors = @{ 'ChopItUp.Core.Tests' = 341; 'ChopItUp.Hub.Tests' = 983; 'ChopItUp.Desktop.Tests' = 108 }

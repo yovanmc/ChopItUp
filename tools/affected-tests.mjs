@@ -1,6 +1,6 @@
 // Repository-local selection shared by the local runner and CI. No external packages.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +23,7 @@ export function selectTests(root, config, files, forcedReason = '') {
       !Array.isArray(config.nodes) || config.nodes.some(n => typeof n !== 'string')) {
     throw new Error('Invalid selection map: clientOwners and nodes must be flat string arrays');
   }
-  const suites = new Set(), nodes = new Set(), reasons = [];
+  const suites = new Set(), nodes = new Set(), builds = new Set(), reasons = [];
   let full = false, client = false, sourceGuards = false;
   const all = reason => { full = true; reasons.push(reason); };
   const projects = config.projects;
@@ -64,7 +64,7 @@ export function selectTests(root, config, files, forcedReason = '') {
     const path = slash(raw);
     if (/^(\/|[A-Za-z]:)|(^|\/)\.\.(\/|$)/.test(path)) { all(`Invalid relative path: ${path}`); continue; }
     if (/\.(csproj|props|targets|slnx?|runsettings)$|(^|\/)(global\.json|NuGet\.Config|nuget\.config|Directory\.Packages\.props)$/.test(path) ||
-        /(^|\/)(affected-tests[^/]*|Invoke-AffectedTests\.ps1|Invoke-CurioSuites\.ps1|Test-NativeSuiteIsolation\.ps1)$/.test(path) || path.startsWith('.github/')) {
+        /(^|\/)(affected-tests\.(mjs|json|test\.mjs)|Invoke-AffectedTests\.ps1|Invoke-CurioSuites\.ps1|Test-NativeSuiteIsolation\.ps1)$/.test(path) || path.startsWith('.github/')) {
       all(`Build, dependency or verification contract: ${path}`); continue;
     }
     // Documentation is not a blanket path exemption: executable artboards and
@@ -80,6 +80,15 @@ export function selectTests(root, config, files, forcedReason = '') {
       }
       const node = config.nodeFiles[path];
       if (node) { nodes.add(node); nodes.add('verify-web-judge-vocabulary'); reasons.push(`Node test: ${path}`); continue; }
+    }
+    // The web client lives inside the Hub project directory but is not Hub code: it gets the
+    // client checks, the tests registered as readers of its served output, and a build of the
+    // project whose ClientBuild target typechecks and bundles it.
+    const subtree = (config.clientSubtrees ?? []).find(s => path.startsWith(s.path));
+    if (subtree) {
+      client = true; builds.add(subtree.build);
+      for (const reader of config.contractReaders ?? []) suites.add(reader.suite);
+      reasons.push(`Client subtree and registered readers: ${path}`); continue;
     }
     const owner = projects.find(p => path.startsWith(dirname(p.path) + '/'));
     if (owner) {
@@ -100,8 +109,25 @@ export function selectTests(root, config, files, forcedReason = '') {
     client = config.kind === 'chopitup'; sourceGuards = false;
   }
   return { version: 1, mode: full ? 'full' : 'affected', files, suites: [...suites].sort(),
-    nodes: [...nodes].sort(), client, sourceGuards, reasons,
+    nodes: [...nodes].sort(), builds: [...builds].sort(), client, sourceGuards, reasons,
     noProductTests: suites.size === 0 && nodes.size === 0 && !client && !sourceGuards };
+}
+
+// A test that mentions served client output, the client directory or the WebView bridge must be
+// classified: a registered contract reader (selected by client edits) or a reviewed non-reader.
+const clientReaderPattern = /wwwroot|index\.html|ClientOutDir|ChopItUp\.Hub[\\/]client|chrome\.webview|WebMessageReceived|PostWebMessage/;
+export function unregisteredClientReaders(root, config) {
+  const readers = (config.contractReaders ?? []).map(r => r.path), reviewed = Object.keys(config.nonReaders ?? {});
+  const testsDir = resolve(root, 'tests'), problems = [];
+  const files = existsSync(testsDir) ? readdirSync(testsDir, { recursive: true }).map(f => `tests/${slash(f)}`) : [];
+  for (const file of files.filter(f => f.endsWith('.cs') && !/\/(bin|obj)\//.test(f)).sort()) {
+    if (clientReaderPattern.test(readFileSync(resolve(root, file), 'utf8')) && !readers.includes(file) && !reviewed.includes(file)) {
+      problems.push(`Unregistered client reader: ${file}`);
+    }
+  }
+  for (const file of readers) if (!existsSync(resolve(root, file))) problems.push(`Registered client reader is missing: ${file}`);
+  for (const file of reviewed) if (!existsSync(resolve(root, file))) problems.push(`Reviewed non-reader is missing: ${file}`);
+  return problems;
 }
 
 export function plan(root, options = {}) {

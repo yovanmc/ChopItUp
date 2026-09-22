@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
-import { changedFiles, selectTests, plan } from './affected-tests.mjs';
+import { changedFiles, selectTests, plan, unregisteredClientReaders } from './affected-tests.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const config = JSON.parse(readFileSync(join(root, 'tools/affected-tests.json'), 'utf8'));
@@ -22,6 +22,49 @@ test('unknown, build, selection and CI changes fail closed', () => {
     assert.equal(result.suites.length, config.projects.filter(p => p.suite).length);
     assert.equal(result.noProductTests, false);
   }
+});
+test('the selection narrative doc is narrative; the selector files themselves still fail closed', () => {
+  const doc = choose(['docs/affected-tests.md']);
+  assert.equal(doc.noProductTests, true);
+  assert.deepEqual(doc.reasons, ['Narrative documentation: docs/affected-tests.md']);
+  for (const path of ['tools/affected-tests.mjs', 'tools/affected-tests.json', 'tools/affected-tests.test.mjs']) {
+    assert.equal(choose([path]).mode, 'full', path);
+  }
+});
+test('a client-subtree edit selects the client, its registered readers and the Hub build, not Hub or Desktop tests', () => {
+  const readerSuites = [...new Set(config.contractReaders.map(r => r.suite))].sort();
+  for (const path of ['src/ChopItUp.Hub/client/src/styles.css', 'src/ChopItUp.Hub/client/src/Thread.test.tsx']) {
+    const result = choose([path]);
+    assert.equal(result.mode, 'affected', path);
+    assert.equal(result.client, true, path);
+    assert.deepEqual(result.suites, readerSuites, path);
+    assert.deepEqual(result.builds, ['src/ChopItUp.Hub/ChopItUp.Hub.csproj'], path);
+  }
+});
+test('Hub contract files outside the client subtree still select Hub tests', () => {
+  for (const path of ['src/ChopItUp.Hub/Realtime/RoomHub.cs', 'src/ChopItUp.Hub/Web/SpaFiles.cs']) {
+    const result = choose([path]);
+    assert.ok(result.suites.includes('ChopItUp.Hub.Tests'), path);
+    assert.equal(result.client, true, path);
+  }
+});
+test('every test that mentions served client output is registered as a reader or a reviewed non-reader', () => {
+  assert.deepEqual(unregisteredClientReaders(root, config), []);
+});
+test('an unregistered client reader or a vanished registration fails the check', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'affected readers '));
+  try {
+    mkdirSync(join(temp, 'tests/Hub.Tests'), { recursive: true });
+    writeFileSync(join(temp, 'tests/Hub.Tests/ServedShellTests.cs'), 'var page = File.ReadAllText(Path.Combine(root, "wwwroot", "index.html"));');
+    const c = { ...config, contractReaders: [], nonReaders: {} };
+    assert.deepEqual(unregisteredClientReaders(temp, c), ['Unregistered client reader: tests/Hub.Tests/ServedShellTests.cs']);
+    const registered = { ...c, contractReaders: [{ path: 'tests/Hub.Tests/ServedShellTests.cs', suite: 'Hub.Tests' }] };
+    assert.deepEqual(unregisteredClientReaders(temp, registered), []);
+    rmSync(join(temp, 'tests/Hub.Tests/ServedShellTests.cs'));
+    assert.deepEqual(unregisteredClientReaders(temp, registered), ['Registered client reader is missing: tests/Hub.Tests/ServedShellTests.cs']);
+    const reviewed = { ...c, nonReaders: { 'tests/Hub.Tests/Gone.cs': 'fabricated wwwroot' } };
+    assert.deepEqual(unregisteredClientReaders(temp, reviewed), ['Reviewed non-reader is missing: tests/Hub.Tests/Gone.cs']);
+  } finally { rmSync(join(temp), { recursive: true, force: true }); }
 });
 test('test-only edit selects its owning suite, not every product consumer', () => {
   for (const p of config.projects.filter(p => p.suite)) {
