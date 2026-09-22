@@ -1,0 +1,40 @@
+name: Hub parallel arms
+
+# Temporary: measures Hub.Tests wall time at serial, 2 and 4 parallel collections on the CI runner,
+# one clean runner per arm. Dispatch only; it gates nothing. Removed once the counts are chosen.
+on:
+  workflow_dispatch:
+
+jobs:
+  arm:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        threads: ['serial', '2', '4']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: dotnet build tests/ChopItUp.Hub.Tests/ChopItUp.Hub.Tests.csproj -c Debug -warnaserror -v minimal
+      - name: Run Hub.Tests
+        shell: pwsh
+        run: |
+          Write-Host "ProcessorCount: $([Environment]::ProcessorCount)"
+          $setting = if ('${{ matrix.threads }}' -eq 'serial') { 'xUnit.ParallelizeTestCollections=false' } else { 'xUnit.MaxParallelThreads=${{ matrix.threads }}' }
+          $sw = [Diagnostics.Stopwatch]::StartNew()
+          dotnet test tests/ChopItUp.Hub.Tests/ChopItUp.Hub.Tests.csproj -c Debug --no-build --nologo -v q `
+            --logger "trx;LogFileName=r.trx" --results-directory "${{ runner.temp }}/arm" -- $setting
+          $code = $LASTEXITCODE
+          $sw.Stop()
+          Write-Host "ARM ${{ matrix.threads }} wall_s=$([int]$sw.Elapsed.TotalSeconds) exit=$code"
+          if ($code -ne 0) { throw "arm ${{ matrix.threads }} failed" }
+      - name: Retain results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-${{ matrix.threads }}
+          path: ${{ runner.temp }}/arm
