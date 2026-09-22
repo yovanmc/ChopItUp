@@ -83,6 +83,16 @@ public sealed class ParallelismPolicyTests
         Assert.True(violations.Count == 0, string.Join(Environment.NewLine, violations));
     }
 
+    /// <summary>The compiled-in default. A runsettings value or a `-- xUnit.MaxParallelThreads=` argument
+    /// overrides it for one run, which is how the thread counts are compared; CI passes neither.</summary>
+    [Fact]
+    public void Collections_run_in_parallel_under_a_cap_of_at_most_four()
+    {
+        var behavior = Assert.Single(typeof(ParallelismPolicyTests).Assembly.GetCustomAttributes(typeof(CollectionBehaviorAttribute), false).Cast<CollectionBehaviorAttribute>());
+        Assert.False(behavior.DisableTestParallelization, "test parallelization is disabled for the whole assembly");
+        Assert.InRange(behavior.MaxParallelThreads, 1, 4);
+    }
+
     [Fact]
     public void An_untagged_test_class_calling_a_shared_state_api_is_reported()
     {
