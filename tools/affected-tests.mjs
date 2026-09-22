@@ -64,7 +64,7 @@ export function selectTests(root, config, files, forcedReason = '') {
     const path = slash(raw);
     if (/^(\/|[A-Za-z]:)|(^|\/)\.\.(\/|$)/.test(path)) { all(`Invalid relative path: ${path}`); continue; }
     if (/\.(csproj|props|targets|slnx?|runsettings)$|(^|\/)(global\.json|NuGet\.Config|nuget\.config|Directory\.Packages\.props)$/.test(path) ||
-        /(^|\/)(affected-tests[^/]*|Invoke-AffectedTests\.ps1|Invoke-CurioSuites\.ps1|Test-NativeSuiteIsolation\.ps1)$/.test(path) || path.startsWith('.github/')) {
+        /(^|\/)(affected-tests\.(mjs|json|test\.mjs)|Invoke-AffectedTests\.ps1|Invoke-CurioSuites\.ps1|Test-NativeSuiteIsolation\.ps1)$/.test(path) || path.startsWith('.github/')) {
       all(`Build, dependency or verification contract: ${path}`); continue;
     }
     // Documentation is not a blanket path exemption: executable artboards and

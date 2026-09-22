@@ -23,6 +23,14 @@ test('unknown, build, selection and CI changes fail closed', () => {
     assert.equal(result.noProductTests, false);
   }
 });
+test('the selection narrative doc is narrative; the selector files themselves still fail closed', () => {
+  const doc = choose(['docs/affected-tests.md']);
+  assert.equal(doc.noProductTests, true);
+  assert.deepEqual(doc.reasons, ['Narrative documentation: docs/affected-tests.md']);
+  for (const path of ['tools/affected-tests.mjs', 'tools/affected-tests.json', 'tools/affected-tests.test.mjs']) {
+    assert.equal(choose([path]).mode, 'full', path);
+  }
+});
 test('test-only edit selects its owning suite, not every product consumer', () => {
   for (const p of config.projects.filter(p => p.suite)) {
     const result = choose([`${dirname(p.path)}/ExampleTests.cs`]);
