@@ -36,6 +36,21 @@
     "src/ChopItUp.Core/ChopItUp.Core.csproj",
     "src/ChopItUp.Hub/ChopItUp.Hub.csproj"
   ],
+  "clientSubtrees": [
+    {
+      "path": "src/ChopItUp.Hub/client/",
+      "build": "src/ChopItUp.Hub/ChopItUp.Hub.csproj"
+    }
+  ],
+  "contractReaders": [],
+  "nonReaders": {
+    "tests/ChopItUp.Desktop.Tests/BootPageTests.cs": "asserts the desktop boot page's own inline postMessage script, not the web client",
+    "tests/ChopItUp.Desktop.Tests/NavigationPolicyTests.cs": "index.html appears only as a URL string in navigation-policy cases",
+    "tests/ChopItUp.Desktop.Tests/ProcessHubFactoryEnvVarTests.cs": "wwwroot appears only in a comment about project references",
+    "tests/ChopItUp.Hub.Tests/DeployScriptTests.cs": "stages a synthetic wwwroot to exercise the deploy script",
+    "tests/ChopItUp.Hub.Tests/Rooms/RoomPathsTests.cs": "wwwroot appears only as a forbidden-path string",
+    "tests/ChopItUp.Hub.Tests/SpaServingTests.cs": "serves a fabricated wwwroot, independent of the client build"
+  },
   "nodeFiles": {},
   "defaultBase": "main"
 }
