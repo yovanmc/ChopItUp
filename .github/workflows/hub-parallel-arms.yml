@@ -1,9 +1,12 @@
 name: Hub parallel arms
 
 # Temporary: measures Hub.Tests wall time at serial, 2 and 4 parallel collections on the CI runner,
-# one clean runner per arm. Dispatch only; it gates nothing. Removed once the counts are chosen.
+# one clean runner per arm. It runs only on this pilot branch and gates nothing. Removed once the
+# counts are chosen.
 on:
   workflow_dispatch:
+  push:
+    branches: [test/hub-parallel-pilot]
 
 jobs:
   arm:
