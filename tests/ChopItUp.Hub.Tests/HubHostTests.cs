@@ -11,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
+[Collection(ProcessStateCollection.Name)]
 public sealed class HubHostTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_hub_" + Guid.NewGuid().ToString("N"));

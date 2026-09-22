@@ -7,6 +7,7 @@ namespace ChopItUp.Hub.Tests.Skills;
 
 
 
+[Collection(ProcessStateCollection.Name)]
 public sealed class SkillStoreTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skills_" + Guid.NewGuid().ToString("N"));

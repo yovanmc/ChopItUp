@@ -14,6 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
+[Collection(ProcessStateCollection.Name)]
 public sealed partial class SpawnerServiceTests
 {
     private const string ClaudeStreamWithTwoCommands = """

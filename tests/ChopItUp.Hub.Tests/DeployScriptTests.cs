@@ -653,6 +653,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
 
         Assert.False(Directory.Exists(target), "the target directory was left behind");
+        // Parallel-safe: this lookup only asks whether the guard process this test started is still alive.
         Assert.Null(Process.GetProcesses().FirstOrDefault(x => x.Id == guardPid && !x.HasExited));
     }
 

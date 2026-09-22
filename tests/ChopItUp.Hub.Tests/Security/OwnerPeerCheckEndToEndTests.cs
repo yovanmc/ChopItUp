@@ -20,6 +20,7 @@ namespace ChopItUp.Hub.Tests.Security;
 /// port instead, so it listens on both loopback families like every deployed hub, and proves the
 /// inside leg over both <c>127.0.0.1</c> and <c>[::1]</c>, with the outside control over
 /// <c>[::1]</c>.</summary>
+[Collection(ProcessStateCollection.Name)]
 public sealed class OwnerPeerCheckEndToEndTests : IAsyncLifetime
 {
     private static readonly string PowerShellExe = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
