@@ -8,6 +8,7 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
 | 49 | Room modes and on-call answers | 📝 | READY | [plan](docs/superpowers/plans/2026-09-19-m49-room-modes.md) | Full primary/relay/panel delivery in progress: persisted ordered pair, bounded turns, blind advisory panel and revision-bound previews. |
+| 69 | Hub test resource inventory | 📝 | READY | [brief](.scratch/m69-hub-test-resources/brief.md) | Lite path, LOW. `docs/testing/hub-test-resources.md`: each shared resource Hub.Tests touches, its scope and classes, each class's safe execution and retry unit, the reusable receipt unit. No parallelization flag changes; the capped parallel pilot is a later row. [V 2026-09-22 084e9f4] all three `tests/*/AssemblyInfo.cs` disable parallelization. |
 | 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
 | 52 | Research tools in plain rooms | [ ] | BACKLOG | — | Web search and fetch for plain-room spawns with honest unavailable-tool messages; files and shell stay directory-room only (SpawnCommands.cs:26-34). |
 | 53 | Task usage telemetry | [ ] | BACKLOG | — | Model, effort, duration, tool and retry counts, termination reason, token metrics when reported (else unknown), per task. |
