@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$Base = 'main',
-    [switch]$CommittedOnly, [switch]$Full, [switch]$PlanOnly,
+    [switch]$CommittedOnly, [switch]$Full, [switch]$PlanOnly, [switch]$IncludeRealDuration,
     [string]$LogDir = (Join-Path $env:TEMP ('chop-affected-' + [guid]::NewGuid().ToString('N')))
 )
 $ErrorActionPreference = 'Stop'
@@ -40,9 +40,13 @@ try {
     }
     # Each selected suite retains its count guard; an empty/partial green run is not evidence.
     $floors = @{ 'ChopItUp.Core.Tests' = 341; 'ChopItUp.Hub.Tests' = 1000; 'ChopItUp.Desktop.Tests' = 108 }
+    # A handful of tests wait out a production timeout on purpose: they prove the shipped duration and
+    # nothing else, so they are marked Category=RealDuration and left to the periodic whole-suite run.
+    # Filtered-out tests are absent from the TRX entirely, so the counters above stay consistent.
+    $traitFilter = if ($IncludeRealDuration) { @() } else { @('--filter', 'Category!=RealDuration') }
     foreach ($suite in $plan.suites) {
         $results = Join-Path $LogDir ($suite + '-' + [guid]::NewGuid().ToString('N'))
-        & dotnet test "tests/$suite/$suite.csproj" -c Debug --no-build --nologo -v minimal --logger 'trx;LogFileName=result.trx' --results-directory $results
+        & dotnet test "tests/$suite/$suite.csproj" -c Debug --no-build --nologo -v minimal @traitFilter --logger 'trx;LogFileName=result.trx' --results-directory $results
         if ($LASTEXITCODE -ne 0) { throw "Tests failed: $suite" }
         [xml]$trx = Get-Content -LiteralPath (Join-Path $results 'result.trx') -Raw
         $count = $trx.TestRun.ResultSummary.Counters

@@ -53,7 +53,12 @@ public static class SkillImport
     // path, so importing and reading the SAME skillsRoot always contend for the SAME mutex even
     // though the two classes share no field.
     private const string MutexPrefix = "Global\\ChopItUp.Skills.";
-    private static readonly TimeSpan MutexTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>The wait every caller gets unless it asks for a shorter one. Public because it is the
+    /// policy itself: a test that wants to observe contention without waiting it out passes its own
+    /// value to <see cref="Validate"/>, and a contract test reads this back to pin the shipped
+    /// default. Not settable - there is no process-wide switch for it.</summary>
+    public static readonly TimeSpan DefaultMutexTimeout = TimeSpan.FromSeconds(10);
 
     private const int MoveRetryAttempts = 5;
     private static readonly TimeSpan MoveRetryDelay = TimeSpan.FromMilliseconds(200);
@@ -70,7 +75,7 @@ public static class SkillImport
     /// the read that produced the pin and the read <see cref="CopyTree"/> performs here. The CLI path
     /// (<see cref="ChopItUp.Hub.Hosting.HostCommands"/>) passes null and is unaffected.</summary>
     public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir = null, IReadOnlyDictionary<string, string>? expectedTree = null) =>
-        PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir, expectedTree));
+        PathMutex.Run(MutexPrefix, skillsRoot, DefaultMutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir, expectedTree));
 
     /// <summary>Task 1: the whole refusal battery (refusals 1-9), with no side effect — nothing under
     /// <paramref name="skillsRoot"/> changes and no database row is written, whether or not the skills
@@ -81,12 +86,17 @@ public static class SkillImport
     /// never restores a torn `.replaced` — it judges the store exactly as it finds it, treating a
     /// present `&lt;name&gt;.replaced` with an absent `&lt;name&gt;` as installed (pass 1 finding), so
     /// <see cref="Validate"/> and <see cref="Run"/> can never disagree about whether a skill is
-    /// installed.</summary>
-    public static SkillImportResult Validate(string sourceDir, string skillsRoot, bool force, string? overlayDir = null)
+    /// installed.
+    ///
+    /// <paramref name="mutexTimeout"/> overrides the wait for this call alone and defaults to
+    /// <see cref="DefaultMutexTimeout"/>; every shipped caller leaves it null. It exists so a test can
+    /// observe the contention refusal against the real named mutex without spending the full default
+    /// wait doing it - the refusal path is identical either way, only the wait differs.</summary>
+    public static SkillImportResult Validate(string sourceDir, string skillsRoot, bool force, string? overlayDir = null, TimeSpan? mutexTimeout = null)
     {
         try
         {
-            return PathMutex.Run(MutexPrefix, skillsRoot, MutexTimeout, () => ValidateCore(sourceDir, skillsRoot, force, overlayDir, enforceReviewAllowlist: true));
+            return PathMutex.Run(MutexPrefix, skillsRoot, mutexTimeout ?? DefaultMutexTimeout, () => ValidateCore(sourceDir, skillsRoot, force, overlayDir, enforceReviewAllowlist: true));
         }
         catch (TimeoutException)
         {
