@@ -129,6 +129,8 @@ CI runner (`windows-latest`, `Environment.ProcessorCount` 4), one clean runner p
 
 2 and 4 are the same within the spread, and both are about 2.3 times faster than serial. The compiled default is 2: the extra speed at 4 is inside the noise, while the one crash this suite suffers (a host start failing with WSAENOBUFS) grows with the number of hubs alive at once.
 
+At the setting that shipped, with nothing overriding it, the merge gate ran green three times in a row (PR 145, run 35791881099). The two attempts whose artifacts were retained show the Hub suite at 447 s and 527 s against the 599 s baseline (run 35730002193), each with a measured peak of 2 concurrent tests and the process-state collection starting only after the last parallel test ended.
+
 One failure in nine arm runs, at 2: `DeployScriptTests` read a starting process's module path as `ntdll.dll` (`docs/BUGS.md` 71). It is a race in the test, not interference between classes, so the class stays parallel; if it repeats, it moves into `ProcessStateCollection` and this line says so.
 
 Controls, each an attempt count rather than a proven rate. Seeded shuffle: 2 runs, 1 failure (a room archive returning 409, not reproducible with the same seed when the class runs alone). A looping build on the other cores: 1 run, 5 failures, all fixed-wait timeouts or temp-directory cleanup (`docs/BUGS.md` 68). Cancellation mid-run and a forced test-host kill: 1 run each, no test host or vstest process alive 30 s later, 8 and 6 GUID temp directories left behind, which is what a killed run is expected to leave.
