@@ -6,7 +6,7 @@ using static ChopItUp.Hub.Tests.RunHostFixture;   // RunSkillMd, exactly as Spaw
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceImportTests : SpawnerServiceTestBase
 {
     private const string ImportedHistory =
         "Owner: @opus what do you think of the plan?\n" +

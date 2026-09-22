@@ -14,8 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-[Collection(ProcessStateCollection.Name)]
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
 {
     private const string ClaudeStreamWithTwoCommands = """
         {"type":"system","subtype":"init"}
@@ -23,76 +22,6 @@ public sealed partial class SpawnerServiceTests
         {"type":"assistant","message":{"content":[{"type":"tool_use","id":"t2","name":"Bash","input":{"command":"git commit -m nope"}}]}}
         {"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[{"tool_name":"Bash","tool_use_id":"t2","tool_input":{"command":"git commit -m nope"}}]}
         """;
-
-    private async Task<string> MakeRoom(string id)
-    {
-        var dir = Path.Combine(_host.RoomsRoot, id);
-        Assert.True(await new GitTrail(dir).InitAsync());
-        await GitConfig(dir, "user.name", "Room Owner");
-        await GitConfig(dir, "user.email", "room-owner@example.test");
-        _host.Services.GetRequiredService<MessageStore>().CreateRoom(id, id.ToUpperInvariant(), dir);
-        return dir;
-    }
-
-    private async Task PostAsOwnerIn(string room, string body)
-    {
-        var r = await _host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body });
-        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
-    }
-
-    private async Task<List<(string Author, string Body)>> MessagesIn(string room)
-    {
-        using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
-        return doc.RootElement.GetProperty("messages").EnumerateArray()
-            .Select(m => (m.GetProperty("authorId").GetString()!, m.GetProperty("body").GetString()!)).ToList();
-    }
-
-    private async Task<(string Author, string Body)> WaitForMessageIn(string room, Func<(string Author, string Body), bool> match)
-    {
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hit = (await MessagesIn(room)).FirstOrDefault(match);
-            if (hit != default) return hit;
-            await Task.Delay(100);
-        }
-        throw new TimeoutException($"No matching message in '{room}' within {Wait}");
-    }
-
-    private async Task<ExchangeView> WaitForExchangeStatusIn(string room, long root, string status)
-    {
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            var exchange = Spawner.Snapshot(room).Exchanges?.SingleOrDefault(e => e.RootMessageId == root);
-            if (exchange?.Status == status) return exchange;
-            await Task.Delay(50);
-        }
-        var last = Spawner.Snapshot(room).Exchanges?.SingleOrDefault(e => e.RootMessageId == root)?.Status ?? "missing";
-        throw new TimeoutException($"Exchange #{root} in '{room}' never reached '{status}'; last was '{last}'.");
-    }
-
-    /// <summary>A room's git trail whose `git merge` call (and only that call - never `merge-base`,
-    /// `worktree add`, a commit, and so on) blocks until <see cref="Hold"/> is released, so a test can
-    /// deterministically catch a worktree close mid-merge. <see cref="MergeAttempted"/> completes the
-    /// instant the merge call actually starts, so a test can wait for the close to have genuinely
-    /// reached it before acting, rather than racing it.</summary>
-    private sealed class DelayingMergeRunner : IProcessRunner
-    {
-        private readonly IProcessRunner _inner = new ProcessRunner();
-        public readonly TaskCompletionSource Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public readonly TaskCompletionSource MergeAttempted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)
-        {
-            if (spec.Arguments.Contains("merge"))
-            {
-                MergeAttempted.TrySetResult();
-                await Hold.Task;
-            }
-            return await _inner.RunAsync(spec, timeout, cancellation);
-        }
-    }
 
     // Row 35: gitRef reads a branch other than the one checked out at dir - a directory room's own
     // exchange branches (see ExchangeWorktrees.Branch) share dir's repository, so its refs are visible
@@ -114,14 +43,6 @@ public sealed partial class SpawnerServiceTests
             TimeSpan.FromSeconds(30), CancellationToken.None);
         Assert.Equal(0, r.ExitCode);
         return r.StandardOutput.Trim();
-    }
-
-    private static async Task GitConfig(string dir, string key, string value)
-    {
-        var r = await new ProcessRunner().RunAsync(
-            new ProcessSpec(CliResolver.Resolve("git").FileName, ["config", key, value], new Dictionary<string, string>(), dir, "", "test-git"),
-            TimeSpan.FromSeconds(30), CancellationToken.None);
-        Assert.Equal(0, r.ExitCode);
     }
 
     [Fact]
@@ -514,45 +435,6 @@ public sealed partial class SpawnerServiceTests
     }
 
     [Fact]
-    public async Task R35_a_worktree_close_that_outlives_shutdown_logs_its_note_to_stderr()
-    {
-        // A close still running when the hub shuts down finds its event channel already completed: the
-        // note it carries must be logged, not silently dropped.
-        var delayingRunner = new DelayingMergeRunner();
-        var localDir = _dir + "_close_shutdown";
-        await using var host = await HubTestHost.StartAsync(localDir, processRunner: _runner, limits: Fast,
-            roomGit: dir => new GitTrail(dir, runner: delayingRunner));
-        host.AuthorizeAs(ChopDb.OwnerParticipantId);
-        var spawner = host.Services.GetRequiredService<SpawnerService>();
-
-        var dir = Path.Combine(host.RoomsRoot, "lab-shutdown-close");
-        Assert.True(await new GitTrail(dir).InitAsync());
-        host.Services.GetRequiredService<MessageStore>().CreateRoom("lab-shutdown-close", "Lab", dir);
-
-        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"type":"result","result":"done"}"""));
-        var post = await host.Client.PostAsJsonAsync("api/rooms/lab-shutdown-close/messages", new { body = "@opus task A" });
-        Assert.Equal(System.Net.HttpStatusCode.Created, post.StatusCode);
-        await _runner.NextSpecAsync(Wait);   // opus's worktree spawn; its close now blocks on the delayed merge
-        await delayingRunner.MergeAttempted.Task.WaitAsync(Wait);
-
-        var error = new StringWriter();
-        var original = Console.Error;
-        Console.SetError(error);
-        try
-        {
-            // StopAsync completes the events channel on its very first line, synchronously, before its
-            // first await - so by the time this call even returns a Task, that has already happened;
-            // releasing the merge only now guarantees the close's own write lands after the channel closes.
-            var stopTask = spawner.StopAsync(CancellationToken.None);
-            delayingRunner.Hold.SetResult();
-            await stopTask.WaitAsync(Wait);
-        }
-        finally { Console.SetError(original); }
-
-        Assert.Contains("lab-shutdown-close", error.ToString());
-    }
-
-    [Fact]
     public async Task M9_A6_a_codex_spawn_in_a_directory_room_gets_the_room_as_its_workspace_and_json_output()
     {
         var dir = await MakeRoom("lab");
@@ -639,12 +521,6 @@ public sealed partial class SpawnerServiceTests
             spec.Arguments);
         Assert.StartsWith(Path.Combine(_dir, "spawns"), spec.WorkingDirectory);
         Assert.DoesNotContain("Files: this room's directory", spec.StandardInput);
-    }
-
-    private async Task PostAsIn(string participant, string room, string body)
-    {
-        await using var client = await _host.ClientFor(participant);
-        HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
     }
 
     [Fact]

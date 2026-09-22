@@ -6,7 +6,7 @@ namespace ChopItUp.Hub.Tests.Spawning;
 /// leading mention hands a turn on or opens an exchange; an inline id is a reference the hub notes
 /// and spawns nothing for; an unknown leading word gets its own note beside whatever else the post
 /// addressed.</summary>
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceRecipientsTests : SpawnerServiceTestBase
 {
     [Fact]
     public async Task Row43_AC4_a_leading_hand_on_spawns_a_second_turn()

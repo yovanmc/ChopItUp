@@ -13,10 +13,8 @@ namespace ChopItUp.Hub.Tests.Spawning;
 
 /// <summary>Row 19, task 4: starting a run, and every refusal at the start (ticket 04). End-to-end
 /// through the real HTTP + MCP surface, same fixture shape as the Skill_04 tests above.</summary>
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 {
-    private RunStore Runs => _host.Services.GetRequiredService<RunStore>();
-
     [Fact]
     public async Task Run04_A1_a_valid_invocation_in_a_directory_room_starts_a_run_and_asks_the_conductor()
     {

@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-public sealed partial class SpawnerServiceTests
+public sealed class SpawnerServiceModesTests : SpawnerServiceTestBase
 {
     [Fact]
     public async Task M49_direct_directory_panel_identifies_the_same_commit_in_all_three_prompts()
@@ -115,6 +115,7 @@ public sealed partial class SpawnerServiceTests
         Assert.Equal(2, _runner.Count); // Warmup + one first pass; no synthesis or second pass.
         await Spawner.StopAsync("general");
     }
+
     [Fact]
     public async Task M49_duplicate_signals_and_explicit_continuation_do_not_repeat_the_mode()
     {
@@ -180,11 +181,6 @@ public sealed partial class SpawnerServiceTests
         await Assert.ThrowsAsync<StaleDispatchException>(() => Spawner.AdmitOwnerAsync("general", "owner", "changed", "new", null, quote.Quote));
         Assert.Empty(await Messages());
         Assert.Equal(0, _runner.Count);
-    }
-    private void Mode(string mode, string first = "sonnet", string? second = "opus")
-    {
-        var store = _host.Services.GetRequiredService<MessageStore>();
-        Assert.True(store.SetMode("general", new RoomModeSettings(mode, first, second, store.GetRoom("general")!.EffectiveMode.Revision), ChopDb.SeedRoster));
     }
 
     [Theory]

@@ -10,70 +10,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-public sealed partial class SpawnerServiceTests : IAsyncLifetime
+public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
 {
-    private static readonly SpawnLimits Fast = new(Budget: 4, Debounce: TimeSpan.FromMilliseconds(150), MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(1), TranscriptMessages: 60, TranscriptChars: 24_000);
-    private static readonly TimeSpan Wait = TimeSpan.FromSeconds(15);
-
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_spawner_" + Guid.NewGuid().ToString("N"));
-    private readonly FakeProcessRunner _runner = new();
-    private HubTestHost _host = null!;
-
-    public async Task InitializeAsync()
-    {
-        _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
-    }
-
-    public async Task DisposeAsync() => await _host.DisposeAsync();
-
-    private SpawnerService Spawner => _host.Services.GetRequiredService<SpawnerService>();
-
-    private async Task PostAsOwner(string body)
-    {
-        var r = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body });
-        Assert.Equal(System.Net.HttpStatusCode.Created, r.StatusCode);
-    }
-
-    private async Task PostAs(string participant, string body, string? clientKey = null)
-    {
-        await using var client = await _host.ClientFor(participant);
-        var args = new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = body };
-        if (clientKey is not null) args["client_key"] = clientKey;
-        HubTestHost.Json(await client.CallToolAsync("post_message", args));
-    }
-
-    private async Task<List<(string Author, string Body)>> Messages()
-    {
-        using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/general/messages?afterId=0&limit=200"));
-        return doc.RootElement.GetProperty("messages").EnumerateArray()
-            .Select(m => (m.GetProperty("authorId").GetString()!, m.GetProperty("body").GetString()!)).ToList();
-    }
-
-    private async Task<(string Author, string Body)> WaitForMessage(Func<(string Author, string Body), bool> match)
-    {
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            var hit = (await Messages()).FirstOrDefault(match);
-            if (hit != default) return hit;
-            await Task.Delay(100);
-        }
-        throw new TimeoutException("No matching message within " + Wait);
-    }
-
-    private async Task<ExchangeSnapshot> WaitForStatus(string status)
-    {
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            var s = Spawner.Snapshot("general");
-            if (s.Status == status) return s;
-            await Task.Delay(50);
-        }
-        throw new TimeoutException($"Exchange never reached '{status}'; last was '{Spawner.Snapshot("general").Status}'.");
-    }
-
     private async Task<ExchangeSnapshot> WaitForPending(string participant)
     {
         var deadline = DateTime.UtcNow + Wait;
@@ -91,20 +29,6 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         // From the fake's launch-time snapshot, never the file: the work dir may already be gone.
         using var doc = JsonDocument.Parse(_runner.McpJsonOf(spec) ?? throw new InvalidOperationException("the fake captured no mcp.json for this spec"));
         return doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("headers").GetProperty("Authorization").GetString()!["Bearer ".Length..];
-    }
-
-    /// <summary>Writes a fixture skill straight into the store's directory and records its fingerprint
-    /// in the same `chopitup.db` the running hub uses (via the DI-registered <see cref="ChopDb"/>),
-    /// exactly the shape Task 5's --import-skill produces. Row 11 fixtures only - no third-party
-    /// skill text (D-g).</summary>
-    private void WriteSkill(string name, string body)
-    {
-        var dir = Path.Combine(_dir, "skills", name);
-        Directory.CreateDirectory(dir);
-        var bytes = new UTF8Encoding(false).GetBytes(body);
-        File.WriteAllBytes(Path.Combine(dir, "SKILL.md"), bytes);
-        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-        new SkillHashes(_host.Services.GetRequiredService<ChopDb>()).Record(name, hash, "test-fixture");
     }
 
     [Fact]
@@ -422,7 +346,6 @@ public sealed partial class SpawnerServiceTests : IAsyncLifetime
         Assert.Equal(3, final.TurnsUsed);
         Assert.Single(await Messages(), m => m.Body.StartsWith("Exchange concluded"));
     }
-
 
     [Fact]
     public async Task A5_a_participant_is_never_in_flight_twice_in_one_room()
