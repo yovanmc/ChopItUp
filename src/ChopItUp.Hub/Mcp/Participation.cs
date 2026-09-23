@@ -38,8 +38,13 @@ public static class Participation
           as anyone else, and nobody can post as you.
         - Address a participant by starting your message with @ and its id: {MENTIONS}. Several ids
           may follow each other at the start. An @id elsewhere in the text is a reference and reaches
-          nobody; a leading @word that matches nobody gets a hub note. A message with no leading
-          mention is for the room.
+          nobody. A leading @word that matches nobody gets a hub note.
+        - Only an owner post starts an exchange. A model's leading mentions hand the turn on only
+          inside an ordinary exchange that is already open. Otherwise, and inside a room-mode
+          exchange, they spawn nobody, and a model message with no leading mention is for the room.
+        - An owner message with no leading mention, outside a run and not a reply or a /command,
+          runs the room's mode: list_rooms shows each room's mode_settings and the participants
+          the mode spawns. The owner changes it with /mode primary|relay|panel [@first [@second]].
         - The owner can type /continue (a reply to a message of the exchange, or bare for the room's
           latest one) to reopen a concluded or stopped exchange with more turns; from anyone else it
           is prose.
@@ -69,8 +74,9 @@ public static class Participation
 
         Memory
         - The hub keeps one memory for every participant. recall with no topic returns its core and the
-          list of topics; recall(topic) returns one topic. Read it before answering anything about the
-          owner or their work, and before proposing.
+          list of topics, and recall(topic) returns one topic. Use it when a question about the owner or
+          their work needs memory that your context does not already carry, and before proposing, to
+          check the fact is not already there.
         - propose_memory(room_id, topic, title, body) proposes one durable fact. The owner approves or
           rejects it in the room; nothing is remembered until approved, and nobody writes memory
           directly. Propose once per fact, never per message, and never what memory already says.

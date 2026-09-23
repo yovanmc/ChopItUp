@@ -38,7 +38,7 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         ?? throw new McpException("Unauthenticated request reached a tool; this is a hub bug.");
 
     [McpServerTool(Name = "list_rooms", ReadOnly = true, Idempotent = true, OpenWorld = false),
-     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. A room with a directory gives a spawned participant file and shell access inside it; archived rooms are not listed. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host, model and classes - a set of roles (plumbing, visible, judge) that row holds; a row with none has an empty set.")]
+     Description("List the chat rooms in this hub with message counts and how many messages you have not read yet. A room with a directory gives a spawned participant file and shell access inside it; archived rooms are not listed. Also tells you which participant you are and returns the roster: every participant's id, display name, kind (human or model), host, model and classes - a set of roles (plumbing, visible, judge) that row holds, and a row with none has an empty set. Each room also carries mode_settings: its mode (primary, relay or panel) and the participants that mode spawns when the owner posts with no leading mention.")]
     public string ListRooms()
     {
         var me = Caller;
@@ -69,7 +69,7 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
     }
 
     [McpServerTool(Name = "post_message", ReadOnly = false, Destructive = false, Idempotent = false, OpenWorld = false),
-     Description("Post a message to a room as yourself. The hub records you as the author; you cannot post as anyone else. Mention a participant with @ and its id (list_rooms returns the roster) when the message is for them.")]
+     Description("Post a message to a room as yourself. The hub records you as the author, and you cannot post as anyone else. Returns the stored message (id, room_id, author_id, body, created_at), with deduplicated: true when client_key matched an earlier post. To address participants, start the body with @ and their ids (list_rooms returns the roster). Only that leading run of @ids addresses anyone, and an @id later in the body is a reference that reaches nobody. A post from a model never starts an exchange: its leading mentions hand the turn on only inside an ordinary exchange that is already open, and otherwise nobody is spawned. An owner post with leading mentions starts an exchange. An owner post with none, outside a run and not a reply or a /command, runs the room's mode. Refused with a reason for an unknown room, an empty body or a body over 20000 characters.")]
     public async Task<string> PostMessage(
         [Description("Room id, e.g. \"general\".")] string room_id,
         [Description("Message text (markdown allowed, up to 20000 characters).")] string body,
