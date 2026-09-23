@@ -4,11 +4,11 @@ using System.Security.Cryptography;
 
 namespace ChopItUp.Desktop.Hub;
 
-/// <summary>Row 12 T3: starts (or attaches to, B3) the hub and tracks its lifecycle for the rest of
-/// the shell's run. The process and the HTTP probe are seams (IHubProcess/IHubProcessFactory/
-/// IHealthProbe); HubProbe's lock/port checks are real disk reads, not seamed (see its own doc
-/// comment). Lifetime (pass 1, finding 21): HubChild owns the factory, which owns the kill-on-close
-/// job handle; whoever owns HubChild for the process's lifetime keeps that job alive.</summary>
+/// <summary>Starts (or attaches to) the hub and tracks its lifecycle for the rest of the shell's
+/// run. The process and the HTTP probe are seams (IHubProcess/IHubProcessFactory/IHealthProbe);
+/// HubProbe's lock/port checks are real disk reads, not seamed (see its own doc comment). Lifetime:
+/// HubChild owns the factory, which owns the kill-on-close job handle; whoever owns HubChild for the
+/// process's lifetime keeps that job alive.</summary>
 public sealed class HubChild : IDisposable
 {
     public static readonly TimeSpan ReadyBudget = TimeSpan.FromSeconds(20);
@@ -29,7 +29,7 @@ public sealed class HubChild : IDisposable
     /// requested origin (the boot page needs none).</summary>
     public Uri ResolvedOrigin => new($"http://127.0.0.1:{Status.Port}/");
 
-    public event Action<HubStatus>? StatusChanged;   // raised on whatever thread set the status; App marshals (Task 5)
+    public event Action<HubStatus>? StatusChanged;   // raised on whatever thread set the status; App marshals
 
     public HubChild(ShellArgs args, IHubProcessFactory factory, IHealthProbe probe, TimeProvider clock, Action<string> log)
     {
@@ -41,15 +41,15 @@ public sealed class HubChild : IDisposable
         Status = new HubStatus(HubState.Starting, null, args.Port, null);
     }
 
-    /// <summary>B3: a hub already owns the data dir → attach. Otherwise start ours and wait for
+    /// <summary>A hub already owns the data dir → attach. Otherwise start ours and wait for
     /// /health. Never throws: the whole body is guarded and every exception becomes Failed.</summary>
     public async Task StartOrAttachAsync(CancellationToken ct)
     {
         try { await StartOrAttachCoreAsync(ct); }
         catch (OperationCanceledException)
         {
-            // Row 12 review fix (C): a --quit during Starting cancels this token (App.QuitAsync). That
-            // is a normal stop, not a startup failure — Stopped must not push the failure page (see
+            // A --quit during Starting cancels this token (App.QuitAsync). That is a normal stop, not
+            // a startup failure: Stopped must not push the failure page (see
             // MainWindow.ApplyHubStatusAsync's default arm, which does nothing for Stopped).
             Set(new HubStatus(HubState.Stopped, _proc?.Pid, Status.Port, null));
         }
@@ -61,8 +61,8 @@ public sealed class HubChild : IDisposable
         var deadline = _clock.GetUtcNow() + ReadyBudget;
         if (HubProbe.LockIsHeld(_args.DataDir))
         {
-            // A hand-started hub takes the lock before it binds; hub.port appears after (Task 1 makes
-            // the hub delete it right after locking). Poll, never probe once.
+            // A hand-started hub takes the lock before it binds; hub.port appears after (the hub
+            // deletes it right after locking). Poll, never probe once.
             int? port = null;
             while (_clock.GetUtcNow() < deadline)
             {
@@ -89,10 +89,10 @@ public sealed class HubChild : IDisposable
         _proc = _factory.Start(_args.HubExe, _args.DataDir, _args.Port, ShellToken);
         _proc.OutputLine += line => { Tail.Add(line); _log("HUB " + line); };
         // Any non-terminal state at exit time is a failure (Starting, or Ready if the probe answered
-        // and the hub died right after; pass 2, finding 13).
+        // and the hub died right after).
         var proc = _proc;
-        // Row 12 review fix (E): the owner-facing reason names the real log path, not a hardcoded
-        // "data\logs\hub.log" that is wrong whenever --data points elsewhere.
+        // The hub's owner-facing reason names the real log path, not a hardcoded "data\logs\hub.log" that
+        // is wrong whenever --data points elsewhere.
         var hubLogPath = Path.Combine(_args.LogDir, "hub.log");
         _proc.Exited += () => { if (Status.State is HubState.Starting or HubState.Ready) Set(new HubStatus(HubState.Failed, proc.Pid, _args.Port, $"the hub exited (see {hubLogPath})")); };
         _proc.BeginReading();
@@ -117,7 +117,7 @@ public sealed class HubChild : IDisposable
         Set(new HubStatus(HubState.Failed, _proc.Pid, _args.Port, $"/health did not answer within {ReadyBudget.TotalSeconds:0} s"));
     }
 
-    /// <summary>B4. Idempotent. Attached → nothing to stop.</summary>
+    /// <summary>Idempotent. Attached → nothing to stop.</summary>
     public void Stop()
     {
         if (_proc is null || _proc.HasExited)

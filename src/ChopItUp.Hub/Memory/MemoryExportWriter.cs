@@ -4,49 +4,48 @@ using ChopItUp.Core.Memory;
 
 namespace ChopItUp.Hub.Memory;
 
-/// <summary>What one run reported: the exit code T4 returns verbatim (pass 2 M5), the target actually
+/// <summary>What one run reported: the exit code the CLI verb returns verbatim, the target actually
 /// acted on, how many entries were exported, the previous-export directory this run retained (its
-/// name says whether it is the reusable slot or a timestamped one — <see langword="null"/> when the
-/// target did not exist before this run), and any staging directory left by ANOTHER run that this run
-/// found and reported rather than touched.</summary>
+/// name says whether it is the reusable slot or a timestamped one; <see langword="null"/> when the
+/// target did not exist before this run), and any staging directory left by another run that this
+/// run found and reported rather than touched.</summary>
 public sealed record ExportResult(int ExitCode, string Target, int Exported, string? PreviousDir, IReadOnlyList<string> OtherStagingDirs);
 
 /// <summary>Stages the whole export in a sibling directory, classifies the target against the
 /// previous export's manifest, re-checks that classification immediately before touching anything,
-/// then swaps the staged directory into place — so the target is never in a state where its files
-/// and its manifest disagree (D3). The order of operations below IS the safety property (plan T3);
-/// the two critique passes that shaped this plan found six defects in exactly this ordering, so it is
-/// not reordered or simplified here. Modelled on <c>tools/Deploy-ChopItUp.ps1</c>'s own doc comment.
+/// then swaps the staged directory into place, so the target is never in a state where its files
+/// and its manifest disagree. The order of operations below is the safety property; do not reorder
+/// or simplify it. Modelled on <c>tools/Deploy-ChopItUp.ps1</c>'s own doc comment.
 ///
 /// Order of operations:
 ///   1. Render the export (<see cref="MemoryExport.Render"/>). A refusal here (over-cap) touches
-///      nothing and maps to exit 6, never the shared exit-3 mapping (claim 21, pass 2 M5).
+///      nothing and maps to exit 6, never the shared exit-3 mapping.
 ///   2. Verify the target against its manifest (<see cref="ExportManifest.Verify"/>). <c>Absent</c>
 ///      and <c>Clean</c> proceed silently. <c>DifferentSource</c> refuses naming both roots and is
-///      overridable only by <c>acceptNewSource</c>, never <c>force</c> (D9); <c>Foreign</c>,
+///      overridable only by <c>acceptNewSource</c>, never <c>force</c>; <c>Foreign</c>,
 ///      <c>Unreadable</c> and <c>Drifted</c> refuse listing every affected path and are overridable
 ///      by <c>force</c>. Every override prints a list byte-identical to the refusal's, from the same
-///      <see cref="FormatAffectedPaths"/> (D2, AC6).
+///      <see cref="FormatAffectedPaths"/>.
 ///   3. Clear the reusable previous slot (<c>&lt;targetDir&gt;.chopitup-export-previous</c>) if it
-///      exists, before anything is moved. Without this the THIRD consecutive export dies:
-///      <c>Directory.Move</c> throws onto an existing destination (claim 22, pass 2 B1).
-///   4. Stage the whole export — every rendered file, the vendor's <c>MEMORY.md</c> index, and the
-///      manifest describing them all — into <c>&lt;targetDir&gt;.chopitup-export-tmp-&lt;nonce&gt;</c>.
-///      Any OTHER staging directory already sitting beside the target is reported, never deleted —
+///      exists, before anything is moved. Without this the third consecutive export dies:
+///      <c>Directory.Move</c> throws onto an existing destination.
+///   4. Stage the whole export (every rendered file, the vendor's <c>MEMORY.md</c> index, and the
+///      manifest describing them all) into <c>&lt;targetDir&gt;.chopitup-export-tmp-&lt;nonce&gt;</c>.
+///      Any other staging directory already sitting beside the target is reported, never deleted:
 ///      it may be a concurrent run's half-built stage.
-///   5. Re-verify the target, right before touching it (pass 2 M6): D11 stops the hub, not a vendor
-///      session writing into the target between steps 2 and 5. If the verdict changed, abort — the
+///   5. Re-verify the target, right before touching it: stopping the hub does not stop a vendor
+///      session writing into the target between steps 2 and 5. If the verdict changed, abort: the
 ///      freshly built stage is deleted (it holds only reproducible bytes and was never exposed to the
 ///      target) and nothing on the target side is touched.
-///      Retention name (D8, pass 2 B3): the aside directory is the SUPERSET test over the two
-///      manifests — reusable only when the replaced target was <c>Absent</c> (nothing to lose) or
-///      <c>Clean</c> AND every key its manifest names is also produced by this export. Otherwise it
-///      is timestamped and never auto-deleted. <c>Foreign</c>/<c>Unreadable</c>/<c>Drifted</c>/a
-///      different-source override always land in the timestamped form — their recorded manifest (if
-///      any) cannot be trusted to describe what is actually there.
+///      Retention name: the aside directory is the superset test over the two manifests, reusable
+///      only when the replaced target was <c>Absent</c> (nothing to lose) or <c>Clean</c> and every
+///      key its manifest names is also produced by this export. Otherwise it is timestamped and never
+///      auto-deleted. <c>Foreign</c>/<c>Unreadable</c>/<c>Drifted</c>/a different-source override
+///      always land in the timestamped form: their recorded manifest (if any) cannot be trusted to
+///      describe what is actually there.
 ///   6. On failure of the second move, the aside directory is moved back; the reported state is a
-///      FRESH <see cref="Directory.Exists"/> check on the target either way, never the state assumed
-///      going in (pass 2 M14) — the thing that made the swap fail is often still there.
+///      fresh <see cref="Directory.Exists"/> check on the target either way, never the state assumed
+///      going in: the thing that made the swap fail is often still there.
 ///   7. Print <c>EXPORT_RESULT: { ... }</c> as the last line: target, count, the previous directory
 ///      and whether it changed since the last export.</summary>
 public static class MemoryExportWriter
@@ -58,19 +57,18 @@ public static class MemoryExportWriter
         Run(store, targetDir, force, acceptNewSource, output, error, afterInitialVerify: null);
 
     /// <summary>The 7-arg overload carries a test-only hook fired right after step 2's initial
-    /// <see cref="ExportManifest.Verify"/> decides to proceed, and before anything else — the seam
-    /// pass 2 M6 is about, and one no test can reach by racing a real second thread inside one call.</summary>
+    /// <see cref="ExportManifest.Verify"/> decides to proceed, and before anything else: the
+    /// re-verify seam, which no test can reach by racing a real second thread inside one call.</summary>
     internal static ExportResult Run(MemoryStore store, string targetDir, bool force, bool acceptNewSource,
         TextWriter output, TextWriter error, Action? afterInitialVerify) =>
         Run(store, targetDir, force, acceptNewSource, output, error, afterInitialVerify, afterAsideMove: null);
 
-    /// <summary>The 8-arg overload adds a second test-only hook, fired right after step 6's FIRST
-    /// <c>Directory.Move</c> (target aside) succeeds and before the SECOND (stage into place) is even
-    /// attempted. It hands the test the exact stage and aside directory names — both carry a
-    /// GUID/timestamp no test can predict ahead of the call — so a test can force the second move to
-    /// fail deterministically. This is the seam AC8's restore branch needs: no test can reach "the
-    /// second move fails after the target is already moved aside" by racing a real second thread
-    /// inside one call, the same reasoning <paramref name="afterInitialVerify"/> is here for.</summary>
+    /// <summary>The 8-arg overload adds a second test-only hook, fired right after step 6's first
+    /// <c>Directory.Move</c> (target aside) succeeds and before the second (stage into place) is
+    /// attempted. It hands the test the exact stage and aside directory names (both carry a
+    /// GUID/timestamp no test can predict ahead of the call), so a test can force the second move to
+    /// fail deterministically and reach the restore branch, for the same reason
+    /// <paramref name="afterInitialVerify"/> exists.</summary>
     internal static ExportResult Run(MemoryStore store, string targetDir, bool force, bool acceptNewSource,
         TextWriter output, TextWriter error, Action? afterInitialVerify, Action<string, string>? afterAsideMove)
     {
@@ -128,7 +126,7 @@ public static class MemoryExportWriter
 
         afterInitialVerify?.Invoke();
 
-        // Step 3: clear the reusable previous slot before anything is moved (claim 22, pass 2 B1).
+        // Step 3: clear the reusable previous slot before anything is moved.
         if (Directory.Exists(previousPlain))
         {
             Directory.Delete(previousPlain, recursive: true);
@@ -152,7 +150,7 @@ public static class MemoryExportWriter
         var fingerprint = ExportManifest.Fingerprint(store);
         ExportManifest.Write(stageDir, new ExportManifest(ExportManifest.CurrentVersion, store.Root, fingerprint, DateTime.UtcNow.ToString("O"), files));
 
-        // Step 5: re-verify immediately before touching the target (pass 2 M6).
+        // Step 5: re-verify immediately before touching the target.
         var reManifest = ExportManifest.TryRead(targetDir);
         var reVerdict = ExportManifest.Verify(reManifest, targetDir, store);
         if (!SameVerdict(verdict, reVerdict))
@@ -167,7 +165,7 @@ public static class MemoryExportWriter
 
         if (targetExists)
         {
-            // D8, pass 2 B3: the superset test over the two manifests, never `state == Clean` alone.
+            // The superset test over the two manifests, never `state == Clean` alone.
             var reusable = reVerdict.State == TargetState.Absent
                 || (reVerdict.State == TargetState.Clean && IsSuperset(reManifest, files));
             var asideDir = reusable ? previousPlain : UniqueTimestampedPrevious(targetDir);
@@ -195,7 +193,7 @@ public static class MemoryExportWriter
                 try { Directory.Move(asideDir, targetDir); restored = true; }
                 catch { /* the thing that made the swap fail is often still there; report the fresh state below regardless */ }
 
-                // Step 6 (pass 2 M14): the reported state is a FRESH existence check, not the state assumed.
+                // Step 6: the reported state is a fresh existence check, not the state assumed.
                 var existsNow = Directory.Exists(targetDir);
                 error.WriteLine($"swap failed while moving the new export into place: {ex.Message}. " +
                     $"Target is now {(existsNow ? "present" : "absent")} (restoring the previous target {(restored ? "succeeded" : "failed")}).");
@@ -236,8 +234,8 @@ public static class MemoryExportWriter
         return new ExportResult(0, targetDir, plan.EntryCount, previousDirResult, otherStagingDirs);
     }
 
-    /// <summary>D2, AC6: the single formatter both the refusal and the matching override call, so the
-    /// two can never diverge — a test captures both real outputs and asserts them byte-identical.</summary>
+    /// <summary>The single formatter both the refusal and the matching override call, so the two can
+    /// never diverge; a test captures both real outputs and asserts them byte-identical.</summary>
     internal static string FormatAffectedPaths(IReadOnlyList<string> paths)
     {
         if (paths.Count == 0) return "affected paths: (none)";
@@ -249,8 +247,8 @@ public static class MemoryExportWriter
     /// <summary>Step 2's refusal/override decision. Returns <see langword="true"/> to proceed;
     /// <see langword="false"/> means refused, with <paramref name="refusalExitCode"/> set to 6 and the
     /// refusal (naming every affected path) already written to <paramref name="error"/>. Every
-    /// override prints <see cref="FormatAffectedPaths"/> over the SAME <see cref="ManifestVerdict.Paths"/>
-    /// the refusal would have printed (D2).</summary>
+    /// override prints <see cref="FormatAffectedPaths"/> over the same <see cref="ManifestVerdict.Paths"/>
+    /// the refusal would have printed.</summary>
     private static bool Decide(ManifestVerdict verdict, MemoryStore store, bool force, bool acceptNewSource,
         TextWriter output, TextWriter error, out int refusalExitCode)
     {
@@ -307,7 +305,7 @@ public static class MemoryExportWriter
     private static bool SameVerdict(ManifestVerdict a, ManifestVerdict b) =>
         a.State == b.State && a.ManifestRoot == b.ManifestRoot && a.Paths.SequenceEqual(b.Paths, StringComparer.Ordinal);
 
-    /// <summary>D8's superset test: every path the replaced manifest names is also produced by this
+    /// <summary>The superset test: every path the replaced manifest names is also produced by this
     /// export. A <see langword="null"/> previous manifest (nothing recorded) is vacuously a subset.</summary>
     private static bool IsSuperset(ExportManifest? previous, IReadOnlyDictionary<string, string> newFiles) =>
         previous is null || previous.Files.Keys.All(newFiles.ContainsKey);
@@ -317,8 +315,8 @@ public static class MemoryExportWriter
     /// drift, then an <c>--accept-new-source</c> over a different source, say) would otherwise collide
     /// and make <c>Directory.Move</c> throw onto an existing destination. Disambiguated with the same
     /// idiom <see cref="MemoryExport.Render"/> uses for a colliding file name: append <c>-2</c>,
-    /// <c>-3</c>, … after the (still-readable) timestamp until the name is free. D8's timestamped
-    /// previous is never auto-deleted, so the collision cannot be resolved by deleting it — only by
+    /// <c>-3</c>, … after the (still-readable) timestamp until the name is free. The timestamped
+    /// previous is never auto-deleted, so the collision cannot be resolved by deleting it, only by
     /// not colliding in the first place.</summary>
     internal static string UniqueTimestampedPrevious(string targetDir) =>
         UniqueTimestampedPrevious(targetDir, DateTime.UtcNow);

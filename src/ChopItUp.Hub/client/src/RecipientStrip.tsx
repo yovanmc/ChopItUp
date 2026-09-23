@@ -2,7 +2,7 @@ import { hostOf, isContinueDraft, MAX_TURNS, recipientsOf } from './participants
 import type { Participant } from './types';
 import { governingCommand, messageBody } from './governing';
 
-/** Row 43 (D5/AC6): who this draft will actually reach, said before it is sent. Only the @id run at
+/** Who this draft will actually reach, said before it is sent. Only the @id run at
  *  the start of a draft addresses anyone, and that rule is invisible while typing — so the strip
  *  names the rows a send would spawn, the rows it would reach without spawning, a leading word that
  *  matches nobody, and the ids it read as references instead. It mirrors the reader and nothing else:
@@ -20,9 +20,9 @@ function nameList(names: string[]): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]!}`;
 }
 
-/** Row 44 (D-a, D-b): the budget a `turns:` token outside 1..MAX_TURNS falls back to. Both numbers
- *  mirror the hub's hard-coded caps — they are not configuration on either side — and the chip below
- *  carries the hub's own range note word for word, so the draft and the posted message read alike. */
+/** The budget a `turns:` token outside 1..MAX_TURNS falls back to. Both numbers mirror the hub's
+ *  hard-coded caps (they are not configuration on either side), and the chip below carries the
+ *  hub's own range note word for word, so the draft and the posted message read alike. */
 const DEFAULT_TURNS = 8;
 
 export default function RecipientStrip({ draft }: { draft: string }) {
@@ -44,8 +44,8 @@ export default function RecipientStrip({ draft }: { draft: string }) {
   const trailing = /@([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(draft);
   const halfTyped = read.length > 0 && trailing !== null && read[read.length - 1]!.toLowerCase() === trailing[1]!.toLowerCase();
   const unknown = halfTyped ? read.slice(0, -1) : read;
-  // Row 44: a draft that sets the turns and names nobody yet is still worth answering — the token is
-  // read the same way whether a recipient follows it or not, and going quiet would say it was prose.
+  // A draft that sets the turns and names nobody yet is still worth answering: the token is read
+  // the same way whether a recipient follows it or not, and going quiet would say it was prose.
   if (recipients.length === 0 && unknown.length === 0 && references.length === 0 && turns === null) return null;
 
   const spawns = recipients.filter(isSpawnable);

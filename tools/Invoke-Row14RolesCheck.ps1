@@ -1,44 +1,35 @@
 <#
 .SYNOPSIS
-    Row 14 Task 7 (issues/07-self-check.md): deploy-day evidence that the whole roles/personas path
-    works -- a v11 fixture migrated to v13 by the REAL hub, a persona and a role set and read back over
-    the API, the three write routes refused with no credential and unchanged storage, a role edit
-    visible in the next GET with no hub restart, and the room_roles foreign key actually enforced.
+    Deploy-day evidence that the whole roles/personas path works: a v11 fixture migrated by the REAL
+    hub, a persona and a role set and read back over the API, the three write routes refused with no
+    credential and unchanged storage, a role edit visible in the next GET with no hub restart, and the
+    room_roles foreign key actually enforced.
 
 .DESCRIPTION
-    Generated from ~\.claude\skills\roadmap\references\desk-check-template.ps1, adapted the way
-    Invoke-Row12ShellCheck.ps1 and Invoke-Row28SelfCheck.ps1 already adapt it for a permanent, committed
-    tool rather than a one-off .scratch\desk-checks\ copy: a RunId from the target exe's mtime+size+
-    harness version, one evidence directory per run (never reused), an explicit boolean passed to every
-    Add-Check call, and a log-line shape restricted to booleans/counts/exit codes -- never message
-    content, a token, or a filename under a real data dir.
+    A permanent, committed tool: a RunId from the target exe's mtime+size+harness version, one evidence
+    directory per run (never reused), an explicit boolean passed to every Add-Check call, and a
+    log-line shape restricted to booleans/counts/exit codes, never message content, a token, or a
+    filename under a real data dir.
 
-    THE FIXTURE (ledger 21/22): tools/ChopItUp.Corpus refuses any schema but v1/v2
-    (CorpusBuilder.cs:64), so it cannot build the v11 fixture this dry run needs, and a v2 corpus
-    replayed through the whole ladder would not model the deployed jump -- the live install is at
-    schema 11, so the real migration is the v11->v13 chain. Following Invoke-M25DryRun.ps1's own
-    precedent exactly: the real, already-built Microsoft.Data.Sqlite.dll is loaded straight out of the
-    hub's own bin output (Add-Type, with runtimes\win-x64\native prepended onto PATH so the native
-    provider resolves outside the hub's own AppContext.BaseDirectory), and the v11 fixture is written
-    with raw SQL -- the v9 cumulative shape transcribed in Invoke-M25DryRun.ps1, plus v10's
-    skill_proposals table (ChopDb.cs ApplyV10) and v11's messages.reply_to_id column (ApplyV11) -- then
-    stamped PRAGMA user_version = 11.
+    THE FIXTURE: tools/ChopItUp.Corpus refuses any schema but v1/v2, so it cannot build the v11
+    fixture, and a v2 corpus replayed through the whole ladder would not model the deployed jump from
+    v11. As in Invoke-M25DryRun.ps1, the already-built Microsoft.Data.Sqlite.dll is loaded out of the
+    hub's bin output (Add-Type, with runtimes\win-x64\native prepended onto PATH so the native provider
+    resolves outside the hub's AppContext.BaseDirectory), and the v11 fixture is written with raw SQL
+    (the v9 cumulative shape from Invoke-M25DryRun.ps1, plus v10's skill_proposals table and v11's
+    messages.reply_to_id column), then stamped PRAGMA user_version = 11.
 
-    THE HUB is launched directly from its own build output (never `dotnet run`), matching
-    Invoke-M25DryRun.ps1's PID-identity reasoning. Every path this script touches is rooted under a
-    fresh $env:TEMP scratch directory with a GUID nonce -- never C:\Self Apps, never the repo's own
-    .data\, never a real data directory or its tokens.json. The scratch hub's OWN tokens.json is seeded
-    before its first start via ChopTokenHelpers.ps1's Initialize-ChopScratchTokens (the same helper
-    Invoke-Row28SelfCheck.ps1 and Invoke-Row12ShellCheck.ps1 already use), so the owner bearer used for
-    every authenticated leg below is one this script minted itself, never anything read off a real
-    installation.
+    THE HUB is launched directly from its own build output (never `dotnet run`) so the PID is the
+    hub's. Every path this script touches is rooted under a fresh $env:TEMP scratch directory with a
+    GUID nonce, never C:\Self Apps, the repo's own .data\, or a real data directory or its tokens.json.
+    The scratch hub's tokens.json is seeded before its first start via ChopTokenHelpers.ps1's
+    Initialize-ChopScratchTokens, so the owner bearer is one this script minted itself.
 
-    DATABASE BOUNDARY: the fixture-writing and post-migration-assertion connections below are the
-    explicit subject under test (this row IS a schema migration), so they are the deliberate exception
-    to the desk-check template's "never open a database" rule -- exactly as Invoke-M25DryRun.ps1 is.
+    DATABASE BOUNDARY: the fixture-writing and post-migration-assertion connections are the subject
+    under test (a schema migration), so they are a deliberate exception to "never open a database".
     Every connection here is against the scratch database this script created, never a real one.
 
-    LEGS (mapped to issues/07-self-check.md's acceptance criteria):
+    LEGS:
       fixture.*      -- build and stamp the v11 database.
       hub.*          -- launch the real exe, wait for /health.
       migrated.*     -- schema 15, every pre-migration table's row count and room name preserved,
@@ -46,9 +37,9 @@
       api.*          -- a persona and a role set over the API and read back.
       auth.*         -- each of the three write routes refused with no credential, storage unchanged.
       live-edit.*    -- a role changed while the hub keeps running is visible in the next GET, no
-                        restart (AC7's own claim, the one a startup-snapshot implementation fails).
+                        restart (the check a startup-snapshot implementation fails).
       fk.*           -- an override insert naming a non-existent room fails at the database
-                        (ChopDb.Open's PRAGMA foreign_keys=ON, ledger 20), not silently.
+                        (ChopDb.Open's PRAGMA foreign_keys=ON), not silently.
 
 .PARAMETER KeepEvidence
     Keep the scratch directory (fixture database, hub stdout/stderr) instead of deleting it at the end.
@@ -56,7 +47,7 @@
 
 .PARAMETER EvidenceRoot
     Where the evidence log and (with -KeepEvidence) the scratch directory contents are copied. Defaults
-    under this repo's already-gitignored .scratch\m14-roles-personas\evidence\ (see .gitignore:10).
+    under this repo's gitignored .scratch\m14-roles-personas\evidence\.
 #>
 [CmdletBinding()]
 param(
@@ -109,7 +100,7 @@ $dataDir = Join-Path $scratch 'data'
 $dbPath = Join-Path $dataDir 'chopitup.db'
 
 try {
-    # --- Step 0: build once, -warnaserror (LESSON M18: incremental is not evidence) -------------------
+    # --- Step 0: build once, -warnaserror (an incremental build is not evidence) ----------------------
     Write-Host "Building ChopItUp.slnx (Debug, -warnaserror)..."
     & dotnet build (Join-Path $repoRoot 'ChopItUp.slnx') -c Debug -warnaserror -v minimal
     if ($LASTEXITCODE -ne 0) { throw "dotnet build failed with exit code $LASTEXITCODE." }
@@ -388,7 +379,7 @@ PRAGMA user_version = 11;
     Add-Check -Name 'auth.room-role-post-refused-without-credential' -Passed ($refused3 -and $roomRoleAfter2 -eq $roomRoleBefore2) -Detail "status=$($noAuthRoomRole.StatusCode)"
 
     # --- Step 8: live-edit leg -- a role changed while the hub keeps running is visible in the next GET,
-    #             with no restart (AC7; the test a startup-snapshot implementation fails) ----------------
+    #             with no restart (the test a startup-snapshot implementation fails) ---------------------
     $secondRoleText = 'row14-dryrun SECOND global role ' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     Invoke-Owner -Method Post -Uri "$base/api/participants/opus/role" -WithAuth -Body @{ role = 'row14-dryrun-first-opus-role' } | Out-Null
     $firstRead = (Get-RoomRoles -RoomId 'general').participants | Where-Object { $_.id -eq 'opus' }
@@ -405,7 +396,7 @@ PRAGMA user_version = 11;
     $hubProcess = $null
 
     # --- Step 10: fk leg -- an override insert naming a non-existent room fails at the database ---------
-    #              (ChopDb.Open sets PRAGMA foreign_keys=ON on every serving connection, ledger 20;
+    #              (ChopDb.Open sets PRAGMA foreign_keys=ON on every serving connection;
     #              this ad-hoc connection sets it explicitly to prove the constraint itself, not the
     #              store's own existence-check short-circuit, is what refuses it)
     $fkThrew = $false

@@ -222,7 +222,7 @@ public sealed class SkillStoreTests : IDisposable
         Assert.False(summary.IsRun);
     }
 
-    // --- Row 19 task 2d: `run:` and `gates:` frontmatter -----------------------------------------
+    // --- `run:` and `gates:` frontmatter -----------------------------------------------------------
 
     [Fact]
     public void A_skill_declaring_run_true_reads_back_as_IsRun_and_a_skill_without_it_does_not()
@@ -307,11 +307,11 @@ public sealed class SkillStoreTests : IDisposable
         Assert.IsType<SkillRead.Ok>(result);
     }
 
-    // --- Row 19 task 12b: VerifyTree and ReadGate ---------------------------------------------------
+    // --- VerifyTree and ReadGate ----------------------------------------------------------------------
 
     /// <summary>Installs a skill through the REAL write path (<see cref="SkillImport"/>) rather than
-    /// the low-level <see cref="WriteSkill"/> fixture above, so the whole-tree manifest (task 12a)
-    /// exists to verify against — <see cref="WriteSkill"/> only ever records the SKILL.md hash.</summary>
+    /// the low-level <see cref="WriteSkill"/> fixture above, so the whole-tree manifest exists to
+    /// verify against: <see cref="WriteSkill"/> only ever records the SKILL.md hash.</summary>
     private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null,
         string? overlayMd = null, IReadOnlyDictionary<string, string>? overlayScripts = null)
     {
@@ -354,7 +354,7 @@ public sealed class SkillStoreTests : IDisposable
     [Fact]
     public void VerifyTree_reports_Missing_for_a_skill_with_no_manifest_at_all()
     {
-        WriteSkill("legacy", ValidSkillBody);   // SKILL.md hash only, no tree manifest (pre-row-19 shape)
+        WriteSkill("legacy", ValidSkillBody);   // SKILL.md hash only, no tree manifest (older shape)
 
         Assert.IsType<TreeVerification.Missing>(_store.VerifyTree("legacy"));
     }
@@ -430,9 +430,8 @@ public sealed class SkillStoreTests : IDisposable
     [Fact]
     public void ReadGate_is_Ok_for_a_declared_gate_even_while_VerifyTree_finds_a_neighbouring_file_tampered()
     {
-        // This is the case P5 exists to catch (plan, task 12): a gate's OWN script can be untouched
-        // while a sibling data file it reads or writes has been rewritten, so run_gate (task 12d)
-        // must require BOTH checks, never either alone.
+        // A gate's OWN script can be untouched while a sibling data file it reads or writes has been
+        // rewritten, so run_gate must require BOTH checks, never either alone.
         ImportSkill("gated", GatedSkillMd, new Dictionary<string, string>
         {
             ["scripts/check-it.ps1"] = "exit 0\n",
@@ -444,7 +443,7 @@ public sealed class SkillStoreTests : IDisposable
         Assert.IsType<TreeVerification.Tampered>(_store.VerifyTree("gated"));
     }
 
-    // --- Row 20 task 1: overlay composition and pinned rendering ------------------------------------
+    // --- Overlay composition and pinned rendering ----------------------------------------------------
 
     [Fact]
     public void Overlay_run_true_and_gates_are_honoured()

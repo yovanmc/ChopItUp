@@ -6,7 +6,7 @@
 # and gh auth + remote reachability are checked here so an auth defect parks at spawn 1 with nothing created.
 [CmdletBinding()] param()
 $ErrorActionPreference = 'Stop'
-$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured 2026-09-07)
+$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured)
 $root = (Get-Location).Path
 $roadmap = Join-Path $root 'ROADMAP.md'
 if (-not (Test-Path -LiteralPath $roadmap -PathType Leaf)) { Write-Host "start-branch: no ROADMAP.md in $root"; exit 2 }

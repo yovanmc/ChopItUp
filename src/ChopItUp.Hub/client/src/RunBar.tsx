@@ -24,23 +24,23 @@ function duration(minutes: number): string {
   return `${h}h ${String(minutes % 60).padStart(2, '0')}m`;
 }
 
-/** The run strip: `ExchangeBar`'s sibling, sitting directly above it (plan P6), and nothing at all in
- *  a room that has never had a run — that room looks exactly as it did before this row shipped.
+/** The run strip: `ExchangeBar`'s sibling, sitting directly above it, and nothing at all in a room
+ *  that has never had a run.
  *
  *  A run is something the owner starts and walks away from, so the three states have to be told apart
  *  from across the room rather than read: `active` leads with the phase, `parked` leads with the
  *  REASON in the danger colour (it is the one state that needs the owner, so it is the loudest thing
  *  in the strip), `ended` is grey and says only that it finished.
  *
- *  Per-room and per-room only (LESSONS M9, decided in the plan): a park in a room the browser is not
- *  showing surfaces when the owner opens that room. The park note mentions `@owner` and the rail
- *  already badges a room with unread messages, so the signal exists — it is just not run-specific.
+ *  Per-room and per-room only: a park in a room the browser is not showing surfaces when the hub owner
+ *  opens that room. The park note mentions `@owner` and the rail already badges a room with unread
+ *  messages, so the signal exists; it is just not run-specific.
  *
- *  Row 22: the stop lives here rather than on `ExchangeBar` because a run outlives its exchanges.
+ *  The stop lives here rather than on `ExchangeBar` because a run outlives its exchanges.
  *  `ParkRun`/`EndRun` close the open exchange and cancel the in-flight spawns, which is exactly what
- *  `ExchangeBar`'s button gated on — so a parked run, and an active run idling between phases, had no
- *  reachable stop at all. `active` and `parked` both get it; `ended` gets nothing, because there is
- *  nothing left to end. */
+ *  `ExchangeBar`'s button gates on, so a parked run, or an active run idling between phases, would
+ *  have no reachable stop there. `active` and `parked` both get it; `ended` gets nothing, because
+ *  there is nothing left to end. */
 function RunBar({ run, stopping, onStop }: RunBarProps) {
   if (run === null) return null;
 

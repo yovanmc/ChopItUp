@@ -23,11 +23,11 @@ public sealed class HubTestHost : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly string _dir;
     private readonly bool _deleteOnDispose;
-    // Row 28: a host-file (hashed-at-rest) participant's plaintext is only ever known at the moment
-    // it is minted. This fixture plays the operator's part (D-28-d's --rotate-token) right after the
-    // FIRST start against a fresh data dir - the one moment a plaintext value for a host-file row is
-    // available - and caches it here for TokenFor/ClientFor. A SECOND HubTestHost against an EXISTING
-    // dir (PersistenceTests) must not repeat this: it would rotate away the very tokens that test is
+    // A host-file (hashed-at-rest) participant's plaintext is only ever known at the moment it is
+    // minted. This fixture plays the operator's part (--rotate-token) right after the FIRST start
+    // against a fresh data dir, the one moment a plaintext value for a host-file row is available,
+    // and caches it here for TokenFor/ClientFor. A SECOND HubTestHost against an EXISTING dir
+    // (PersistenceTests) must not repeat this: it would rotate away the very tokens that test is
     // proving survive a restart, so a token captured before the restart has to be presented directly
     // via ClientFor's bearer override instead.
     private readonly Dictionary<string, string> _mintedHostFile = new(StringComparer.Ordinal);
@@ -59,15 +59,15 @@ public sealed class HubTestHost : IAsyncDisposable
     {
         using var timing = FixtureTiming.Measure("HubTestHost.start");
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
-        // Row 29 Task 4: port 0 (the default) never gets the [::1] listener (HubHost.cs:41, ledger
-        // 23) - a caller that needs to prove anything over IPv6 passes a fixed free port instead.
+        // Port 0 (the default) never gets the [::1] listener (see HubHost), so a caller that needs
+        // to prove anything over IPv6 passes a fixed free port instead.
         var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled, ShellToken: shellToken);
         var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits, ownerPeerCheck);
         await app.StartAsync();
-        // With a fixed port and an IPv6 stack, HubHost binds BOTH 127.0.0.1 and [::1] (HubHost.cs:
-        // 38-49), so Addresses can hold two entries here - Single() would throw. BaseAddress stays
-        // the IPv4 one, matching every existing test's expectations of this fixture; a caller that
-        // needs the IPv6 side (Row 29 Task 4) builds that URI itself from the same port.
+        // With a fixed port and an IPv6 stack, HubHost binds BOTH 127.0.0.1 and [::1], so Addresses
+        // can hold two entries here and Single() would throw. BaseAddress stays the IPv4 one,
+        // matching every existing test's expectations of this fixture; a caller that needs the IPv6
+        // side builds that URI itself from the same port.
         var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses;
         var address = addresses.FirstOrDefault(a => new Uri(a).Host == "127.0.0.1") ?? addresses.Single();
         return new HubTestHost(app, dir, new Uri(address.TrimEnd('/') + "/"), deleteOnDispose, options.RoomsRootPath, freshDataDir);
@@ -84,14 +84,12 @@ public sealed class HubTestHost : IAsyncDisposable
     public string TokenFor(string participant) =>
         _mintedHostFile.TryGetValue(participant, out var minted) ? minted : Tokens.BearerFor(participant);
 
-    /// <summary>Row 28 Task 4: sets <see cref="Client"/>'s default <c>Authorization</c> header to
+    /// <summary>Sets <see cref="Client"/>'s default <c>Authorization</c> header to
     /// <paramref name="participant"/>'s bearer (via <see cref="TokenFor"/>), so every non-GET
-    /// <c>/api</c> call this fixture's own tests already made unauthenticated keeps working now that
-    /// <c>BearerTokenMiddleware</c> guards them. Built on <see cref="TokenFor"/> rather than a second
-    /// lookup path. A request that builds its own <see cref="HttpRequestMessage"/> and sets its own
-    /// <c>Authorization</c> header overrides this default; a test proving the no-credential or a
-    /// non-owner path needs a client that never had this called on it (see
-    /// <c>SkillsApiAuthTests.Send</c>).</summary>
+    /// <c>/api</c> call this fixture's tests make passes <c>BearerTokenMiddleware</c>. A request that
+    /// builds its own <see cref="HttpRequestMessage"/> and sets its own <c>Authorization</c> header
+    /// overrides this default; a test proving the no-credential or a non-owner path needs a client
+    /// that never had this called on it (see <c>SkillsApiAuthTests.Send</c>).</summary>
     public void AuthorizeAs(string participant) =>
         Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", TokenFor(participant));
 

@@ -2,11 +2,11 @@ using System.Text.RegularExpressions;
 
 namespace ChopItUp.Core.Model;
 
-/// <summary>The hub's phase grammar (row 19, P3): the FIRST LINE of a conductor post, exactly
+/// <summary>The hub's phase grammar: the FIRST LINE of a conductor post, exactly
 /// <c>phase: &lt;kind&gt;</c> or <c>phase: &lt;kind&gt;/&lt;name&gt;</c>, kind drawn from
-/// <see cref="Kinds"/>. Trailing text on the same line is ignored on purpose (pass 1's M8): the first
-/// draft required end-of-line after the tag, which rejected the most natural thing a conductor writes
-/// (<c>phase: build @sonnet go</c>). A leading <c>**</c> or <c>#</c> is deliberately NOT tolerated —
+/// <see cref="Kinds"/>. Trailing text on the same line is ignored on purpose: requiring end-of-line
+/// after the tag would reject the most natural thing a conductor writes
+/// (<c>phase: build @sonnet go</c>). A leading <c>**</c> or <c>#</c> is deliberately NOT tolerated:
 /// the hub does not guess at markdown.</summary>
 public sealed record PhaseTag(string Kind, string? Name)
 {
@@ -22,7 +22,7 @@ public sealed record PhaseTag(string Kind, string? Name)
 
     /// <summary>Same as the two-argument overload, and also reports <paramref name="prefixLength"/>:
     /// the length of the matched tag token on the (CRLF-normalised) first line, 0 when there is no
-    /// tag. Row 43 (D5) uses this to find where the tag ends and the recipient region begins.</summary>
+    /// tag. Mention parsing uses this to find where the tag ends and the recipient region begins.</summary>
     public static bool TryParse(string body, out PhaseTag? tag, out int prefixLength)
     {
         tag = null;

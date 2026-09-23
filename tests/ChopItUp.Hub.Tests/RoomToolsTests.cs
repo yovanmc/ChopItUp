@@ -280,8 +280,8 @@ public sealed class RoomToolsTests : IAsyncLifetime
         Assert.Equal(JsonValueKind.Null, model.ValueKind);
     }
 
-    /// <summary>Task 2, 2d: every roster row published by list_rooms carries a classes array, parsed
-    /// (never the raw delimited string), and an unclassed row answers [] rather than being absent.</summary>
+    /// <summary>Every roster row published by list_rooms carries a classes array, parsed (never the
+    /// raw delimited string), and an unclassed row answers [] rather than being absent.</summary>
     [Fact]
     public async Task M8_A4_list_rooms_roster_carries_a_classes_array_on_every_row()
     {
@@ -300,8 +300,8 @@ public sealed class RoomToolsTests : IAsyncLifetime
     [Fact]
     public async Task M8_A2_a_spawn_row_can_authenticate_and_post_today()
     {
-        // The row is inert until M5 spawns it, but its token is real: a hand-run headless client
-        // holding it must be a first-class participant already.
+        // The row's token is real: a hand-run headless client holding it must be a first-class
+        // participant.
         await using var opus = await _host.ClientFor("opus");
         var posted = HubTestHost.Json(await opus.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "hello from opus" }));
         Assert.Equal("opus", posted.GetProperty("author_id").GetString());
@@ -336,8 +336,8 @@ public sealed class RoomToolsTests : IAsyncLifetime
         Assert.Equal(JsonValueKind.Null, rooms[1].GetProperty("directory").ValueKind);
     }
 
-    /// <summary>Row 42 AC3: an in-flight wait and a subsequent explicit read both see the imported
-    /// flag on a turn brought in through the import endpoint.</summary>
+    /// <summary>An in-flight wait and a subsequent explicit read both see the imported flag on a turn
+    /// brought in through the import endpoint.</summary>
     [Fact]
     public async Task Row42_AC3_read_messages_and_wait_for_message_carry_the_imported_flag()
     {
@@ -357,9 +357,9 @@ public sealed class RoomToolsTests : IAsyncLifetime
         Assert.True(read.GetProperty("messages")[0].GetProperty("imported").GetBoolean());
     }
 
-    /// <summary>Row 42 AC8: the server instructions and both read tools' descriptions explain what the
-    /// imported flag means, so a host or a spawned model never answers pasted history as if it were
-    /// addressed to it.</summary>
+    /// <summary>The server instructions and both read tools' descriptions explain what the imported
+    /// flag means, so a host or a spawned model never answers pasted history as if it were addressed
+    /// to it.</summary>
     [Fact]
     public async Task Row42_AC8_the_server_instructions_and_the_two_read_tools_explain_the_imported_flag()
     {

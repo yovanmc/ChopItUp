@@ -1,30 +1,22 @@
 <#
 .SYNOPSIS
-    Row 24 (M24) self-check gate: a PASS/FAIL row per acceptance-relevant claim about the export
-    verb's shape and this row's documentation, plus one row for the synthetic-corpus dry run
+    Memory-export self-check gate: a PASS/FAIL row per acceptance-relevant claim about the export
+    verb's shape and its documentation, plus one row for the synthetic-corpus dry run
     (`tools\Invoke-M24DryRun.ps1`) actually passing. Every row's boolean comes from a real measurement
     -- a `Select-String` match, a `Test-Path`, or the dry run's own exit code -- never a string a
     later branch could reinterpret as truthy.
 
 .DESCRIPTION
-    See PR #63 (merged f964ece), plan task "T6 -- dry run, self-check, docs" and ticket
-    06-dry-run-and-the-owner-probe.md (deleted at close-out, in that commit): "The self-check must
-    be capable of failing. A harness whose rows cannot go red is worse than no harness, and this repo
-    has already shipped one that recorded a failure as a pass."
-
-    The shipped `~/.claude/skills/roadmap/references/desk-check-template.ps1` records a check's
-    result through a scriptblock whose return value is later re-interpreted by a `$shapeOk` matcher
-    (a string, an int, a bare 'OK'/'FAIL' token) -- a shape a future check can satisfy by accident
-    without the check itself ever having compared anything. This script never does that: `Add-Check`
-    takes `[bool]$Passed` as a MANDATORY, typed parameter (the M2/M4 idiom, `tools\Invoke-M2DryRun.ps1`
-    / `tools\Invoke-M4SelfCheck.ps1`), so every row's status is a boolean the calling code computed
+    The self-check must be capable of failing: a harness whose rows cannot go red is worse than no
+    harness. A check recorded through a scriptblock whose return value is later re-interpreted by a
+    shape matcher (a string, an int, a bare 'OK'/'FAIL' token) can be satisfied by accident without
+    the check itself ever having compared anything. This script never does that: `Add-Check` takes
+    `[bool]$Passed` as a MANDATORY, typed parameter (the same idiom as `tools\Invoke-M2DryRun.ps1` /
+    `tools\Invoke-M4SelfCheck.ps1`), so every row's status is a boolean the calling code computed
     itself, not a string this function goes on to interpret.
 
-    This script was run once with a deliberately wrong expectation on one row (a canary added and
-    then removed before this file was committed) to confirm `Add-Check` actually records FAIL and
-    the script actually exits non-zero when a row is false -- see the builder's report for that run's
-    real console output. Nothing in the delivered script is designed to fail; every row here should
-    read PASS against a correct checkout.
+    Nothing in the delivered script is designed to fail; every row here should read PASS against a
+    correct checkout.
 #>
 [CmdletBinding()]
 param()
@@ -92,13 +84,13 @@ try {
     # === Documentation: docs/verification.md carries the runbook T6 requires =======================
     Add-Check -Name 'docs.exit-code-4-documented' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\b4\b.*[Nn]o memory') -Detail 'exit 4'
     Add-Check -Name 'docs.exit-code-6-documented' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\b6\b.*[Rr]efused') -Detail 'exit 6'
-    Add-Check -Name 'docs.d1-operating-rule-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'D1') -Detail 'the export owns its directory'
+    Add-Check -Name 'docs.d1-operating-rule-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'The export owns its directory') -Detail 'the export owns its directory'
     Add-Check -Name 'docs.reusable-previous-name-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-previous(?!-)') -Detail 'the plain, reusable recovery name'
     Add-Check -Name 'docs.timestamped-previous-name-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-previous-') -Detail 'the timestamped recovery name'
     Add-Check -Name 'docs.staging-tmp-disposal-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-tmp-') -Detail "the owner's sanctioned cleanup"
     Add-Check -Name 'docs.accept-new-source-guidance-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '--accept-new-source') -Detail 'when it is (and is not) the right answer'
     Add-Check -Name 'docs.manifest-source-root-sentence-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)manifest.*(records|holds).*(absolute|source)') -Detail 'the manifest records the absolute source path'
-    Add-Check -Name 'docs.owner-probe-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)owner probe') -Detail 'the not-machine-checkable question'
+    Add-Check -Name 'docs.owner-probe-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)does a session read the export') -Detail 'the not-machine-checkable question'
     Add-Check -Name 'docs.owner-probe-type-discriminator-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'room-general') -Detail 'an out-of-enum metadata.type'
     Add-Check -Name 'docs.owner-probe-index-discriminators-stated' -Passed ((Test-FileContains -Path $verificationDoc -Pattern '198') -and (Test-FileContains -Path $verificationDoc -Pattern '199')) -Detail 'the 198/199-entry boundary'
 

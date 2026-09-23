@@ -5,7 +5,7 @@
     <InvariantGlobalization>true</InvariantGlobalization>
     <ClientDir>$(MSBuildProjectDirectory)\client</ClientDir>
     <ClientOutDir>$(MSBuildProjectDirectory)\wwwroot</ClientOutDir>
-    <!-- Row 29: the LibraryImport source generator needs this for the Job Object / peer-process Win32
+    <!-- The LibraryImport source generator needs this for the Job Object / peer-process Win32
          interop. Hub only, never Directory.Build.props, which would flip Core and the test projects. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
@@ -19,15 +19,14 @@
     <InternalsVisibleTo Include="ChopItUp.Hub.Tests" />
   </ItemGroup>
 
-  <!-- Release shape (M4). Self-contained so C:\Self Apps\ChopItUp keeps working across SDK changes,
+  <!-- Release shape. Self-contained so C:\Self Apps\ChopItUp keeps working across SDK changes,
        single-file so the folder holds an exe rather than a pile of DLLs, and
        IncludeNativeLibrariesForSelfExtract so SQLite's e_sqlite3.dll travels inside the exe.
 
        IncludeAllContentForSelfExtract is deliberately NOT set: it moves AppContext.BaseDirectory to
        the temp extraction directory, and both the data folder (HubOptions) and the web root
-       (SpaFiles) are resolved from BaseDirectory — so setting it would silently relocate the
-       owner's database into a folder Windows may clean up. That is the whole trap this milestone
-       exists to not fall into.
+       (SpaFiles) are resolved from BaseDirectory, so setting it would silently relocate the
+       owner's database into a folder Windows may clean up.
 
        PublishTrimmed is NOT set either: the MCP SDK, SignalR and System.Text.Json all resolve types
        reflectively, and a trimmed build fails at runtime in ways no build gate catches. -->
@@ -50,8 +49,8 @@
   </ItemGroup>
 
   <!--
-    Web client (brief M3, D3): the client is built into wwwroot and served by the hub, so a normal
-    `dotnet build` produces a served UI and M4 publishes one exe with no separate front-end step.
+    Web client: the client is built into wwwroot and served by the hub, so a normal `dotnet build`
+    produces a served UI and a publish produces one exe with no separate front-end step.
 
     Node.js is treated as optional on purpose. CI runs on windows-latest with Node present, but a
     machine without it must still build and test the hub: the probe below degrades to "no UI", which

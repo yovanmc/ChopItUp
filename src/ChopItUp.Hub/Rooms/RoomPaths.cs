@@ -4,9 +4,9 @@ namespace ChopItUp.Hub.Rooms;
 
 public sealed record RefusedSubtree(string Path, string Reason);
 
-/// <summary>What a room directory may not be (D12, M9 plan decision 3): the profile folder itself, and
-/// anything under the listed subtrees. Built once per hub from the data dir, the install dir, the
-/// profile and four environment folders; pure string rules after that.</summary>
+/// <summary>What a room directory may not be: the profile folder itself, and anything under the
+/// listed subtrees. Built once per hub from the data dir, the install dir, the profile and four
+/// environment folders; pure string rules after that.</summary>
 public sealed record RoomPathRules(string UserProfile, IReadOnlyList<RefusedSubtree> Subtrees)
 {
     public const string SelfApps = @"C:\Self Apps";

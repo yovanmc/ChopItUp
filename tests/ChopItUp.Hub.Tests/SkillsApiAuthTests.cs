@@ -6,15 +6,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>M25 ticket 06 / plan Task 6, D1 first put owner-only auth on the two skill-proposal
-/// decision endpoints; row 28 Task 4 widens the same gate to every non-GET <c>/api</c> route.
-/// <see cref="SkillsApiProposalsTests"/> covers the decision logic once a caller is let through (its
-/// helpers now authenticate as the owner, per M25 task 6); this file covers the gate itself —
-/// acceptance 5's contract: no credential or an unresolvable one is 401 and changes nothing, a
-/// credential resolving to a non-owner participant is 403 and changes nothing, and <c>GET</c> here
-/// stays reachable with no credential. The sibling <c>/api/memory</c> decision route, once the
-/// deliberately-still-unauthenticated example proving M25 task 6's gate had not silently widened, is
-/// now gated the same way as everything else on this surface — see
+/// <summary>The hub's owner-class gate on every non-GET <c>/api</c> route, as seen from the skill-proposal
+/// decision endpoints. <see cref="SkillsApiProposalsTests"/> covers the decision logic once a caller
+/// is let through (its helpers authenticate as the hub owner); this file covers the gate itself: no
+/// credential or an unresolvable one is 401 and changes nothing, a credential resolving to a
+/// non-owner participant is 403 and changes nothing, and <c>GET</c> here stays reachable with no
+/// credential. The sibling <c>/api/memory</c> decision route is gated the same way, see
 /// <see cref="Memory_proposal_approve_a_different_api_route_now_requires_the_owner_credential_too"/>.</summary>
 public sealed class SkillsApiAuthTests : IAsyncLifetime
 {
@@ -180,13 +177,9 @@ public sealed class SkillsApiAuthTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 
-    /// <summary>Superseded by row 28 Task 4 (D-28-a): M25 task 6's rule was "every existing /api route
-    /// must remain unauthenticated" and this test proved exactly that for the sibling memory-decision
-    /// route, deliberately left alone by that milestone's narrower, route-listed gate. Row 28 replaces
-    /// that gate with "authenticate by method, not by route list" — /api/memory writes the memory
-    /// store, so leaving it unauthenticated would reopen the escalation this row exists to close on
-    /// the one route every other write-gate test in this file already covers. Inverted, not exempted:
-    /// no credential is 401 and changes nothing, the owner token succeeds.</summary>
+    /// <summary>Auth is by method, not by route list: /api/memory writes the memory store, so leaving
+    /// it unauthenticated would reopen the escalation the gate exists to close. No credential is 401
+    /// and changes nothing, the hub's owner token succeeds.</summary>
     [Fact]
     public async Task Memory_proposal_approve_a_different_api_route_now_requires_the_owner_credential_too()
     {

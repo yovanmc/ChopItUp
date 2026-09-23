@@ -1,11 +1,10 @@
 <#
 .SYNOPSIS
-    Row 28 Task 8 (issues/08-dry-run.md, required at HIGH): fabricates a real pre-row-28 installation
-    -- an OLD-shape plaintext tokens.json for the full seeded roster, plus host-config files carrying
-    live tokens the way a real `--print-config` used to write them -- and runs the REAL, freshly
-    published ChopItUp.Hub.exe against it, end to end. Unit tests prove pieces; this proves the
-    composition, including the one branch (an unrewritable host-config file) no unit test or other
-    live check exercises (pass 2 finding 12).
+    Token-migration dry run: fabricates a real older installation -- an OLD-shape plaintext
+    tokens.json for the full seeded roster, plus host-config files carrying live tokens the way an
+    older `--print-config` wrote them -- and runs the REAL, freshly published ChopItUp.Hub.exe against
+    it, end to end. Unit tests prove pieces; this proves the composition, including the one branch
+    (an unrewritable host-config file) no unit test or other live check exercises.
 
 .DESCRIPTION
     Never touches `C:\Self Apps` or any real installation -- everything lives under a fresh
@@ -20,25 +19,25 @@
          produces the same single-file exe Deploy-ChopItUp.ps1 ships) into a scratch publish
          directory, unless -PublishDir was given (a pre-built publish output to reuse, the same seam
          Invoke-M4SelfCheck.ps1's -PublishDir is).
-      1. Fabricate the pre-row-28 install: ChopTokenHelpers.ps1's Initialize-ChopScratchTokens seeds
+      1. Fabricate the older install: ChopTokenHelpers.ps1's Initialize-ChopScratchTokens seeds
          tokens.json as a flat plaintext map (participant id -> token string) for the FULL roster --
          every id in ChopDb.SeedRoster, including 'hub' (system) and every spawnable row -- which is
          exactly what the OLD TokenStore.Load(dataDir, IReadOnlyList<string> participantIds) wrote
-         before this row split credentials into two classes. Three of those plaintext values (claude,
+         before credentials were split into two classes. Three of those plaintext values (claude,
          codex, owner-remote) are then hand-embedded into fabricated host-config files in the same
          shapes HostConfigs.cs's ClaudeDesktop/Codex/SpawnCommands.ClaudeMcpConfigJson emit today,
          except carrying a live token instead of today's {{TOKEN}} placeholder -- exactly what a real
-         pre-Task-3 `--print-config` run left on disk. One of those files (claude-desktop.json) is
+         older `--print-config` run left on disk. One of those files (claude-desktop.json) is
          then opened with FileShare.None and held open by this script itself for the rest of the
          first hub run, reproducing "a generated file cannot be rewritten" (a deny-write ACL would
-         work too, per the ticket, but a held handle needs no elevated rights and is exercised
+         work too, but a held handle needs no elevated rights and is exercised
          identically from HostConfigs.SweepLiveTokens's point of view: its own File.ReadAllText throws
          IOException the same way either failure would).
       2. Start the real published exe once (port 0, so HubHost's own ApplicationStarted handler
          records the bound port to hub.port -- same polling helpers as Invoke-M4SelfCheck.ps1).
          Assert: /health answers 200 despite the held-open file; the pre-migration owner token (never
          touched by anything after step 1) still yields 201 on POST /api/rooms/general/messages --
-         AC3/the ticket's own words for "this is the check that matters most", an upgrade must never
+         the check that matters most: an upgrade must never
          lock the owner out; tokens.json is now the hashed {"id":{"sha256":"..."}} shape for every
          host-file row (owner, claude, codex, owner-remote) with the correct digest
          (ChopTokenHelpers.ps1's Get-ChopTokenSha256, the one hash implementation every tools/ script
@@ -103,7 +102,7 @@ if (Test-UnderSelfApps $scratch) { throw "Refusing to run: scratch path '$scratc
 New-Item -ItemType Directory -Path $scratch | Out-Null
 
 $dataDir = Join-Path $scratch 'data'
-$roomsRoot = Join-Path $scratch 'rooms-root'   # a SIBLING of $dataDir -- RoomPathRules refuses a room directory nested inside the data dir (M25SkillProposalCheck lesson)
+$roomsRoot = Join-Path $scratch 'rooms-root'   # a SIBLING of $dataDir -- RoomPathRules refuses a room directory nested inside the data dir
 $hostConfigsDir = Join-Path $dataDir 'host-configs'
 $ownPublish = [string]::IsNullOrWhiteSpace($PublishDir)
 if ($ownPublish) { $PublishDir = Join-Path $scratch 'publish' }
@@ -285,7 +284,7 @@ tool_timeout_sec = 60
     # Hold claude-desktop.json open with FileShare.None: SweepLiveTokens' own File.ReadAllText will
     # throw IOException on this file the moment the hub tries to sweep it, the same failure shape a
     # deny-write ACL or another process's open handle would produce -- reproducing "a generated file
-    # cannot be rewritten" (ticket 08, AC4's second half) without needing elevated rights.
+    # cannot be rewritten" without needing elevated rights.
     $lockedStream = [System.IO.File]::Open($claudeDesktopPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
     Add-Check -Name 'fixture.claude-desktop-json-held-open-exclusively' -Passed $true -Detail 'FileShare.None, held by this script'
 

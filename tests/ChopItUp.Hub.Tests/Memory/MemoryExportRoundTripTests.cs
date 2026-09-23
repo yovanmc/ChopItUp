@@ -3,10 +3,10 @@ using ChopItUp.Hub.Memory;
 
 namespace ChopItUp.Hub.Tests.Memory;
 
-/// <summary>T5 (ticket 05): the strongest thing this repo can say about the exported shape is not that
-/// it looks right, but that our own importer — written against the vendor's shape and shipped before
-/// this milestone — reads it back and recovers the same memories. Round-trips a store through
-/// <see cref="MemoryExportWriter.Run"/> (the real write path T4's verb uses) and
+/// <summary>The strongest thing this repo can say about the exported shape is not that it looks
+/// right, but that our own importer (written against the vendor's shape before the exporter existed)
+/// reads it back and recovers the same memories. Round-trips a store through
+/// <see cref="MemoryExportWriter.Run"/> (the real write path the export verb uses) and
 /// <see cref="MemoryImport.Read"/> (the real read path a vendor-shape import uses).</summary>
 public sealed class MemoryExportRoundTripTests : IDisposable
 {
@@ -28,9 +28,8 @@ public sealed class MemoryExportRoundTripTests : IDisposable
     [Fact]
     public void T5_export_then_import_recovers_the_same_memories_with_the_known_lossy_topics()
     {
-        // D10 newly routes the core through this path, and an earlier revision's fixture omitted it
-        // (pass 2 M17) — so the fixture below deliberately includes core and a room topic alongside
-        // the four Claude-recognised topics.
+        // The core goes through this path too, so the fixture below deliberately includes core and a
+        // room topic alongside the four Claude-recognised topics.
         _store.Append(MemoryStore.CoreTopic, "Core Fact", "Core body text.", "prov");
         _store.Append("user", "Who the owner is", "User body text.", "prov");
         _store.Append("feedback", "A piece of feedback", "Feedback body text.", "prov");
@@ -70,8 +69,8 @@ public sealed class MemoryExportRoundTripTests : IDisposable
 
         // `core` and `room-general` are NOT among the four values MemoryImport's ClaudeTopics recognises,
         // so both come back under the "imported" fallback topic. This is asserted deliberately as the
-        // known, documented lossy case (ticket 05 / plan T5): a test that omitted these two would let a
-        // future change silently break the rest, and a test that claimed they round-trip would be false.
+        // known, documented lossy case: a test that omitted these two would let a future change
+        // silently break the rest, and a test that claimed they round-trip would be false.
         Assert.Equal("imported", byTitle["Core Fact"].Topic);
         Assert.Equal("imported", byTitle["A room note"].Topic);
 

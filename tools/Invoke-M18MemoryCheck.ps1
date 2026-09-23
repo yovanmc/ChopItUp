@@ -1,16 +1,16 @@
 <#
 .SYNOPSIS
-    Row 18 live check: proves the memory v1.1 composition (schema v9, supersede, search, flags,
+    Live memory check: proves the memory v1.1 composition (schema v9, supersede, search, flags,
     related entries, the core cap and its refusal, one git commit) through the real exe, driving
     /mcp itself as two participants. Spends nothing: no model is ever spawned. 16 checks.
 
 .DESCRIPTION
-    Mirrors Invoke-M10MemoryCheck.ps1's frame (param block, Add-Check, a fresh -DataDir under
+    Same frame as Invoke-M10MemoryCheck.ps1 (param block, Add-Check, a fresh -DataDir under
     $env:TEMP, the hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0
     only when every check passes) but never touches a model: MCP runs in stateless mode at /mcp
     with a bearer token per participant (<data>\tokens.json), so a plain POST per tool call
-    suffices (verified empirically against this build: a tools/call needs no initialize round
-    trip in Stateless session mode). 16 Add-Check calls.
+    suffices (a tools/call needs no initialize round trip in Stateless session mode). 16 Add-Check
+    calls.
 
     Never touches C:\Self Apps or any real data directory: -DataDir defaults to a fresh folder
     under $env:TEMP and is left behind with the log.
@@ -36,8 +36,8 @@ function Add-Check {
     Add-Content -Path $log -Value $line
 }
 
-# LESSONS M10: drives /mcp itself as the participant named. A JSON-RPC error envelope has no
-# result (pass 2 P2-8a): surfaced as the failure text, never as a silent empty success.
+# Drives /mcp itself as the participant named. A JSON-RPC error envelope has no result, so it is
+# surfaced as the failure text, never as a silent empty success.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
     if (-not $script:PlaintextTokens.ContainsKey($Participant)) {
         $msg = "'$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn"
@@ -58,7 +58,7 @@ function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Argumen
 
 function Read-HubNotes {
     # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before
-    # filtering (LESSONS M10, measured 2026-09-06).
+    # filtering.
     $messages = @((Invoke-RestMethod -Uri "$base/api/rooms/general/messages?afterId=0&limit=200" -TimeoutSec 10).messages | ForEach-Object { $_ })
     @($messages | Where-Object authorId -eq 'hub')
 }
@@ -85,8 +85,8 @@ $coreText = "# Memory`n`n$filler`n"
 $topicText = "## Editor`n<!-- seed -->`nVim.`n"
 [System.IO.File]::WriteAllText((Join-Path $DataDir 'memory\topics\user.md'), $topicText, (New-Object System.Text.UTF8Encoding($false)))
 
-# Row 28: 'claude', 'codex' (both driven via /mcp below) and 'owner' (needed for the approve calls)
-# are host-file rows -- seed plaintexts for them into tokens.json BEFORE the hub's first start
+# 'claude', 'codex' (both driven via /mcp below) and 'owner' (needed for the approve calls) are
+# host-file rows: seed plaintexts for them into tokens.json BEFORE the hub's first start
 # (ChopTokenHelpers.ps1). Never a real installation's credential.
 $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('claude', 'codex', 'owner')
 
@@ -146,7 +146,7 @@ try {
 
     # Leg 7: approve.core-409 - the over-cap core approval is refused, the row stays pending, and the
     # hub posts a refusal note. -SkipHttpErrorCheck so a non-2xx response still hands back its body
-    # (LESSONS M10 pass 2 P2-8b: the $_.Exception idiom drops it).
+    # (the $_.Exception idiom drops it).
     $coreApprove = Invoke-WebRequest -Uri "$base/api/memory/proposals/$coreId/approve" -Method Post -Headers $ownerAuth -TimeoutSec $TimeoutSeconds -SkipHttpErrorCheck
     $coreApproveBody = $coreApprove.Content | ConvertFrom-Json
     Add-Check -Name 'approve.core-409' -Passed ($coreApprove.StatusCode -eq 409 -and $coreApproveBody.cap -eq 6000) `

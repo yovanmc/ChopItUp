@@ -121,10 +121,10 @@ public sealed class SpawnCommandsTests
         Assert.DoesNotContain("\n", rules);
     }
 
-    // Row 19, task 11 (AC7/D10): a conductor or a judge-class row is launched with an explicit
-    // reasoning-effort flag; an ordinary in-run row and anything outside a run get no effort token at
-    // all, never an explicit default. "high" here stands in for whatever Launch decided (SpawnerService
-    // computes the value; these are argument-list assertions on the builders alone) - never xhigh/max.
+    // A conductor or a judge-class row is launched with an explicit reasoning-effort flag; an ordinary
+    // in-run row and anything outside a run get no effort token at all, never an explicit default.
+    // "high" here stands in for whatever Launch decided (SpawnerService computes the value; these are
+    // argument-list assertions on the builders alone) - never xhigh/max.
     [Theory]
     [InlineData("high")]   // in-run conductor, or in-run judge
     [InlineData(null)]     // in-run plumbing (an ordinary row), or out-of-run
@@ -194,7 +194,7 @@ public sealed class SpawnCommandsTests
         Assert.DoesNotContain("--skip-git-repo-check", spec.Arguments);
     }
 
-    // --- Row 19, task 12e: run_gate on a second Claude allowlist --------------------------------
+    // --- run_gate on a second Claude allowlist -----------------------------------------------------
 
     [Fact]
     public void ClaudeInDirectory_defaults_to_the_ordinary_directory_allowlist_without_run_gate()
@@ -215,7 +215,7 @@ public sealed class SpawnCommandsTests
         Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
     }
 
-    // --- Row 19, task 12f: the Codex in-directory MCP tool-call timeout, raised for a run ----------
+    // --- The Codex in-directory MCP tool-call timeout, raised for a run ----------------------------
 
     [Fact]
     public void CodexInDirectory_defaults_the_tool_timeout_to_sixty_seconds()
@@ -232,7 +232,7 @@ public sealed class SpawnCommandsTests
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
-    // --- Row 19, orchestrator addition to task 12f: the Claude CLI's OWN MCP tool-call timeout -----
+    // --- The Claude CLI's OWN MCP tool-call timeout ------------------------------------------------
 
     [Fact]
     public void ClaudeInDirectory_sets_no_MCP_TOOL_TIMEOUT_by_default()
@@ -248,7 +248,7 @@ public sealed class SpawnCommandsTests
         Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
     }
 
-    // --- Row 20 task 3: the per-server mcp.json timeout and the idle-timeout env var ---------------
+    // --- The per-server mcp.json timeout and the idle-timeout env var ------------------------------
 
     [Fact]
     public void ClaudeMcpConfigJson_carries_a_per_server_timeout_only_when_given()

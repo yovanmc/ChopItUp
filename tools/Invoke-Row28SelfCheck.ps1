@@ -1,29 +1,27 @@
 <#
 .SYNOPSIS
-    Row 28 Task 9 (issues/09-deploy-day-checks.md, required at HIGH): the deploy-day gate, run and
-    read by whoever installs row 28 against the REAL hub -- not a scratch copy.
+    The deploy-day gate for owner-bearer auth, run and read by whoever installs it against the REAL
+    hub -- not a scratch copy.
 
 .DESCRIPTION
-    DEPLOY-DAY ORDER (D-28-c/D-28-d; row 28 ships deliberately undeployed until this runs):
+    DEPLOY-DAY ORDER:
       1. Stop the hub (owner-verified PID, never `Stop-Process -Name`).
       2. Deploy the new build (`Deploy-ChopItUp.ps1` or equivalent) to -InstallDir.
       3. `ChopItUp.Hub.exe --data <install>\data --rotate-token owner` -- OWNER-TYPED ONLY, NEVER
-         AGENT-RUN (D-28-d, docs/verification.md "Rotating a token"). It prints the new owner bearer
-         once, to the owner's own terminal.
+         AGENT-RUN (docs/verification.md "Rotating a token"). It prints the new owner bearer once,
+         to the owner's own terminal.
          ROTATE BEFORE THE HUB IS STARTED, NOT AFTER: HostCommands.RotateToken gates on
          HubLock.IsHeld and exits 5 against a live hub ("Stop it first -- rotating while it runs
          writes a new token that the running hub ignores, and the old token keeps working"), because
-         a loaded TokenStore is a startup singleton (TokenStore.Load's remarks). An earlier revision
-         of this list put the start before the rotate; following it deploy-day cost a stop/start
-         cycle and produced an exit 5, so the order below is the product's, not a preference.
+         a loaded TokenStore is a startup singleton (TokenStore.Load's remarks). Starting first costs
+         a stop/start cycle and an exit 5, so this order is required, not a preference.
       4. Start the hub. It loads the rotated tokens.json at startup; nothing rotated after this point
          takes effect until the next start.
       5. The owner pastes that value into the browser's token prompt.
       6. Run THIS script, passing the same value as -OwnerToken.
-    Steps 1-5 are all owner-only (a terminal the owner may not have had overnight is exactly why row
-    28 shipped undeployed -- see the plan's D-28-c). This script performs none of them: it never stops
-    or starts the hub, never runs --rotate-token, and never touches C:\Self Apps outside the read-only
-    checks named below.
+    Steps 1-5 are all owner-only. This script performs none of them: it never stops or starts the
+    hub, never runs --rotate-token, and never touches C:\Self Apps outside the read-only checks named
+    below.
 
     WHAT IT CHECKS
       Agent-runnable checks (no protected read; every one below runs from a session with no owner
@@ -34,42 +32,39 @@
         - hub.host-configs-sweep-clean: room 'general' holds no `hub`-authored message containing
           "still carries a live credential" created at or after the deployed exe's LastWriteTimeUtc.
           HostConfigs.SweepLiveTokens (Hosting/HubHost.cs) posts exactly that note when a host-config
-          rewrite fails at startup, always to 'general' (HubHost.cs:87), regardless of -RoomId, so
-          this is the room-observable half of the two data checks row 28 shipped with (deleted here;
-          see PRIVACY BOUNDARY). Reads GET /api/rooms/general/messages?afterId=&limit=, paging on
-          NextAfterId.
+          rewrite fails at startup, always to 'general', regardless of -RoomId, so this is the
+          room-observable proof that the sweep ran clean (see PRIVACY BOUNDARY). Reads
+          GET /api/rooms/general/messages?afterId=&limit=, paging on NextAfterId.
       Owner-only checks (need -OwnerToken; SKIPped with a reason naming the owner when it is omitted):
         - auth.owner-token-post-accepted-201 and its -ipv6 twin: the SAME POST above, carrying
-          "Authorization: Bearer <OwnerToken>", is accepted (201) -- the "refused-then-accepted pair"
-          the ticket names, and the actual proof the owner can post from the browser after pasting the
-          token. This is the owner's own credential; nothing here mints or reads one.
+          "Authorization: Bearer <OwnerToken>", is accepted (201) -- the refused-then-accepted pair,
+          and the actual proof the owner can post from the browser after pasting the token. This is
+          the owner's own credential; nothing here mints or reads one.
       Bundle checks (need -PublishDir; SKIPped with a reason when it is omitted):
         - The deployed ChopItUp.Hub.exe and wwwroot\ are byte-identical to what -PublishDir staged
           (SHA-256 per file), so the browser is never left on a build that cannot authenticate.
 
     PRIVACY BOUNDARY -- READ BEFORE RUNNING FROM AN AGENT SESSION
       This repo's own guard denies file reads under `C:\Self Apps\*\data` in an agent session, and
-      that deny is correct and permanent. This script reads nothing under <InstallDir>\data\ at all --
-      there is no -SkipDataChecks switch because there is nothing left that switch would have skipped;
-      the two data checks row 28 shipped with (a plaintext-token scan and a live-token-shape scan, both
-      direct file reads under data\) are deleted, and hub.host-configs-sweep-clean above proves the
-      same fact -- HostConfigs.SweepLiveTokens ran clean at this start -- over the room API instead of
-      a file read. That makes every check above agent-runnable end to end except the two owner-only
-      201 legs, which need -OwnerToken (the owner's own credential) and are SKIPped, never faked, when
-      it is absent.
+      that deny is correct and permanent. This script reads nothing under <InstallDir>\data\ at all,
+      so there is no -SkipDataChecks switch. hub.host-configs-sweep-clean above proves
+      HostConfigs.SweepLiveTokens ran clean at this start over the room API instead of a file read.
+      That makes every check above agent-runnable end to end except the two owner-only 201 legs,
+      which need -OwnerToken (the owner's own credential) and are SKIPped, never faked, when it is
+      absent.
 
     DATABASE BOUNDARY: this script never opens, queries, or PRAGMAs chopitup.db -- every check above is
     an HTTP call against a hub the operator already started, or a file-hash comparison of the deployed
     binaries.
 
     BINARY LAUNCHES: none. This script starts and stops no process; every check is an HTTP call
-    against a hub the operator already started (step 3 above) or a file-hash comparison. There is
+    against a hub the operator already started (step 4 above) or a file-hash comparison. There is
     nothing to allowlist.
 
     CREDENTIAL HANDLING: -OwnerToken, when given, is read from the command line, held only in memory
     for the lifetime of this process, and is never written to the log, to stdout/Write-Host, to any
     file under <InstallDir>, or to a commit. It necessarily passes through the process command line and
-    PowerShell history the same way `--rotate-token`'s printed value does (docs/verification.md already
+    PowerShell history the same way `--rotate-token`'s printed value does (docs/verification.md
     accepts that trade for a human typing a command by hand); this script adds no further exposure
     beyond that. Omitting -OwnerToken SKIPs the two checks that need it rather than running them with
     an empty credential.
@@ -85,7 +80,7 @@
     The real install directory. Defaults to `C:\Self Apps\ChopItUp`.
 
 .PARAMETER OwnerToken
-    The value the owner pasted after `--rotate-token owner` (step 4 above). Optional -- omit it to run
+    The value the owner pasted after `--rotate-token owner` (step 5 above). Optional -- omit it to run
     every check except the two owner-only 201 legs, which SKIP with a reason naming the owner. Never
     read from disk, never logged.
 
@@ -96,21 +91,19 @@
     SKIP the two bundle.* legs with a reason.
 
 .PARAMETER Port
-    The hub's HTTP port. Defaults to 8790 (HubOptions.DefaultPort; docs/LESSONS.md M8 names this as
-    "the live hub's" port).
+    The hub's HTTP port. Defaults to 8790 (HubOptions.DefaultPort, the live hub's port).
 
 .PARAMETER RoomId
     The room the 401/201 pair posts against. Defaults to 'general'. hub.host-configs-sweep-clean does
-    NOT read this parameter -- it always reads room 'general', since that is where HubHost.cs:87
-    posts the sweep-failure note regardless of -RoomId. The 201 leaves one real, clearly-labelled
-    verification message in -RoomId -- see RESUME SEMANTICS for why a re-run does not repeat it.
+    NOT read this parameter -- it always reads room 'general', since that is where HubHost posts the
+    sweep-failure note regardless of -RoomId. The 201 leaves one real, clearly-labelled verification
+    message in -RoomId -- see RESUME SEMANTICS for why a re-run does not repeat it.
 
 .PARAMETER LogDir
     Where the evidence log lives. Defaults to a directory under $env:TEMP -- NEVER pass a path under
     this repo's `tools\` directory: it is git-tracked, and the nested `.gitignore` this script writes
     (so its own log never gets committed) is refused outright when the target directory already holds
-    tracked files, specifically to avoid repeating the trap in the desk-check template's own docs
-    (a `.gitignore` containing `*` untracking six real files when a harness was once placed in `build\`).
+    tracked files, because a `.gitignore` containing `*` in a tracked directory untracks real files.
 
 .PARAMETER Reset
     Ignore prior PASS rows for this RunId and re-run every check, including the owner-token POST
@@ -130,8 +123,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $HarnessVersion = 'row28-selfcheck-v1'
 
-# --- RunId + log setup (desk-check-template.ps1 shape: RunId from the target exe, resume semantics,
-#     a nested .gitignore that refuses to write into a directory holding tracked files) --------------
+# --- RunId + log setup (RunId from the target exe, resume semantics, a nested .gitignore that
+#     refuses to write into a directory holding tracked files) ----------------------------------------
 $installExePath = Join-Path $InstallDir 'ChopItUp.Hub.exe'
 if (-not (Test-Path -LiteralPath $installExePath -PathType Leaf)) {
     Write-Error "'$installExePath' does not exist. Has the new build actually been deployed to -InstallDir (step 2 of the deploy-day order)?"
@@ -231,13 +224,13 @@ function Get-RelativeFileHashes {
 
 Invoke-Check -Name 'health.responds-200-expected-schema' -Body {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-    $expectedSchema = 13   # ChopDb.LatestSchemaVersion as of row 42 (src/ChopItUp.Core/Storage/ChopDb.cs:10)
+    $expectedSchema = 13   # must equal ChopDb.LatestSchemaVersion (src/ChopItUp.Core/Storage/ChopDb.cs)
     @{ Passed = ($health.ok -eq $true -and $health.schema -eq $expectedSchema); Detail = "ok=$($health.ok) schema=$($health.schema) expected=$expectedSchema" }
 }
 
 Invoke-Check -Name 'auth.no-credential-post-refused-401' -Body {
-    # M10 (docs/LESSONS.md): Invoke-RestMethod hands back a top-level JSON array as one wrapper
-    # object -- pipe through ForEach-Object { $_ } before counting/filtering, every time.
+    # Invoke-RestMethod hands back a top-level JSON array as one wrapper object -- pipe through
+    # ForEach-Object { $_ } before counting/filtering, every time.
     $before = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/rooms/$RoomId/messages" -TimeoutSec 10
     $beforeCount = @($before.messages | ForEach-Object { $_ }).Count
     $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/api/rooms/$RoomId/messages" -Method Post -ContentType 'application/json' `
@@ -250,12 +243,11 @@ Invoke-Check -Name 'auth.no-credential-post-refused-401' -Body {
 
 Invoke-Check -Name 'hub.host-configs-sweep-clean' -Body {
     # HostConfigs.SweepLiveTokens (Hosting/HubHost.cs) runs at every hub start; a rewrite failure never
-    # stops the hub (AC4 of row 28 ticket 3) but posts a `hub`-authored note in room 'general' -- the
-    # caller (HubHost.cs:87, messages.Post("general", ChopDb.HubParticipantId, ...)) posts there
-    # unconditionally, regardless of -RoomId -- whose body contains "still carries a live credential"
-    # (ChatApi.MapMessage / GetMessages, Web/ChatApi.cs: 43-46, 145-155). A note from BEFORE this deploy
-    # (an old, already-handled failure) does not fail this leg -- only one at or after the deployed
-    # exe's LastWriteTimeUtc does, since that is the note this exact start would have posted.
+    # stops the hub but posts a `hub`-authored note in room 'general' (HubHost posts there
+    # unconditionally, regardless of -RoomId) whose body contains "still carries a live credential".
+    # A note from BEFORE this deploy (an old, already-handled failure) does not fail this leg -- only
+    # one at or after the deployed exe's LastWriteTimeUtc does, since that is the note this exact
+    # start would have posted.
     $needle = 'still carries a live credential'
     $afterId = 0L
     $hasMore = $true
@@ -263,7 +255,7 @@ Invoke-Check -Name 'hub.host-configs-sweep-clean' -Body {
     $hit = $null
     while ($hasMore) {
         $page = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/rooms/general/messages?afterId=$afterId&limit=200" -TimeoutSec 10
-        # M10 (docs/LESSONS.md): pipe a top-level JSON array through ForEach-Object { $_ } first.
+        # Pipe a top-level JSON array through ForEach-Object { $_ } first.
         $msgs = @($page.messages | ForEach-Object { $_ })
         foreach ($m in $msgs) {
             $scanned++
@@ -291,12 +283,12 @@ Invoke-Check -Name 'auth.owner-token-post-accepted-201' -SkipReason $ownerTokenS
     @{ Passed = ($resp.StatusCode -eq 201); Detail = "status=$($resp.StatusCode)" }
 }
 
-# Row 29 (G-4): the same accepted-write proof, over the browser's own loopback family. `localhost`
-# resolves to ::1 first on Windows, so this is what actually proves the peer check has not locked the
-# owner out of their own hub when posting from the browser. HubHost only adds the [::1] listener when
-# the port is fixed (never for Port 0), which every deployed hub is -- but the probe below still checks
-# live rather than assuming, and skips with a reason when it finds nothing listening (the hub itself
-# logs "Not listening on [::1]" in exactly that case).
+# The same accepted-write proof, over the browser's own loopback family. `localhost` resolves to ::1
+# first on Windows, so this is what actually proves the peer check has not locked the hub owner out of
+# their own hub when posting from the browser. HubHost only adds the [::1] listener when the port
+# is fixed (never for Port 0), which every deployed hub is -- but the probe below still checks live
+# rather than assuming, and skips with a reason when it finds nothing listening (the hub itself logs
+# "Not listening on [::1]" in exactly that case).
 $ipv6SkipReason = $ownerTokenSkipReason
 if (-not $ipv6SkipReason) {
     try {

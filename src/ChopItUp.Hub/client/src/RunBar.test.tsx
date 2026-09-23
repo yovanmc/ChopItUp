@@ -5,10 +5,10 @@ import RunBar from './RunBar';
 import { setRoster } from './participants';
 import type { RunSnapshot } from './types';
 
-/** Row 19, task 14. `parked` and `ended` cannot be reached against a real hub inside a build task —
- *  the caps are hard code, so parking one for real costs 8 hours, 80 spawns or three phase re-entries
- *  (pass 2's F-20). The browser leg proves `active` and the no-run case; these hand-written rows are
- *  what prove the other two renders, and they are the reason a park is not "not tested".
+/** `parked` and `ended` cannot be reached against a real hub inside a build: the caps are hard
+ *  code, so parking one for real costs 8 hours, 80 spawns or three phase re-entries. The browser leg
+ *  proves `active` and the no-run case; these hand-written rows are what prove the other two
+ *  renders.
  *
  *  Rendered through `react-dom/server`, not a DOM: the strip has no behaviour to click, so static
  *  markup is the whole of what it produces and a jsdom would only add a dependency. */
@@ -47,7 +47,7 @@ interface ButtonProps {
 }
 
 /** Static markup carries no handlers, and there is still no DOM here to click in. So for the one
- *  assertion that needs the wiring rather than the picture (row 22 AC2's client half), call the
+ *  assertion that needs the wiring rather than the picture (the stop's client half), call the
  *  memoised component's own function and walk the element tree it returns for the button. */
 function findButton(node: ReactNode): ReactElement<ButtonProps> | null {
   if (Array.isArray(node)) {
@@ -132,9 +132,9 @@ describe('RunBar', () => {
     expect(render(BASE)).toContain('>Stop run</button>');
   });
 
-  /** AC1. The strip takes no exchange prop at all, which is what makes "in every such state" true by
-   *  construction: an active run with no open exchange and nothing in flight — the state that had no
-   *  button before this row — renders the same strip as any other. */
+  /** The strip takes no exchange prop at all, which is what makes "in every such state" true by
+   *  construction: an active run with no open exchange and nothing in flight renders the same strip
+   *  as any other. */
   test('a parked run offers the same stop, which is the state that had none', () => {
     const html = render({ ...BASE, status: 'parked', reason: 'the 80-spawn cap is spent' });
 
@@ -146,7 +146,7 @@ describe('RunBar', () => {
     expect(render(BASE)).not.toContain('Stop exchange');
   });
 
-  /** AC3. Nothing left to end, so nothing to press — and a room that never had a run still renders
+  /** Nothing left to end, so nothing to press, and a room that never had a run still renders
    *  the empty string, so the control cannot appear where there is no strip. */
   test('an ended run offers no stop', () => {
     expect(render({ ...BASE, status: 'ended', endedAt: '2026-03-01T12:05:00.0000000+00:00' })).not.toContain(
@@ -158,14 +158,14 @@ describe('RunBar', () => {
     expect(render(null)).not.toContain('<button');
   });
 
-  /** AC5. `stopping` is App's in-flight flag for the stop call itself, held until the refreshed run
+  /** `stopping` is App's in-flight flag for the stop call itself, held until the refreshed run
    *  lands, so a second press cannot race the first. */
   test('a stop already in flight leaves the control disabled', () => {
     expect(render(BASE, true)).toContain('disabled=""');
     expect(render(BASE, false)).not.toContain('disabled');
   });
 
-  /** AC2, client half: pressing it runs the caller's stop. That the run then reaches `ended` is the
+  /** Client half: pressing it runs the caller's stop. That the run then reaches `ended` is the
    *  server's half and the interactive gate's to prove. */
   test('pressing the control calls the stop it was handed', () => {
     let calls = 0;

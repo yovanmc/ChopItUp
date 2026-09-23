@@ -2,27 +2,25 @@ using System.Text.Json;
 
 namespace ChopItUp.Hub.Spawning;
 
-/// <summary>The two command lines, verbatim from the runs measured on 2026-09-05 (plan header).
-/// Pure: builds a <see cref="ProcessSpec"/>, touches nothing. The token never appears in an
-/// argument — Claude reads it from the per-spawn <c>mcp.json</c>, Codex from
-/// <see cref="TokenEnvVar"/>; both CLIs take the prompt on stdin (a Windows command line is capped
-/// at 32,767 characters and a transcript is longer).</summary>
+/// <summary>The two command lines, verbatim from measured runs. Pure: builds a
+/// <see cref="ProcessSpec"/>, touches nothing. The token never appears in an argument: Claude reads
+/// it from the per-spawn <c>mcp.json</c>, Codex from <see cref="TokenEnvVar"/>; both CLIs take the
+/// prompt on stdin (a Windows command line is capped at 32,767 characters and a transcript is
+/// longer).</summary>
 public static class SpawnCommands
 {
     public const string McpServerName = "chopitup";
     public const string TokenEnvVar = "CHOPITUP_TOKEN";
     /// <summary>Comma-separated in one value (`claude --help`: "Comma or space-separated list"). Read
-    /// tools stay off the list: the prompt already carries the transcript (plan decision 11). Row 23
-    /// (item 3) adds <c>propose_rewrite</c>, keeping the composed idiom (claim 6) rather than a flat
-    /// literal.</summary>
+    /// tools stay off the list: the prompt already carries the transcript.</summary>
     public const string ClaudeToolAllowed = "mcp__" + McpServerName + "__post_message,mcp__" + McpServerName + "__recall,mcp__" + McpServerName + "__propose_memory,mcp__" + McpServerName + "__propose_rewrite";
 
-    /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable (LESSONS,
-    /// M5 tool-surface); `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP
-    /// servers and settings out of the spawn; `--no-session-persistence` is D9; `--bare` is NEVER
-    /// used — it switches auth to API key only, and this app holds no key. <paramref name="effort"/>
-    /// is row 19's AC7/D10: null outside a run and for an ordinary in-run row (nothing appended); a
-    /// conductor or a `judge`-class row gets exactly `--effort high` — never `xhigh` or `max`.</summary>
+    /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable;
+    /// `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP servers and settings
+    /// out of the spawn; `--no-session-persistence` keeps the spawn stateless; `--bare` is never
+    /// used: it switches auth to API key only, and this app holds no key. <paramref name="effort"/>
+    /// is null outside a run and for an ordinary in-run row (nothing appended); a conductor or a
+    /// `judge`-class row gets exactly `--effort high`, never `xhigh` or `max`.</summary>
     public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
@@ -33,16 +31,15 @@ public static class SpawnCommands
             new Dictionary<string, string>(),
             workDir, prompt, label);
 
-    // WriteIndented + a trailing newline (critique pass 2, m-12): this JSON also lands in
+    // WriteIndented + a trailing newline: this JSON also lands in
     // host-configs\claude-code-owner-remote.json, which the owner hand-merges like every other file
     // in that folder, and those are all indented with a trailing newline. The per-spawn mcp.json
     // this also produces (SpawnerService) is read by the Claude CLI, which does not care either way.
     //
-    // <paramref name="toolTimeoutMs"/> (row 20, task 3; ledger 11, 25): the installed CLI's own
-    // per-server <c>timeout</c> field, milliseconds - a documented override of
-    // <see cref="ClaudeMcpToolTimeoutEnvVar"/> for this one server. Null (every out-of-run caller, and
-    // every caller before this task) omits the field entirely rather than writing an explicit default,
-    // so the JSON this produces is byte-identical to before this task for every existing call site.
+    // <paramref name="toolTimeoutMs"/>: the installed CLI's own per-server <c>timeout</c> field, in
+    // milliseconds, a documented override of <see cref="ClaudeMcpToolTimeoutEnvVar"/> for this one
+    // server. Null (every out-of-run caller) omits the field entirely rather than writing an
+    // explicit default.
     public static string ClaudeMcpConfigJson(string mcpUrl, string token, int? toolTimeoutMs = null)
     {
         object server = toolTimeoutMs is null
@@ -55,12 +52,11 @@ public static class SpawnCommands
     }
 
     /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
-    /// tool (LESSONS, M5 approvals); `--ignore-user-config` keeps the owner's config.toml out while
-    /// auth still comes from CODEX_HOME (verified); `-c` values are literal strings when they are
-    /// not TOML, so no quotes and no cmd.exe quoting hazards; `-` reads the prompt from stdin.
-    /// <paramref name="effort"/> is row 19's AC7/D10, as `-c model_reasoning_effort=<value>` — null
-    /// appends nothing. Row 20, task 3 (ledger 12): F10 measured 2026-09-07 on codex-cli 0.153.3 that
-    /// this `-c` override binds per spawn and that `high` is a value the CLI/API accepts.</summary>
+    /// tool; `--ignore-user-config` keeps the owner's config.toml out while auth still comes from
+    /// CODEX_HOME (verified); `-c` values are literal strings when they are not TOML, so no quotes
+    /// and no cmd.exe quoting hazards; `-` reads the prompt from stdin. <paramref name="effort"/> is
+    /// passed as `-c model_reasoning_effort=&lt;value&gt;` (null appends nothing); measured on
+    /// codex-cli 0.153.3, the override binds per spawn and `high` is a value the CLI/API accepts.</summary>
     public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
@@ -87,20 +83,20 @@ public static class SpawnCommands
         return text.Length == 0 ? null : text;
     }
 
-    /// <summary>M9 decision 9: the built-in tools a spawn in a directory room gets, and the allow list
-    /// that pre-approves them beside the three MCP tools. `dontAsk` denies anything not on the list.</summary>
+    /// <summary>The built-in tools a spawn in a directory room gets, and the allow list that
+    /// pre-approves them beside the three MCP tools. `dontAsk` denies anything not on the list.</summary>
     public const string ClaudeBuiltins = "Read,Edit,Write,Glob,Grep,Bash";
     public const string ClaudeDirectoryToolsAllowed = ClaudeBuiltins + "," + ClaudeToolAllowed;
 
-    /// <summary>Profile folders that hold credentials — refused as room directories (RoomPathRules) and
-    /// denied to Claude's file tools through the settings deny list (M9 decisions 3, 8). `~/` patterns
-    /// are the one path form measured to bind on 2.1.220 (claim 23).</summary>
+    /// <summary>Profile folders that hold credentials: refused as room directories (RoomPathRules) and
+    /// denied to Claude's file tools through the settings deny list. `~/` patterns are the one path
+    /// form measured to bind on 2.1.220.</summary>
     public static readonly string[] CredentialFolders = [".claude", ".codex", ".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker"];
 
     /// <summary>Every git subcommand that writes the index, the tree, refs, config or remotes.
     /// `Bash(git -*)` (below) covers any invocation that opens with an option (`-c`, `-C`, `--git-dir`,
     /// `--work-tree`), which is the form that reaches these verbs sideways. Read-only verbs (log, status,
-    /// diff, show, blame, grep, ls-files, rev-parse) stay allowed: D11 says read-only, not off.</summary>
+    /// diff, show, blame, grep, ls-files, rev-parse) stay allowed: git is read-only for a spawn, not off.</summary>
     public static readonly string[] GitWriteVerbs =
     [
         "add", "am", "apply", "bisect", "branch", "checkout", "cherry-pick", "clean", "clone", "commit", "config",
@@ -109,28 +105,27 @@ public static class SpawnCommands
         "submodule", "switch", "symbolic-ref", "tag", "update-index", "update-ref", "worktree", "write-tree",
     ];
 
-    /// <summary>Row 19, task 12e: the second Claude allowlist — the ordinary six-builtin-plus-three-MCP
-    /// list, plus `run_gate`, for an in-run Claude spawn's directory room only. The built-in TOOL set
-    /// (`--tools`, <see cref="ClaudeBuiltins"/>) is untouched (LESSONS, M5 claude-code-headless-tool-surface):
-    /// MCP tools stay directly callable regardless of the built-in list, so widening only the allowlist
-    /// is enough, and an out-of-run or non-conductor spawn never sees this constant at all.</summary>
+    /// <summary>The second Claude allowlist: the ordinary six-builtin-plus-three-MCP list, plus
+    /// `run_gate`, for an in-run Claude spawn's directory room only. The built-in tool set
+    /// (`--tools`, <see cref="ClaudeBuiltins"/>) is untouched: MCP tools stay directly callable
+    /// regardless of the built-in list, so widening only the allowlist is enough, and an out-of-run
+    /// spawn never sees this constant at all.</summary>
     public const string ClaudeRunToolsAllowed = ClaudeDirectoryToolsAllowed + ",mcp__" + McpServerName + "__run_gate";
 
     /// <summary>The deny list of the per-spawn settings file: measured on 2.1.220 to block `git commit`,
     /// `git -c … commit` and `git.exe commit` while `echo`, `git log` and in-room writes ran, and to block
-    /// a Write under a denied `~/` folder while a cwd Write succeeded (claims 23, 35). Deny rules apply in
-    /// every permission mode and are prefix rules: an absolute-path `git.exe` is NOT caught (measured) and
+    /// a Write under a denied `~/` folder while a cwd Write succeeded. Deny rules apply in every
+    /// permission mode and are prefix rules: an absolute-path `git.exe` is not caught (measured) and
     /// is left to the trail. There is deliberately no allow list here (the command line carries it) and
-    /// no read fence (measured ineffective on this version — a rule in the prompt instead, decision 8).
+    /// no read fence (measured ineffective on this version; a rule in the prompt instead).
     ///
-    /// <paramref name="dataDir"/> (row 11, D-i measure (a)): when given, adds Read/Write/Edit deny rules
-    /// for the hub's data directory, forward-slashed and `/**`-suffixed. The skill store lives under
-    /// this directory and its text becomes instruction in a later spawn's prompt (D-i); the hash pin in
-    /// the `skills` table is the actual control, and this is a second lock whose binding is UNVERIFIED -
-    /// every deny form ever measured on 2.1.220 used the `~/` shape (claim 23), never an absolute path.
-    /// The M11 check probes it live. The Codex asymmetry is NOT closed here: Codex directory spawns get
-    /// no deny list at all, and row 13 ("symmetric confinement") owns both. Null (the default) omits
-    /// these rules entirely, so a caller with no data directory in scope gets the pre-row-11 list.</summary>
+    /// <paramref name="dataDir"/>: when given, adds Read/Write/Edit deny rules for the hub's data
+    /// directory, forward-slashed and `/**`-suffixed. The skill store lives under this directory and
+    /// its text becomes instruction in a later spawn's prompt; the hash pin in the `skills` table is
+    /// the actual control, and this is a second lock whose binding is unverified: every deny form
+    /// measured on 2.1.220 used the `~/` shape, never an absolute path. Invoke-M11SkillCheck.ps1
+    /// probes it live. Codex directory spawns get no deny list at all. Null (the default) omits these
+    /// rules entirely.</summary>
     public static IReadOnlyList<string> ClaudeDenyRules(string? dataDir = null)
     {
         var rules = new List<string>();
@@ -162,40 +157,32 @@ public static class SpawnCommands
     public static string ClaudeSettingsJson(string? dataDir = null) =>
         JsonSerializer.Serialize(new { permissions = new { deny = ClaudeDenyRules(dataDir) } });
 
-    /// <summary>Row 19, orchestrator addition to task 12f: the environment variable the installed
-    /// Claude CLI's own <c>--mcp-config</c> schema documents as its per-server tool-call timeout
-    /// ("Per-server tool-call timeout in milliseconds... Hard wall-clock limit per call; progress
-    /// notifications do not extend it. Values below 1000ms are ignored"). Task 12f measured that this
-    /// is read from the environment, not that raising it actually extends a live call that would
-    /// otherwise time out — the CLI's default value could not be extracted either. Inferred from the
-    /// binary's own embedded schema text this session, not from a round-trip that timed out and was
-    /// then rescued by this variable; row 20 task 5's probe (rescue leg) is what verifies the round
-    /// trip — until that runs, treat this as unverified.</summary>
+    /// <summary>The environment variable the installed Claude CLI's own <c>--mcp-config</c> schema
+    /// documents as its per-server tool-call timeout ("Per-server tool-call timeout in milliseconds...
+    /// Hard wall-clock limit per call; progress notifications do not extend it. Values below 1000ms
+    /// are ignored"). Measured: neither this nor the other two timeout knobs stops the runtime cutting
+    /// a silent MCP call at 300 s; only bytes on the wire (run_gate's progress notifications) reset
+    /// that cut.</summary>
     public const string ClaudeMcpToolTimeoutEnvVar = "MCP_TOOL_TIMEOUT";
 
-    /// <summary>Row 20, task 3 (ledger 11): the env var the installed CLI documents for the HTTP MCP
-    /// transport's idle-abort timeout, milliseconds — separate from <see cref="ClaudeMcpToolTimeoutEnvVar"/>'s
-    /// hard per-call wall clock; the CLI's own default is 5 minutes when this is unset. Raised
-    /// alongside the other two knobs (this var, the env var above, and the per-server <c>timeout</c>
-    /// field in <see cref="ClaudeMcpConfigJson"/>) for an in-run Claude directory spawn only, all three
-    /// at the same value, so a long <c>run_gate</c> call cannot be cut by whichever of the three the
-    /// installed CLI actually enforces — the probe (task 5) is what tells them apart.</summary>
+    /// <summary>The env var the installed CLI documents for the HTTP MCP transport's idle-abort
+    /// timeout, in milliseconds, separate from <see cref="ClaudeMcpToolTimeoutEnvVar"/>'s hard per-call
+    /// wall clock; the CLI's own default is 5 minutes when this is unset. Set alongside the other two
+    /// knobs (the env var above and the per-server <c>timeout</c> field in
+    /// <see cref="ClaudeMcpConfigJson"/>) for an in-run Claude directory spawn only, all three at the
+    /// same value.</summary>
     public const string ClaudeMcpIdleTimeoutEnvVar = "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT";
 
-    /// <summary>A spawn in a directory room (M9 decision 9): cwd is the room's tree; `dontAsk` plus the
-    /// allow list runs the six built-ins and the three MCP tools without a prompt and auto-denies
-    /// everything else (protected-path writes included — under `bypassPermissions` they would be
-    /// auto-approved); the deny list rides in <paramref name="settingsPath"/>, which sits in the scratch
-    /// folder beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
+    /// <summary>A spawn in a directory room: cwd is the room's tree; `dontAsk` plus the allow list
+    /// runs the six built-ins and the three MCP tools without a prompt and auto-denies everything
+    /// else (protected-path writes included; under `bypassPermissions` they would be auto-approved);
+    /// the deny list rides in <paramref name="settingsPath"/>, which sits in the scratch folder
+    /// beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is
     /// what carries the Bash calls the trail records; <paramref name="systemRules"/> (`SpawnPrompt.DirectoryRules`)
-    /// rides as an appended system prompt (F10) so the fence is not only in the transcript channel.
-    /// <paramref name="mcpToolTimeoutMs"/> (orchestrator addition to task 12f; row 20 task 3 raises the
-    /// value from <c>RunLimits.SpawnTimeout</c> to <c>RunLimits.EffectiveGateTimeout</c> and adds the
-    /// second env var) sets BOTH <see cref="ClaudeMcpToolTimeoutEnvVar"/> and
+    /// rides as an appended system prompt so the fence is not only in the transcript channel.
+    /// <paramref name="mcpToolTimeoutMs"/> sets both <see cref="ClaudeMcpToolTimeoutEnvVar"/> and
     /// <see cref="ClaudeMcpIdleTimeoutEnvVar"/> in the child's environment, to the same value, when
-    /// given — an in-run Claude spawn only, so neither of the CLI's own MCP timeouts can kill a long
-    /// <c>run_gate</c> call before the hub's own per-spawn timeout does. Null (the default, every
-    /// non-run caller) sets nothing, exactly the pre-existing empty environment.</summary>
+    /// given (an in-run Claude spawn only). Null (every non-run caller) sets nothing.</summary>
     public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
@@ -214,12 +201,11 @@ public static class SpawnCommands
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is
     /// not skipped), `--json` carries the command_execution items the trail records, and network is on
-    /// inside workspace-write (D10). Measured 2026-09-06 (claim 24): every flag accepted; note the
-    /// sandbox did NOT stop a `git commit` — the prompt rule and the trail are the mechanism (decision 7).
-    /// <paramref name="toolTimeoutSeconds"/> is row 19's task 12f (pass 1's M7): the hard-coded 60 s
-    /// this used to always carry kills an MCP tool call — <c>run_gate</c> included — well before a
-    /// 30-minute gate can finish; an in-run Codex spawn passes <c>RunLimits.SpawnTimeout</c> in
-    /// seconds here instead. Every other caller keeps the 60 s default.</summary>
+    /// inside workspace-write. Measured: every flag accepted, but the sandbox did not stop a
+    /// `git commit`; the prompt rule and the trail are the mechanism.
+    /// <paramref name="toolTimeoutSeconds"/>: a 60 s MCP tool-call timeout kills a long
+    /// <c>run_gate</c> call well before a gate can finish, so an in-run Codex spawn passes
+    /// <c>RunLimits.EffectiveGateTimeout</c> in seconds. Every other caller keeps the 60 s default.</summary>
     public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label, string? effort = null, int toolTimeoutSeconds = 60) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,

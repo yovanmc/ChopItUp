@@ -3,15 +3,14 @@ using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Tests.Skills;
 
-/// <summary>Row 23, task 7 (AC8, ticket 07): the shipped <c>tools/skills/consolidate-memory</c> skill,
-/// asserted against the real directory in this repo rather than a fixture — a fixture would prove only
-/// that the import path works, which <see cref="SkillImportTests"/> already proves. What can break here
-/// is the file the owner actually imports: frontmatter that stops parsing, a stray <c>run:</c> that
-/// would turn one exchange into a run, or a gate declaration with no script to back it.
+/// <summary>The shipped <c>tools/skills/consolidate-memory</c> skill, asserted against the real
+/// directory in this repo rather than a fixture: a fixture would prove only that the import path
+/// works, which <see cref="SkillImportTests"/> already proves. What can break here is the file the
+/// owner actually imports: frontmatter that stops parsing, a stray <c>run:</c> that would turn one
+/// exchange into a run, or a gate declaration with no script to back it.
 ///
 /// The repo root is found the way <c>GateScriptFixture</c> finds it (walk up from
-/// <see cref="AppContext.BaseDirectory"/> to <c>ChopItUp.slnx</c>) — neither skill test file reads
-/// <c>tools/skills</c> today, so there was no closer pattern to follow. The import target is a scratch
+/// <see cref="AppContext.BaseDirectory"/> to <c>ChopItUp.slnx</c>). The import target is a scratch
 /// store under <see cref="Path.GetTempPath"/>: nothing here touches an installed skill or a real data
 /// directory.</summary>
 public sealed class ConsolidateMemorySkillTests : IDisposable
@@ -19,7 +18,7 @@ public sealed class ConsolidateMemorySkillTests : IDisposable
     private const string SkillName = "consolidate-memory";
 
     /// <summary>The skill body is rendered into every spawn of the exchange it roots, so its size is a
-    /// prompt-budget decision, not a formatting one. The plan's budget is 3 KB.</summary>
+    /// prompt-budget decision, not a formatting one. The budget is 3 KB.</summary>
     private const int MaxBytes = 3 * 1024;
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "chopitup_consolidate_" + Guid.NewGuid().ToString("N"));
@@ -76,9 +75,9 @@ public sealed class ConsolidateMemorySkillTests : IDisposable
     {
         var skill = Import();
 
-        // Ticket 07: one exchange, not a run. `run: true` would put a conductor and a run record
-        // behind an owner asking for one topic to be tidied, and a declared gate with no script under
-        // scripts/ would make the import itself refuse (SkillImportTests covers that refusal).
+        // One exchange, not a run. `run: true` would put a conductor and a run record behind an owner
+        // asking for one topic to be tidied, and a declared gate with no script under scripts/ would
+        // make the import itself refuse (SkillImportTests covers that refusal).
         Assert.False(skill.IsRun);
         Assert.True(skill.Gates is null or { Count: 0 });
         Assert.Null(skill.Overlay);

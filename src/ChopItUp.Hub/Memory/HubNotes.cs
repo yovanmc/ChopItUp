@@ -7,10 +7,10 @@ using ChopItUp.Hub.Git;
 
 namespace ChopItUp.Hub.Memory;
 
-/// <summary>The memory milestone's notes, posted as the <c>hub</c> row through the same store + signal
-/// path every message takes (so browsers and waiting hosts see them). A proposal's note is the
-/// "special message" of D15: the durable, host-visible record that something awaits the owner. The
-/// texts are code (tests match on them), not templates.</summary>
+/// <summary>The memory notes, posted as the <c>hub</c> row through the same store + signal path every
+/// message takes (so browsers and waiting hosts see them). A proposal's note is the durable,
+/// host-visible record that something awaits the hub owner. The texts are code (tests match on them),
+/// not templates.</summary>
 public static class HubNotes
 {
     public const string ProposalPrefix = "Memory proposal #";
@@ -26,10 +26,10 @@ public static class HubNotes
     }
 
     /// <summary>The body is model-written and every future spawn reads this note under the hub's
-    /// authorship, which the rules tell models to trust — so the note names the proposer as the author
-    /// of what follows and fences it (plan decision 14). A fence inside the body is broken up so it
-    /// cannot close ours; a memory-fence-shaped line (row 18, critique P1-4) is broken the same way so a
-    /// proposal note can never carry one into a later spawn's memory injection.</summary>
+    /// authorship, which the rules tell models to trust, so the note names the proposer as the author
+    /// of what follows and fences it. A fence inside the body is broken up so it cannot close ours; a
+    /// memory-fence-shaped line is broken the same way so a proposal note can never carry one into a
+    /// later spawn's memory injection.</summary>
     public static string Proposed(MemoryProposal p)
     {
         var quoted = p.Body.Replace("```", "` ` `", StringComparison.Ordinal);
@@ -43,8 +43,8 @@ public static class HubNotes
     public static string Imported(string source, string path, int imported, int skipped) =>
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
 
-    /// <summary>Row 23 (item 4): a rewrite is a whole-file replacement, not an append or a supersede, so
-    /// "written to" / "replaced" are both wrong for it; the note names the topic and the entries the
+    /// <summary>A rewrite is a whole-file replacement, not an append or a supersede, so "written to" /
+    /// "replaced" are both wrong for it; the note names the topic and the entries the
     /// consolidation removed instead.</summary>
     public static string Approved(MemoryProposal p, IReadOnlyList<string>? removedTitles = null)
     {
@@ -62,17 +62,17 @@ public static class HubNotes
 
     public static string Rejected(MemoryProposal p) => $"{ProposalPrefix}{p.Id} rejected.";
 
-    /// <summary>Pass 2 P2-13: a core that is ALREADY over the cap (the L2 defect M10 shipped, or hand-written
-    /// prose with no entries) cannot be shrunk by any approval, so the message says which door opens. Row 23
-    /// (item 4): a rewrite's refusal names the topic and its real cap instead — "fold it into a topic" makes
-    /// no sense for a rewrite, which already targets a whole topic (or the core) by design.</summary>
+    /// <summary>A core that is ALREADY over the cap (legacy content, or hand-written prose with no
+    /// entries) cannot be shrunk by any approval, so the message says which door opens. A rewrite's
+    /// refusal names the topic and its real cap instead: "fold it into a topic" makes no sense for a
+    /// rewrite, which already targets a whole topic (or the core) by design.</summary>
     public static string Refused(MemoryProposal p, int chars, int current)
     {
         if (p.Kind == MemoryProposalStore.KindRewrite)
         {
             var cap = p.Topic == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
             var where = p.Topic == MemoryStore.CoreTopic ? "the core" : $"topic '{p.Topic}'";
-            // Row 40: an editor row is never pending for anyone, so the Retry path's fix-and-try-again
+            // An editor row is never pending for anyone, so the Retry path's fix-and-try-again
             // sentence must say "save", not "propose" (the editor has no separate propose step).
             var tryAgain = p.Source == MemoryProposalStore.SourceEditor ? "Trim it and save again." : "Trim it and propose the rewrite again.";
             return $"{ProposalPrefix}{p.Id} refused: the rewrite of {where} would be {chars} characters, over the {cap} cap. {tryAgain}";
@@ -83,8 +83,8 @@ public static class HubNotes
                 : "Fold it into a topic, or propose it with replaces to update an entry the core already holds.");
     }
 
-    /// <summary>The room's record of what the trail did around one spawn (M9 decision 6). One line;
-    /// the commit itself is the detail.</summary>
+    /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
+    /// is the detail.</summary>
     public static string Trail(string participantId, CommitOutcome? owner, CommitOutcome agent, int commands, bool headMoved)
     {
         if (agent.Hash is null || !agent.Created)

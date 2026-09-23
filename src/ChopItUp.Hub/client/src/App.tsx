@@ -53,9 +53,9 @@ export function applyExchangeFromRequest(
   return applyExchange(current, incoming);
 }
 
-/** Row 34: a copy of a per-root pending set with `root` added or removed. A copy because it is React
- *  state, and one root's release must never drop a neighbour that is still pending. Row 44 gives the
- *  Continue presses a second set of the same shape, which this serves too. */
+/** A copy of a per-root pending set with `root` added or removed. A copy because it is React state,
+ *  and one root's release must never drop a neighbour that is still pending. The Continue presses
+ *  use a second set of the same shape. */
 export function withStopping(current: ReadonlySet<number>, root: number, on: boolean): ReadonlySet<number> {
   const next = new Set(current);
   if (on) next.add(root);
@@ -72,11 +72,11 @@ export interface ExchangeStopHooks {
   end: () => void;
 }
 
-/** Row 34, AC3: one strip's Stop, which ends the exchange rooted at `root` and leaves the rest of the
- *  room running. The shape of `stop` below minus its run refresh: this endpoint refuses (409) rather
- *  than ending a run, so there is no run change to chase. `end` is in `finally`, so a refused stop
- *  releases its strip as surely as a successful one. Outside the component so it can be tested without
- *  a DOM; App supplies the hooks. */
+/** One strip's Stop, which ends the exchange rooted at `root` and leaves the rest of the room
+ *  running. The shape of `stop` below minus its run refresh: this endpoint refuses (409) rather than
+ *  ending a run, so there is no run change to chase. `end` is in `finally`, so a refused stop releases
+ *  its strip as surely as a successful one. Outside the component so it can be tested without a DOM;
+ *  App supplies the hooks. */
 export async function stopExchangeAt(roomId: string, root: number, hooks: ExchangeStopHooks): Promise<void> {
   hooks.begin();
   try {
@@ -89,9 +89,9 @@ export async function stopExchangeAt(roomId: string, root: number, hooks: Exchan
 }
 
 /** What `continueExchangeAt` reports back to App. `apply` takes the posted message rather than a
- *  snapshot: D-e routes Continue through the ordinary message endpoint, so what comes back is the
- *  posted `/continue` message itself, and the hub's answer to it arrives over the socket like any
- *  other message does. */
+ *  snapshot: Continue goes through the ordinary message endpoint, so what comes back is the posted
+ *  `/continue` message itself, and the hub's answer to it arrives over the socket like any other
+ *  message does. */
 export interface ExchangeContinueHooks {
   begin: () => void;
   apply: (messages: Message[]) => void;
@@ -100,11 +100,11 @@ export interface ExchangeContinueHooks {
   end: () => void;
 }
 
-/** Row 44, AC5: the strip's Continue, which posts `/continue` as a reply to that exchange's root. The
- *  button and a phone typing the same command share one code path and leave one visible trail, which
- *  is why this is a post and not an endpoint of its own (D-e). `end` is in `finally`, so a refused
- *  continue releases its strip as surely as an accepted one. Outside the component for the same reason
- *  `stopExchangeAt` is: this client has no DOM to press the button in. */
+/** The strip's Continue, which posts `/continue` as a reply to that exchange's root. The button and
+ *  a phone typing the same command share one code path and leave one visible trail, which is why this
+ *  is a post and not an endpoint of its own. `end` is in `finally`, so a refused continue releases its
+ *  strip as surely as an accepted one. Outside the component for the same reason `stopExchangeAt` is:
+ *  this client has no DOM to press the button in. */
 export async function continueExchangeAt(roomId: string, root: number, hooks: ExchangeContinueHooks,
   expected?: { mode: string; participants: string[] }): Promise<void> {
   hooks.begin();
@@ -127,15 +127,13 @@ function byActivity(rooms: Room[]): Room[] {
   return [...rooms].sort((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : a.lastActivityAt > b.lastActivityAt ? -1 : 0));
 }
 
-/** Row 28, AC5's first half: the paste prompt a refused DELIBERATE action raises. `notice` names what
- *  did not happen, because a Send that silently ate the message is the failure this row closes rather
- *  than a smaller version of it — the owner must not have to infer from an empty thread that his
- *  message is gone.
+/** The paste prompt a refused deliberate action raises. `notice` names what did not happen: the
+ *  owner must not have to infer from an empty thread that his message is gone.
  *
  *  Deliberately not raised by a refused `markRead`: that one fires on every room open, so a prompt
  *  there would reopen itself forever. The rail carries that case instead.
  *
- *  Exported for its test: this client has no jsdom, so rendering it IS the only proof it renders. */
+ *  Exported for its test: this client has no jsdom, so rendering it is the only proof it renders. */
 export function TokenGate({
   notice,
   onToken,
@@ -202,11 +200,11 @@ export default function App() {
   const [exchange, setExchange] = useState<ExchangeSnapshot | null>(null);
   const [run, setRun] = useState<RunSnapshot | null>(null);
   const [stopping, setStopping] = useState(false);
-  /** Row 34: the exchange roots whose own stop is in flight, so one strip greys and its neighbours stay
+  /** The exchange roots whose own stop is in flight, so one strip greys and its neighbours stay
    *  pressable. `stopping` above stays the room stop's, which `RunBar` shares. */
   const [stoppingRoots, setStoppingRoots] = useState<ReadonlySet<number>>(() => new Set());
-  /** Row 44: the same, for the roots whose `/continue` post is in flight. Its own set, because one
-   *  strip can be stopping while another is being continued. */
+  /** The same, for the roots whose `/continue` post is in flight. Its own set, because one strip can
+   *  be stopping while another is being continued. */
   const [continuingRoots, setContinuingRoots] = useState<ReadonlySet<number>>(() => new Set());
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
@@ -215,12 +213,12 @@ export default function App() {
   /** The hub's own refusal sentence per skill proposal, shown on the card that produced it rather
    *  than in the page banner: several cards can be on screen and a decision is per card. */
   const [skillRefusals, setSkillRefusals] = useState<Record<number, string>>({});
-  /** D2: read once at mount from `localStorage`, replaced by a one-time paste. Held in state as well
-   *  as in storage so a browser that refuses storage still works for the session. */
+  /** Read once at mount from `localStorage`, replaced by a one-time paste. Held in state as well as in
+   *  storage so a browser that refuses storage still works for the session. */
   const [ownerToken, setOwnerToken] = useState<string | null>(() => readOwnerToken());
-  /** Row 28: what a deliberate write did NOT do, because the hub refused it for want of a credential.
-   *  Set means the paste prompt is on screen; the sentence is built where the failure happened, since
-   *  only that call site knows what the owner was trying to do. */
+  /** What a deliberate write did not do, because the hub refused it for want of a credential. Set
+   *  means the paste prompt is on screen; the sentence is built where the failure happened, since only
+   *  that call site knows what the hub owner was trying to do. */
   const [tokenNotice, setTokenNotice] = useState<string | null>(null);
   /** The hub's reason the read cursor would not move, kept rather than a bare boolean so the rail's
    *  prompt can state the same cause as any other refusal instead of a second guess at it. */
@@ -275,12 +273,12 @@ export default function App() {
     return room !== null && !ids.includes(room) ? [room, ...ids] : ids;
   }, []);
 
-  /** Row 19: the run strip has no socket event of its own, so it rides the room's existing refresh
-   *  points — opening the room, an exchange change (a run's whole life is exchanges opening and
-   *  closing), a hub note (started, parked, ended), and a reconnect. Per room, deliberately: a park
-   *  in a room the browser is not showing waits until the owner opens that room, and the rail's
-   *  unread badge on the park note is the signal in the meantime. Guarded on the ref for the same
-   *  reason `loadProposals` is. */
+  /** The run strip has no socket event of its own, so it rides the room's existing refresh points:
+   *  opening the room, an exchange change (a run's whole life is exchanges opening and closing), a hub
+   *  note (started, parked, ended), and a reconnect. Per room, deliberately: a park in a room the
+   *  browser is not showing waits until the hub owner opens that room, and the rail's unread badge on the
+   *  park note is the signal in the meantime. Guarded on the ref for the same reason `loadProposals`
+   *  is. */
   const refreshRun = useCallback(async (room: string, signal?: AbortSignal) => {
     const snapshot = await api.getRun(room, signal);
     if (currentRoom.current === room) setRun(snapshot);
@@ -293,8 +291,8 @@ export default function App() {
     if (currentRoom.current === room) setProposals(list);
   }, []);
 
-  /** M25: undecided skill proposals of the open room — pending ones, and the approved-but-uninstalled
-   *  ones the Retry state exists for. Same room guard as `loadProposals`, for the same reason. */
+  /** Undecided skill proposals of the open room: pending ones, and the approved-but-uninstalled ones
+   *  the Retry state exists for. Same room guard as `loadProposals`, for the same reason. */
   const loadSkillProposals = useCallback(async (room: string, signal?: AbortSignal) => {
     const list = await api.listSkillProposals(room, signal);
     if (currentRoom.current === room) setSkillProposals(list);
@@ -347,10 +345,10 @@ export default function App() {
     refreshRooms().catch((failure) => setError(api.describeError(failure)));
   }, [refreshRooms]);
 
-  /** Row 28: the credential branch every DELIBERATE write shares. Returns whether the failure was a
-   *  refusal a pasted token can fix — the caller then leaves the error banner alone, because the
-   *  prompt this raises says both what failed and what to do about it, and the banner would only
-   *  repeat half of that. `didNotHappen` is the caller's, since only it knows what was attempted. */
+  /** The credential branch every deliberate write shares. Returns whether the failure was a refusal a
+   *  pasted token can fix; the caller then leaves the error banner alone, because the prompt this
+   *  raises says both what failed and what to do about it, and the banner would only repeat half of
+   *  that. `didNotHappen` is the caller's, since only it knows what was attempted. */
   const refused = useCallback((failure: unknown, didNotHappen: string): boolean => {
     if (!api.isCredentialRefusal(failure)) return false;
     setError(null); // whatever the banner held is older than this, and two red blocks read as two faults
@@ -359,18 +357,18 @@ export default function App() {
   }, []);
   const previewRefused = useCallback((failure: unknown) => { refused(failure, 'The recipient preview needs your owner token.'); }, [refused]);
 
-  /** Row 28, the quiet half of AC5. `markRead` is a background write on every room open, so its
-   *  refusal must NOT raise the prompt — that would pop the moment the owner opened a room and again
-   *  every time he closed it. It is not free to ignore either: every unread badge in the rail is then
-   *  a number the hub will not let this browser clear, so the reason goes to the rail. */
+  /** `markRead` is a background write on every room open, so its refusal must not raise the prompt:
+   *  that would pop the moment the hub owner opened a room and again every time he closed it. It is not
+   *  free to ignore either: every unread badge in the rail is then a number the hub will not let this
+   *  browser clear, so the reason goes to the rail. */
   const readRoom = useCallback((room: string) => {
     api.markRead(room).catch((failure) => {
       if (api.isCredentialRefusal(failure)) setUnreadRefusal(api.describeError(failure));
     });
   }, []);
 
-  /** M9: the owner's read cursor moves while the room is open. Debounced, so a burst of messages is
-   *  one call; dropped if the room changed before it fired. */
+  /** The hub owner's read cursor moves while the room is open. Debounced, so a burst of messages is one
+   *  call; dropped if the room changed before it fired. */
   const scheduleRead = useCallback(
     (room: string) => {
       if (readTimer.current !== null) window.clearTimeout(readTimer.current);
@@ -416,11 +414,10 @@ export default function App() {
 
     connection.on('MessagePosted', (message: Message) => {
       const open = message.roomId === currentRoom.current;
-      // Since schema v7 "a human wrote it" and "this window wrote it" are different questions. Only
-      // the owner's own posts advance the owner's cursor on the hub; a post from the remote hand
-      // (D3) is read with ITS cursor, so for this window it is someone else's message — it has to
-      // bump the badge live and get read like any other, or the badge sits still until a reload
-      // disagrees with it.
+      // "A human wrote it" and "this window wrote it" are different questions. Only the hub owner's own
+      // posts advance the hub owner's cursor on the hub; a post from the remote hand is read with its own
+      // cursor, so for this window it is someone else's message: it has to bump the badge live and
+      // get read like any other, or the badge sits still until a reload disagrees with it.
       const fromThisHand = isHuman(message.authorId) && !isOwnerRemote(message.authorId);
       if (open) merge([message]);
       // Every memory state change is announced by a hub note that starts with "Memory " (a proposal,
@@ -428,14 +425,14 @@ export default function App() {
       if (open && isSystem(message.authorId) && message.body.startsWith('Memory ')) {
         loadProposals(message.roomId).catch(() => undefined);
       }
-      // M25, the same wiring for the same reason: every skill-proposal state change (proposed,
+      // The same wiring for the same reason: every skill-proposal state change (proposed,
       // approved-and-installed, rejected) is announced by a hub note starting with "Skill proposal ",
-      // and that note IS the refresh signal — the card appears without the owner reloading anything.
+      // and that note is the refresh signal, so the card appears without the hub owner reloading anything.
       if (open && isSystem(message.authorId) && message.body.startsWith('Skill proposal ')) {
         loadSkillProposals(message.roomId).catch(() => undefined);
       }
-      // Row 19: a run starts, parks and ends by hub note, and no event carries the run itself — so a
-      // note from the hub is the cue to re-read it. Cheap, loopback, and only for the open room.
+      // A run starts, parks and ends by hub note, and no event carries the run itself, so a note from
+      // the hub is the cue to re-read it. Cheap, loopback, and only for the open room.
       if (open && isSystem(message.authorId)) refreshRun(message.roomId).catch(() => undefined);
       if (open && !fromThisHand) scheduleRead(message.roomId);
       // The owner's own posts advance the owner's cursor on the hub, so they never count as unread.
@@ -627,8 +624,8 @@ export default function App() {
     [roomId, merge, refused],
   );
 
-  // D17: Stop is "step in and end it" — the owner's next message opens a fresh exchange, this call
-  // only ends the current one. The banner is the existing error surface; nothing new for failures.
+  // Stop is "step in and end it": the hub owner's next message opens a fresh exchange, this call only
+  // ends the current one. The banner is the existing error surface; nothing new for failures.
   const stop = useCallback(async () => {
     if (!roomId) return;
     const generation = exchangeGeneration.current;
@@ -638,10 +635,10 @@ export default function App() {
       setExchange((previous) => applyExchangeFromRequest(
         previous, snapshot, roomId, generation, currentRoom.current, exchangeGeneration.current));
       setError(null);
-      // Row 22: this call ends the RUN when there is one, and the run strip has no socket event of
-      // its own — it rides `ExchangeChanged` and the hub's note. Both are round trips that may not
-      // have landed yet, so refresh the run here rather than betting the strip repaints. Awaited
-      // before `finally`, which keeps the button disabled until the new state is on screen (AC5).
+      // This call ends the run when there is one, and the run strip has no socket event of its own:
+      // it rides `ExchangeChanged` and the hub's note. Both are round trips that may not have landed
+      // yet, so refresh the run here rather than betting the strip repaints. Awaited before `finally`,
+      // which keeps the button disabled until the new state is on screen.
       await refreshRun(roomId).catch(() => undefined);
     } catch (failure) {
       if (!refused(failure, 'The exchange was not stopped.')) setError(api.describeError(failure));
@@ -651,7 +648,7 @@ export default function App() {
   }, [roomId, refreshRun, refused]);
 
   /** The bar's one handler: a strip's root goes to that exchange's own stop, and `null` (a hub that
-   *  sends no `exchanges`) to the room stop above, as it did before row 34. */
+   *  sends no `exchanges`) to the room stop above. */
   const stopFromBar = useCallback(
     (root: number | null) => {
       if (root === null) {
@@ -675,8 +672,8 @@ export default function App() {
     [roomId, stop, refused],
   );
 
-  /** Row 44, AC5: the bar's Continue. The composer's reply state is deliberately untouched — a reply
-   *  may be half composed down there, and this press is not that reply. */
+  /** The bar's Continue. The composer's reply state is deliberately untouched: a reply may be half
+   *  composed down there, and this press is not that reply. */
   const continueFromBar = useCallback(
     (root: number) => {
       if (!roomId) return;
@@ -695,8 +692,8 @@ export default function App() {
     [roomId, merge, refused, exchange],
   );
 
-  // D15: the owner's word, in the room. The card leaves the panel on success; the hub's note is what
-  // the thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
+  // The hub owner's word, in the room. The card leaves the panel on success; the hub's note is what the
+  // thread shows. Failures (409 already decided, 404) surface in the banner and the list reloads.
   const decide = useCallback(
     async (id: number, decision: 'approve' | 'reject') => {
       if (!roomId) return;
@@ -715,11 +712,11 @@ export default function App() {
     [roomId, loadProposals, refused],
   );
 
-  /** M25 (D1/D2): the owner's word on a proposed skill, carrying the pasted bearer token and, on an
-   *  approve, the tree hash the card displayed. Refusals — 401/403 from the gate, 409 from a spawn in
-   *  flight, a changed source or a stale installed-or-not state — land on the card that produced them
-   *  and the list is re-read, so what the owner sees next is the hub's current answer rather than the
-   *  stale row that was just refused. */
+  /** The hub owner's word on a proposed skill, carrying the pasted bearer token and, on an approve, the
+   *  tree hash the card displayed. Refusals (401/403 from the gate, 409 from a spawn in flight,
+   *  a changed source or a stale installed-or-not state) land on the card that produced them and the
+   *  list is re-read, so what the hub owner sees next is the hub's current answer rather than the stale
+   *  row that was just refused. */
   const decideSkill = useCallback(
     async (proposal: SkillProposal, decision: 'approve' | 'reject') => {
       if (!roomId || ownerToken === null) return;
@@ -743,9 +740,9 @@ export default function App() {
     [roomId, ownerToken, loadSkillProposals],
   );
 
-  /** Row 28: a token arriving clears both credential surfaces optimistically. Optimistic on purpose —
-   *  the next write decides whether the new token actually works, and re-raising the prompt from a
-   *  fresh refusal is honest, while leaving it up beside a token that works is not. */
+  /** A token arriving clears both credential surfaces optimistically, on purpose: the next write
+   *  decides whether the new token works, and re-raising the prompt from a fresh refusal is honest,
+   *  while leaving it up beside a token that works is not. */
   const takeOwnerToken = useCallback((token: string | null) => {
     const stored = writeOwnerToken(token);
     setOwnerToken(stored);
@@ -784,8 +781,8 @@ export default function App() {
     setRooms((previous) => previous.map((r) => (r.id === room.id ? room : r)));
   }, []);
 
-  // Archive hides, never blocks (plan decision 14): the hub keeps the room and its folder; the list
-  // is re-read so the selection moves to the first visible room when the open one leaves the list.
+  // Archive hides, never blocks: the hub keeps the room and its folder; the list is re-read so the
+  // selection moves to the first visible room when the open one leaves the list.
   const toggleArchive = useCallback(async () => {
     if (!roomId) return;
     const room = rooms.find((r) => r.id === roomId);
@@ -806,13 +803,13 @@ export default function App() {
 
   const activeRoom = rooms.find((room) => room.id === roomId) ?? null;
 
-  // Row 22: a run that has not ended is what `stop` will actually end, so the run strip owns the
-  // control and `ExchangeBar` stands down for as long as that is true. One stop, one label.
+  // A run that has not ended is what `stop` will actually end, so the run strip owns the control and
+  // `ExchangeBar` stands down for as long as that is true. One stop, one label.
   const runStoppable = run !== null && run.status !== 'ended';
 
-  // Row 12: inside ChopItUp.Desktop the window has no title bar of its own, so the page draws one and
-  // the layout grows a row for it. Asked here rather than at module scope — this module is imported
-  // under node by the tests, where there is no `window` to ask.
+  // Inside ChopItUp.Desktop the window has no title bar of its own, so the page draws one and the
+  // layout grows a row for it. Asked here rather than at module scope: this module is imported under
+  // node by the tests, where there is no `window` to ask.
   const hosted = isHosted();
 
   return (

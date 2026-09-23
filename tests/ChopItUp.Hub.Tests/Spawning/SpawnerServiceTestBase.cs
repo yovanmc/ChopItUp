@@ -36,7 +36,7 @@ public abstract class SpawnerServiceTestBase : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -90,8 +90,8 @@ public abstract class SpawnerServiceTestBase : IAsyncLifetime
 
     /// <summary>Writes a fixture skill straight into the store's directory and records its fingerprint
     /// in the same `chopitup.db` the running hub uses (via the DI-registered <see cref="ChopDb"/>),
-    /// exactly the shape Task 5's --import-skill produces. Row 11 fixtures only - no third-party
-    /// skill text (D-g).</summary>
+    /// exactly the shape --import-skill produces. Synthetic fixtures only, no third-party skill
+    /// text.</summary>
     protected void WriteSkill(string name, string body)
     {
         var dir = Path.Combine(_dir, "skills", name);

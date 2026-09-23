@@ -8,7 +8,7 @@ namespace ChopItUp.Hub.Spawning;
 /// <summary>What the service found when it looked the message's slash command up. The policy needs
 /// these outcomes and no filesystem. Every arm except <c>None</c> and <c>Found</c> is a refusal: the
 /// owner asked for an instruction the hub cannot hand over intact, and spawning without it spends
-/// real model turns on the wrong ask (D-c).</summary>
+/// real model turns on the wrong ask.</summary>
 public abstract record SkillResolution
 {
     public sealed record None : SkillResolution;
@@ -23,25 +23,24 @@ public abstract record SkillResolution
     public static readonly SkillResolution Nothing = new None();
 }
 
-/// <summary>What <see cref="ExchangePolicy.OnMessage"/> needs to know about the room's ACTIVE run, if
-/// any (row 19, task 4). Null when no run is active here - a parked or ended run gates nothing at
-/// this level; those refusals need <c>RunStore.Latest</c>, which this pure class never reads, so
-/// <c>SpawnerService</c> decides them (impure) before the policy is consulted at all (pass 2's
-/// F-9).</summary>
+/// <summary>What <see cref="ExchangePolicy.OnMessage"/> needs to know about the room's active run, if
+/// any. Null when no run is active here: a parked or ended run gates nothing at this level. Those
+/// refusals need <c>RunStore.Latest</c>, which this pure class never reads, so
+/// <c>SpawnerService</c> decides them before the policy is consulted.</summary>
 public sealed record RunContext(long RunId, string ConductorId, string CurrentPhase);
 
-/// <summary>What a /continue found (row 44, D-d). The service maps each refusal to one note.</summary>
+/// <summary>What a /continue found. The service maps each refusal to one note.</summary>
 public enum ContinueOutcome { Continued, RunExchange, StillOpen, StillFinishing, NobodySpawnable }
 
-/// <summary>The rules, and nothing but the rules. D2: only an owner message opens an exchange. An
-/// owner prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
-/// running beside the new one. An owner reply joins the exchange it replies to instead (row 36). D8: a
-/// LEADING mention (row 43, D5; see <see cref="Mentions.Leading"/>) is the only trigger,
-/// never one's own message, never a row that is not spawnable. D5: eight turns by default (a
-/// turns: token in the leading run overrides, row 44); whoever holds the last one is told so, and
-/// the addressee gets a synthesis turn when another participant posted last. D7: debounce, one in
-/// flight per (participant, room), minimum spacing per participant. Returns notes for the caller
-/// to post as the hub; never posts itself.</summary>
+/// <summary>The rules, and nothing but the rules. Only an owner message opens an exchange. An owner
+/// prompt closes only the open exchanges it shares a mentioned participant with; the rest keep
+/// running beside the new one. An owner reply joins the exchange it replies to instead. A leading
+/// mention (see <see cref="Mentions.Leading"/>) is the only trigger, never one's own message, never
+/// a row that is not spawnable. Eight turns by default (a turns: token in the leading run
+/// overrides); whoever holds the last one is told so, and the addressee gets a synthesis turn when
+/// another participant posted last. Debounce, one in flight per (participant, room), minimum
+/// spacing per participant. Returns notes for the caller to post as the hub; never posts
+/// itself.</summary>
 public sealed class ExchangePolicy
 {
     private readonly IReadOnlyDictionary<string, Participant> _roster;
@@ -69,8 +68,8 @@ public sealed class ExchangePolicy
     /// exchange, else the open exchange involving a model it mentions, else the newest open one).
     /// A human prompt supersedes each open exchange it shares a mentioned participant with before any
     /// refusal is decided, since the owner spoke to that model either way; a run-start that passes
-    /// every check supersedes all of them. <paramref name="joins"/> (row 36) is the exchange that holds
-    /// the message an owner post replies to, as the service resolved it (any status), or null when the
+    /// every check supersedes all of them. <paramref name="joins"/> is the exchange that holds the
+    /// message an owner post replies to, as the service resolved it (any status), or null when the
     /// post is not a reply or its target is in no exchange the service holds.</summary>
     public (Exchange? Opened, IReadOnlyList<string> Notes) OnRoomMessage(IReadOnlyList<Exchange> room, Exchange? target, Message message, DateTimeOffset now,
         bool acceptMentions = true, SkillResolution? skill = null, RunContext? run = null, bool startsRun = false, bool hasDirectory = false, Exchange? joins = null)
@@ -79,7 +78,7 @@ public sealed class ExchangePolicy
         if (!_roster.TryGetValue(message.AuthorId, out var author) || author.Kind == "system") return (null, notes);
 
         // acceptMentions = false: the author is a spawn of an exchange that is closed, or (inside a run)
-        // no longer the room's newest one; its post lands, its mentions do not.
+        // not the room's newest one; its post lands, its mentions do not.
         var leading = acceptMentions ? _mentions.Leading(message.Body) : Mentions.LeadingMentions.None;
         var mentioned = leading.Recipients
             .Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p))
@@ -94,9 +93,9 @@ public sealed class ExchangePolicy
                 return (null, notes);
             }
             target.MessageIds.Add(message.Id);
-            // I-M2 (hub F2): only a spawnable author's post can buy the addressee a synthesis turn - an
-            // app-backed window's stray post into an open exchange must never read as "someone else
-            // posted last" to Finished.
+            // Only a spawnable author's post can buy the addressee a synthesis turn: an app-backed
+            // window's stray post into an open exchange must never read as "someone else posted last"
+            // to Finished.
             if (IsSpawnable(author)) target.LastModelPost = (message.AuthorId, message.Id);
             Accept(target, mentioned, message.Id, now, notes);
             return (null, notes);
@@ -106,7 +105,7 @@ public sealed class ExchangePolicy
         // the service records it as a steer for the conductor's next trigger set.
         if (run is not null) return (null, notes);
 
-        // Row 36: a reply joins the exchange its target belongs to. A skill invocation or a run-start is
+        // A reply joins the exchange its target belongs to. A skill invocation or a run-start is
         // always a new prompt, and says so when it was a reply.
         if (message.ReplyToId is { } replyTo)
         {
@@ -153,13 +152,13 @@ public sealed class ExchangePolicy
                 return (null, notes);
         }
 
-        // Row 43 (D-b): a leading word that matched nobody is noted once per word, whatever else this
-        // post did or refused; the mentioned recipients above still act.
+        // A leading word that matched nobody is noted once per word, whatever else this post did or
+        // refused; the mentioned recipients above still act.
         NoteUnknownLeadingWords(leading, notes);
 
-        // Row 43 (D-c): with no leading recipient at all (spawnable or not) and no unknown leading
-        // word, which already got its own note, a spawnable id elsewhere in the body is a reference,
-        // not an address; named here so both refusal shapes below can carry it.
+        // With no leading recipient at all (spawnable or not) and no unknown leading word, which
+        // already got its own note, a spawnable id elsewhere in the body is a reference, not an
+        // address; named here so both refusal shapes below can carry it.
         var referenced = leading.Recipients.Count == 0 && leading.Unknown.Count == 0
             ? _mentions.Find(message.Body).Where(id => id != message.AuthorId && _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList()
             : new List<string>();
@@ -192,9 +191,8 @@ public sealed class ExchangePolicy
         if (startsRun)
             foreach (var x in open.Where(x => x.Status == ExchangeStatus.Open)) Supersede(x);
 
-        // Row 44 (D-b), Spec a2 (hub F12): read only now that every early return above has already
-        // passed - a turns: N on a message that opens nothing (no skill, nobody mentioned, a refused
-        // run-start) is prose the hub never remarks on.
+        // Read only now that every early return above has passed: a turns: N on a message that opens
+        // nothing (no skill, nobody mentioned, a refused run-start) is prose the hub never remarks on.
         var budget = TurnsOrDefault(leading, notes);
 
         var found = skill as SkillResolution.Found;
@@ -221,8 +219,8 @@ public sealed class ExchangePolicy
         return (opened ?? current, notes);
     }
 
-    /// <summary>The running spawn finishes (its completion lands on this object, which
-    /// is no longer open, so it cannot conclude or spawn); everything queued is dropped.</summary>
+    /// <summary>The running spawn finishes (its completion lands on this object, which is not open,
+    /// so it cannot conclude or spawn); everything queued is dropped.</summary>
     internal static void Supersede(Exchange x)
     {
         x.Status = ExchangeStatus.Superseded;
@@ -230,11 +228,11 @@ public sealed class ExchangePolicy
         x.Pending.Clear();
     }
 
-    /// <summary>Row 44: a synthesis still pending is being dropped with the rest of the queue; if it had
+    /// <summary>A synthesis still pending is being dropped with the rest of the queue; if it had
     /// grown the budget, that turn goes back, so the stop note and /continue count only real turns.
-    /// I-m7 (hub F8): <see cref="Exchange.TurnsCommitted"/> goes back with it - <see cref="Finished"/>
-    /// increments both together when it grows the budget, so undoing only one would leave
-    /// TurnsCommitted greater than Budget on the wire.</summary>
+    /// <see cref="Exchange.TurnsCommitted"/> goes back with it: <see cref="Finished"/> increments
+    /// both together when it grows the budget, so undoing only one would leave TurnsCommitted greater
+    /// than Budget on the wire.</summary>
     private static void DropQueuedSynthesis(Exchange x)
     {
         if (!x.SynthesisGrewBudget || !x.Pending.Values.Any(p => p.Reason == SpawnReason.Synthesis)) return;
@@ -244,14 +242,13 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>A non-human post led with a mention of a spawnable participant, but there is no open
-    /// exchange for that mention to join - only a human post opens one (D2). Named so nothing here
+    /// exchange for that mention to join (only a human post opens one). Named so nothing here
     /// hardcodes which participant it happened to be.</summary>
     private static string StrayMentionNote(string authorId, IReadOnlyList<string> mentioned) =>
         $"@{authorId} mentioned {string.Join(", ", mentioned.Select(m => "@" + m))}, but no exchange is open for it to join and only a human post opens one; nothing was spawned.";
 
-    /// <summary>Row 43 (D-b), extracted for row 44's F11 (Standards): a leading word that matched
-    /// nobody is noted once per word, in <see cref="OnRoomMessage"/> and in <see cref="Continue"/>
-    /// alike.</summary>
+    /// <summary>A leading word that matched nobody is noted once per word, in
+    /// <see cref="OnRoomMessage"/> and in <see cref="Continue"/> alike.</summary>
     private void NoteUnknownLeadingWords(Mentions.LeadingMentions leading, List<string> notes)
     {
         foreach (var word in leading.Unknown)
@@ -260,8 +257,8 @@ public sealed class ExchangePolicy
                 : $"No participant named @{word}. Address one of: {_addressable}.");
     }
 
-    /// <summary>Row 44 (D-b), extracted for row 44's F11 (Standards): the leading run's own token if
-    /// valid, else the hub's default, noting the refusal once when the token was out of range.</summary>
+    /// <summary>The leading run's own turns token if valid, else the hub's default, noting the refusal
+    /// once when the token was out of range.</summary>
     private int TurnsOrDefault(Mentions.LeadingMentions leading, List<string> notes)
     {
         if (leading.Turns == TurnsToken.OutOfRange)
@@ -269,14 +266,14 @@ public sealed class ExchangePolicy
         return leading.Turns == TurnsToken.Valid ? leading.TurnsValue : _limits.Budget;
     }
 
-    /// <summary>Row 44 (D-e), extracted for I-m1 (hub F4): the wire's <c>continuable</c> field, used by
-    /// both an exchange's own view and the snapshot's top level. <paramref name="runBlocks"/> is the
-    /// service's own read of whether the room's run would resume on a /continue - active, or parked
-    /// (row 19's AC15 resumes a parked run on any human post, /continue included).</summary>
+    /// <summary>The wire's <c>continuable</c> field, used by both an exchange's own view and the
+    /// snapshot's top level. <paramref name="runBlocks"/> is the service's own read of whether the
+    /// room's run would resume on a /continue: active, or parked (a parked run resumes on any human
+    /// post, /continue included).</summary>
     public static bool Continuable(Exchange x, bool runBlocks) =>
         x.Joinable && x.Status != ExchangeStatus.Open && x.InFlight.Count == 0 && !runBlocks;
 
-    /// <summary>Row 36: an owner reply lands in <paramref name="x"/> and nothing is superseded. Open: its
+    /// <summary>An owner reply lands in <paramref name="x"/> and nothing is superseded. Open: its
     /// mentions are accepted against the exchange's own remaining budget. Closed with nothing in flight:
     /// it reopens with its turns and skill kept, but only if a mention was actually accepted; otherwise
     /// it stays exactly as it was. Closed with a spawn still running: nothing is accepted and a note names
@@ -301,14 +298,14 @@ public sealed class ExchangePolicy
         x.TurnsCommitted = x.TurnsStarted;   // a stop or supersede dropped queued turns that never ran; only launched turns stay spent
         Accept(x, mentioned, messageId, now, notes);
         if (x.Pending.Count == 0) { (x.Status, x.StopCause, x.TurnsCommitted) = (status, cause, committed); return; }
-        // Row 44: a new leg: the addressee may owe a fresh wrap-up, and what was refused before has been replayed by the reply's own words.
+        // A new leg: the addressee may owe a fresh wrap-up, and what was refused before has been replayed by the reply's own words.
         x.SynthesisUsed = false;
         x.LastModelPost = null;
         x.Refused.Clear();
     }
 
-    /// <paramref name="refusedAt"/> (row 44, I-M1/I-m6, hub F1/F7): for a <see cref="SpawnReason.Continuation"/>
-    /// call only, the ORIGINAL message that refused each replayed id - carried into the fresh
+    /// <paramref name="refusedAt"/>: for a <see cref="SpawnReason.Continuation"/> call only, the
+    /// original message that refused each replayed id, carried into the fresh
     /// <see cref="PendingSpawn.RefusedAt"/> and prepended to its <see cref="PendingSpawn.TriggerIds"/>,
     /// so a hand-off /continue could not fit this time keeps citing the refusal that actually happened
     /// to it, never this /continue message's own id.
@@ -327,9 +324,9 @@ public sealed class ExchangePolicy
             if (x.TurnsCommitted >= x.Budget)
             {
                 refused.Add(id);
-                // I-M1 (hub F1): a /continue's own overflow is re-recorded by the caller, which still
-                // has each id's ORIGINAL refusing message; recording it here would overwrite that with
-                // this /continue message's own id.
+                // A /continue's own overflow is re-recorded by the caller, which still has each id's
+                // original refusing message; recording it here would overwrite that with this
+                // /continue message's own id.
                 if (reason != SpawnReason.Continuation) x.Refused.TryAdd(id, messageId);
                 continue;
             }
@@ -345,28 +342,27 @@ public sealed class ExchangePolicy
             notes.Add($"Budget of {x.Budget} turns is used up for the exchange started at #{x.RootMessageId}; not spawning {string.Join(", ", refused.Select(r => "@" + r))}. An owner message that mentions one of them starts a fresh exchange; once it has concluded, /continue extends it.");
     }
 
-    /// <summary>Row 19, task 8: every id a conductor's post @-mentions that is spawnable - UNLIKE the
-    /// mention set <see cref="OnMessage"/> builds for itself, a self-mention is deliberately kept
-    /// rather than dropped, because <see cref="RefuseConductorPost"/>'s own rule ("mentions the
-    /// conductor itself") needs to see it in order to refuse it - silently filtering it out here would
-    /// make that rule unreachable. Row 43 (D5): the mentions read are leading ones, via <see cref="Mentions.Leading"/>.</summary>
+    /// <summary>Every id a conductor's post @-mentions that is spawnable. Unlike the mention set
+    /// <see cref="OnMessage"/> builds for itself, a self-mention is kept, because
+    /// <see cref="RefuseConductorPost"/>'s rule ("mentions the conductor itself") needs to see it to
+    /// refuse it. The mentions read are leading ones, via <see cref="Mentions.Leading"/>.</summary>
     public IReadOnlyList<string> MentionedSpawnable(Message message) =>
         _mentions.Leading(message.Body).Recipients.Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
 
-    /// <summary>Row 43 (D-d): the whole-body reader, kept for TARGET SELECTION only (which open
-    /// exchange an app-backed window's post lands in, <c>SpawnerService.AppBackedTarget</c>) - never
-    /// for dispatch, which is <see cref="MentionedSpawnable"/>'s leading-only reading.</summary>
+    /// <summary>The whole-body reader, kept for target selection only (which open exchange an
+    /// app-backed window's post lands in, <c>SpawnerService.AppBackedTarget</c>), never for dispatch,
+    /// which is <see cref="MentionedSpawnable"/>'s leading-only reading.</summary>
     public IReadOnlyList<string> ReferencedSpawnable(Message message) =>
         _mentions.Find(message.Body).Where(id => _roster.TryGetValue(id, out var p) && IsSpawnable(p)).ToList();
 
-    /// <summary>Row 19, task 8 (D8/AC6): the class rules a conductor's post inside its run must pass,
-    /// pure and side-effect free - null means valid, otherwise names which rule failed, in AC6's own
-    /// order. <paramref name="mentioned"/> is <see cref="MentionedSpawnable"/>'s output (self kept).
-    /// <paramref name="artifactAuthor"/> resolves a normalized path to who last touched it (task 1's
-    /// RunStore), or null if never recorded; <paramref name="artifactExists"/> answers whether the
-    /// path is present in the room's directory tree - either one satisfies "recorded or in the room
-    /// tree" (P4). Never touches a database or a filesystem itself: those two functions are the
-    /// service's impure edges, kept out of this pure class (D-b).</summary>
+    /// <summary>The class rules a conductor's post inside its run must pass, pure and side-effect
+    /// free: null means valid, otherwise names which rule failed, in order.
+    /// <paramref name="mentioned"/> is <see cref="MentionedSpawnable"/>'s output (self kept).
+    /// <paramref name="artifactAuthor"/> resolves a normalized path to who last touched it, or null if
+    /// never recorded; <paramref name="artifactExists"/> answers whether the path is present in the
+    /// room's directory tree. Either one satisfies "recorded or in the room tree". Those two
+    /// functions are the service's impure edges; this class never touches a database or a
+    /// filesystem itself.</summary>
     public string? RefuseConductorPost(Message message, RunContext run, IReadOnlyList<string> mentioned,
         Func<string, string?> artifactAuthor, Func<string, bool> artifactExists)
     {
@@ -399,21 +395,20 @@ public sealed class ExchangePolicy
         return null;
     }
 
-    /// <summary>Row 20, task 3 (AC4b, pass-2 B2): every roster row a refused build or critique post
-    /// COULD have mentioned to satisfy the rule it just failed, in roster order, or a line telling the
-    /// owner to class one when nothing qualifies — never a bare "none qualified" that gives no next
-    /// step.</summary>
+    /// <summary>Every roster row a refused build or critique post could have mentioned to satisfy the
+    /// rule it just failed, in roster order, or a line telling the hub owner to class one when nothing
+    /// qualifies, never a bare "none qualified" that gives no next step.</summary>
     private string QualifyingRows(Func<Participant, bool> qualifies)
     {
         var ids = _roster.Values.Where(qualifies).Select(p => p.Id).ToList();
         return ids.Count == 0 ? "none is classed; set one with --set-classes" : string.Join(", ", ids.Select(id => "@" + id));
     }
 
-    /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
-    /// same acceptance path as a fresh owner-started exchange (<see cref="Accept"/> seeds the
-    /// mentioned rows as pending against the ordinary turn budget), but rooted at the conductor's own
-    /// post rather than an owner's, and carrying no <see cref="Exchange.Skill"/>: workers see the run
-    /// state (task 7) and the conductor's own words, not the raw skill fence.</summary>
+    /// <summary>The conductor's post passed every class rule and asks for work. Same acceptance path
+    /// as a fresh owner-started exchange (<see cref="Accept"/> seeds the mentioned rows as pending
+    /// against the ordinary turn budget), but rooted at the conductor's own post and carrying no
+    /// <see cref="Exchange.Skill"/>: workers see the run state and the conductor's own words, not the
+    /// raw skill fence.</summary>
     public (Exchange Next, IReadOnlyList<string> Notes) OpenForWorkers(string roomId, long rootMessageId, IReadOnlyList<string> mentioned, DateTimeOffset now)
     {
         var notes = new List<string>();
@@ -422,13 +417,12 @@ public sealed class ExchangePolicy
         return (x, notes);
     }
 
-    /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
-    /// <see cref="OnMessage"/>'s human-only rule is untouched (P2). The conductor is the sole pending
+    /// <summary>The hub re-spawning its run's conductor. No message roots this, so
+    /// <see cref="OnMessage"/>'s human-only rule is untouched. The conductor is the sole pending
     /// entry, budgeted for exactly the one turn it is being asked for; every id in
-    /// <paramref name="triggerIds"/> is queued as its trigger. Sets <see cref="Exchange.Skill"/>
-    /// (pass 1's M9): the skill is never posted into the room, only rendered into the prompt, so
-    /// omitting it here would leave every re-spawn after the first exchange with no instruction at
-    /// all.</summary>
+    /// <paramref name="triggerIds"/> is queued as its trigger. Sets <see cref="Exchange.Skill"/>: the
+    /// skill is never posted into the room, only rendered into the prompt, so omitting it here would
+    /// leave every re-spawn after the first exchange with no instruction at all.</summary>
     public static Exchange OpenForConductor(string roomId, string conductorId, long rootMessageId, IReadOnlyList<long> triggerIds, DateTimeOffset now, ResolvedSkill skill)
     {
         var x = new Exchange { RoomId = roomId, RootMessageId = rootMessageId, Budget = 1, Skill = skill };
@@ -441,12 +435,12 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>Which pending spawns may launch now. <paramref name="inFlightInRoom"/> is the room's
-    /// whole in-flight set, across exchanges — a superseded exchange's spawn still counts.
-    /// <paramref name="exclusive"/> (a directory room, M9 decision 5): at most one spawn in the room
-    /// at a time — nothing is due while anything is in flight, and only the first pending spawn
-    /// launches per pass; the completion wakes the loop for the next.
+    /// whole in-flight set, across exchanges: a superseded exchange's spawn still counts.
+    /// <paramref name="exclusive"/> (a directory room): at most one spawn in the room at a time, so
+    /// nothing is due while anything is in flight, and only the first pending spawn launches per
+    /// pass; the completion wakes the loop for the next.
     /// <paramref name="exclusiveOver"/> narrows what exclusivity waits on: the exchange's own
-    /// in-flight set when it has a worktree (row 35); the room's whole set otherwise.</summary>
+    /// in-flight set when it has a worktree; the room's whole set otherwise.</summary>
     public IReadOnlyList<SpawnRequest> Due(Exchange x, DateTimeOffset now, IReadOnlyDictionary<string, DateTimeOffset> lastStartByParticipant, IReadOnlySet<string> inFlightInRoom, bool exclusive = false, IReadOnlySet<string>? exclusiveOver = null)
     {
         if (x.Status != ExchangeStatus.Open) return [];
@@ -457,9 +451,9 @@ public sealed class ExchangePolicy
             if (inFlightInRoom.Contains(id)) continue;
             if (now - pending.LastTriggerAt < _limits.Debounce) continue;
             if (lastStartByParticipant.TryGetValue(id, out var last) && now - last < _limits.MinSpacing) continue;
-            // I-m8 (hub F9): a synthesis spawn is unconditionally the exchange's last - the plain
-            // Budget - TurnsCommitted arithmetic can read nonzero here (a free turn was left when it was
-            // queued), which would wrongly tell it another turn follows.
+            // A synthesis spawn is always the exchange's last. Budget - TurnsCommitted can read
+            // nonzero here (a free turn was left when it was queued), which would wrongly tell it
+            // another turn follows.
             var remainingAfter = pending.Reason == SpawnReason.Synthesis ? 0 : x.Budget - x.TurnsCommitted;
             due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, remainingAfter, pending.Reason, pending.RefusedAt));
             if (exclusive) break;
@@ -494,7 +488,7 @@ public sealed class ExchangePolicy
     }
 
     /// <summary>A spawn ended, however it ended. <c>Note</c> is the conclusion note, or the synthesis
-    /// note when this exchange still owes the addressee a wrap-up (row 44, D-c), or null when nothing changed;
+    /// note when this exchange still owes the addressee a wrap-up, or null when nothing changed;
     /// <c>Concluded</c> says which. The synthesis turn is queued as an ordinary pending spawn
     /// (reason Synthesis, triggered by the last model post, debounced like any other), takes a free turn
     /// when one is left and adds one to the budget otherwise, and is marked at once so it fires at most
@@ -521,15 +515,14 @@ public sealed class ExchangePolicy
             : $"Exchange concluded: {x.TurnsStarted} of {x.Budget} turns used.", true);
     }
 
-    /// <summary>Row 44 (D-d): handles /continue on <paramref name="x"/>. Adds the message's turns
-    /// token (else the default) to the budget, reopens, and queues: the message's own spawnable leading
-    /// mentions if any, else the hand-offs the budget refused (each triggered by the message that made
-    /// it and by this one), else the addressee. A message that named someone but nobody spawnable
-    /// queues nothing. Pure: the service resolved which exchange this is and posts the notes.
-    /// I-m3 (hub F6): the unknown-word notes are read before the RunExchange/StillOpen/StillFinishing
-    /// guards, so a /continue naming a typo still draws its row 43 note even when the state below
-    /// refuses it outright; a refused /continue never becomes a member of the exchange (it did nothing
-    /// to it).</summary>
+    /// <summary>Handles /continue on <paramref name="x"/>. Adds the message's turns token (else the
+    /// default) to the budget, reopens, and queues: the message's own spawnable leading mentions if
+    /// any, else the hand-offs the budget refused (each triggered by the message that made it and by
+    /// this one), else the addressee. A message that named someone but nobody spawnable queues
+    /// nothing. Pure: the service resolved which exchange this is and posts the notes. The
+    /// unknown-word notes are read before the RunExchange/StillOpen/StillFinishing guards, so a
+    /// /continue naming a typo still draws its note even when the state below refuses it outright; a
+    /// refused /continue never becomes a member of the exchange (it did nothing to it).</summary>
     public (ContinueOutcome Outcome, IReadOnlyList<string> Notes) Continue(Exchange x, Message message, DateTimeOffset now)
     {
         var notes = new List<string>();
@@ -566,17 +559,17 @@ public sealed class ExchangePolicy
         x.MessageIds.Add(message.Id);
         var refusedAt = replayed.Count > 0 ? replayed.ToDictionary(kv => kv.Key, kv => kv.Value) : null;
         Accept(x, queue, message.Id, now, notes, SpawnReason.Continuation, refusedAt);
-        // I-M1 (hub F1): whatever this leg still could not fit keeps the ORIGINAL refusing id - Accept
-        // skips recording refusals for a Continuation, so nothing here overwrites it with this
-        // /continue message's own id.
+        // Whatever this leg still could not fit keeps the original refusing id: Accept skips
+        // recording refusals for a Continuation, so nothing here overwrites it with this /continue
+        // message's own id.
         foreach (var (id, refusingId) in replayed)
             if (!x.Pending.ContainsKey(id)) x.Refused.TryAdd(id, refusingId);
         notes.Add($"Exchange started at #{x.RootMessageId} continued: {extra} more turn(s), {x.Budget} in all; queued {string.Join(", ", x.Pending.Keys.Select(id => "@" + id))}.");
         return (ContinueOutcome.Continued, notes);
     }
 
-    /// <summary>Row 27: <paramref name="cause"/> is never defaulted - every call site must say who
-    /// stopped the exchange (P7). <see cref="ExchangeStopCause.Owner"/> keeps the original text;
+    /// <summary><paramref name="cause"/> is never defaulted: every call site must say who stopped the
+    /// exchange. <see cref="ExchangeStopCause.Owner"/> keeps the original text;
     /// <see cref="ExchangeStopCause.Run"/> is the same shape without attributing the stop to the
     /// owner, since the run itself parked or ended with this exchange still open.</summary>
     public static string Stop(Exchange x, ExchangeStopCause cause)

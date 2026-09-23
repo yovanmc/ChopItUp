@@ -3,8 +3,8 @@ namespace ChopItUp.Hub.Spawning;
 /// <summary>How to start a CLI: the executable to hand to CreateProcess and the arguments that must
 /// come before the caller's own. For a real <c>.exe</c> that is the exe and nothing; for a
 /// <c>.cmd</c>/<c>.bat</c> shim it is <c>cmd.exe /d /c &lt;shim&gt;</c>, because a direct process
-/// create of a shim finds nothing to execute and fails silently (LESSONS, M5 cli-shims — this bit
-/// the project twice). <see cref="ResolvedPath"/> is what was found, for logs.</summary>
+/// create of a shim finds nothing to execute and fails silently. <see cref="ResolvedPath"/> is what
+/// was found, for logs.</summary>
 public sealed record ResolvedCli(string FileName, IReadOnlyList<string> LeadingArguments, string ResolvedPath);
 
 /// <summary>How <see cref="SpawnerService"/> finds a CLI by participant host name. The production

@@ -1,44 +1,40 @@
 <#
 .SYNOPSIS
-    Row 25 (M25 task 9) live check: drives a SCRATCH hub end to end over the real MCP and /api
-    surfaces -- propose_skill, the owner-gated decision endpoints, and every refusal leg the plan
-    names as not optional (AC2's two new refusals, AC3's dedup, AC5's 403 half, AC8's interrupted
-    retry, the live-hub swap failure, a mutated source, sourceChanged suppression, and a staged-copy
-    mismatch). Never the deployed hub; never --import-skill; never a real tokens.json.
+    Skill-proposal live check: drives a SCRATCH hub end to end over the real MCP and /api surfaces
+    -- propose_skill, the hub's owner-gated decision endpoints, and every refusal leg (the extension and
+    junction refusals, dedup, the 403 non-owner half, the interrupted retry, the live-hub swap
+    failure, a mutated source, sourceChanged suppression, and a staged-copy mismatch). Never the
+    deployed hub; never --import-skill; never a real tokens.json.
 
 .DESCRIPTION
     Mirrors Invoke-M18MemoryCheck.ps1's frame (param block, Add-Check, a fresh -DataDir under
     $env:TEMP, the hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0
-    only when every check passes) but drives a NEW MCP tool (propose_skill) and TWO owner-gated
-    decision endpoints instead of memory's. Like the other M-check scripts, it leaves its data dir
-    and log in place (no -KeepEvidence switch; nothing here is deleted).
+    only when every check passes) but drives propose_skill and the two owner-gated decision
+    endpoints. It leaves its data dir and log in place (no -KeepEvidence switch; nothing here is
+    deleted).
 
-    LESSON M11's converse (binds this whole script): every assertion is on something the hub itself
-    controls -- a status code, a JSON field the hub wrote, an exit code, a file's presence/absence/
-    mtime -- never on how a model worded a note or an error message's prose beyond a short substring
-    the hub's own source pins verbatim.
-    LESSON M10: Invoke-RestMethod wraps a top-level JSON array in one Object[]; enumerate before
-    filtering.
-    LESSON 2026-09-07: Start-Process -ArgumentList joins with spaces and quotes nothing -- every path
-    element carries its own literal double quotes.
+    Every assertion is on something the hub itself controls -- a status code, a JSON field the hub
+    wrote, an exit code, a file's presence/absence/mtime -- never on how a model worded a note or an
+    error message's prose beyond a short substring the hub's own source pins verbatim.
+    Invoke-RestMethod wraps a top-level JSON array in one Object[]; enumerate before filtering.
+    Start-Process -ArgumentList joins with spaces and quotes nothing -- every path element carries
+    its own literal double quotes.
 
-    Two legs are deliberately NOT driven through the live HTTP surface, and the reason is recorded
-    at each site rather than skipped silently:
-      - The "staged-copy mismatch" leg (task 2, D5) is the window between Approve's own re-hash of
-        the source and SkillImport.Run's re-hash of the STAGED COPY -- both reads happen back to
-        back inside one synchronous request, so reaching it through black-box HTTP timing would be a
-        flaky race (exactly the kind lesson M24 warns a mutation gate must not depend on). SkillImport.
-        Run is documented as "a public static entry point callable in-process" (plan claim 6), so this
-        script instead loads the REAL, already-built ChopItUp.Hub.dll/ChopItUp.Core.dll (Add-Type,
-        same technique as Invoke-M25DryRun.ps1's direct Microsoft.Data.Sqlite load) and calls
-        SkillImport.Run directly with a deliberately corrupted expectedTree, against a throwaway
-        skills root that is never the scratch hub's own -- deterministic, and it exercises the exact
-        compiled code path task 2 added.
-      - AC8's "kill the hub between the mark and the install record" leg is reproduced literally: the
-        hub is actually stopped, the install is actually performed in-process against its own (now
-        unheld) database and skills root, the row is marked approved by a direct SQL UPDATE with
-        installed_at left NULL (the exact crash state), and the hub is actually restarted before the
-        Retry call -- no in-memory shortcut, no timing race.
+    Two legs are deliberately not driven through the live HTTP surface, and the reason is recorded
+    at each site:
+      - The "staged-copy mismatch" leg is the window between Approve's own re-hash of the source and
+        SkillImport.Run's re-hash of the staged copy. Both reads happen back to back inside one
+        synchronous request, so reaching it through black-box HTTP timing would be a flaky race.
+        SkillImport.Run is a public static entry point, so this script instead loads the real,
+        already-built ChopItUp.Hub.dll/ChopItUp.Core.dll (Add-Type, same technique as
+        Invoke-M25DryRun.ps1's direct Microsoft.Data.Sqlite load) and calls SkillImport.Run directly
+        with a deliberately corrupted expectedTree, against a throwaway skills root that is never the
+        scratch hub's own: deterministic, and it exercises the compiled code path.
+      - The "kill the hub between the mark and the install record" leg is reproduced literally: the
+        hub is actually stopped, the install is performed in-process against its own (now unheld)
+        database and skills root, the row is marked approved by a direct SQL UPDATE with
+        installed_at left NULL (the exact crash state), and the hub is restarted before the Retry
+        call -- no in-memory shortcut, no timing race.
 #>
 [CmdletBinding()]
 param(
@@ -87,12 +83,11 @@ New-Item -ItemType Directory -Path $roomsRoot -Force | Out-Null
 Add-Content -Path $log -Value ("M25 skill-proposal check {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
 
 # --- Load the real Microsoft.Data.Sqlite + ChopItUp.Hub/.Core assemblies straight from the hub's own
-# build output (same technique Invoke-M25DryRun.ps1 uses): the staged-copy-mismatch leg and AC8's
-# interrupted-retry leg both need to drive production code in-process, against a REAL compiled DLL,
-# deterministically -- never a race against the live hub's own timing. [NullString]::Value (not a bare
-# $null) is required for PowerShell's own method-invocation binder to pass an actual null for a
-# nullable string parameter with a default value; measured directly against this signature before
-# writing the rest of this script -- a bare $null silently becomes "" and changes which branch runs.
+# build output (same technique Invoke-M25DryRun.ps1 uses): the staged-copy-mismatch leg and the
+# interrupted-retry leg both drive production code in-process, deterministically, never racing the
+# live hub. [NullString]::Value (not a bare $null) is required for PowerShell's method-invocation
+# binder to pass an actual null for a nullable string parameter with a default value; a bare $null
+# silently becomes "" and changes which branch runs (measured against this signature).
 $nativeDir = Join-Path $hubBin 'runtimes\win-x64\native'
 $env:PATH = $nativeDir + ';' + $env:PATH
 Add-Type -Path (Join-Path $hubBin 'SQLitePCLRaw.core.dll')
@@ -106,8 +101,8 @@ Add-Type -Path (Join-Path $hubBin 'ChopItUp.Hub.dll')
 $git = Get-Command git -ErrorAction SilentlyContinue
 Add-Check -Name 'cli.git-on-path' -Passed ([bool]$git) -Detail ($git.Source ?? 'not found')
 
-# LESSONS M10: drives /mcp itself as the participant named. A JSON-RPC error envelope has no result:
-# surfaced as the failure text, never a silent empty success.
+# Drives /mcp itself as the participant named. A JSON-RPC error envelope has no result: surfaced as the
+# failure text, never a silent empty success.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
     if (-not $script:PlaintextTokens.ContainsKey($Participant)) {
         $msg = "'$Participant' is a spawnable participant; no external bearer is obtainable without a real spawn"
@@ -127,7 +122,7 @@ function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Argumen
 }
 
 function Get-Proposals([string]$Room, [string]$Status = 'undecided') {
-    # LESSONS M10: a top-level JSON array comes back as one nested Object[]; enumerate before filtering.
+    # A top-level JSON array comes back as one nested Object[]; enumerate before filtering.
     @(Invoke-RestMethod -Uri "$base/api/skills/proposals?room=$Room&status=$Status" -TimeoutSec $TimeoutSeconds | ForEach-Object { $_ })
 }
 
@@ -151,9 +146,9 @@ function New-SkillSource([string]$Root, [string]$Name, [string]$SkillMd, [hashta
 
 function SkillMd([string]$Name, [string]$Desc = 'd.') { "---`nname: $Name`ndescription: $Desc`n---`n# $Name`n`nBody text.`n" }
 
-# Row 28: 'owner' (decision routes + POST /api/rooms), 'claude' (Invoke-McpTool, the 403-non-owner
-# leg) and 'codex' (Leg B) are all host-file rows -- seed plaintexts for them into tokens.json BEFORE
-# the hub's first start (ChopTokenHelpers.ps1). Never a real installation's credential.
+# 'owner' (decision routes + POST /api/rooms), 'claude' (Invoke-McpTool, the 403-non-owner leg) and
+# 'codex' (Leg B) are all host-file rows -- seed plaintexts for them into tokens.json before the hub's
+# first start (ChopTokenHelpers.ps1). Never a real installation's credential.
 $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner', 'claude', 'codex')
 
 $base = "http://127.0.0.1:$Port"
@@ -168,15 +163,13 @@ try {
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     Add-Check -Name 'health.schema-is-15' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
-    # Row 28: $script:PlaintextTokens (seeded before the hub started, above) replaces reading
-    # tokens.json now -- the file holds only host-file rows' SHA-256 after the hub's own startup
-    # migration, never a usable plaintext.
+    # $script:PlaintextTokens (seeded before the hub started, above): tokens.json holds only host-file
+    # rows' SHA-256 after the hub's own startup migration, never a usable plaintext.
     $ownerToken = $script:PlaintextTokens.owner
     $ownerAuth = New-ChopBearerHeaders -Token $ownerToken
 
     # A room bound to a scratch, hub-created directory under --rooms-root -- never the real profile.
-    # Row 28: POST /api/rooms is a non-GET /api route too -- it had no credential at all before this
-    # task and would now 401.
+    # POST /api/rooms is a non-GET /api route, so it needs the hub's owner credential.
     $room = Invoke-RestMethod -Uri "$base/api/rooms" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ name = 'skill-room' } | ConvertTo-Json) -TimeoutSec $TimeoutSeconds
     $roomId = $room.id
     $roomDir = $room.directory
@@ -214,7 +207,7 @@ try {
     $skillsListed = @(Invoke-RestMethod -Uri "$base/api/skills" -TimeoutSec $TimeoutSeconds | ForEach-Object { $_ })
     Add-Check -Name 'list.get-api-skills-shows-it' -Passed (($skillsListed | Where-Object name -eq 'basic-skill').Count -eq 1) -Detail "names=$(($skillsListed | ForEach-Object name) -join ',')"
 
-    # === Leg B: AC3 dedup -- a repeat offer of the same (name, tree) returns the first proposal ====
+    # === Leg B: dedup -- a repeat offer of the same (name, tree) returns the first proposal ==========
     $dupMd = SkillMd 'dup-test'
     $sourceB = New-SkillSource -Root $roomDir -Name 'dup-test' -SkillMd $dupMd
     $first = Invoke-McpTool -Participant 'claude' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceB }
@@ -225,14 +218,14 @@ try {
     Add-Check -Name 'ac3.no-second-card' -Passed (-not $first.IsError -and $dupRows.Count -eq 1) -Detail "rows=$($dupRows.Count)"
     Invoke-Decide -Verb 'reject' -Id $first.Json.id -Token $ownerToken -Tree $null | Out-Null
 
-    # === Leg C: AC2 refusal -- a file type off D7's allowlist =======================================
+    # === Leg C: refusal -- a file type off the reviewable allowlist ==================================
     $sourceC = New-SkillSource -Root $roomDir -Name 'bad-ext-test' -SkillMd (SkillMd 'bad-ext-test') -ExtraFiles @{ 'payload.exe' = 'not reviewable' }
     $refusedC = Invoke-McpTool -Participant 'claude' -Tool 'propose_skill' -Arguments @{ room_id = $roomId; source_dir = $sourceC }
     Add-Check -Name 'ac2.refuses-file-off-the-allowlist' -Passed ($refusedC.IsError -and $refusedC.Text -like '*not reviewable text*') -Detail $refusedC.Text
     $rowsC = @(Get-Proposals -Room $roomId -Status 'all' | Where-Object name -eq 'bad-ext-test')
     Add-Check -Name 'ac2.no-row-for-refused-extension' -Passed ($rowsC.Count -eq 0) -Detail "rows=$($rowsC.Count)"
 
-    # === Leg D: AC2 refusal -- a source reached through a junction ==================================
+    # === Leg D: refusal -- a source reached through a junction =======================================
     $outsideDir = Join-Path $DataDir 'outside-secret'
     New-Item -ItemType Directory -Path (Join-Path $outsideDir 'junction-skill') -Force | Out-Null
     [System.IO.File]::WriteAllText((Join-Path $outsideDir 'junction-skill\SKILL.md'), (SkillMd 'junction-skill'), (New-Object System.Text.UTF8Encoding($false)))
@@ -279,7 +272,7 @@ try {
     $okResult = [ChopItUp.Hub.Skills.SkillImport]::Run($probeSource, $probeSkillsRoot, $false, $probeHashes, [NullString]::Value, $rightTree)
     Add-Check -Name 'f.control-matching-tree-installs' -Passed ($okResult.Outcome -eq [ChopItUp.Hub.Skills.SkillImportOutcome]::Ok) -Detail "outcome=$($okResult.Outcome)"
 
-    # === Leg G: AC8 -- kill the hub between the mark and the install record; delete the source too;
+    # === Leg G: kill the hub between the mark and the install record; delete the source too;
     #     restart; re-approve; the listing still says approvable/sourceMissing and it finishes WITHOUT
     #     re-installing ================================================================================
     $retryMd = SkillMd 'retry-test'
@@ -316,12 +309,10 @@ try {
     [Microsoft.Data.Sqlite.SqliteConnection]::ClearAllPools()
     Add-Check -Name 'g.marked-approved-with-installed-at-still-null' -Passed ($markedRows -eq 1) -Detail "rowsUpdated=$markedRows"
 
-    # Row 25 task 9 correction: leg G as first written reproduced AC8's crash window but never deleted
-    # $sourceG, so the retry it drove always had a live, unchanged source -- IsApprovable's cheap
-    # "!sourceMissing && !sourceChanged" branch was enough on its own, and the fix to the Retry arm's
-    # rule (task 7/8, AC8) could be reverted without this leg noticing. Deleting the source here, before
-    # the restart, forces the retry through the AlreadyInstalled branch instead -- the one AC8 exists to
-    # rescue -- so the leg actually binds the defect it claims to cover.
+    # Delete the source before the restart. With a live, unchanged source, IsApprovable's cheap
+    # "!sourceMissing && !sourceChanged" branch passes on its own, and a regression in the Retry
+    # arm's rule would go unnoticed. Deleting it forces the retry through the AlreadyInstalled
+    # branch, which is the one this leg exists to cover.
     Remove-Item -LiteralPath $sourceG -Recurse -Force
     Add-Check -Name 'g.source-deleted-before-restart' -Passed (-not (Test-Path -LiteralPath $sourceG)) -Detail "sourceG=$sourceG"
 
@@ -334,7 +325,7 @@ try {
     }
     Add-Check -Name 'g.hub-restarted' -Passed ($null -ne $health2) -Detail "pid=$($hub.Id)"
 
-    # AC8 with the source gone too: the listing must still mark this row approvable, via the
+    # With the source gone too: the listing must still mark this row approvable, via the
     # AlreadyInstalled branch, and say why the source is missing (sourceMissing) rather than trusting a
     # live read of a directory that is no longer there.
     $listedG = Get-Proposals -Room $roomId -Status 'all' | Where-Object id -eq $idG

@@ -1,5 +1,5 @@
 ﻿/** Mirrors the hub's `/api` JSON (camelCase, see Web/ChatApi.cs). `authorId` is stamped by the hub,
- *  never typed by the writer — including for imported transcripts, which are always `owner` (D1). */
+ *  never typed by the writer, including for imported transcripts, which are always `owner`. */
 export interface Message {
   id: number;
   roomId: string;
@@ -8,7 +8,7 @@ export interface Message {
   createdAt: string;
   /** The id of the message this one replies to, always in the same room, or null/absent. */
   replyToId?: number | null;
-  /** Row 42: true for a transcript turn brought in by import. The hub stores it as history and never
+  /** True for a transcript turn brought in by import. The hub stores it as history and never
    *  dispatches anything inside it. */
   imported?: boolean;
 }
@@ -20,14 +20,14 @@ export interface Room {
   createdAt: string;
   messageCount: number;
   lastMessageId: number;
-  /** Absolute path of the room's git tree, or null for a room made before M9 and not yet bound. */
+  /** Absolute path of the room's git tree, or null for a room with no directory bound. */
   directory: string | null;
   archivedAt: string | null;
   /** The newest message's time, or createdAt when there is none — the chat-list order. */
   lastActivityAt: string;
   /** Messages past the owner's read cursor. */
   unread: number;
-  /** Row 14: the room-wide text the hub renders into every spawn here, or null. */
+  /** The room-wide text the hub renders into every spawn here, or null. */
   persona: string | null;
 }
 
@@ -51,16 +51,15 @@ export interface DispatchPreview {
  *  exactly (Web/RolesApi.cs `BuildRoomRoles`), field for field.
  *
  *  The three role fields are three different things and collapsing any two of them loses a state the
- *  owner can reach (D-b): `role` is the global role the participant carries everywhere; `roomRole`
- *  is this room's override, `null` when none is stored and `''` when the room stores the "no role
- *  here" sentinel — a stored row, not the absence of one; `effectiveRole` is what the hub actually
- *  renders into the prompt, `COALESCE(roomRole, role)`, computed by the server and never re-derived
- *  here.
+ *  owner can reach: `role` is the global role the participant carries everywhere; `roomRole` is this
+ *  room's override, `null` when none is stored and `''` when the room stores the "no role here"
+ *  sentinel (a stored row, not the absence of one); `effectiveRole` is what the hub actually renders
+ *  into the prompt, `COALESCE(roomRole, role)`, computed by the server and never re-derived here.
  *
- *  Milestone 51: the three read-only roster fields. `model` is the name the host CLI is launched
- *  with (never null on a listed row: unspawnable rows are not listed). `classes` is the normalised
- *  set the dispatcher applies (`ParticipantClasses.Parse`), empty when the row has none. `effort` is
- *  the flag those classes earn inside a run, or null for "no flag, the CLI's default" — the server's
+ *  The three read-only roster fields: `model` is the name the host CLI is launched with (never null
+ *  on a listed row: unspawnable rows are not listed). `classes` is the normalised set the dispatcher
+ *  applies (`ParticipantClasses.Parse`), empty when the row has none. `effort` is the flag those
+ *  classes earn inside a run, or null for "no flag, the CLI's default": the server's
  *  `EffortPolicy.ForClasses`, never a rule re-derived here. */
 export interface RoleRow {
   id: string;
@@ -75,9 +74,9 @@ export interface RoleRow {
 
 /** Mirrors `GET /api/rooms/{id}/roles` and the answer to every write on it. `participants` holds only
  *  the rows the hub can actually spawn (`ExchangePolicy.IsSpawnable`), so the app-backed `claude` and
- *  `codex` rows are absent — a role stored on them could never render. `conductorEffort` (milestone
- *  51) is the effort a run's conductor is spawned at whatever its classes, sent so the dialog can say
- *  so without carrying the value itself. */
+ *  `codex` rows are absent: a role stored on them could never render. `conductorEffort` is the effort
+ *  a run's conductor is spawned at whatever its classes, sent so the dialog can say so without
+ *  carrying the value itself. */
 export interface RoomRoles {
   roomId: string;
   persona: string | null;
@@ -120,8 +119,8 @@ export interface Participant {
 }
 
 /** Mirrors `GET /api/skills` (Web/SkillsApi.cs). `chars` is the size of the text the hub renders
- *  into every spawn of an exchange the skill roots. `isRun` (row 19) says whether invoking this
- *  skill starts a run. Matches `SkillSummary` exactly. */
+ *  into every spawn of an exchange the skill roots. `isRun` says whether invoking this skill starts a
+ *  run. Matches `SkillSummary` exactly. */
 export interface Skill {
   name: string;
   title: string;
@@ -146,23 +145,23 @@ export interface ExchangeSnapshot {
   turnsCommitted: number;
   remaining: number;
   inFlight: string[];
-  /** M57. Working-chip start instants, keyed only for the live participants above. Optional so a
-   *  client talking to an older hub still shows names without inventing an elapsed time. */
+  /** Working-chip start instants, keyed only for the live participants above. Optional so a client
+   *  talking to an older hub still shows names without inventing an elapsed time. */
   inFlightStartedAt?: Record<string, string>;
   pending: string[];
   seq: number;
-  /** Row 27. The wire name of the `ExchangeStopCause` that stopped this exchange
-   *  (Spawning/Exchange.cs), and null whenever nothing has stopped it — an open or concluded
-   *  exchange, or a snapshot from a hub older than this row. The whole of the enum and nothing else:
-   *  ExchangeBar's marker map is keyed on this union, so a cause added to the hub without a label
-   *  here is a compile error rather than a bar that silently blames the owner for it. */
+  /** The wire name of the `ExchangeStopCause` that stopped this exchange (Spawning/Exchange.cs), and
+   *  null whenever nothing has stopped it: an open or concluded exchange, or a snapshot from an older
+   *  hub. The whole of the enum and nothing else: ExchangeBar's marker map is keyed on this union, so
+   *  a cause added to the hub without a label here is a compile error rather than a bar that silently
+   *  blames the hub owner for it. */
   stoppedBy: 'owner' | 'run' | null;
-  /** Row 44. The `continuable` of the exchange these top-level fields describe (the newest open one,
-   *  else the newest), on the same rule as every other field here. See `ExchangeView` below. */
+  /** The `continuable` of the exchange these top-level fields describe (the newest open one, else the
+   *  newest), on the same rule as every other field here. See `ExchangeView` below. */
   continuable?: boolean;
-  /** Row 34. Every exchange the room still holds, oldest first (Spawning/SpawnerService.cs
-   *  `ExchangeView`); the top-level fields above describe the newest open one, else the newest.
-   *  Optional because a hub older than row 32 does not send it, and that hub is still served. */
+  /** Every exchange the room still holds, oldest first (Spawning/SpawnerService.cs `ExchangeView`);
+   *  the top-level fields above describe the newest open one, else the newest. Optional because an
+   *  older hub does not send it, and that hub is still served. */
   exchanges?: ExchangeView[];
 }
 
@@ -184,11 +183,11 @@ export interface ExchangeView {
   inFlightStartedAt?: Record<string, string>;
   pending: string[];
   stoppedBy: ExchangeSnapshot['stoppedBy'];
-  /** Row 44 (D-e). The hub's own decision that `/continue` would be accepted for this exchange: it is
-   *  rooted at a human's message, it is no longer open, nothing of its own is in flight, and no run is
-   *  active in the room. The client re-derives none of that — it adds only the live-run gate its Stop
-   *  already honours. Optional because a hub older than this row sends no such field, and a bar that
-   *  read `undefined` as "yes" would offer a button that hub cannot serve. */
+  /** The hub's own decision that `/continue` would be accepted for this exchange: it is rooted at a
+   *  human's message, it is not open, nothing of its own is in flight, and no run is active in the
+   *  room. The client re-derives none of that; it adds only the live-run gate its Stop already honours.
+   *  Optional because an older hub sends no such field, and a bar that read `undefined` as "yes" would
+   *  offer a button that hub cannot serve. */
   continuable?: boolean;
 }
 
@@ -237,9 +236,9 @@ export interface RunSnapshot {
   wallClockCapMinutes: number;
   artifacts: RunArtifact[];
   gateRuns: RunGate[];
-  /** Every phase tag the run has entered, with its own entry count. The strip does not draw it — it
-   *  is here because the field is on the wire and a type that omits half the payload invites the next
-   *  reader to re-derive it. The M19 live check is what reads it. */
+  /** Every phase tag the run has entered, with its own entry count. The strip does not draw it; it is
+   *  typed because the field is on the wire and a type that omits half the payload invites the next
+   *  reader to re-derive it. The run live check (tools/Invoke-M19RunCheck.ps1) reads it. */
   phaseHistory: Record<string, number>;
 }
 
@@ -274,12 +273,10 @@ export interface MemoryProposal {
    *  hub computes these for `pending` rows only, so a decided proposal carries an empty list. Never
    *  null — a rewrite gets `[]`, and MemoryPanel reads `.length` unguarded. */
   related: { title: string; snippet: string; replaced: boolean }[];
-  /* Row 23 (AC7). The list endpoint always sends the five fields below: populated for a `rewrite` that
-     is pending or approved-but-unwritten, null/empty/0 for every other row. They are optional here
-     because the approve/reject and import responses map the base shape only (MemoryApi.Map), and a
-     type that claimed them on those payloads would be claiming something the hub does not send. */
-  /** The line diff of the topic file as it is against what approval would write, elided runs included;
-   *  null when the row is not a rewrite the owner can still act on. */
+  /* The list endpoint always sends the five fields below: populated for a `rewrite` that is pending
+     or approved-but-unwritten, null/empty/0 for every other row. They are optional here because the
+     approve/reject and import responses map the base shape only (MemoryApi.Map), and a type that
+     claimed them on those payloads would be claiming something the hub does not send. */
   diff?: MemoryDiffLine[] | null;
   /** Live entry titles present in the file today and absent from what approval would write. */
   removedTitles?: string[];
@@ -303,25 +300,25 @@ export interface SkillGate {
 }
 
 /** One file of a proposed skill's source tree: the relative path the install would create, and the
- *  whole of its text. The hub sends every file (D7 refuses any extension outside the reviewable-text
- *  allowlist and any file over `SkillStore.MaxSkillChars` at propose time, so nothing that reaches a
- *  card is un-showable) — or none of them, when `sourceMissing`/`sourceChanged` is set. */
+ *  whole of its text. The hub sends every file (propose refuses any extension outside the
+ *  reviewable-text allowlist and any file over `SkillStore.MaxSkillChars`, so nothing that reaches a
+ *  card is un-showable), or none of them, when `sourceMissing`/`sourceChanged` is set. */
 export interface SkillFile {
   path: string;
   text: string;
 }
 
 /** Mirrors `GET /api/skills/proposals` (Web/SkillsApi.cs `Row`). An agent proposes a skill over
- *  `propose_skill`; only the owner, with a bearer token, may approve or reject it (D1/D2).
+ *  `propose_skill`; only the hub owner, with a bearer token, may approve or reject it.
  *
  *  `approvable` is the hub's own answer (`SkillsApi.IsApprovable`), computed from the same conditions
  *  `Approve` enforces before it will attempt an install. The card renders that flag; it must never
  *  re-derive one from `sourceMissing`/`sourceChanged`, or the two drift apart the moment the hub adds
  *  a condition.
  *
- *  `treeSha256` is the manifest digest pinned at propose time — the one value the card, the approve
- *  body and the staged copy must all three agree on before anything installs (D5), so an approval
- *  sends back exactly the hash of the tree it displayed. */
+ *  `treeSha256` is the manifest digest pinned at propose time: the one value the card, the approve
+ *  body and the staged copy must all agree on before anything installs, so an approval sends back
+ *  exactly the hash of the tree it displayed. */
 export interface SkillProposal {
   id: number;
   roomId: string;
@@ -336,7 +333,7 @@ export interface SkillProposal {
   status: 'pending' | 'approved' | 'rejected';
   createdAt: string;
   decidedAt: string | null;
-  /** Null while a row is approved but its install has not finished — the Retry state (AC8). */
+  /** Null while a row is approved but its install has not finished: the Retry state. */
   installedAt: string | null;
   sourceMissing: boolean;
   sourceChanged: boolean;
@@ -356,7 +353,7 @@ export interface MemoryImportResult {
   proposals: MemoryProposal[];
 }
 
-/** Row 40: one row of `GET /api/memory/topics` — the core first, then topics in slug order. */
+/** One row of `GET /api/memory/topics`: the core first, then topics in slug order. */
 export interface MemoryFile {
   slug: string;
   /** `MEMORY.md` for the core, `topics/<slug>.md` otherwise. */
@@ -365,15 +362,15 @@ export interface MemoryFile {
   cap: number;
 }
 
-/** Row 40: `GET /api/memory/topics/{slug}` — the whole file, uncut and LF-normalised, and the hash a
- *  save must echo. */
+/** `GET /api/memory/topics/{slug}`: the whole file, uncut and LF-normalised, and the hash a save must
+ *  echo. */
 export interface MemoryFileText extends MemoryFile {
   text: string;
   hash: string;
 }
 
-/** Row 40: `POST /api/memory/topics/{slug}/preview` — the size the hub would write, which is what the
- *  cap is enforced on. */
+/** `POST /api/memory/topics/{slug}/preview`: the size the hub would write, which is what the cap is
+ *  enforced on. */
 export interface MemoryPreview {
   slug: string;
   chars: number;
@@ -381,7 +378,7 @@ export interface MemoryPreview {
   over: boolean;
 }
 
-/** Row 40: what a save returns — the approved editor row, the file as the hub wrote it, and where the
+/** What a save returns: the approved editor row, the file as the hub wrote it, and where the
  *  pre-edit copy went. */
 export interface MemoryEditResult extends MemoryFileText {
   proposal: MemoryProposal;

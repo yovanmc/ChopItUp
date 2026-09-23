@@ -8,7 +8,7 @@ interface Props {
   onClose: () => void;
 }
 
-/** The last 20 commits the hub made in this room's directory (D11), newest first. Read on open and on
+/** The last 20 commits the hub made in this room's directory, newest first. Read on open and on
  *  Refresh; nothing here writes. */
 export default function TrailDialog({ room, onClose }: Props) {
   const [trail, setTrail] = useState<Trail | null>(null);

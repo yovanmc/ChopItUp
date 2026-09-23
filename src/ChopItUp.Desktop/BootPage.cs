@@ -3,7 +3,7 @@ using System.Text;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12 B8: the two pages the WebView2 shows before (or instead of) the hub's own client.
+/// <summary>The two pages the WebView2 shows before (or instead of) the hub's own client.
 ///
 /// They are HTML rather than native WPF for one reason: the window has no caption of its own, so
 /// anything shown before the client loads still has to give the owner a way to move the window and a
@@ -11,10 +11,11 @@ namespace ChopItUp.Desktop;
 /// the page's; this one is the same 36 px row in the same palette, with the same
 /// <c>app-region</c> declarations, so the switch to React is a repaint rather than a jump.
 ///
-/// These pages are loaded with <c>NavigateToString</c>, which means they are NOT on the hub origin —
-/// WebView2 reports their source as <c>about:blank</c>. That is why every message they post carries a
-/// per-launch nonce: it is the one widening of the bridge's origin rule, and the nonce is what bounds
-/// it (Task 5's <c>HostBridge.IsTrusted</c>).
+/// These pages are loaded with <c>NavigateToString</c>, which means they are NOT on the hub origin:
+/// WebView2 reports their source as <c>about:blank</c> or a <c>data:</c> URI (see
+/// <see cref="NavigationPolicy"/>). That is why every message they post carries a per-launch nonce:
+/// it is the one widening of the bridge's origin rule, and the nonce is what bounds it
+/// (<c>HostBridge.IsTrusted</c>).
 ///
 /// Pure and tested: no window, no WebView2, no clock.</summary>
 public static class BootPage

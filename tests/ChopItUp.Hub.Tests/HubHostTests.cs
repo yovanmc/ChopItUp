@@ -27,8 +27,8 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.True(File.Exists(Path.Combine(_dir, "tokens.json")));
         Assert.Equal("127.0.0.1", _host.BaseAddress.Host);
 
-        // Row 28: 'hub' (system) holds no credential at all; a host-file row's persisted value is a
-        // sha256 hex hash, never a plaintext; a spawnable row's plaintext lives only in memory.
+        // 'hub' (system) holds no credential at all; a host-file row's persisted value is a sha256 hex
+        // hash, never a plaintext; a spawnable row's plaintext lives only in memory.
         var hostFile = TokenStore.ReadExisting(_dir, ChopDb.SeedRoster);
         var expectedHostFile = ChopDb.SeedRoster.Count(p => p.Kind != "system" && !ExchangePolicy.IsSpawnable(p));
         Assert.Equal(expectedHostFile, hostFile.Count);
@@ -40,9 +40,9 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.All(ephemeral, t => Assert.True(t.Length >= 32));
     }
 
-    /// <summary>AC7: a minted spawn credential authenticates <c>/mcp</c>, stops authenticating at the
-    /// next hub start, and appears in no persisted store — never as a tautology (the value it mints
-    /// is only ever compared to itself); a REAL restart and a REAL 401 are both exercised.</summary>
+    /// <summary>A minted spawn credential authenticates <c>/mcp</c>, stops authenticating at the next
+    /// hub start, and appears in no persisted store. Not a tautology (the value it mints is only ever
+    /// compared to itself): a real restart and a real 401 are both exercised.</summary>
     [Fact]
     public async Task AC7_a_minted_spawn_credential_authenticates_mcp_then_dies_at_restart_and_is_never_persisted()
     {
@@ -72,7 +72,7 @@ public sealed class HubHostTests : IAsyncLifetime
     {
         var res = await _host.Client.GetStringAsync("/health");
         Assert.Contains($"\"schema\":{ChopItUp.Core.Storage.ChopDb.LatestSchemaVersion}", res);
-        // A9: retry-key adoption is part of the shape from M2 on — empty on a hub nobody has posted to.
+        // Retry-key adoption is part of the shape: empty on a hub nobody has posted to.
         var health = System.Text.Json.JsonDocument.Parse(res).RootElement;
         Assert.True(health.GetProperty("ok").GetBoolean());
         Assert.Equal(System.Text.Json.JsonValueKind.Array, health.GetProperty("key_usage").ValueKind);
@@ -100,9 +100,8 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Contains("one hub per data directory", ex.Message);
     }
 
-    /// <summary>Row 19 task 2b: the clock seam. Nothing yet reads it off a run path (that starts at
-    /// task 4), so this proves the seam itself — the injected fake reaches the DI container the
-    /// hub was built with, rather than every consumer silently falling back to the real wall clock.</summary>
+    /// <summary>The clock seam: the injected fake reaches the DI container the hub was built with,
+    /// rather than every consumer silently falling back to the real wall clock.</summary>
     [Fact]
     public async Task A_HubTestHost_built_with_a_fake_TimeProvider_reports_the_fakes_time()
     {
@@ -171,8 +170,8 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rooms-root"], _ => null));
     }
 
-    /// <summary>Row 12: the shell's owner bearer is read from the environment only — never a CLI
-    /// argument, so it never shows up in a process listing.</summary>
+    /// <summary>The shell's owner bearer is read from the environment only, never a CLI argument, so
+    /// it never shows up in a process listing.</summary>
     [Fact]
     public void Parse_reads_the_shell_token_from_the_environment_only()
     {
@@ -202,9 +201,9 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(dir, "spawns")));
     }
 
-    // --- Row 28 ticket 3: no live token left under data\host-configs\ at hub start -------------
+    // No live token left under data\host-configs\ at hub start
 
-    /// <summary>What a pre-row-28 (or hand-edited) `--print-config` run left behind: a host-config
+    /// <summary>What an older (or hand-edited) `--print-config` run left behind: a host-config
     /// file with a REAL live token embedded, in the exact shape <see cref="HostConfigs.Write"/>
     /// produces. Reused here rather than hand-typed so the fixture matches production, the same
     /// discipline <c>TokenScanTests</c> follows for <see cref="TokenScan.Candidates"/> itself.</summary>
@@ -215,7 +214,7 @@ public sealed class HubHostTests : IAsyncLifetime
         Directory.CreateDirectory(dir);
         new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
         var roster = ChopDb.SeedRoster;
-        // What `--rotate-token claude` would have printed once, pre-row-28-Task-3 shape: a real
+        // What `--rotate-token claude` would have printed once, older shape: a real
         // plaintext embedded straight into the host file (never through the new placeholder path).
         var plaintext = TokenStore.Load(dir, roster).MintFor("claude");
         var claudeOnly = roster.Where(p => p.Id == "claude").ToList();
@@ -244,10 +243,10 @@ public sealed class HubHostTests : IAsyncLifetime
         }
     }
 
-    /// <summary>AC4's second half: a file the sweep cannot rewrite must not stop the hub. Locked with
-    /// <c>FileShare.None</c> for the whole start (Task 8's own ACL/lock choice, applied here at unit
-    /// scope) so even the read half of the sweep fails, not only the write — the hub must still come
-    /// up, the stderr line must still name the file, and one hub note must land in `general`.</summary>
+    /// <summary>A file the sweep cannot rewrite must not stop the hub. Locked with
+    /// <c>FileShare.None</c> for the whole start so even the read half of the sweep fails, not only
+    /// the write: the hub must still come up, the stderr line must still name the file, and one hub
+    /// note must land in `general`.</summary>
     [Fact]
     public async Task Row28_a_host_config_file_that_cannot_be_rewritten_does_not_stop_the_hub_and_posts_a_room_note()
     {
@@ -298,7 +297,7 @@ public sealed class HubHostTests : IAsyncLifetime
         await host.DisposeAsync();
     }
 
-    // --- Row 29: --owner-peer-check / CHOPITUP_OWNER_PEER_CHECK -------------------------------
+    // --owner-peer-check / CHOPITUP_OWNER_PEER_CHECK
 
     [Fact]
     public void Owner_peer_check_parses_from_the_flag_then_the_environment_defaulting_on()
@@ -312,8 +311,8 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--owner-peer-check"], _ => null));
     }
 
-    /// <summary>D3: the switch's whole reason to exist is that it prints where the owner can see it —
-    /// a silent bypass would be a second escalation on top of the first.</summary>
+    /// <summary>The switch's whole reason to exist is that it prints where the hub owner can see it: a
+    /// silent bypass would be a second escalation on top of the first.</summary>
     [Fact]
     public async Task The_switch_prints_its_warning_at_build()
     {
@@ -349,11 +348,11 @@ public sealed class HubHostTests : IAsyncLifetime
         try { await onApp.DisposeAsync(); } catch { /* best-effort cleanup */ }
     }
 
-    // --- Row 29 commit 1: the Host-header gate accepts loopback under any spelling ------------
+    // The Host-header gate accepts loopback under any spelling
 
-    /// <summary>Ticket 04's finding: Windows PowerShell 5.1's Invoke-WebRequest (.NET Framework's
-    /// HttpWebRequest) sends the IPv6 loopback address fully expanded, never RFC 5952-canonical
-    /// [::1] - the same address, spelled differently, and a real child hit a real 400 for it.</summary>
+    /// <summary>Windows PowerShell 5.1's Invoke-WebRequest (.NET Framework's HttpWebRequest) sends the
+    /// IPv6 loopback address fully expanded, never RFC 5952-canonical [::1]: the same address,
+    /// spelled differently, and a real child hit a real 400 for it.</summary>
     [Theory]
     [InlineData("127.0.0.1")]
     [InlineData("localhost")]
@@ -380,10 +379,10 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 
-    // --- Row 12: CHOPITUP_SHELL_TOKEN, the desktop shell's launch-scoped owner bearer ----------
+    // CHOPITUP_SHELL_TOKEN, the desktop shell's launch-scoped owner bearer
 
-    /// <summary>B2: ProcessRunner inherits this process's environment into every spawn, so the shell's
-    /// owner bearer must not ride along — HubHost.Build scrubs it from the process environment before
+    /// <summary>ProcessRunner inherits this process's environment into every spawn, so the shell's
+    /// owner bearer must not ride along: HubHost.Build scrubs it from the process environment before
     /// anything can spawn.</summary>
     [Fact]
     public async Task Build_scrubs_the_shell_token_from_the_process_environment()
@@ -411,9 +410,9 @@ public sealed class HubHostTests : IAsyncLifetime
         Assert.Equal(ChopDb.OwnerParticipantId, body.GetProperty("authorId").GetString());
     }
 
-    /// <summary>Pass 2, finding 5: a port file that exists while the lock is held must always belong
-    /// to the current hub, never a previous run's. HubHost.Build deletes it right after taking the
-    /// lock; ApplicationStarted then writes the real bound port.</summary>
+    /// <summary>A port file that exists while the lock is held must always belong to the current hub,
+    /// never a previous run's. HubHost.Build deletes it right after taking the lock;
+    /// ApplicationStarted then writes the real bound port.</summary>
     [Fact]
     public async Task Hub_port_file_is_deleted_at_lock_acquire_so_a_stale_value_never_survives_start()
     {

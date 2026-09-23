@@ -86,7 +86,7 @@ input {
   height: 100%;
 }
 
-/* ---------- desktop shell chrome (row 12) — rendered only inside ChopItUp.Desktop ---------- */
+/* ---------- desktop shell chrome, rendered only inside ChopItUp.Desktop ---------- */
 
 /* The chrome is the first child and spans both columns, so auto-placement puts it on row 1 and drops
    the rail and the room onto row 2. A browser tab never gets the `hosted` class and keeps the
@@ -240,7 +240,7 @@ input {
 }
 
 /* Takes the slack in the rail's column so `.rail-foot` sits at the bottom and a long room list
-   scrolls inside itself rather than pushing the footer off screen (M9). */
+   scrolls inside itself rather than pushing the footer off screen. */
 .room-list {
   list-style: none;
   margin: 0;
@@ -350,8 +350,8 @@ input {
   cursor: pointer;
 }
 
-/* Row 28: sits directly under the badges it is about, because the wrong number is what the owner is
-   looking at. Wrapped like a sentence rather than centred like a button label. */
+/* Sits directly under the badges it is about, because the wrong number is what the owner is looking
+   at. Wrapped like a sentence rather than centred like a button label. */
 .rail-unread-blocked {
   margin: 0 12px 8px;
   padding: 6px 8px;
@@ -464,9 +464,9 @@ input {
   border-bottom: 1px solid var(--line);
 }
 
-/* Row 28: the paste prompt a refused write raises. Shaped like `.banner` because it IS the refusal
-   surface, with the field inline underneath — a modal between "the hub refused that" and the paste
-   is one more place to lose the token (the same reasoning as `.skills-token`). */
+/* The paste prompt a refused write raises. Shaped like `.banner` because it is the refusal surface,
+   with the field inline underneath: a modal between "the hub refused that" and the paste is one more
+   place to lose the token (the same reasoning as `.skills-token`). */
 .token-gate {
   margin: 0;
   flex: none;
@@ -766,8 +766,8 @@ input {
   color: var(--faint);
 }
 
-/* Row 42: a transcript turn brought in by import. Same voice as the hub-note label so it reads as
-   "the app is telling you where this came from", never as a second author. */
+/* A transcript turn brought in by import. Same voice as the hub-note label so it reads as "the app is
+   telling you where this came from", never as a second author. */
 .imported-tag {
   display: inline-block;
   margin-bottom: 2px;
@@ -1021,13 +1021,13 @@ input {
   }
 }
 
-/* ---------- run strip (row 19) ----------
+/* ---------- run strip ----------
 
    The exchange bar's sibling, directly above it: same flex row, same gutter, same `--accent` trick,
    so a room inside a run reads as one stack of two strips rather than a new region. The three states
    are meant to be told apart from the other side of the room without reading a word of them, which is
-   what the accent and the weight below are for — active takes the Claude amber and leads with the
-   phase, parked takes the danger colour and leads with the REASON at full size, ended goes grey and
+   what the accent and the weight below are for: active takes the Claude amber and leads with the
+   phase, parked takes the danger colour and leads with the reason at full size, ended goes grey and
    drops to the same weight as the counters. */
 .run {
   display: flex;
@@ -1322,11 +1322,11 @@ input {
   color: var(--faint);
 }
 
-/* ---- slash menu (row 11): the installed skills, offered while the draft is still just the command
-   word. It renders UPWARD out of the composer, which sits on the bottom edge of the window, and caps
-   its own height so a long store scrolls inside the list instead of running off the top. Same panel,
-   border and radius as the dialogs; the rows borrow `.room-item`'s hover/active idiom rather than
-   inventing a second one. */
+/* ---- slash menu: the installed skills, offered while the draft is still just the command word. It
+   renders upward out of the composer, which sits on the bottom edge of the window, and caps its own
+   height so a long store scrolls inside the list instead of running off the top. Same panel, border
+   and radius as the dialogs; the rows borrow `.room-item`'s hover/active idiom rather than inventing
+   a second one. */
 .skill-menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1577,13 +1577,13 @@ input {
   }
 }
 
-/* ---- Memory proposals (M10): the owner's approval surface, between the thread and the exchange bar.
-   A card takes its author's accent the way a message row does (`p-*` sets --accent); the section is a
+/* ---- Memory proposals: the owner's approval surface, between the thread and the exchange bar. A
+   card takes its author's accent the way a message row does (`p-*` sets --accent); the section is a
    quiet strip that is simply absent when there is nothing to decide. */
 .memory {
   flex: none;
-  /* Row 18: an enriched card (replaces line, hub checks, closest entries, actions) is ~291px, so with
-     the panel header it needs ~326px of viewport. A flat 40vh gave 288px on a 1280x720 window — the
+  /* An enriched card (replaces line, hub checks, closest entries, actions) is ~291px, so with the
+     panel header it needs ~326px of viewport. A flat 40vh gives 288px on a 1280x720 window, and the
      owner could not see what approval retires and the Approve button at once, which is the whole
      point of the card. The absolute cap stays where 40vh put it on a normal screen (400px at 1000px
      tall); only short windows get more, and never over 55% of them. Several proposals still scroll. */
@@ -1668,11 +1668,10 @@ input {
   font-size: 13px;
 }
 
-/* ---- Row 18 (AC5): what the owner needs to judge a proposal, not just read it. All three blocks
-   are absent from a plain card, so the ordinary proposal looks exactly as it did before. Every rule
-   here wraps rather than scrolls: the room pane gets narrow and a hint that overflows is a hint the
-   owner does not read. */
-/* A statement about the OLD entry, immediately above the text of the NEW one: it gets the same
+/* ---- What the owner needs to judge a proposal, not just read it. All three blocks are absent from
+   a plain card. Every rule here wraps rather than scrolls: the room pane gets narrow and a hint that
+   overflows is a hint the owner does not read. */
+/* A statement about the old entry, immediately above the text of the new one: it gets the same
    8px-and-a-dashed-rule separation the related block uses below, because a 2px font-size step is not
    enough to keep the two apart. */
 .memory-replaces {
@@ -1757,8 +1756,7 @@ input {
 }
 /* The block as a whole is secondary to the proposal body above it — neighbours the owner is not
    deciding about sit at --dim and normal-ish weight, under the body's own 13px. The one entry
-   approval destroys is the exception: full --text, the heavier title, a danger rule down its side.
-   Before this it was the dimmest line in the block and the untouched neighbour the brightest. */
+   approval destroys is the exception: full --text, the heavier title, a danger rule down its side. */
 .memory-related-entry {
   font-weight: 500;
   color: var(--dim);
@@ -1794,9 +1792,9 @@ input {
   color: var(--text);
 }
 
-/* ---- Row 23 (AC7): a consolidation replaces the whole topic file, so its card shows the change
-   rather than the body. The three lines above the diff are the ones that decide the answer, and they
-   stay in the fixed part of the card; only the comparison scrolls. */
+/* ---- A consolidation replaces the whole topic file, so its card shows the change rather than the
+   body. The three lines above the diff are the ones that decide the answer, and they stay in the
+   fixed part of the card; only the comparison scrolls. */
 .memory-rewrite-head {
   display: grid;
   gap: 3px;
@@ -1903,9 +1901,9 @@ input {
   margin-top: 8px;
 }
 
-/* ---- Skill proposals (M25): the same strip as the memory panel, one row lower, for a decision with
-   a bigger blast radius — an installed skill's scripts/<gate>.ps1 is executed under pwsh by run_gate,
-   so approving one authorises code. The whole control is that the owner reads every byte first, which
+/* ---- Skill proposals: the same strip as the memory panel, one row lower, for a decision with a
+   bigger blast radius: an installed skill's scripts/<gate>.ps1 is executed under pwsh by run_gate, so
+   approving one authorises code. The whole control is that the owner reads every byte first, which
    is why this panel is taller than the memory one and why nothing in it collapses. */
 .skills {
   flex: none;
@@ -1937,8 +1935,8 @@ input {
   padding: 2px 8px;
   font-size: 11px;
 }
-/* D2: a one-time paste, in the panel header rather than a dialog — the owner is already looking here,
-   and a modal between "I want to approve this" and the paste is one more place to lose the token. */
+/* A one-time paste, in the panel header rather than a dialog: the owner is already looking here, and
+   a modal between "I want to approve this" and the paste is one more place to lose the token. */
 .skills-token {
   display: flex;
   flex-wrap: wrap;
@@ -2035,8 +2033,8 @@ input {
 .skill-summary-scripts {
   color: var(--danger-ink);
 }
-/* The value the approval sends back and the staged copy is checked against before the swap (D5). It
-   is small and dim on purpose: it is here so the owner CAN compare it, not so they must read it. */
+/* The value the approval sends back and the staged copy is checked against before the swap. It is
+   small and dim on purpose: it is here so the owner can compare it, not so they must read it. */
 .skill-pin {
   margin: 2px 0 6px;
   color: var(--faint);
@@ -2157,8 +2155,8 @@ input {
   color: var(--danger-ink);
   font-size: 11px;
 }
-/* Every file is shown whole — no truncation, no disclosure widget (D7: the owner is shown every
-   byte). A long file scrolls in its own box so it cannot push the buttons past the panel's scroll,
+/* Every file is shown whole: no truncation, no disclosure widget, because the owner is shown every
+   byte. A long file scrolls in its own box so it cannot push the buttons past the panel's scroll,
    which is the same failure the memory diff's cap exists to prevent. */
 .skill-file-text,
 .skill-file-body {
@@ -2247,7 +2245,7 @@ input {
   cursor: pointer;
 }
 
-/* ---------- roles dialog (row 14) ---------- */
+/* ---------- roles dialog ---------- */
 
 /* Wider than the other dialogs, and the list scrolls on its own: one card per spawnable participant,
    each carrying two text boxes, is a taller thing than anything else that uses `.dialog`. */
@@ -2304,7 +2302,7 @@ input {
   color: var(--dim);
 }
 
-/* Milestone 51: what the roster says about the row (model, classes, effort). Under the head and above
+/* What the roster says about the row (model, classes, effort). Under the head and above
    the in-force line: it is context the boxes cannot change, so it sits with the identity, not with
    the editing. Same --dim at 12px as the in-force line, for the same WCAG reason. */
 .roles-meta {
@@ -2344,7 +2342,7 @@ input {
 .roles-inforce-empty {
   font-style: italic;
 }
-/* ---------- memory editor dialog (row 40) ---------- */
+/* ---------- memory editor dialog ---------- */
 
 /* The widest dialog here — 860px against the roles dialog's 760 — because what it holds is a whole
    memory file, and a 6,000-character core wrapped into a 680px column is a column of ragged prose. */

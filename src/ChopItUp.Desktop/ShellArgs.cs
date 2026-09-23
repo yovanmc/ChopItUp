@@ -7,9 +7,9 @@ namespace ChopItUp.Desktop;
 
 public enum ShellCommand { Run, Show, Quit }
 
-/// <summary>Row 12: the shell's whole command line. Everything resolves to an absolute path so the
-/// child hub, the log and the WebView2 profile agree on one data dir regardless of the launcher's cwd.
-/// `--hub` exists for development (B10): the deployed layout has the hub beside this exe.</summary>
+/// <summary>The shell's whole command line. Everything resolves to an absolute path so the child hub,
+/// the log and the WebView2 profile agree on one data dir regardless of the launcher's cwd. `--hub`
+/// exists for development: the deployed layout has the hub beside this exe.</summary>
 public sealed record ShellArgs(string DataDir, int Port, string HubExe, ShellCommand Command)
 {
     public const int DefaultPort = 8790;
@@ -18,7 +18,7 @@ public sealed record ShellArgs(string DataDir, int Port, string HubExe, ShellCom
     public string LogDir => Path.Combine(DataDir, "logs");
     /// <summary>B11: outside data\. Keyed by the data dir so two data dirs never share a profile.</summary>
     public string WebViewProfileDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ChopItUp", "webview2", SingleInstance.Hash16(DataDir));
-    /// <summary>The origin implied by --port. Only the START path may use it; after StartOrAttach every consumer reads HubChild.ResolvedOrigin (B3).</summary>
+    /// <summary>The origin implied by --port. Only the START path may use it; after StartOrAttach every consumer reads HubChild.ResolvedOrigin.</summary>
     public Uri RequestedOrigin => new($"http://127.0.0.1:{Port}/");
 
     public static ShellArgs Parse(string[] args, string baseDir, string? cwd = null)

@@ -2,7 +2,7 @@
 # Gate: Check-PlanClaims on every plan a 📝 or 🔨 row names. No such row = nothing to check, exit 0.
 [CmdletBinding()] param()
 $ErrorActionPreference = 'Stop'
-$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured 2026-09-07)
+$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured)
 $root = (Get-Location).Path
 $roadmap = Join-Path $root 'ROADMAP.md'
 if (-not (Test-Path -LiteralPath $roadmap -PathType Leaf)) { Write-Host "plan-claims: no ROADMAP.md in $root"; exit 2 }

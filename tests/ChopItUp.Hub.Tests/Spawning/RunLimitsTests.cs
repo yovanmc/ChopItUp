@@ -2,7 +2,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>D9: the run ceiling is one hard-coded value, not configuration — no constructor argument,
+/// <summary>The run ceiling is one hard-coded value, not configuration: no constructor argument,
 /// no environment variable, no room-scoped override exists anywhere near it.</summary>
 public sealed class RunLimitsTests
 {
@@ -15,7 +15,7 @@ public sealed class RunLimitsTests
         Assert.Equal(3, RunLimits.Default.PhaseEntries);
     }
 
-    // --- Row 20 task 3: GateTimeout, the ceiling run_gate and the MCP timeouts actually use --------
+    // --- GateTimeout, the ceiling run_gate and the MCP timeouts actually use -----------------------
 
     [Fact]
     public void GateTimeout_is_below_SpawnTimeout_by_default_and_the_invariant_is_enforced()
@@ -37,7 +37,7 @@ public sealed class RunLimitsTests
     public void A_SpawnTimeout_too_small_to_leave_a_positive_default_GateTimeout_is_refused()
     {
         // No explicit GateTimeout: EffectiveGateTimeout defaults to SpawnTimeout - 5 min. At a 4-minute
-        // SpawnTimeout that default is negative, which the old ">= SpawnTimeout" check alone missed
+        // SpawnTimeout that default is negative, which a ">= SpawnTimeout" check alone misses
         // (-1 min is not >= 4 min).
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(4), PhaseEntries: 1));

@@ -5,8 +5,8 @@ using Xunit;
 
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T5: HostBridge is a pure function from a page message to a host action plus a JSON
-/// reply, so the whole wire protocol (dispatch, ids, trust) is tested here without a window.</summary>
+/// <summary>HostBridge is a pure function from a page message to a host action plus a JSON reply, so
+/// the whole wire protocol (dispatch, ids, trust) is tested here without a window.</summary>
 public sealed class HostBridgeTests
 {
     private const string HubOrigin = "http://127.0.0.1:8795/";
@@ -75,10 +75,10 @@ public sealed class HostBridgeTests
     [Fact]
     public void Numeric_id_round_trips_as_a_number_not_a_string()
     {
-        // Row 12 defect fix: the page's hostBridge.ts sends {id: <number>, cmd} (`let nextId = 1`) and
-        // only accepts a reply whose id is a number. The old `Request.Id` was `string?`, so
-        // System.Text.Json threw JsonException on the number token, Handle caught it and answered
-        // {"id":null,"ok":false,"error":"malformed"} -- every real page call was refused.
+        // The page's hostBridge.ts sends {id: <number>, cmd} (`let nextId = 1`) and only accepts a
+        // reply whose id is a number. A `string?` Request.Id would make System.Text.Json throw on the
+        // number token, and Handle would answer {"id":null,"ok":false,"error":"malformed"}, refusing
+        // every real page call.
         var host = NewHost();
         var reply = HostBridge.Handle("""{"id":7,"cmd":"minimize"}""", host);
         Assert.Equal(new[] { "Minimize" }, host.Calls);
@@ -128,7 +128,7 @@ public sealed class HostBridgeTests
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
     }
 
-    // ===== trust matrix (ticket 05) ===========================================================
+    // ===== trust matrix ======================================================================
 
     [Fact]
     public void Hub_origin_any_path_is_trusted_without_a_nonce() =>

@@ -3,7 +3,7 @@ import fixture from '../../../../tests/mention-cases.json';
 import { recipientsOf, setRoster } from './participants';
 import type { Participant } from './types';
 
-/** Row 43: `recipientsOf` is the client twin of `Mentions.Leading` (Core). The fixture at the repo
+/** `recipientsOf` is the client twin of `Mentions.Leading` (Core). The fixture at the repo
  *  root is the contract between them — both readers run every case in it, so a grammar change that
  *  only one side takes shows up here rather than in the room. It is imported rather than read off
  *  disk because this client has no `@types/node`, and `tsc --noEmit` is part of the build. */
@@ -43,8 +43,8 @@ describe('recipientsOf', () => {
     expect(read.recipients.map((p) => p.id)).toEqual(c.recipients);
     expect(read.unknown).toEqual(c.unknown);
     expect(read.references.map((p) => p.id)).toEqual(c.references);
-    // Row 44: only the turns cases carry `turns`; a case without it asserts nothing here. A refused
-    // token reports the value 0 on both sides, so the fixture's `value` (absent means 0) is asserted
+    // Only the turns cases carry `turns`; a case without it asserts nothing here. A refused token
+    // reports the value 0 on both sides, so the fixture's `value` (absent means 0) is asserted
     // whatever the token says.
     const turns = (c as { turns?: { token: string; value?: number } }).turns;
     if (turns === undefined) return;

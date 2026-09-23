@@ -1,14 +1,10 @@
 <#
 .SYNOPSIS
-    Row 24 (M24) synthetic-corpus dry run (HIGH gate): drives the REAL built `ChopItUp.Hub.exe
-    --export-memory` verb against fabricated, scratch-only corpora and asserts only what the tool
-    controls -- its exit codes and the `EXPORT_RESULT:` line -- never a prose message a later edit
-    could reword (M11).
+    Memory-export synthetic-corpus dry run: drives the REAL built `ChopItUp.Hub.exe --export-memory`
+    verb against fabricated, scratch-only corpora and asserts only what the tool controls -- its exit
+    codes and the `EXPORT_RESULT:` line -- never a prose message a later edit could reword.
 
 .DESCRIPTION
-    See PR #63 (merged f964ece), plan task "T6 -- dry run, self-check, docs" and ticket
-    06-dry-run-and-the-owner-probe.md; both were deleted at close-out and live in that commit.
-
     Every path this script touches is rooted under a fresh $env:TEMP scratch directory with a GUID
     nonce -- never a real memory directory, never a real `.claude` directory. `Assert-ScratchOnly`
     is the load-bearing refusal: it is called before every `--data` or `--export-memory` argument
@@ -17,10 +13,10 @@
 
     Every argument to the real hub exe is quoted by passing it as its own element of an
     `-ArgumentList` array (never a hand-joined string), and every path is
-    `[IO.Path]::TrimEndingDirectorySeparator`-ed before it is added to that array -- the 2026-09-07
-    lesson (pass 2 M15b): a trailing backslash immediately before a closing quote escapes the quote
-    and corrupts argv, and HubOptions.Parse's own trim for `--export-memory` runs AFTER argv is
-    already built, so it cannot fix a corruption that happened on the way in.
+    `[IO.Path]::TrimEndingDirectorySeparator`-ed before it is added to that array: a trailing
+    backslash immediately before a closing quote escapes the quote and corrupts argv, and
+    HubOptions.Parse's own trim for `--export-memory` runs after argv is already built, so it cannot
+    fix a corruption that happened on the way in.
 
     Fixtures are written directly as the markdown MemoryStore.ParseEntries reads (`# <topic>` then
     one `## <title>` / `<!-- provenance -->` / body block per entry) -- the same shape
@@ -46,7 +42,7 @@ $scratch = Join-Path $env:TEMP "chopitup_m24dryrun_$nonce"
 New-Item -ItemType Directory -Path $scratch | Out-Null
 $scratchFull = [IO.Path]::GetFullPath($scratch)
 
-# --- Evidence log: one PASS/FAIL line per check (M2/M4 idiom) -------------------------------------
+# --- Evidence log: one PASS/FAIL line per check ------------------------------------------------------
 $checkLines = New-Object System.Collections.Generic.List[string]
 $failCount = 0
 
@@ -142,7 +138,7 @@ function Invoke-HubExport {
     }
 }
 
-# --- The one machine-readable line this tool controls (M11): parse it, never the surrounding prose.
+# --- The one machine-readable line this tool controls: parse it, never the surrounding prose.
 function Get-ExportResult {
     param([string]$StdOut)
     if ([string]::IsNullOrEmpty($StdOut)) { return $null }
@@ -151,9 +147,9 @@ function Get-ExportResult {
     return ($line.Substring('EXPORT_RESULT: '.Length) | ConvertFrom-Json)
 }
 
-# --- D2/AC6's affected-paths list is a tested, byte-stable machine contract ("  " + relative path
-# per line under "affected paths:") -- checked against THAT line shape, never against the sentence
-# wording around it, which a later edit is free to reword. ------------------------------------------
+# --- The affected-paths list is a tested, byte-stable machine contract ("  " + relative path per line
+# under "affected paths:") -- checked against that line shape, never against the sentence wording
+# around it, which a later edit is free to reword. ----------------------------------------------------
 function Test-AffectedPathsContains {
     param([string]$Text, [string]$RelativePath)
     if ([string]::IsNullOrEmpty($Text)) { return $false }
@@ -198,8 +194,8 @@ try {
 
     # =============================================================================================
     # Scenario 2: three exports in a row against the same target all exit 0, exactly one reusable
-    # previous-export directory afterward (AC12, claim 22/pass 2 B1: the THIRD run is the one that
-    # dies on Directory.Move onto an existing destination if step 3 is missing).
+    # previous-export directory afterward (the third run is the one that dies on Directory.Move onto
+    # an existing destination if step 3 is missing).
     # =============================================================================================
     $target2 = Join-Path $scratch 's2\export'
     $reusablePrevious2 = $target2 + '.chopitup-export-previous'
@@ -216,7 +212,7 @@ try {
 
     # =============================================================================================
     # Scenario 3+4: hand-edit an exported file -> refusal names it; --force replaces it and the
-    # edited file survives in a TIMESTAMPED previous (Drifted is never the reusable-name case, D8).
+    # edited file survives in a TIMESTAMPED previous (Drifted is never the reusable-name case).
     # =============================================================================================
     $target3 = Join-Path $scratch 's3\export'
     $r3a = Invoke-HubExport -DataDir $dataDir1 -TargetDir $target3 -LogTag 's3-initial'
@@ -250,19 +246,14 @@ try {
 
     # =============================================================================================
     # Scenario 5: exporting a DIFFERENT store into a target Clean and bound to store 1's root
-    # refuses naming both roots; --force cannot override it (D9, not re-asserted here -- T3's own
-    # tests own that); --accept-new-source proceeds and prints the (possibly empty) drift list
-    # through the same formatter a plain refusal would use (D2/AC6).
+    # refuses naming both roots; --force cannot override it (MemoryExportWriter's own tests own
+    # that); --accept-new-source proceeds and prints the (possibly empty) drift list through the same
+    # formatter a plain refusal would use.
     #
-    # Uses its OWN fresh target5, never target3: target3 already carries a TIMESTAMPED previous-
-    # export directory from scenario 4 (its name is a whole-second UTC timestamp), and this run's own
-    # override also lands in the timestamped case (DifferentSource is never the reusable slot). Two
-    # independent replacements of the SAME target landing on the SAME target within the same UTC
-    # second collide on that name and `Directory.Move` throws onto an existing destination -- observed
-    # directly while authoring this script (a real, reproducible finding against the already-landed
-    # T3 code, reported separately; not this task's file to fix). A fresh target's first-ever
-    # timestamped move cannot collide with a pre-existing directory of that name, so scenario 5 is
-    # deliberately independent of target3 to stay deterministic.
+    # Uses its own fresh target5, never target3: target3 already carries a timestamped previous-export
+    # directory from scenario 4, and this override also lands in the timestamped case
+    # (DifferentSource is never the reusable slot). A fresh target keeps this scenario independent of
+    # scenario 4's timing.
     # =============================================================================================
     $dataDir5 = Join-Path $scratch 's5\data'
     New-MemoryFixture -MemoryDir (Join-Path $dataDir5 'memory') -TopicSlugs @('other-topic') -EntriesPerTopic 3 -CoreEntries 1

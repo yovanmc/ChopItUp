@@ -2,8 +2,8 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Fixtures are the shapes measured on 2026-09-06 (plan claims 23, 24), cut to the fields the
-/// parser reads; the paths and text are fabricated.</summary>
+/// <summary>Fixtures are the measured CLI output shapes, cut to the fields the parser reads; the
+/// paths and text are fabricated.</summary>
 public sealed class SpawnOutputTests
 {
     private const string ClaudeStream = """

@@ -9,17 +9,15 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Security;
 
-/// <summary>Row 29 Task 4 / issues/04-end-to-end.md: the escalation, end to end, against a real
-/// child process in a real Job Object - not a fake verdict (that is
-/// <see cref="OwnerPeerCheckMiddlewareTests"/>'s job). One test, in the spirit of
-/// <see cref="EscalationClosedTests"/>: a scatter of narrow unit facts could each pass while the
-/// combination this row exists to close still worked.
+/// <summary>The escalation, end to end, against a real child process in a real Job Object, not a
+/// fake verdict (that is <see cref="OwnerPeerCheckMiddlewareTests"/>'s job). One test, in the spirit
+/// of <see cref="EscalationClosedTests"/>: a scatter of narrow unit facts could each pass while the
+/// combination the check exists to close still worked.
 ///
-/// D9: <see cref="HubTestHost"/> normally starts on port 0, which never gets the <c>[::1]</c>
-/// listener (<c>HubHost.cs:40-49</c>, ledger 23). This fixture starts its own host on a fixed free
-/// port instead, so it listens on both loopback families like every deployed hub, and proves the
-/// inside leg over both <c>127.0.0.1</c> and <c>[::1]</c>, with the outside control over
-/// <c>[::1]</c>.</summary>
+/// <see cref="HubTestHost"/> normally starts on port 0, which never gets the <c>[::1]</c> listener
+/// (see <c>HubHost</c>). This fixture starts its own host on a fixed free port instead, so it listens
+/// on both loopback families like every deployed hub, and proves the inside leg over both
+/// <c>127.0.0.1</c> and <c>[::1]</c>, with the outside control over <c>[::1]</c>.</summary>
 [Collection(ProcessStateCollection.Name)]
 public sealed class OwnerPeerCheckEndToEndTests : IAsyncLifetime
 {
@@ -63,8 +61,8 @@ public sealed class OwnerPeerCheckEndToEndTests : IAsyncLifetime
     /// (the <c>@{ }</c> header hashtable and the JSON body) never has to be escaped against C#'s
     /// interpolated-string syntax. Windows PowerShell 5.1's <c>Invoke-WebRequest</c> throws a
     /// terminating <c>System.Net.WebException</c> on a non-2xx status; <c>$_.Exception.Response</c> is
-    /// an <c>HttpWebResponse</c> there, so <c>.StatusCode</c> is the plan's flagged-unverified shape -
-    /// this leg is what measures it.</summary>
+    /// an <c>HttpWebResponse</c> there, so <c>.StatusCode</c> is an unverified shape that this leg
+    /// measures.</summary>
     private static string ForgeScript(string host, int port, string token) =>
         "try { $r = Invoke-WebRequest -UseBasicParsing -Method POST -Uri 'http://" + host + ":" + port + "/api/rooms/general/messages'" +
         " -Headers @{ Authorization = 'Bearer " + token + "' } -ContentType 'application/json' -Body '{\"body\":\"forged\"}';" +
@@ -126,7 +124,7 @@ public sealed class OwnerPeerCheckEndToEndTests : IAsyncLifetime
         Assert.Contains("@opus's spawn (pid ", lastAfterV4.GetProperty("body").GetString());
 
         // --- Inside, IPv6: the SAME bearer, a NEW spawn job, over [::1] - the browser's own path.
-        // HubTestHost.StartAsync's default port (0) never binds [::1] at all (D9); this fixture's
+        // HubTestHost.StartAsync's default port (0) never binds [::1] at all; this fixture's
         // fixed port is what makes the family reachable in the first place. ---
         var insideV6 = ForgeSpec("[::1]", _port, _remoteToken) with { RoomId = "general", ParticipantId = "opus" };
         var v6Result = await new ProcessRunner(_jobs).RunAsync(insideV6, TimeSpan.FromSeconds(60), CancellationToken.None);
@@ -143,7 +141,7 @@ public sealed class OwnerPeerCheckEndToEndTests : IAsyncLifetime
         // --- Control, outside, IPv6: the identical command, the identical stolen bearer, run with NO
         // tracking at all. Without this half, a reverted middleware would still pass the two legs
         // above for the wrong reason (a broken command also prints a non-201), and running it over
-        // [::1] is what proves the browser's own path is not locked out by this row.
+        // [::1] is what proves the browser's own path is not locked out by this check.
         //
         // SpawnJobs.Membership only ever answers Outside when NO live job exists at all - with zero
         // live jobs OwnerPeerCheck short-circuits straight to Allowed (9da479b) without ever calling

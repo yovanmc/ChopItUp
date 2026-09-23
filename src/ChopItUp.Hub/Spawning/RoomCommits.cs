@@ -4,13 +4,13 @@ using ChopItUp.Hub.Git;
 
 namespace ChopItUp.Hub.Spawning;
 
-/// <summary>What a room commit says and whom it credits (M9 decisions 6, 7; identity rule changed by
-/// row 46). The author and committer are the repository's own configured identity - git resolves it
-/// and the hub never overrides it (<see cref="Git.GitTrail.ConfiguredIdentityAsync"/>) - so the room's
-/// log reads like every other commit made there. The participant is named in the subject, and a turn
-/// that changed something is credited with its host's <c>Co-authored-by</c> trailer, the convention
-/// that folder's AGENTS.md sets for Codex. The subject is one line the trail dialog shows; the body
-/// carries the shell log.</summary>
+/// <summary>What a room commit says and whom it credits. The author and committer are the
+/// repository's own configured identity - git resolves it and the hub never overrides it
+/// (<see cref="Git.GitTrail.ConfiguredIdentityAsync"/>) - so the room's log reads like every other
+/// commit made there. The participant is named in the subject, and a turn that changed something is
+/// credited with its host's <c>Co-authored-by</c> trailer, the convention that folder's AGENTS.md
+/// sets for Codex. The subject is one line the trail dialog shows; the body carries the shell
+/// log.</summary>
 public static class RoomCommits
 {
     public const string ShellHeader = "Shell commands run";

@@ -26,9 +26,9 @@ public interface IProcessRunner
 }
 
 /// <summary>Runs a child with stdin/stdout/stderr redirected, kills the whole tree on timeout or
-/// cancellation (the Codex shim is <c>cmd.exe</c> with the real exe underneath — killing only the
+/// cancellation (the Codex shim is <c>cmd.exe</c> with the real exe underneath: killing only the
 /// parent would leave the model running and posting), and drains both output pipes before
-/// returning (LESSONS, M4: a process can exit with its last line still in the pipe).</summary>
+/// returning (a process can exit with its last line still in the pipe).</summary>
 public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
 {
     private static readonly TimeSpan DrainGrace = TimeSpan.FromSeconds(5);
@@ -44,7 +44,7 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             RedirectStandardInput = true,
             // Pinned: unset, .NET picks the console code page, and a hub started without a console (the
             // Desktop shell) falls back to ANSI, where U+2013 leaves as the single byte 0x96 and Codex
-            // refuses the prompt as invalid UTF-8 (2026-09-22). Both CLIs read stdin as UTF-8.
+            // refuses the prompt as invalid UTF-8. Both CLIs read stdin as UTF-8.
             StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
@@ -64,7 +64,7 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
         using var process = new Process { StartInfo = psi };
         process.Start();
         IDisposable tracked;
-        try { tracked = jobs.Track(process, spec); }   // row 29: the next statement after Start, on purpose
+        try { tracked = jobs.Track(process, spec); }   // the next statement after Start, on purpose
         catch
         {
             try { process.Kill(entireProcessTree: true); }
@@ -74,8 +74,8 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
 
         // The timeout is armed BEFORE the stdin write: a child that stalls before reading its prompt
         // (auth prompt, MCP startup hang) leaves the writer blocked on a full pipe, and an un-armed
-        // timeout would never fire (critique pass 1, B1 — measured: a 24,000-char write to a
-        // non-reading child did not complete in 6 s).
+        // timeout would never fire (measured: a 24,000-char write to a non-reading child did not
+        // complete in 6 s).
         bool timedOut = false, cancelled = false;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         linked.CancelAfter(timeout);
@@ -130,7 +130,7 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            // Row 46, R11: a process that started always yields a result, so its turn commit can credit it.
+            // A process that started always yields a result, so its turn commit can credit it.
             errText = "(output pipes failed: " + e.GetBaseException().Message + ")";
             if (stdout.IsCompletedSuccessfully) outText = stdout.Result;
         }

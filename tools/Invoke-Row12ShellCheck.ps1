@@ -1,20 +1,18 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  Row 12 Task 9: end-to-end UIA verification harness for the desktop shell (ChopItUp.Desktop.exe).
+  End-to-end UIA verification harness for the desktop shell (ChopItUp.Desktop.exe).
 
 .DESCRIPTION
-  Adapted from ~\.claude\skills\roadmap\references\desk-check-template.ps1 -- this is a permanent,
-  committed tool (not a one-off desk-check copy under .scratch\desk-checks\), so it keeps that
-  template's CONVENTIONS rather than its literal frozen param block:
+  Conventions:
     - a RunId derived from the target exe's mtime+size+harness version, stamped on every log row;
-    - one evidence directory PER RUN (never reused -- see -EvidenceRoot), so the "skip a prior PASS"
-      caching the template does for a long-lived log file does not apply here and is not implemented;
+    - one evidence directory PER RUN (never reused -- see -EvidenceRoot), so there is no "skip a prior
+      PASS" caching;
     - a nested .gitignore ('*') is written into the run's own evidence dir before anything else, and
       the write REFUSES if that directory already holds git-tracked files (it never will -- it is a
       freshly stamped guid-suffixed dir -- but the refusal is kept as defence in depth);
-    - every leg records an EXPLICIT $passed boolean via Add-Check (Row 29's Invoke-Row29PeerCheck.ps1
-      convention, `Add-Check -Name -Passed:[bool] -Detail`), never inferred from a string;
+    - every leg records an EXPLICIT $passed boolean via Add-Check (`Add-Check -Name -Passed:[bool]
+      -Detail`, as in Invoke-Row29PeerCheck.ps1), never inferred from a string;
     - shape allowlist for -Detail: booleans, counts, exit codes, ports, milliseconds -- never a
       message body, a token, a filename under the data dir, or any quoted log content upward. Every
       report line below honours "counts only, never quoting log content."
@@ -25,24 +23,20 @@
       a real `claude` CLI spawn triggered through the hub's own run machinery) rather than incidental
       utility calls, so there is no generic $LaunchAllowlist/Invoke-Allowlisted wrapper; each launch
       is commented with its justification and every PID this script starts is tracked and killed by
-      PID in Finally, never by name (standing contract).
+      PID in Finally, never by name.
 
-  Coordinator ruling (2026-09-15, this session) on top of the plan's Task 9 section:
+  Seeding and room choice:
     - seed the corpus with `--schema-version 2 --messages 200` (the corpus tool's newest shape; it
-      only ever writes v1 or v2 -- CorpusBuilder.cs:64) and let the hub's real 2->11 migration run
-      inside leg 1's 25 s readiness budget. Leg 1 keeps its 25 s assertion and ADDITIONALLY records
-      the SESSION START -> HUB STATE Ready latency as evidence (reported, not asserted, so the
-      migration's real cost is learned). This doubles as the tier's synthetic-corpus dry run, so the
-      data dir is never swapped for an empty one.
+      only ever writes v1 or v2) and let the hub's real migration run inside leg 1's 25 s readiness
+      budget. Leg 1 keeps its 25 s assertion and ADDITIONALLY records the SESSION START -> HUB STATE
+      Ready latency as evidence (reported, not asserted, so the migration's real cost is learned).
+      This doubles as a synthetic-corpus dry run, so the data dir is never swapped for an empty one.
     - legs 3 and 7 never hardcode room "general": they read `GET /api/rooms` and post/read against
-      `rooms[0].id` (the client itself selects `loaded[0].id` on load -- App.tsx:279 -- so the
-      composer the harness types into is always this same room).
+      `rooms[0].id` (the client itself selects `loaded[0].id` on load, so the composer the harness
+      types into is always this same room).
 
-  Legs 1-9 and the screenshot-sanity gate are exactly the plan's Task 9 section. The plan also asks
-  for a screenshot "judged by a pinned sonnet subagent" -- a PowerShell script cannot dispatch a
-  Claude subagent, and builder-subagent policy forbids using the Agent tool at all, so this script's
-  own responsibility ends at capture + Test-CaptureSane.ps1's mechanical sanity gate; the visual
-  judging pass is a follow-on action for whoever reviews this run's evidence directory.
+  The screenshot is captured and passed through Test-CaptureSane.ps1's mechanical sanity gate;
+  judging it visually is left to whoever reviews this run's evidence directory.
 
 .NOTES
   Windows-only (System.Windows.Automation, System.Drawing, System.Windows.Forms, P/Invoke). Refuses
@@ -60,7 +54,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $HarnessVersion = 'row12-harness-v1'
 
-# ===== standard preamble (adapted from the desk-check template; see .DESCRIPTION) ==================
+# ===== standard preamble (see .DESCRIPTION) =========================================================
 
 foreach ($exe in @($TargetExe, $HubExe, $CorpusExe)) {
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
@@ -119,7 +113,7 @@ function Add-Check {
 
 function Add-Metric {
     # Informational only -- never counted toward pass/fail. Used for the "reported, not asserted"
-    # timings the coordinator's ruling and the plan's leg 1 both ask for.
+    # timings leg 1 records.
     param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Value)
     Add-Content -LiteralPath $log -Value ("{0}`t{1}`tMETRIC`t{2}`t{3}" -f $RunId, $Name, $Value, (Get-Date -Format o))
     Write-Host ("METRIC {0}  {1}" -f $Name, $Value)
@@ -214,10 +208,8 @@ $script:TrackedPids = New-Object System.Collections.Generic.List[int]
 
 function Start-Tracked {
     # System.Diagnostics.ProcessStartInfo.ArgumentList (not Start-Process -ArgumentList) so every path
-    # argument is quoted correctly by .NET's own argv marshalling -- Start-Process's array form is NOT
-    # reliably per-element-quoted on Windows (measured elsewhere in this repo: tools\Invoke-Row29PeerCheck.ps1
-    # manually double-quotes every path argument for exactly this reason). Mirrors ProcessHubFactory.cs's
-    # own shape.
+    # argument is quoted correctly by .NET's own argv marshalling: Start-Process's array form is NOT
+    # reliably per-element-quoted on Windows. Mirrors ProcessHubFactory.cs's own shape.
     param([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments = @())
     $psi = [System.Diagnostics.ProcessStartInfo]::new($Exe)
     foreach ($a in $Arguments) { $psi.ArgumentList.Add($a) }
@@ -310,7 +302,7 @@ $D = Join-Path $env:TEMP ("chopitup_row12_" + [guid]::NewGuid().ToString('N'))
 $P = Get-FreePort
 $P2 = Get-FreePort -Avoid @(8790, 8795, $P)
 $base = "http://127.0.0.1:$P"
-$localhostBase = "http://localhost:$P"   # POST/import over `localhost`, matching Row29PeerCheck.ps1's own D9 note (Windows resolves [::1] first)
+$localhostBase = "http://localhost:$P"   # POST/import over `localhost`, as Invoke-Row29PeerCheck.ps1 does (Windows resolves [::1] first)
 
 Write-Host "Evidence: $evidenceDir"
 Write-Host "Data dir: $D  Port: $P  Attach port: $P2"
@@ -462,7 +454,7 @@ try {
     Add-Check -Name 'capture.screenshot-saved' -Passed:$false -Detail 'exit=1'
 }
 
-# ===== room discovery (legs 3 and 7 never hardcode "general" -- coordinator ruling) ====================
+# ===== room discovery (legs 3 and 7 never hardcode "general") =========================================
 
 try {
     $rooms = Invoke-OwnerJson -Uri "$base/api/rooms"
@@ -723,19 +715,19 @@ try {
 }
 
 # ===== leg 7: spawn-peer (mandatory) ======================================================================
-# One live tracked spawn (SpawnJobs.LiveCount > 0), reusing the row 29 peer-check-vehicle skill and
-# run_gate mechanism (tools/skills/peer-check-vehicle, tools/Invoke-Row29PeerCheck.ps1's own pattern)
-# rather than inventing a new one. Unlike Row29's own script this never plants a stolen credential --
-# it only needs a live spawn window to exist; present-header.ps1's own gate outcome is irrelevant here
-# (it fails fast with no stolen-mcp.json, which is fine: the CLAUDE.EXE directory spawn itself is what
-# SpawnJobs tracks, for its whole lifetime, independent of what its one gate call does).
+# One live tracked spawn (SpawnJobs.LiveCount > 0), reusing the peer-check-vehicle skill and run_gate
+# mechanism (tools/skills/peer-check-vehicle, tools/Invoke-Row29PeerCheck.ps1's own pattern) rather
+# than inventing a new one. Unlike that script this never plants a stolen credential -- it only needs a
+# live spawn window to exist; present-header.ps1's own gate outcome is irrelevant here (it fails fast
+# with no stolen-mcp.json, which is fine: the CLAUDE.EXE directory spawn itself is what SpawnJobs
+# tracks, for its whole lifetime, independent of what its one gate call does).
 #
-# --import-skill runs AFTER leg 1, not before: ImportSkill's HostCommand calls ChopDb.EnsureDatabase()
-# itself (HostCommands.cs:186-187), which would silently pre-migrate the corpus's v2 database before
-# the shell's hub ever started, zeroing out leg 1's SESSION START -> HUB STATE Ready migration-cost
-# measurement -- exactly what the coordinator's ruling asked to keep honest. HostCommands.ImportSkill
-# does not call HubLock.IsHeld the way RotateToken/SetClasses do, so running it against a data dir a
-# live hub already holds is the tool's own supported shape, not a race this script invented.
+# --import-skill runs AFTER leg 1, not before: HostCommands.ImportSkill calls ChopDb.EnsureDatabase()
+# itself, which would silently pre-migrate the corpus's v2 database before the shell's hub ever
+# started, zeroing out leg 1's SESSION START -> HUB STATE Ready migration-cost measurement.
+# HostCommands.ImportSkill does not call HubLock.IsHeld the way RotateToken/SetClasses do, so running
+# it against a data dir a live hub already holds is the tool's own supported shape, not a race this
+# script invented.
 try {
     $skillSource = Join-Path $RepoRoot 'tools\skills\peer-check-vehicle'
     $skillName = 'peer-check-vehicle'

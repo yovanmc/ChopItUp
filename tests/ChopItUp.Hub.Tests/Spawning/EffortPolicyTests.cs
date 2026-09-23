@@ -3,7 +3,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Milestone 51: the one place the run-effort rule lives (row 19's AC7/D10), so the Roles
+/// <summary>The one place the run-effort rule lives, so the Roles
 /// dialog can show what a row's classes earn without a second copy of the rule drifting from the
 /// launch site. <see cref="EffortPolicy.ForClasses"/> is the configured half (classes only);
 /// <see cref="EffortPolicy.AtLaunch"/> adds the runtime half (inside a run, or its conductor).</summary>

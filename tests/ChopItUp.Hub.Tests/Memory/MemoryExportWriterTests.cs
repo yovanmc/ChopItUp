@@ -62,7 +62,7 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Equal(TargetState.Clean, verdict.State);
     }
 
-    // ---- 2. three consecutive clean exports (pass 2 B1, AC12) --------------------------------
+    // ---- 2. three consecutive clean exports -------------------------------------------------
 
     [Fact]
     public void T3_three_consecutive_clean_exports_all_exit_0_and_leave_exactly_one_reusable_previous()
@@ -144,7 +144,7 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Equal("tampered content", File.ReadAllText(rescuedPath));
     }
 
-    // ---- 5. shrinking store -> timestamped previous, report names the drop (pass 2 B3) -------
+    // ---- 5. shrinking store -> timestamped previous, report names the drop ------------------
 
     [Fact]
     public void T3_a_shrinking_store_between_two_clean_exports_lands_in_a_timestamped_previous_and_the_report_names_the_drop()
@@ -179,7 +179,7 @@ public sealed class MemoryExportWriterTests : IDisposable
     }
 
     // ---- 6. a different store: refuses with both roots, --force does not help, ---------------
-    //         --accept-new-source proceeds after printing the drift list (pass 2 M4)
+    //         --accept-new-source proceeds after printing the drift list
 
     [Fact]
     public void T3_a_different_store_refuses_with_both_roots_stays_refused_under_force_and_accept_new_source_proceeds_after_printing_the_drift_list()
@@ -199,7 +199,7 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Contains(storeB.Root, err1);
 
         var stillRefused = Run(storeB, targetDir, force: true, acceptNewSource: false, out _, out var err2);
-        Assert.Equal(6, stillRefused.ExitCode);   // --force never overrides DifferentSource (D9)
+        Assert.Equal(6, stillRefused.ExitCode);   // --force never overrides DifferentSource
         Assert.Contains(storeA.Root, err2);
 
         // Nothing changed by either refusal.
@@ -235,7 +235,7 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Contains("real.md", err);
     }
 
-    // ---- 8. the refusal's list and the override's list are byte-identical (AC6, pass 2 M10) --
+    // ---- 8. the refusal's list and the override's list are byte-identical --------------------
 
     [Fact]
     public void T3_the_refusals_affected_path_list_and_the_overrides_are_byte_identical()
@@ -284,11 +284,11 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Equal(before, File.ReadAllText(exportedFile));   // target byte-identical to before the attempt
         Assert.NotEmpty(err);
 
-        // Findings-ledger item 2 (row 24 pass 2): the target must never hold files its manifest does
-        // not describe after a failed attempt. The writer never got as far as exposing the stage to
-        // the target on this path (it deletes the stage instead - see the comment at the failure site
-        // in MemoryExportWriter.Run), so the target's ORIGINAL manifest, from the first successful
-        // export, must still verify Clean - not Drifted, not Unreadable, not Foreign.
+        // The target must never hold files its manifest does not describe after a failed attempt.
+        // The writer never got as far as exposing the stage to the target on this path (it deletes
+        // the stage instead; see the comment at the failure site in MemoryExportWriter.Run), so the
+        // target's original manifest, from the first successful export, must still verify Clean:
+        // not Drifted, not Unreadable, not Foreign.
         var manifestAfterFailure = ExportManifest.TryRead(targetDir);
         var verdictAfterFailure = ExportManifest.Verify(manifestAfterFailure, targetDir, store);
         Assert.Equal(TargetState.Clean, verdictAfterFailure.State);
@@ -300,7 +300,7 @@ public sealed class MemoryExportWriterTests : IDisposable
         Assert.Empty(staleStages);
     }
 
-    // ---- 10. the target is mutated between step 2 and step 5, run aborts (pass 2 M6) ---------
+    // ---- 10. the target is mutated between step 2 and step 5, run aborts ---------------------
 
     [Fact]
     public void T3_the_target_mutated_between_verify_and_swap_aborts_the_run()
@@ -308,8 +308,8 @@ public sealed class MemoryExportWriterTests : IDisposable
         // Nothing in MemoryStore is virtual, so there is no way to make Render() itself mutate the
         // target as a side effect. MemoryExportWriter exposes an internal test-only hook (Run's extra
         // overload, InternalsVisibleTo) that fires right after step 2's initial Verify and before
-        // staging - exactly the seam pass 2 M6 is about: D11 stops the hub, not a vendor session
-        // writing into the target between steps 2 and 5.
+        // staging: stopping the hub does not stop a vendor session writing into the target between
+        // steps 2 and 5.
         var store = NewStore(NewDir("t10-store"));
         store.Append("user", "A", "Body A.", "prov");
         var targetDir = NewDir("t10-target", create: false);
@@ -388,11 +388,11 @@ public sealed class MemoryExportWriterTests : IDisposable
         var exportedFile = Directory.EnumerateFiles(targetDir, "*.md").First(f => !f.EndsWith("MEMORY.md", StringComparison.OrdinalIgnoreCase));
         File.WriteAllText(exportedFile, "tampered content");
 
-        // Two independent non-reusable replacements of the same target, back to back: a --force
-        // over drift, then an --accept-new-source over a different source (D8's own example of the
-        // road that reaches this). Run immediately one after the other so they land in the same
-        // second-granularity timestamp far more often than not, which is exactly the window the
-        // pre-fix code collided in and Directory.Move threw onto an existing destination.
+        // Two independent non-reusable replacements of the same target, back to back: a --force over
+        // drift, then an --accept-new-source over a different source. Run immediately one after the
+        // other so they land in the same second-granularity timestamp far more often than not, which
+        // is exactly the window where a plain timestamped name would collide and Directory.Move would
+        // throw onto an existing destination.
         var r1 = Run(storeA, targetDir, force: true, acceptNewSource: false, out _, out var e1);
         var r2 = Run(storeB, targetDir, force: false, acceptNewSource: true, out _, out var e2);
 
@@ -463,9 +463,8 @@ public sealed class MemoryExportWriterTests : IDisposable
     }
 
     // ---- 16. the SECOND move (stage into place) fails AFTER the target has already been moved
-    //          aside (AC8): the writer attempts to restore it, and the reported state comes from a
-    //          FRESH Directory.Exists check afterward, never from what it assumed going in (pass 2
-    //          M14) -----------------------------------------------------------------------------
+    //          aside: the writer attempts to restore it, and the reported state comes from a FRESH
+    //          Directory.Exists check afterward, never from what it assumed going in -----------------
 
     [Fact]
     public void T3_a_failure_after_the_target_is_moved_aside_restores_it_and_reports_a_fresh_existence_check()

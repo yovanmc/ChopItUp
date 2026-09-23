@@ -33,9 +33,9 @@ public sealed record ExchangeView(
 public enum ExchangeStopOutcome { Stopped, NotFound, NothingToStop, RunOwnsRoom }
 
 /// <summary>What the UI and the API see. <see cref="Status"/> is <c>idle</c>, <c>open</c>,
-/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> (row 27) is the
-/// wire name of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>),
-/// mapped by name so an enum reordering never silently changes the JSON; null until stopped.
+/// <c>concluded</c>, <c>superseded</c> or <c>stopped</c>. <see cref="StoppedBy"/> is the wire name
+/// of the <see cref="ExchangeStopCause"/> that stopped it (<c>owner</c> or <c>run</c>), mapped by
+/// name so an enum reordering never silently changes the JSON; null until stopped.
 /// <see cref="Exchanges"/> lists every exchange the room still holds, in the order they were opened; a
 /// reply that reopens one moves it to the end. The top-level fields describe the newest open one, else
 /// the newest.</summary>
@@ -44,13 +44,13 @@ public sealed record ExchangeSnapshot(
     IReadOnlyList<string> InFlight, IReadOnlyList<string> Pending, long Seq = 0, string? StoppedBy = null, IReadOnlyList<ExchangeView>? Exchanges = null, bool Continuable = false,
     IReadOnlyDictionary<string, DateTimeOffset>? InFlightStartedAt = null, string? Mode = null, IReadOnlyList<string>? ModeParticipants = null, bool Preparing = false);
 
-/// <summary>The spawner (M5). One loop, one thread of control: posts, completions, stop requests and
-/// timer ticks are one FIFO channel, handled in order; after each batch the loop launches whatever
+/// <summary>One loop, one thread of control: posts, completions, stop requests and timer ticks are
+/// one FIFO channel, handled in order; after each batch the loop launches whatever
 /// <see cref="ExchangePolicy.Due"/> says and arms a timer for the next moment anything could become
-/// due. State is per room, in memory (plan decision 3). Notes go into the room as the hub
-/// participant; the launch itself goes through <see cref="IProcessRunner"/> so tests never start a
-/// CLI. Nothing here reads a token out to a log: the only places a token goes are the per-spawn
-/// <c>mcp.json</c> and the Codex environment, and every quoted output is scrubbed first.</summary>
+/// due. State is per room, in memory. Notes go into the room as the hub participant; the launch
+/// itself goes through <see cref="IProcessRunner"/> so tests never start a CLI. Nothing here reads a
+/// token out to a log: the only places a token goes are the per-spawn <c>mcp.json</c> and the Codex
+/// environment, and every quoted output is scrubbed first.</summary>
 public sealed partial class SpawnerService : BackgroundService
 {
     private abstract record Event;
@@ -59,12 +59,11 @@ public sealed partial class SpawnerService : BackgroundService
     private sealed record StopEvent(string RoomId, TaskCompletionSource<ExchangeSnapshot?> Reply) : Event;
     private sealed record StopOneEvent(string RoomId, long RootMessageId, TaskCompletionSource<(ExchangeStopOutcome, ExchangeSnapshot?)> Reply) : Event;
     private sealed record TickEvent : Event;
-    // Row 35: a worktree close finished off the loop thread; carries the note to post (or null).
+    // A worktree close finished off the loop thread; carries the note to post (or null).
     private sealed record WorktreeClosedEvent(string RoomId, string? Note) : Event;
 
-    /// <summary>What the trail did around one spawn in a directory room (M9 decision 6); null when the
-    /// room has no directory. <see cref="Leased"/> (row 35) is true when the spawn body ran in a
-    /// leased worktree.</summary>
+    /// <summary>What the trail did around one spawn in a directory room; null when the room has no
+    /// directory. <see cref="Leased"/> is true when the spawn body ran in a leased worktree.</summary>
     private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved, bool Leased = false);
 
     private sealed class SpawnHandle
@@ -77,10 +76,9 @@ public sealed partial class SpawnerService : BackgroundService
         public required string Token { get; init; }
         public required CancellationTokenSource Cancel { get; init; }
         public string? Directory { get; init; }
-        // Row 19, task 9c: captured AT LAUNCH (Launch reads _runs.Active once, before this handle
-        // exists), never re-derived once the spawn's own task body or OnFinished runs - a run can
-        // park or end while its spawn is still alive, and the two "did not reply in time" notes at
-        // OnFinished must describe the SAME timeout the spawn was actually given.
+        // Captured at launch, never re-derived later: a run can park or end while its spawn is still
+        // alive, and the "did not reply in time" notes at OnFinished must describe the timeout the
+        // spawn was actually given.
         public required TimeSpan Timeout { get; init; }
         // The chip becomes "working" at Launch, before optional git preparation. This is elapsed
         // working time, not a claim about model execution or billable time.
@@ -88,15 +86,14 @@ public sealed partial class SpawnerService : BackgroundService
         public Task Run { get; set; } = Task.CompletedTask;
         public bool Posted { get; set; }
         public List<string> PostedTexts { get; } = new();
-        // Row 35: true when this spawn runs in its exchange's own worktree rather than the room
-        // directory itself.
+        // True when this spawn runs in its exchange's own worktree rather than the room directory.
         public bool InWorktree { get; init; }
     }
 
     public const string ChangedEvent = "ExchangeChanged";
     private const int NoteReplyChars = 4_000;
     private const int NoteStderrChars = 600;
-    // Row 35: a worktree lease refusal reported back through ProcessResult.StandardError, so OnFinished
+    // A worktree lease refusal reported back through ProcessResult.StandardError, so OnFinished
     // (loop thread) can tell it apart from every other "no CLI ran" shape and post the dedicated note.
     private const string WorktreeRefused = "the exchange's worktree could not be created: ";
 
@@ -114,9 +111,9 @@ public sealed partial class SpawnerService : BackgroundService
     private readonly RoomTrails _trails;
     private readonly ExchangeWorktrees _worktrees;
     private readonly Participant _owner;
-    // Row 14, task 4 (D-c): the roster (_roster) stays the startup-static snapshot for identity, peers
-    // and tokens, but role and persona text must reflect a web-UI edit without a hub restart, so this
-    // is read live at launch time via _participants.EffectiveRole, never off _roster.
+    // _roster stays the startup snapshot for identity, peers and tokens, but role and persona text
+    // must reflect a web-UI edit without a hub restart, so they are read live at launch through
+    // _participants.EffectiveRole.
     private readonly ParticipantStore _participants;
     private readonly ExchangePolicy _policy;
     private readonly SkillStore _skills;
@@ -128,42 +125,39 @@ public sealed partial class SpawnerService : BackgroundService
     // Every exchange the loop still holds per room, oldest first. The newest is "the room's exchange"
     // for the run machinery and the top-level snapshot.
     private readonly Dictionary<string, List<Exchange>> _rooms = new(StringComparer.Ordinal);
-    // Row 36: the last JoinableKept exchanges an owner prompt opened per room, oldest first, whatever
-    // their status, so an owner reply finds its exchange after AddExchange pruned it from _rooms. Run
+    // The last JoinableKept exchanges an owner prompt opened per room, oldest first, whatever their
+    // status, so an owner reply finds its exchange after AddExchange pruned it from _rooms. Run
     // exchanges are never here: a reply never reopens a conductor's or its workers' exchange.
     private readonly Dictionary<string, List<Exchange>> _joinable = new(StringComparer.Ordinal);
     internal const int JoinableKept = 50;
-    // Row 19, task 6: messages posted by a human inside an active run, waiting for the conductor's
-    // next trigger set. Empty until task 6 populates it; DriveRun (task 5) already drains it whenever
-    // an OpenConductor decision consumes it, so the two tasks never have to touch this line twice.
+    // Messages posted by a human inside an active run, waiting for the conductor's next trigger set.
+    // DriveRun drains it whenever an OpenConductor decision consumes it.
     private readonly Dictionary<string, List<long>> _steers = new(StringComparer.Ordinal);
     private readonly Dictionary<(string Room, string Participant), SpawnHandle> _inFlight = new();
-    // Row 19, task 8 (pass 2's F-2): the two per-phase counters RunState reports, kept here because
-    // they are cheap in-memory state with no durable meaning (Architecture, plan). Keyed by run id
-    // only, not (run, phase) - EnterPhase resets BOTH to 0 on every accepted post, not only on a tag
-    // change (F-22), so a stale count from an earlier phase can never leak into a later one.
+    // The two per-phase counters RunState reports, in memory because they have no durable meaning.
+    // Keyed by run id only, not (run, phase): EnterPhase resets both on every accepted post, not only
+    // on a tag change, so a stale count from an earlier phase never leaks into a later one.
     private readonly Dictionary<long, int> _refusalsThisPhase = new();
     private readonly Dictionary<long, int> _silencesThisPhase = new();
-    // Row 19, task 9b (pass 2's F-7): the instant each active run was last known BUSY (exchange
-    // open or something in flight), so ArmWake can arm a bounded stall wake at
-    // "SpawnTimeout after that instant" rather than "SpawnTimeout after ArmWake happened to run" -
-    // the latter would let an unrelated room's activity (which re-runs ArmWake for every room) push
-    // a genuinely stalled run's deadline forward forever. Cleared whenever the run is next observed
-    // busy, or is no longer active (park/end) - see ArmWake.
+    // The instant each active run was last known busy (exchange open or something in flight), so
+    // ArmWake arms the stall wake at "SpawnTimeout after that instant", not "SpawnTimeout after
+    // ArmWake ran". The latter would let another room's activity (which re-runs ArmWake for every
+    // room) push a stalled run's deadline forward forever. Cleared when the run is next seen busy or
+    // stops being active (park/end).
     private readonly Dictionary<long, DateTimeOffset> _lastRunActivity = new();
     private readonly Dictionary<string, DateTimeOffset> _lastStart = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCli> _clis = new(StringComparer.Ordinal);
     private CancellationTokenSource? _wake;
-    // Row 35: worktree closes running off the loop thread, swept lazily in CloseIdleWorktrees
-    // and waited on (briefly) at shutdown.
+    // Worktree closes running off the loop thread, swept lazily in CloseIdleWorktrees and waited on
+    // briefly at shutdown.
     private readonly List<Task> _closing = new();
-    /// <summary>Row 35: every exchange that launched in a worktree and has not been handed to a close
-    /// yet, whether or not it is still in its room's <see cref="_rooms"/> list (a run's <c>replaceAll</c>
+    /// <summary>Every exchange that launched in a worktree and has not been handed to a close yet,
+    /// whether or not it is still in its room's <see cref="_rooms"/> list (a run's <c>replaceAll</c>
     /// can drop one while it is still open - it stays here until it closes or the hub restarts).</summary>
     private readonly List<Exchange> _worktreeExchanges = new();
-    /// <summary>Row 35: rooms with a worktree close running; a room-directory launch waits while its
-    /// room is here.</summary>
+    /// <summary>Rooms with a worktree close running; a room-directory launch waits while its room is
+    /// here.</summary>
     private readonly HashSet<string> _closingRooms = new(StringComparer.Ordinal);
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
@@ -188,18 +182,17 @@ public sealed partial class SpawnerService : BackgroundService
     private int _live;
 
     /// <summary>True while any spawn process of any room may be alive. Counted at the launch and the
-    /// finish themselves, not read off <c>_snapshots</c> (which <c>Publish</c> writes after the launch —
-    /// critique pass 2, P2-4). A spawn process exists only inside this window, so a memory decision
-    /// refused while it is true can never have come from one (M10, plan decision 13).</summary>
+    /// finish themselves, not read off <c>_snapshots</c> (which <c>Publish</c> writes after the
+    /// launch). A spawn process exists only inside this window, so a memory decision refused while it
+    /// is true can never have come from one.</summary>
     public bool AnySpawnInFlight => Volatile.Read(ref _live) > 0 || Volatile.Read(ref _preparingPanels) > 0;
 
-    /// <summary>The owner's stop for a room, and since row 19 (task 13) not an exchange stop only:
-    /// when the room has an active or a parked run, this ends the RUN through <see cref="EndRun"/>
-    /// whether or not an exchange is open — see <see cref="OnStop"/>, which decides. With no run it is
-    /// the older behaviour: kill the room's in-flight spawns, drop the pending ones, close the open
-    /// exchange, post the note. Returns the new snapshot, or null when there was nothing to stop at
-    /// all — no run, no open exchange and no spawn still running (the API turns that into a 409) — or
-    /// when the service is shutting down and the event can no longer be queued.</summary>
+    /// <summary>The hub owner's stop for a room. When the room has an active or a parked run, this ends
+    /// the run through <see cref="EndRun"/> whether or not an exchange is open (see
+    /// <see cref="OnStop"/>, which decides). With no run it kills the room's in-flight spawns, drops
+    /// the pending ones, closes the open exchange and posts the note. Returns the new snapshot, or
+    /// null when there was nothing to stop (no run, no open exchange, no spawn running; the API turns
+    /// that into a 409) or when the service is shutting down and the event cannot be queued.</summary>
     public async Task<ExchangeSnapshot?> StopAsync(string roomId)
     {
         var reply = new TaskCompletionSource<ExchangeSnapshot?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -243,11 +236,11 @@ public sealed partial class SpawnerService : BackgroundService
             try { handle.Cancel.Cancel(); } catch (ObjectDisposedException) { }   // the hub is going down; do not leave CLIs running
         }
         // Wait for the tree kills to land (they run on the launch tasks) so a Ctrl+C on a dev hub does
-        // not leave a CLI posting into a room after the hub is gone (critique pass 2, m5).
+        // not leave a CLI posting into a room after the hub is gone.
         try { await Task.WhenAll(_inFlight.Values.Select(h => h.Run)).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
         catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some spawns did not stop within 10 s of shutdown"); }
-        // Row 35: worktree closes run off this loop entirely (Task.Run, not an _inFlight spawn),
-        // so they need their own short wait here or a Ctrl+C could leave one mid-merge.
+        // Worktree closes run off this loop entirely (Task.Run, not an _inFlight spawn), so they need
+        // their own short wait here or a Ctrl+C could leave one mid-merge.
         try { await Task.WhenAll(_closing.ToList()).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
         catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some worktree closes did not finish within 10 s of shutdown"); }
     }
@@ -258,19 +251,18 @@ public sealed partial class SpawnerService : BackgroundService
     {
         try
         {
-            // Decision 6's crash window: the hub may have died between the CLI exiting and the
-            // after-spawn commit. A log line for the owner to look at, never a commit and never a note
-            // — the next spawn's pre-commit sweeps it in as the owner, as documented.
+            // Crash window: the hub may have died between the CLI exiting and the after-spawn commit.
+            // A log line for the hub owner to look at, never a commit and never a note; the next spawn's
+            // pre-commit sweeps it in as the hub owner.
             foreach (var room in _store.ListRooms(includeArchived: true))
             {
                 if (room.Directory is null) continue;
                 if (await _trails.For(room.Directory).IsDirtyAsync(stoppingToken))
                     Console.Error.WriteLine($"room {room.Id}: {room.Directory} has uncommitted changes at startup (a spawn may have ended without its commit); the next spawn commits them as the owner");
-                // Row 35: a previous hub process may have died with an exchange worktree still
-                // registered (or its own exchange merge left mid-flight) - commit, remove and report
-                // before this room can launch anything. Wrapped so one room's recovery failing can never
-                // stop the whole host (this loop runs before Guarded's own try/catch exists to help)
-                // and never prevents the rest of the rooms from being recovered in turn.
+                // A previous hub process may have died with an exchange worktree still registered
+                // (or its merge mid-flight): commit, remove and report before this room can launch.
+                // Wrapped so one room's recovery failing never stops the host (this runs before
+                // Guarded exists to help) or the recovery of the other rooms.
                 try
                 {
                     var recovered = await _worktrees.RecoverAsync(room.Directory, stoppingToken);
@@ -292,8 +284,8 @@ public sealed partial class SpawnerService : BackgroundService
     }
 
     /// <summary>The loop is the hub's only spawner; an exception escaping it would stop the whole
-    /// host (BackgroundServiceExceptionBehavior.StopHost, the default — critique pass 1, B3). A
-    /// SQLITE_BUSY on a note, a bad room, a launch that throws: logged, and the loop goes on.</summary>
+    /// host (BackgroundServiceExceptionBehavior.StopHost, the default). A SQLITE_BUSY on a note, a bad
+    /// room, a launch that throws: logged, and the loop goes on.</summary>
     private static void Guarded(Action step, string what)
     {
         try { step(); }
@@ -330,11 +322,11 @@ public sealed partial class SpawnerService : BackgroundService
         }
     }
 
-    /// <summary>Row 35: hands each closed, idle worktree exchange of <paramref name="roomId"/>
-    /// to <see cref="ExchangeWorktrees.CloseAsync"/>, one at a time per room, off the loop thread. Does
-    /// nothing (to be retried by a later call - <see cref="OnFinished"/>, <see cref="Publish"/> and
-    /// <see cref="AddExchange"/> all call this) while a close of this room already runs, or while any
-    /// spawn is in flight in the room directory itself (its before-commit must never race a close's own
+    /// <summary>Hands each closed, idle worktree exchange of <paramref name="roomId"/> to
+    /// <see cref="ExchangeWorktrees.CloseAsync"/>, one at a time per room, off the loop thread. Does
+    /// nothing (a later call from <see cref="OnFinished"/>, <see cref="Publish"/> or
+    /// <see cref="AddExchange"/> retries) while a close of this room already runs, or while any spawn
+    /// is in flight in the room directory itself (its before-commit must never race a close's own
     /// commit of the same tree).</summary>
     private void CloseIdleWorktrees(string roomId)
     {
@@ -356,23 +348,20 @@ public sealed partial class SpawnerService : BackgroundService
                     RoomCommits.OwnerMessage(_owner, roomId)), CancellationToken.None);
             }
             catch (Exception e) { note = $"Exchange #{root}: its worktree could not be closed: {e.GetType().Name}: {e.Message}"; }
-            // The event channel is closed once the hub starts shutting down (StopAsync), and this close
-            // may still be running past that point - the note it carries would otherwise be silently
-            // dropped with no record of it anywhere.
+            // The event channel closes once the hub starts shutting down, and this close may still be
+            // running past that point; without this the note it carries would be dropped unrecorded.
             if (!_events.Writer.TryWrite(new WorktreeClosedEvent(roomId, note)) && note is not null)
                 Console.Error.WriteLine($"room {roomId}: the hub was shutting down; a worktree close finished with a note that was not posted: {note}");
         }));
     }
 
-    /// <summary>Row 19, task 9b: the periodic wake ArmWake arms (the wall-clock deadline, or the
-    /// bounded stall wake) fires as a bare <see cref="TickEvent"/> with no room of its own - unlike
-    /// the steer branch's immediate, single-run <c>DriveRun(runRow, Tick)</c> call (task 6), this
-    /// checks EVERY active run, because one shared timer can be the earliest deadline for any of
-    /// them. <see cref="RunPolicy"/>'s rows 1/2 (checked first, for every event) are what actually
-    /// makes this useful: a run that is still busy gets <see cref="RunDecision.Nothing"/> here
-    /// unless it has separately spent a hard cap, in which case THIS is what parks it (pass 2's
-    /// F-7 - without a Tick ever reaching a busy-but-capped run, row 19's stall park and AC8's
-    /// wall-clock park while idle are both unreachable in production).</summary>
+    /// <summary>The periodic wake ArmWake arms (the wall-clock deadline, or the bounded stall wake)
+    /// fires as a bare <see cref="TickEvent"/> with no room of its own, so unlike the steer branch's
+    /// single-run <c>DriveRun(runRow, Tick)</c> this checks every active run: one shared timer can be
+    /// the earliest deadline for any of them. <see cref="RunPolicy"/>'s hard-cap checks (first, for
+    /// every event) make this useful: a busy run gets <see cref="RunDecision.Nothing"/> unless it has
+    /// spent a hard cap, in which case this is what parks it. Without a Tick reaching a busy capped
+    /// run, the stall park and the wall-clock park while idle would be unreachable.</summary>
     private void OnTick()
     {
         foreach (var run in _runs.ListActive()) DriveRun(run, new RunEvent.Tick());
@@ -381,7 +370,7 @@ public sealed partial class SpawnerService : BackgroundService
     private void OnMessage(Message m)
     {
         if (!RememberSignal(m.Id)) return;
-        // Row 42: an imported turn is history. It was stored and announced like any message (browsers,
+        // An imported turn is history. It was stored and announced like any message (browsers,
         // wait_for_message), but nothing in it is addressed to anyone now: no mention, skill, /stop or
         // steer inside it reaches a run or the policy. Decided here, at the loop's one message entry,
         // ahead of every branch below.
@@ -401,9 +390,8 @@ public sealed partial class SpawnerService : BackgroundService
         // A spawn's post belongs to the exchange that launched it. Outside a run its mentions count
         // while that exchange is open and still held for the room, so two side-by-side exchanges never
         // feed each other and a run exchange dropped when the run moved on stays mute after the run
-        // ends. Inside a run
-        // the room keeps one current exchange (the newest): a conductor's later post, after it rooted
-        // a workers exchange, is prose.
+        // ends. Inside a run the room keeps one current exchange (the newest): a conductor's later
+        // post, after it rooted a workers exchange, is prose.
         bool acceptMentions = true;
         Exchange? target;
         if (_inFlight.TryGetValue((m.RoomId, m.AuthorId), out var handle))
@@ -411,41 +399,37 @@ public sealed partial class SpawnerService : BackgroundService
             handle.Posted = true;
             handle.Exchange.MessageIds.Add(m.Id);
             target = handle.Exchange;
-            // Row 44 (D-c): a synthesis spawn's post lands and is a member (it is still the exchange's
-            // last model post), but hands nothing on - it is the addressee's own wrap-up, not a fresh
-            // hand-off.
+            // A synthesis spawn's post lands and is a member (it is still the exchange's last model
+            // post), but hands nothing on: it is the addressee's own wrap-up, not a fresh hand-off.
             acceptMentions = handle.Request.Reason != SpawnReason.Synthesis && (activeRun is null
                 ? handle.Exchange.Status == ExchangeStatus.Open && exchanges.Contains(handle.Exchange)
                 : ReferenceEquals(handle.Exchange, newest));
         }
         else target = activeRun is not null ? newest : AppBackedTarget(m.RoomId, m);
-        // Row 19's clock seam (task 2b): OnMessage is the run-start site (task 4's _runs.Start reads
-        // this same instant), so it goes through the injected clock; LaunchDue/ArmWake stay on the
-        // real wall clock until a run path needs them too.
+        // OnMessage is the run-start site (_runs.Start reads this same instant), so it goes through
+        // the injected clock; LaunchDue/ArmWake stay on the real wall clock.
         var now = _clock.GetUtcNow();
         var skill = ResolveSkill(m);
         var startsRun = skill is SkillResolution.Found found && found.Skill.IsRun;
         var run = activeRun is not null ? new RunContext(activeRun.Id, activeRun.ConductorId, activeRun.Phase) : null;
 
-        // Row 19, task 8 (AC4/AC6): the conductor's own post, while its exchange is still this room's
-        // CURRENT one (acceptMentions - a later post from the same spawn, after it has already
-        // rooted, is prose and falls through to the ordinary branches below, never refused - pass 1's
-        // M1). Bypasses ExchangePolicy.OnMessage's ordinary model branch entirely: that method knows
-        // nothing about phases or classes, and P7 keeps every run DECISION inside RunPolicy.
+        // The conductor's own post, while its exchange is still this room's current one
+        // (acceptMentions; a later post from the same spawn, after it has rooted, is prose and falls
+        // through to the ordinary branches below, never refused). Bypasses ExchangePolicy.OnMessage's
+        // model branch entirely: that method knows nothing about phases or classes, and every run
+        // decision stays inside RunPolicy.
         if (activeRun is not null && acceptMentions && m.AuthorId == activeRun.ConductorId)
         {
             HandleConductorPost(activeRun, m, now);
             return;
         }
 
-        // Row 19, task 13 (AC11, pass 2's F-9): step 1 of the ordered human branch, checked before
-        // anything below can post a note or touch a run's status. Ends an active OR parked run
-        // outright, through the SAME RunPolicy.Decide path every other transition takes (P7) - never
-        // resuming it first (RunPolicy's rows 1/2 are skipped for StopRequested, so a hard-capped
-        // park gets End, not Park - the state AC11 most needs this to work on). With no run in this
-        // room, RunCommands.IsStop still matched but there is nothing to stop; falling through to
-        // ResolveSkill's ordinary result would read as "no skill named '/stop'", which names the
-        // wrong problem - a dedicated note says directly that there was nothing to stop.
+        // Step 1 of the ordered human branch, checked before anything below can post a note or touch
+        // a run's status. Ends an active or parked run outright through the same RunPolicy.Decide path
+        // every other transition takes, never resuming it first (RunPolicy's hard-cap checks are
+        // skipped for StopRequested, so a hard-capped park gets End, not Park). With no run in this
+        // room there is nothing to stop; falling through to ResolveSkill would read as "no skill named
+        // '/stop'", which names the wrong problem, so a dedicated note says so directly.
         if (RunCommands.IsStop(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var stoppable = activeRun ?? (_runs.Latest(m.RoomId) is { Status: RunStatus.Parked } parkedForStop ? parkedForStop : null);
@@ -458,11 +442,10 @@ public sealed partial class SpawnerService : BackgroundService
             return;
         }
 
-        // Row 19, task 4 (pass 2's F-9), steps 2-3 of the ordered human branch: these two refusals
-        // need RunStore.Latest, which ExchangePolicy (pure) never reads - decided here, before the
-        // policy is consulted at all, so a run-start invocation can never land on top of an active OR
-        // a parked run (ux_runs_one_active_per_room only guards 'active'; a second Start against a
-        // parked room would otherwise succeed and leave two run rows for one room).
+        // Steps 2-3 of the ordered human branch: these two refusals need RunStore.Latest, which the
+        // pure ExchangePolicy never reads, so they are decided here before the policy is consulted. A
+        // run-start never lands on top of an active or a parked run (ux_runs_one_active_per_room only
+        // guards 'active'; a second Start against a parked room would leave two run rows for one room).
         if (startsRun)
         {
             if (activeRun is not null)
@@ -478,18 +461,14 @@ public sealed partial class SpawnerService : BackgroundService
             }
         }
 
-        // Row 19, task 9f (AC15), restored to P7 (orchestrator diff-review finding): a human post
-        // that reaches here has no active run in this room (the conductor-post branch above only
-        // fires when one exists, and startsRun's own checks just above already returned for an
+        // A human post that reaches here has no active run in this room (the conductor-post branch
+        // only fires when one exists, and startsRun's checks above already returned for an
         // active-or-parked room) and is not itself a run-start. If the room's most recent run is
-        // PARKED, this is exactly AC15's resume - decided through RunPolicy.Decide like every other
-        // transition, never here (P7: "nothing else in this row may hold run decisions"). The two
-        // misfires the original bypass worked around are now fixed at their source instead of routed
-        // around: RunPolicy.Decide's rows 1/2 only apply to a Status == Active run (a parked run
-        // cannot trip a cap again), and RunStore.ActiveElapsed freezes while parked, so a soft park's
-        // Elapsed no longer grows for as long as it sits parked (pass 2's F-4). CarryOut resumes
-        // (folding parked_seconds) only when the decision is OpenConductor; a Refuse posts the line
-        // and does nothing else.
+        // parked, this is a resume, decided through RunPolicy.Decide like every other transition.
+        // RunPolicy.Decide's hard-cap checks apply only to an Active run (a parked run cannot trip a
+        // cap again), and RunStore.ActiveElapsed freezes while parked. CarryOut resumes (folding
+        // parked_seconds) only when the decision is OpenConductor; a Refuse posts the line and does
+        // nothing else.
         if (activeRun is null && !startsRun && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var latestForResume = _runs.Latest(m.RoomId);
@@ -500,10 +479,10 @@ public sealed partial class SpawnerService : BackgroundService
             }
         }
 
-        // Row 44 (D-d): a /continue post never reaches the policy's message path (it would resolve as
-        // an unknown skill). Decided here, after the run branches above: a parked run resumes on it
-        // like on any human post, an active run refuses it, and outside runs it targets the exchange the
-        // message replies to, else the last owner-rooted one in room order (the room list is what Reopen
+        // A /continue post never reaches the policy's message path (it would resolve as an unknown
+        // skill). Decided here, after the run branches above: a parked run resumes on it like on any
+        // human post, an active run refuses it, and outside runs it targets the exchange the message
+        // replies to, else the last owner-rooted one in room order (the room list is what Reopen
         // moves a reopened exchange to the end of; the remembered list only knows the opening order).
         if (ExchangeCommands.IsContinue(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
@@ -564,17 +543,17 @@ public sealed partial class SpawnerService : BackgroundService
             return;
         }
 
-        // Row 19, task 6 (AC5): a human post inside an active run that did not start a new one is a
-        // steer. ExchangePolicy already left the room's exchanges untouched above (its own step 3);
-        // this is the impure half - record it, tell the owner, and if the conductor is idle, wake it now.
+        // A human post inside an active run that did not start a new one is a steer. ExchangePolicy
+        // already left the room's exchanges untouched above; this is the impure half: record it, tell
+        // the hub owner, and if the conductor is idle, wake it now.
         if (run is not null && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
             var runRow = activeRun!;
             var pending = _steers.TryGetValue(m.RoomId, out var list) ? list : (_steers[m.RoomId] = new List<long>());
             pending.Add(m.Id);
             var state = AssembleRunState(runRow);
-            // Table row 14: Nothing while active. Routed through the policy anyway (P7) rather than
-            // assumed by the service, even though the only reachable outcome here is a no-op.
+            // Nothing while active. Routed through the policy anyway rather than assumed by the
+            // service, even though the only reachable outcome here is a no-op.
             CarryOut(runRow, _runPolicy.Decide(state, new RunEvent.HumanPosted(m.Id), pending));
             PostNote(m.RoomId, $"Steer noted; @{run.ConductorId} is given it when the current exchange concludes.");
             if (!state.ExchangeOpen && !state.AnythingInFlight) DriveRun(runRow, new RunEvent.Tick());
@@ -582,12 +561,10 @@ public sealed partial class SpawnerService : BackgroundService
     }
 
     /// <summary>Everything <see cref="RunPolicy"/> needs to know about <paramref name="run"/> right
-    /// now, assembled from the store and the loop's own in-memory state (row 19, tasks 5/6/8).
-    /// <see cref="RunState.RefusalsThisPhase"/> is written by <see cref="HandleConductorPost"/> (task
-    /// 8); <see cref="RunState.SilencesThisPhase"/> stays 0 here until task 10 raises
-    /// <c>SpawnSilent</c> and writes it - both counters share the same reset rule (EnterPhase clears
-    /// them together, F-22), which is why they live in sibling dictionaries rather than one each
-    /// wired up independently.</summary>
+    /// now, assembled from the store and the loop's own in-memory state.
+    /// <see cref="RunState.RefusalsThisPhase"/> is written by <see cref="HandleConductorPost"/> and
+    /// <see cref="RunState.SilencesThisPhase"/> by <see cref="HandleSpawnSilent"/>. Both counters
+    /// share one reset rule (EnterPhase clears them together).</summary>
     private RunState AssembleRunState(Run run) => new(
         run.Id, run.RoomId, run.ConductorId, run.Status, run.CapSpent,
         run.Phase, _runs.PhaseEntries(run.Id),
@@ -597,9 +574,8 @@ public sealed partial class SpawnerService : BackgroundService
         AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
         RootMessageId: run.RootMessageId);
 
-    /// <summary>Row 19, task 7 (AC9): what the prompt shows about the run a spawn is launched inside.
-    /// Read fresh at every launch, never cached, so a re-spawned conductor sees the counters as they
-    /// stand right now rather than as they stood when the run started.</summary>
+    /// <summary>What the prompt shows about the run a spawn is launched inside. Read fresh at every
+    /// launch, never cached, so a re-spawned conductor sees the counters as they stand now.</summary>
     private RunView BuildRunView(Run run, string participantId, DateTimeOffset now) => new(
         run.Id, run.ConductorId, participantId == run.ConductorId, run.SkillName, run.Arguments,
         run.Phase, _runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase), _runLimits.PhaseEntries,
@@ -607,9 +583,8 @@ public sealed partial class SpawnerService : BackgroundService
         RunStore.ActiveElapsed(run, now), _runLimits.WallClock,
         _runs.Artifacts(run.Id), _runs.GateRuns(run.Id));
 
-    /// <summary>Assembles the state, asks <see cref="RunPolicy"/>, carries the decision out - never
-    /// decided here (P7) - and drains this room's pending steers when the decision consumed them
-    /// (row 19, tasks 5/6).</summary>
+    /// <summary>Assembles the state, asks <see cref="RunPolicy"/>, carries the decision out (never
+    /// decided here) and drains this room's pending steers when the decision consumed them.</summary>
     private void DriveRun(Run run, RunEvent ev)
     {
         var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
@@ -618,18 +593,12 @@ public sealed partial class SpawnerService : BackgroundService
         if (decision is RunDecision.OpenConductor) pending.Clear();
     }
 
-    /// <summary>What <see cref="RunPolicy"/> decided, carried out. <see cref="RunDecision.Nothing"/>,
-    /// <see cref="RunDecision.OpenConductor"/> (tasks 4-6), <see cref="RunDecision.OpenWorkers"/>,
-    /// <see cref="RunDecision.RefuseAndAsk"/>, <see cref="RunDecision.Park"/> (task 8/9) and
-    /// <see cref="RunDecision.Refuse"/> (task 9f, restored to P7) are wired; <see cref="RunDecision.End"/>
-    /// is a later task's (13), so this fails loudly rather than silently if it is reached before its
-    /// task lands.
+    /// <summary>What <see cref="RunPolicy"/> decided, carried out.
     ///
     /// <see cref="RunDecision.OpenConductor"/> resumes first when <paramref name="run"/> is still
-    /// PARKED (row 15/AC15's only caller): <see cref="RunStore.Resume"/> folds the whole parked
-    /// interval into <c>parked_seconds</c> and flips the row to active before the exchange opens -
-    /// every other caller of this arm (tasks 4-6, 8, 10) already holds an ACTIVE run, so the check is
-    /// a no-op for them.</summary>
+    /// parked: <see cref="RunStore.Resume"/> folds the whole parked interval into
+    /// <c>parked_seconds</c> and flips the row to active before the exchange opens. Every other
+    /// caller of this arm already holds an active run, so the check is a no-op for them.</summary>
     private void CarryOut(Run run, RunDecision decision)
     {
         switch (decision)
@@ -644,14 +613,13 @@ public sealed partial class SpawnerService : BackgroundService
                 OpenWorkersExchange(run, ow);
                 break;
             case RunDecision.RefuseAndAsk ra:
-                // "Ask it once more" needs nothing further here: the conductor's OWN exchange is
+                // "Ask it once more" needs nothing further here: the conductor's own exchange is
                 // still open with it in flight (a refusal never touches _rooms), so when its spawn
-                // eventually exits, task 5's ExchangeConcluded handling re-spawns it with this note as
-                // the trigger (table row 8) - the natural loop already does the asking.
+                // exits, the ExchangeConcluded handling re-spawns it with this note as the trigger.
                 PostNote(run.RoomId, ra.Note);
                 break;
             case RunDecision.Refuse rf:
-                // Row 16 (AC15): post the line and do nothing else - never resumed (P7).
+                // Post the line and do nothing else: never resumed.
                 PostNote(run.RoomId, rf.Note);
                 break;
             case RunDecision.Park park:
@@ -665,14 +633,13 @@ public sealed partial class SpawnerService : BackgroundService
         }
     }
 
-    /// <summary>Row 19, task 8 (AC4/AC6): the conductor's own post, raised while its exchange is still
-    /// the room's current one (acceptMentions - the same distinction <see cref="OnMessage"/> already
-    /// draws at its top - is exactly "the first phase-tagged post of a conductor spawn"; a LATER post
-    /// from the same spawn, after it has already rooted, is prose and falls through to the ordinary
-    /// model branch, never refused - pass 1's M1). Checked against D8's class rules
-    /// (<see cref="ExchangePolicy.RefuseConductorPost"/>, pure) and raised to <see cref="RunPolicy"/>
-    /// as <see cref="RunEvent.ConductorPosted"/>; the decision is carried out. The refusal counter is
-    /// written HERE (pass 2's F-2): the policy only reads it.</summary>
+    /// <summary>The conductor's own post, raised while its exchange is still the room's current one
+    /// (acceptMentions, the same distinction <see cref="OnMessage"/> draws at its top, is exactly
+    /// "the first phase-tagged post of a conductor spawn"; a later post from the same spawn is prose
+    /// and falls through to the ordinary model branch, never refused). Checked against the class
+    /// rules (<see cref="ExchangePolicy.RefuseConductorPost"/>, pure) and raised to
+    /// <see cref="RunPolicy"/> as <see cref="RunEvent.ConductorPosted"/>; the decision is carried out.
+    /// The refusal counter is written here: the policy only reads it.</summary>
     private void HandleConductorPost(Run run, Message m, DateTimeOffset now)
     {
         var mentioned = _policy.MentionedSpawnable(m);
@@ -689,8 +656,8 @@ public sealed partial class SpawnerService : BackgroundService
             _refusalsThisPhase[run.Id] = _refusalsThisPhase.GetValueOrDefault(run.Id) + 1;
         else
         {
-            // Accepted (including ping): count a phase entry and reset BOTH counters (pass 2's F-22 -
-            // the silence path re-enters the SAME tag, so a change-only reset would leave it latched).
+            // Accepted (including ping): count a phase entry and reset both counters (the silence
+            // path re-enters the same tag, so a change-only reset would leave it latched).
             _runs.EnterPhase(run.Id, tag!.ToString(), now);
             _refusalsThisPhase[run.Id] = 0;
             _silencesThisPhase[run.Id] = 0;
@@ -699,27 +666,22 @@ public sealed partial class SpawnerService : BackgroundService
         CarryOut(run, decision);
     }
 
-    /// <summary>Row 19, task 10 (A2): the run's CONDUCTOR finished without posting. Table rows 10-12
-    /// all still ask again with the SAME triggers it was given (<paramref name="triggerIds"/>), but
-    /// the bookkeeping differs: the FIRST silence in a phase costs nothing (row 10); every one after
-    /// that ALSO counts a phase entry for THIS ask (row 12) - which is what lets row 11 eventually
-    /// reach the phase's own entry cap and park the run instead of asking forever. "At most twice
-    /// per phase entry" (ticket 10) falls out of that rule for whatever RunLimits.PhaseEntries says -
-    /// this never hardcodes "twice". Pass 1's B3 closed exactly this stall; the fold reintroduced it
-    /// by leaving the counter declared, consumed and reset with no write site (pass 2's F-2) -
-    /// written HERE, since RunPolicy only reads it. <see cref="AssembleRunState"/>'s
-    /// <c>SilencesThisPhase</c> is read ONCE, before the increment, so <see cref="RunPolicy.Decide"/>
-    /// sees how many silences already happened before this one - the same before-then-increment
-    /// order <see cref="HandleConductorPost"/> uses for the refusal counter.</summary>
+    /// <summary>The run's conductor finished without posting. Every silence asks again with the same
+    /// triggers (<paramref name="triggerIds"/>), but the bookkeeping differs: the first silence in a
+    /// phase costs nothing, and every one after that also counts a phase entry for this ask, which is
+    /// what lets the phase's entry cap eventually park the run instead of asking forever. The
+    /// counter is written here, since RunPolicy only reads it. <see cref="AssembleRunState"/>'s
+    /// <c>SilencesThisPhase</c> is read once, before the increment, so <see cref="RunPolicy.Decide"/>
+    /// sees how many silences happened before this one (the same order
+    /// <see cref="HandleConductorPost"/> uses for the refusal counter).</summary>
     private void HandleSpawnSilent(Run run, string participantId, IReadOnlyList<long> triggerIds)
     {
         var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
         var state = AssembleRunState(run);
         var decision = _runPolicy.Decide(state, new RunEvent.SpawnSilent(participantId, triggerIds), pending);
 
-        // Row 12's "the service counts a phase entry for this ask": only past the first silence, and
-        // only when the run is actually still being asked again (rows 1/2's hard caps still win
-        // first here exactly as everywhere else in RunPolicy, and a Park needs no phase entry).
+        // Count a phase entry only past the first silence, and only when the run is actually being
+        // asked again (the hard caps still win first, and a Park needs no phase entry).
         if (state.SilencesThisPhase >= 1 && decision is RunDecision.OpenConductor)
             _runs.EnterPhase(run.Id, run.Phase, _clock.GetUtcNow());
         _silencesThisPhase[run.Id] = state.SilencesThisPhase + 1;
@@ -727,9 +689,9 @@ public sealed partial class SpawnerService : BackgroundService
         CarryOut(run, decision);
     }
 
-    /// <summary>Row 19, task 8 (AC4): the conductor's post passed every D8 rule and asks for work -
-    /// rooted at that post (<see cref="RunDecision.OpenWorkers.RootMessageId"/>), never at the
-    /// conductor's own re-spawn root.</summary>
+    /// <summary>The conductor's post passed every class rule and asks for work: rooted at that post
+    /// (<see cref="RunDecision.OpenWorkers.RootMessageId"/>), never at the conductor's own re-spawn
+    /// root.</summary>
     private void OpenWorkersExchange(Run run, RunDecision.OpenWorkers ow)
     {
         var (exchange, notes) = _policy.OpenForWorkers(run.RoomId, ow.RootMessageId, ow.Mentioned, _clock.GetUtcNow());
@@ -739,15 +701,11 @@ public sealed partial class SpawnerService : BackgroundService
         Publish(run.RoomId);
     }
 
-    /// <summary>Row 19: writes the parked row, stops the room's open exchange and cancels its
-    /// in-flight spawns (pass 1's M3 - a park that touches neither would let an in-flight conductor's
-    /// later post resolve <c>run == null</c> and take the plain model branch, launching more spawns
-    /// from a parked run), posts the note naming the reason and @owner, and publishes. Landed in
-    /// task 8 for AC6's second-bad-post-in-one-phase park; task 9's 9a audited it against the plan's
-    /// full spec (spawn/wall-clock/phase-entry caps, all reached through the SAME <see
-    /// cref="RunDecision.Park"/> arm via <see cref="CarryOut"/>) and found it already complete -
-    /// task 9 adds the wakes that make every cap REACHABLE (<see cref="ArmWake"/>, <see
-    /// cref="OnTick"/>) and the 30-minute in-run timeout, not a second park path.</summary>
+    /// <summary>Writes the parked row, stops the room's open exchange and cancels its in-flight spawns
+    /// (a park that touched neither would let an in-flight conductor's later post resolve
+    /// <c>run == null</c> and take the plain model branch, launching more spawns from a parked run),
+    /// posts the note naming the reason and @owner, and publishes. Every cap reaches this through the
+    /// one <see cref="RunDecision.Park"/> arm in <see cref="CarryOut"/>.</summary>
     private void ParkRun(Run run, string reason, bool capSpent)
     {
         var now = _clock.GetUtcNow();
@@ -760,17 +718,14 @@ public sealed partial class SpawnerService : BackgroundService
         Publish(run.RoomId);
     }
 
-    /// <summary>Row 19, task 13 (AC11): ends a run - active OR parked, and whether or not an exchange
-    /// is open or anything is in flight - through the ONE path <see cref="RunDecision.End"/> ever
-    /// reaches (the text `/stop`, and the API/button stop via <see cref="OnStop"/>). Mirrors
-    /// <see cref="ParkRun"/>'s shape (stop the open exchange, cancel the room's in-flight spawns) but
-    /// also clears the room's pending steers (ticket 13: "ending a run clears the pending steer
-    /// list" - depends on task 6, which is the only other writer of <see cref="_steers"/>) and posts
-    /// ONE note naming how much of each cap the run used rather than a bare "parked: reason" line.
-    /// <see cref="RunStore.ActiveElapsed"/> is read against the SAME <paramref name="reason"/>-ending
-    /// instant <see cref="RunStore.End"/> stamps, and against the run as it stood before ending (an
-    /// ended run is never <see cref="RunStatus.Parked"/>, so it falls to that method's "not parked"
-    /// arm: elapsed time since start, minus whatever was already parked).</summary>
+    /// <summary>Ends a run, active or parked, whether or not an exchange is open or anything is in
+    /// flight, through the one path <see cref="RunDecision.End"/> reaches (the text `/stop`, and the
+    /// API/button stop via <see cref="OnStop"/>). Mirrors <see cref="ParkRun"/> (stop the open
+    /// exchange, cancel the room's in-flight spawns) but also clears the room's pending steers and
+    /// posts one note naming how much of each cap the run used. <see cref="RunStore.ActiveElapsed"/>
+    /// is read against the same instant <see cref="RunStore.End"/> stamps, and against the run as it
+    /// stood before ending (an ended run is never <see cref="RunStatus.Parked"/>, so it falls to that
+    /// method's "not parked" arm: elapsed time since start, minus whatever was already parked).</summary>
     private void EndRun(Run run, string reason, ExchangeStopCause cause)
     {
         var now = _clock.GetUtcNow();
@@ -787,11 +742,11 @@ public sealed partial class SpawnerService : BackgroundService
         Publish(run.RoomId);
     }
 
-    /// <summary>Row 19, task 8 (D8's critique rule): whether <paramref name="path"/> is present in the
-    /// room's own directory tree - satisfies "recorded or in the room tree" for an artifact nothing
-    /// has recorded yet. Normalizes with the SAME <see cref="RunStore.Normalize"/> the authorship
-    /// lookup uses, so the two checks can never disagree on one path (P4). A room with no directory,
-    /// an absolute path, or one that walks above the room root, is never "in the tree".</summary>
+    /// <summary>Whether <paramref name="path"/> is present in the room's own directory tree, which
+    /// satisfies "recorded or in the room tree" for an artifact nothing has recorded yet. Normalizes
+    /// with the same <see cref="RunStore.Normalize"/> the authorship lookup uses, so the two checks
+    /// never disagree on one path. A room with no directory, an absolute path, or one that walks
+    /// above the room root, is never "in the tree".</summary>
     private bool ArtifactInRoomTree(Run run, string path)
     {
         var directory = _store.GetRoom(run.RoomId)?.Directory;
@@ -801,10 +756,10 @@ public sealed partial class SpawnerService : BackgroundService
         return File.Exists(Path.GetFullPath(Path.Combine(directory, normalized)));
     }
 
-    /// <summary>Row 19, task 5a: the hub re-spawning its run's conductor - no message roots this, so
-    /// <see cref="ExchangePolicy.OnMessage"/>'s human-only rule is untouched (P2). Re-resolves the
-    /// skill by <see cref="Run.SkillName"/> at every launch, honouring the hash pin (5a): a skill that
-    /// no longer matches what was imported parks the run rather than continuing with no instruction.</summary>
+    /// <summary>The hub re-spawning its run's conductor. No message roots this, so
+    /// <see cref="ExchangePolicy.OnMessage"/>'s human-only rule is untouched. Re-resolves the skill by
+    /// <see cref="Run.SkillName"/> at every launch, honouring the hash pin: a skill that no longer
+    /// matches what was imported parks the run rather than continuing with no instruction.</summary>
     private void OpenConductorExchange(Run run, long rootMessageId, IReadOnlyList<long> triggerIds)
     {
         var now = _clock.GetUtcNow();
@@ -819,20 +774,19 @@ public sealed partial class SpawnerService : BackgroundService
         AddExchange(run.RoomId, exchange, replaceAll: true);
         _runs.CountExchange(run.Id);
         Publish(run.RoomId);
-        // Launching is left to LaunchDue on the next pass, never inline (task 5b) - a directory
-        // room's one-spawn-at-a-time exclusivity must not be bypassed.
+        // Launching is left to LaunchDue on the next pass, never inline: a directory room's
+        // one-spawn-at-a-time exclusivity must not be bypassed.
     }
 
     /// <summary>What the message's first line asks for, if anything. Only a human's post is ever
-    /// resolved (a model's `/whatever` is prose, acceptance 3) — the policy itself never touches the
-    /// filesystem (D-b), so this is the one place row 11's I/O happens.
+    /// resolved (a model's `/whatever` is prose). The policy itself never touches the filesystem, so
+    /// this is the one place skill I/O happens.
     ///
-    /// Safe to do on this loop's single thread: <see cref="SkillStore.Read"/> refuses on file length
-    /// before reading a byte (<c>MaxSkillFileBytes</c>), so a local read plus one SHA-256 of at most
-    /// 1 MB is sub-millisecond, and it happens once per exchange root, not per turn. That bound (and
-    /// the same one in <c>List</c>) is what makes this placement correct — without it, a single
-    /// oversized file in a store the threat model says is writable would stall every room's exchange
-    /// handling and the owner's stop button behind a read and a hash. Do not remove either guard as
+    /// Safe on this loop's single thread: <see cref="SkillStore.Read"/> refuses on file length before
+    /// reading a byte (<c>MaxSkillFileBytes</c>), so a local read plus one SHA-256 of at most 1 MB is
+    /// sub-millisecond, once per exchange root. That bound (and the same one in <c>List</c>) is what
+    /// makes this placement correct: without it, one oversized file in a writable store would stall
+    /// every room's exchange handling and the owner's stop button. Do not remove either guard as
     /// "defensive".</summary>
     private SkillResolution ResolveSkill(Message m)
     {
@@ -853,21 +807,20 @@ public sealed partial class SpawnerService : BackgroundService
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
-            // Deliberately broad, and deliberately NOT a degrade to Nothing. Nothing would open a
-            // normal exchange and spend the model calls on a skill-less prompt, silently (D-c). A
-            // narrow catch is just as bad in the other direction: anything it misses escapes to the
-            // loop's Guarded, which logs and swallows the WHOLE PostedEvent - so no exchange opens,
-            // no note is posted, the supersede never happens, and a previously-open exchange stays
-            // Open in _rooms and keeps accepting model posts. That is silent state divergence.
+            // Deliberately broad, and deliberately not a degrade to Nothing, which would open a normal
+            // exchange and spend model calls on a skill-less prompt, silently. A narrow catch fails
+            // the other way: anything it misses escapes to Guarded, which swallows the whole
+            // PostedEvent, so no exchange opens, no note posts, the supersede never happens, and an
+            // open exchange stays Open in _rooms accepting model posts.
             return new SkillResolution.Unavailable(invocation.Name, e.Message);
         }
     }
 
-    /// <summary>Row 35: whether an exchange of <paramref name="roomId"/> launches in its own worktree
-    /// rather than the room directory itself - outside a run (no run active or parked here), in a
-    /// room bound to a directory. When true, exclusivity narrows to the exchange's own in-flight set
+    /// <summary>Whether an exchange of <paramref name="roomId"/> launches in its own worktree rather
+    /// than the room directory itself: outside a run (no run active or parked here), in a room bound
+    /// to a directory. When true, exclusivity narrows to the exchange's own in-flight set
     /// (<see cref="ExchangePolicy.Due"/>'s <c>exclusiveOver</c>) so side-by-side exchanges each still
-    /// run one spawn at a time within themselves; a run keeps the whole room exclusive, as before.</summary>
+    /// run one spawn at a time within themselves; a run keeps the whole room exclusive.</summary>
     private bool UsesWorktrees(string roomId, string? directory) =>
         directory is not null && _runs.Active(roomId) is null && _runs.Latest(roomId) is not { Status: RunStatus.Parked };
 
@@ -882,14 +835,13 @@ public sealed partial class SpawnerService : BackgroundService
             if (x.ModeLeg is { Preparing: true }) continue;
             var exclusive = directory is not null && x.ModeLeg?.Settings.Mode != "panel";
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
-            // Row 35: a worktree launch still waits while a spawn is in flight in the room
-            // directory itself (a run just ended or stopped, its cancelled conductor not yet
-            // finished) - otherwise the before-commit a worktree launch makes would commit that
-            // spawn's still-in-progress edits as the owner's.
+            // A worktree launch still waits while a spawn is in flight in the room directory itself
+            // (a run just ended or stopped, its cancelled conductor not yet finished); otherwise the
+            // worktree launch's before-commit would commit that spawn's in-progress edits as the hub owner's.
             if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
-            // Row 35: a room-directory launch (over is null) waits while a worktree close of
-            // this room is running - both write the same tree. A worktree launch (over non-null)
-            // never waits on a close: it only touches its own worktree and the gated owner commit.
+            // A room-directory launch (over is null) waits while a worktree close of this room is
+            // running: both write the same tree. A worktree launch never waits on a close: it only
+            // touches its own worktree and the gated owner commit.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             if (x.WaitsForClose) continue;
             var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
@@ -911,16 +863,16 @@ public sealed partial class SpawnerService : BackgroundService
 
     /// <summary>Appends <paramref name="x"/> and drops every exchange that is closed with nothing left
     /// in flight, so a closed exchange stays visible until the next one opens. <paramref name="replaceAll"/>
-    /// is for the run's own exchanges: a run room holds exactly one exchange, as the loop did before rooms
-    /// held several, so an older run exchange still open with queued entries is never launched, and its
-    /// spawn's later mentions count for nothing (it is no longer in the room's list).</summary>
+    /// is for the run's own exchanges: a run room holds exactly one exchange, so an older run exchange
+    /// still open with queued entries is never launched, and its spawn's later mentions count for
+    /// nothing (it is not in the room's list).</summary>
     private void AddExchange(string roomId, Exchange x, bool replaceAll = false)
     {
         MaintainModeResources(roomId);
         if (!_rooms.TryGetValue(roomId, out var list)) _rooms[roomId] = list = new List<Exchange>();
-        // Row 35: give an already-idle worktree exchange a last chance to close before it is
-        // dropped from this list (replaceAll) or pruned (the ordinary path) - closing it never depends
-        // on _rooms, but a room with nothing left open never otherwise revisits CloseIdleWorktrees.
+        // Give an already-idle worktree exchange a last chance to close before it is dropped
+        // (replaceAll) or pruned: closing never depends on _rooms, but a room with nothing left open
+        // never otherwise revisits CloseIdleWorktrees.
         CloseIdleWorktrees(roomId);
         if (replaceAll) list.Clear();
         else list.RemoveAll(e => e.Status != ExchangeStatus.Open && e.InFlight.Count == 0);
@@ -942,7 +894,7 @@ public sealed partial class SpawnerService : BackgroundService
         return open.FirstOrDefault(e => mentioned.Any(e.Participants.Contains)) ?? open.FirstOrDefault();
     }
 
-    /// <summary>Row 36: the exchange of <paramref name="roomId"/> that holds <paramref name="messageId"/>:
+    /// <summary>The exchange of <paramref name="roomId"/> that holds <paramref name="messageId"/>:
     /// the room's own list first (so an exchange still held there is found even after it left the
     /// remembered window), then the remembered ones; null when none does (a hub note, one older than the
     /// last <see cref="JoinableKept"/>, one a previous hub process held). A run's exchange can be returned;
@@ -958,7 +910,7 @@ public sealed partial class SpawnerService : BackgroundService
         if (list.Count > JoinableKept) list.RemoveAt(0);
     }
 
-    /// <summary>Row 36: a closed exchange an owner reply just reopened becomes the room's newest entry
+    /// <summary>A closed exchange an owner reply just reopened becomes the room's newest entry
     /// again (AddExchange may have pruned it). Its interrupted mark is dropped: the owner chose to continue.
     /// If its worktree was already handed to a close, that bookkeeping starts over: the next launch leases
     /// <c>chopitup/x&lt;root&gt;</c> again, continuing a kept branch only when this exchange really leased it
@@ -986,15 +938,15 @@ public sealed partial class SpawnerService : BackgroundService
         ExchangePolicy.Started(x, request);
         _lastStart[participant.Id] = now;
         var activeRun = _runs.Active(request.RoomId);
-        // Row 19, task 11 (AC7/D10): a conductor thinks harder about its own loop, and a judge about
-        // what it is asked to judge; everyone else, and anything outside a run, gets no effort flag
-        // at all rather than an explicit default. Never xhigh or max. The rule itself is
-        // EffortPolicy's (milestone 51), so the Roles dialog shows the same one this site applies.
+        // A conductor thinks harder about its own loop, and a judge about what it is asked to judge;
+        // everyone else, and anything outside a run, gets no effort flag rather than an explicit
+        // default. Never xhigh or max. EffortPolicy owns the rule so the Roles dialog shows the same
+        // one this site applies.
         var effort = EffortPolicy.AtLaunch(participant, inRun: activeRun is not null, conductor: activeRun is not null && participant.Id == activeRun.ConductorId);
         try
         {
-            // Row 19, task 9d: counted before anything below can throw - a spawn that fails even to
-            // start (a bad token, a directory that vanished) still used one of the run's spawns.
+            // Counted before anything below can throw: a spawn that fails even to start (a bad
+            // token, a directory that vanished) still used one of the run's spawns.
             if (activeRun is not null) _runs.CountSpawn(activeRun.Id);
             var token = _tokens.BearerFor(participant.Id);
             Directory.CreateDirectory(workDir);
@@ -1002,25 +954,23 @@ public sealed partial class SpawnerService : BackgroundService
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
             // Capture the same selected limit for the runner and its timeout note. An active run
-            // always wins, even when its room has a directory; plain outside-run rooms keep D7.
+            // always wins, even when its room has a directory.
             var timeout = activeRun is not null ? _runLimits.SpawnTimeout
                 : directory is not null ? _limits.EffectiveOutsideDirectoryTimeout : _limits.Timeout;
-            // Row 35: outside a run, a directory room's spawn edits its exchange's own worktree, not
-            // the room directory itself - each exchange got its own in-flight set from LaunchDue's
-            // exclusiveOver on the same test (UsesWorktrees), so the two must never disagree.
+            // Outside a run, a directory room's spawn edits its exchange's own worktree, not the room
+            // directory itself. LaunchDue's exclusiveOver uses the same test (UsesWorktrees), so the
+            // two must never disagree.
             var inWorktree = UsesWorktrees(request.RoomId, directory);
             var tree = inWorktree ? ExchangeWorktrees.PathFor(directory!, x.RootMessageId) : directory;
             if (inWorktree)
             {
                 x.WorktreeRoom = directory;
-                // Row 35: registered once, at its first worktree launch - CloseIdleWorktrees
-                // reads this list, not _rooms, so an exchange a run's replaceAll later drops stays
-                // closable.
+                // Registered once, at its first worktree launch. CloseIdleWorktrees reads this list,
+                // not _rooms, so an exchange a run's replaceAll later drops stays closable.
                 if (!_worktreeExchanges.Contains(x)) _worktreeExchanges.Add(x);
             }
-            // Row 18 (L7): a directory room's spawn also gets the room's own topic, cut at RoomChars
-            // (budget ruling). A room id that is not a slug (the table has no CHECK) gets no section,
-            // not no spawn.
+            // A directory room's spawn also gets the room's own topic, cut at RoomChars. A room id
+            // that is not a slug (the table has no CHECK) gets no section, not no spawn.
             RoomMemory? roomMemory = null;
             if (directory is not null && MemoryStore.TopicSlug.IsMatch(MemoryStore.RoomTopic(request.RoomId)))
             {
@@ -1029,8 +979,8 @@ public sealed partial class SpawnerService : BackgroundService
                 roomMemory = new RoomMemory(roomTopic, text?.Text ?? "", text?.Truncated ?? false);
             }
             var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) : null;
-            // Row 14, task 4 (D-c): read fresh at launch, not from the startup-static _roster, so an
-            // owner edit through the API takes effect on the very next spawn with no hub restart (AC7).
+            // Read fresh at launch, not from the startup-static _roster, so an owner edit through the
+            // API takes effect on the next spawn with no hub restart.
             var standing = new SpawnPrompt.StandingText(room?.Persona, _participants.EffectiveRole(request.RoomId, participant.Id));
             var context = _store.ReadSpawnContext(request.RoomId, _limits.TranscriptMessages);
             var prompt = SpawnPrompt.Render(new SpawnPromptInput(
@@ -1054,16 +1004,12 @@ public sealed partial class SpawnerService : BackgroundService
             {
                 case "claude":
                 {
-                    // Row 20, task 3: computed BEFORE the mcp.json write so both the per-server
-                    // `timeout` field (below) and the two environment variables ClaudeInDirectory sets
-                    // (in the directory branch) agree on the same value - RunLimits.EffectiveGateTimeout
-                    // (25 min by default), not the run's own 30-minute SpawnTimeout, leaving the 5-minute
-                    // reserve documented on RunLimits. Null outside a run. Inside a run this is written
-                    // once, before the `directory is null` split below, for BOTH spawn shapes on purpose
-                    // (plan task 3: mcp.json is written once before the split) - nothing in RunPolicy
-                    // requires a run to bind a directory, so a non-directory in-run spawn can happen, and
-                    // carrying the value there is harmless: ClaudeMcpConfigJson only sets it on the
-                    // `chopitup` server entry regardless of spawn shape.
+                    // Computed before the mcp.json write so the per-server `timeout` field and the two
+                    // environment variables ClaudeInDirectory sets agree on one value:
+                    // RunLimits.EffectiveGateTimeout, not the run's SpawnTimeout, leaving the reserve
+                    // documented on RunLimits. Null outside a run. Nothing requires a run to bind a
+                    // directory, so a non-directory in-run spawn carries it too, harmlessly:
+                    // ClaudeMcpConfigJson only sets it on the `chopitup` server entry.
                     var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.EffectiveGateTimeout.TotalMilliseconds : null;
                     var mcpPath = Path.Combine(workDir, "mcp.json");
                     File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token, mcpToolTimeoutMs));
@@ -1071,22 +1017,19 @@ public sealed partial class SpawnerService : BackgroundService
                         spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label, effort);
                     else
                     {
-                        var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room (decision 8)
+                        var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room
                         File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
-                        // Row 19, task 12e: run_gate joins the allowlist only for an in-run spawn - the
-                        // built-in tool set (--tools) is untouched either way, and an out-of-run
-                        // directory spawn never sees the extra MCP tool at all.
+                        // run_gate joins the allowlist only for an in-run spawn. The built-in tool set
+                        // (--tools) is untouched either way.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
                         spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null), tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
                     }
                     break;
                 }
                 case "codex":
-                    // Row 19, task 12f (pass 1's M7); row 20 task 3 lowers the ceiling from SpawnTimeout
-                    // to EffectiveGateTimeout (the same 5-minute reserve as the Claude side above): the
-                    // CLI's default 60 s MCP tool-call timeout kills a long run_gate call well before it
-                    // can finish. Raised for an in-run directory spawn only; every other Codex spawn
-                    // keeps 60 s.
+                    // The CLI's default 60 s MCP tool-call timeout kills a long run_gate call well
+                    // before it can finish, so an in-run directory spawn gets EffectiveGateTimeout
+                    // (the same reserve as the Claude side above). Every other Codex spawn keeps 60 s.
                     var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.EffectiveGateTimeout.TotalSeconds : 60;
                     spec = directory is null
                         ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
@@ -1116,8 +1059,8 @@ public sealed partial class SpawnerService : BackgroundService
                     var leased = false;
                     if (directory is not null)
                     {
-                        // Before: the owner's edits since the last spawn become their own commit (decision 6),
-                        // in the room directory itself whether or not this spawn runs in a worktree.
+                        // Before: the hub owner's edits since the last spawn become their own commit, in
+                        // the room directory itself whether or not this spawn runs in a worktree.
                         var roomGit = _trails.For(directory);
                         if (await roomGit.IsDirtyAsync(CancellationToken.None))
                             owner = await roomGit.CommitAllAsync(RoomCommits.OwnerMessage(_owner, roomId), author: null, allowEmpty: false, cancellation: CancellationToken.None);
@@ -1126,7 +1069,7 @@ public sealed partial class SpawnerService : BackgroundService
                             var lease = await _worktrees.EnsureAsync(directory, request.RootMessageId, CancellationToken.None, continueBranch);
                             if (lease.Refusal is not null)
                             {
-                                // No CLI starts anywhere (AC8); the finally below still reports FinishedEvent.
+                                // No CLI starts anywhere; the finally below still reports FinishedEvent.
                                 result = new ProcessResult(null, false, false, "", WorktreeRefused + lease.Refusal, TimeSpan.Zero);
                                 return;
                             }
@@ -1136,8 +1079,8 @@ public sealed partial class SpawnerService : BackgroundService
                         else git = roomGit;
                         headBefore = await git.HeadAsync(CancellationToken.None);
                     }
-                    // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
-                    // refusal note can name the spawn if this credential is later stolen and replayed.
+                    // RoomId/ParticipantId are set at this one line so the hub's owner-peer check's refusal
+                    // note can name the spawn if this credential is later stolen and replayed.
                     var launched = false;
                     try { result = await _runner.RunAsync(spec with { RoomId = roomId, ParticipantId = participant.Id }, timeout, handle.Cancel.Token); launched = true; }
                     catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
@@ -1147,19 +1090,19 @@ public sealed partial class SpawnerService : BackgroundService
                         var commands = (host == "codex" ? SpawnOutput.CodexShellCommands(result.StandardOutput) : SpawnOutput.ClaudeShellCommands(result.StandardOutput))
                             .Select(c => c with { Command = Scrub(StripAnsi(c.Command), token) }).ToList();
                         var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
-                        // Row 46: the repository's own identity is the author; the host is credited by
-                        // trailer only when its process actually launched (R11) and the turn changed
+                        // The repository's own identity is the author; the host is credited by
+                        // trailer only when its process actually launched and the turn changed
                         // something (CommitAllAsync decides that part).
                         var trailer = launched ? RoomCommits.CoAuthorTrailer(host) : null;
                         var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true,
                             trailers: trailer is null ? null : [trailer], cancellation: CancellationToken.None);
                         trail = new TrailReport(owner, agent, commands.Count, headMoved, leased);
 
-                        // Row 19, task 5c (P4): artifact authorship, from the SPAWN'S WHOLE DIFF - not
-                        // one commit, so a host that commits its own work mid-spawn (Codex, or a rogue
-                        // Claude Bash call) is still attributed correctly. This runs off the spawner
-                        // loop (pass 2's F-21): the run lookup is _runs.Active (a database read, thread
-                        // safe), never a read of _rooms/_inFlight, which only the loop thread mutates.
+                        // Artifact authorship comes from the spawn's whole diff, not one commit, so a
+                        // host that commits its own work mid-spawn (Codex, or a rogue Claude Bash call)
+                        // is still attributed correctly. This runs off the spawner loop: the run lookup
+                        // is _runs.Active (a thread-safe database read), never _rooms/_inFlight, which
+                        // only the loop thread mutates.
                         if (agent.Hash is not null && _runs.Active(roomId) is { } runForArtifacts)
                         {
                             var changed = headBefore is not null
@@ -1178,8 +1121,8 @@ public sealed partial class SpawnerService : BackgroundService
         {
             PostNote(request.RoomId, $"@{participant.Id} could not be started: {e.GetType().Name}: {e.Message}");
             TryDeleteDir(workDir);
-            // Row 44 (D-c): the spawn never launched, so it never posted; a silent addressee is not
-            // retried as its own synthesis turn.
+            // The spawn never launched, so it never posted; a silent addressee is not retried as its
+            // own synthesis turn.
             var (note, _) = ExchangePolicy.Finished(x, participant.Id, now, posted: false);
             if (note is not null) PostNote(request.RoomId, note);
         }
@@ -1192,9 +1135,9 @@ public sealed partial class SpawnerService : BackgroundService
         _inFlight.Remove((room, id));
         Interlocked.Decrement(ref _live);
         if (h.Exchange.ModeLeg is not null) { OnModeFinished(h, r, trail); return; }
-        // Row 35: a spawn cancelled or timed out may have left a half-written worktree, so its
-        // exchange's close must keep the branch unmerged whatever ExchangeStatus says; a spawn that
-        // really ran in a leased worktree marks its exchange so a close knows to look for one at all.
+        // A spawn cancelled or timed out may have left a half-written worktree, so its exchange's
+        // close must keep the branch unmerged whatever ExchangeStatus says; a spawn that really ran in
+        // a leased worktree marks its exchange so a close knows to look for one at all.
         if (r.Cancelled || r.TimedOut) h.Exchange.Interrupted = true;
         if (trail?.Leased == true) h.Exchange.WorktreeLeased = true;
         Console.Error.WriteLine($"spawn {h.SpawnId}: {id} ended exit={(r.ExitCode?.ToString() ?? "killed")} timedOut={r.TimedOut} cancelled={r.Cancelled} posted={h.Posted} in {r.Elapsed.TotalSeconds:0}s");
@@ -1209,7 +1152,7 @@ public sealed partial class SpawnerService : BackgroundService
         {
             // Stopped by the owner or by shutdown; the stop note (or nothing) is the record.
         }
-        // Row 35 (AC8): a worktree lease refused before any CLI started - never claim a process ran.
+        // A worktree lease refused before any CLI started: never claim a process ran.
         else if (r.ExitCode is null && r.StandardError.StartsWith(WorktreeRefused, StringComparison.Ordinal))
             PostNote(room, $"@{id} was not started: {r.StandardError}.");
         else if (!h.Posted)
@@ -1237,30 +1180,28 @@ public sealed partial class SpawnerService : BackgroundService
         TryDeleteDir(h.WorkDir);
         if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
         h.Cancel.Dispose();
-        // Row 44 (D-c): Finished may return a synthesis-queuing note with Concluded false - the exchange
-        // is still open, waiting on the addressee's wrap-up turn, so the run branch below (which only
-        // makes sense once the exchange has genuinely concluded) is gated on Concluded, not on the note
-        // alone.
+        // Finished may return a synthesis-queuing note with Concluded false: the exchange is still
+        // open, waiting on the addressee's wrap-up turn, so the run branch below is gated on
+        // Concluded, not on the note.
         var (note, concluded) = ExchangePolicy.Finished(h.Exchange, id, _clock.GetUtcNow(), posted: h.Posted);
-        // Row 35: this exchange may have just gone idle (concluded, superseded or stopped with
-        // nothing left in flight) - try to hand its worktree to a close now. Also releases a close (or
-        // a worktree launch) of another exchange that was waiting on THIS spawn because it ran in the
-        // room directory itself.
+        // This exchange may have just gone idle (concluded, superseded or stopped with nothing left in
+        // flight): try to hand its worktree to a close now. Also releases a close (or a worktree
+        // launch) of another exchange that was waiting on this spawn because it ran in the room
+        // directory itself.
         CloseIdleWorktrees(room);
         if (note is not null)
         {
             PostNote(room, note);
-            // Row 19, task 5b: wake the run's loop, but only when the exchange that just concluded is
-            // still the room's CURRENT one - a conductor may already have rooted a newer exchange that
-            // superseded it (pass 2's F-1); that newer exchange must be left alone.
+            // Wake the run's loop only when the exchange that just concluded is still the room's
+            // current one: a conductor may already have rooted a newer exchange that superseded it,
+            // and that one must be left alone.
             if (concluded && _runs.Active(room) is { } activeRun && ReferenceEquals(h.Exchange, Newest(room)))
             {
-                // Row 19, task 10 (A2): the run's CONDUCTOR finishing WITHOUT posting is a silence,
-                // decided through RunEvent.SpawnSilent (ask again, then park once the phase's
-                // allowance is spent) rather than the unconditional immediate reopen every OTHER
-                // conclusion gets via ExchangeConcluded - a worker's turn, or the conductor's own
-                // turn when it DID post (even a refused post is still "posted": HandleConductorPost
-                // already asked it again itself, above this method entirely).
+                // The conductor finishing without posting is a silence, decided through
+                // RunEvent.SpawnSilent (ask again, then park once the phase's allowance is spent)
+                // rather than the immediate reopen every other conclusion gets via ExchangeConcluded
+                // (a worker's turn, or the conductor's turn when it did post; after a refused post
+                // HandleConductorPost already asked again itself).
                 if (!h.Posted && activeRun.ConductorId == id)
                     HandleSpawnSilent(activeRun, id, h.Request.TriggerIds);
                 else
@@ -1270,23 +1211,21 @@ public sealed partial class SpawnerService : BackgroundService
                 }
             }
         }
-        // Row 35: a room-directory spawn finishing releases a deferred close (or worktree
-        // launch) of another exchange in this room.
+        // A room-directory spawn finishing releases a deferred close (or worktree launch) of another
+        // exchange in this room.
         CloseIdleWorktrees(room);
         Publish(room);
     }
 
-    /// <summary>Room-scoped, not exchange-scoped (critique pass 2, M1): a superseded exchange's spawn
-    /// is still a live CLI in this room, and an owner message with no mention leaves the room with no
-    /// open exchange while one runs. Stop kills every in-flight spawn of the room, closes every open
-    /// exchange, and answers null only when there is nothing at all to stop.
+    /// <summary>Room-scoped, not exchange-scoped: a superseded exchange's spawn is still a live CLI in
+    /// this room, and an owner message with no mention leaves the room with no open exchange while
+    /// one runs. Stop kills every in-flight spawn of the room, closes every open exchange, and
+    /// answers null only when there is nothing at all to stop.
     ///
-    /// Row 19, task 13 (AC11, ticket 13 - "the control must work even when there is nothing currently
-    /// running"): checked FIRST, ahead of the ordinary exchange-only stop below. An active OR parked
-    /// run in this room is ended through <see cref="EndRun"/> regardless of whether an exchange is
-    /// open or anything is in flight - the exact case the ordinary branch's "nothing to stop" null
-    /// (409 at the API) would otherwise hit for a parked run sitting with nothing open and nothing in
-    /// flight. A room with no run at all falls through to the pre-row-19 behaviour, unchanged.</summary>
+    /// A run is checked first: an active or parked run in this room is ended through
+    /// <see cref="EndRun"/> whether or not an exchange is open or anything is in flight, since a
+    /// parked run with nothing open would otherwise hit the ordinary branch's "nothing to stop" null
+    /// (409 at the API). A room with no run falls through to the exchange stop.</summary>
     private ExchangeSnapshot? OnStop(string roomId)
     {
         var run = _runs.Active(roomId) ?? (_runs.Latest(roomId) is { Status: RunStatus.Parked } parked ? parked : null);
@@ -1333,23 +1272,21 @@ public sealed partial class SpawnerService : BackgroundService
             var exclusive = directory is not null && x.ModeLeg?.Settings.Mode != "panel";
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
             if (over is not null && _inFlight.Values.Any(h => h.Request.RoomId == x.RoomId && h.Directory is not null && !h.InWorktree)) continue;
-            // Row 35: skip this exchange's wake while its room's close is running - the close's
-            // own WorktreeClosedEvent wakes the loop when it finishes.
+            // Skip this exchange's wake while its room's close is running: the close's own
+            // WorktreeClosedEvent wakes the loop when it finishes.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             if (x.WaitsForClose) continue;
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive, over);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }
 
-        // Row 19, task 9b (pass 2's F-7): every ACTIVE run gets two wakes of its own, neither of
-        // which the exchange-only loop above can see - a run with nothing open and nothing in
-        // flight has no Open exchange in _rooms at all for _policy.NextWake to consider. The
-        // wall-clock wake is unconditional (D9's 8-hour hard cap must trip even while the run is
-        // busy - AC8 says "stop its open exchange and in-flight spawns", not "only while idle"); the
-        // stall wake only arms while genuinely idle, SpawnTimeout after the last instant the run was
-        // known busy - never "SpawnTimeout from right now", or an unrelated room's activity (which
-        // reruns THIS method on every pass of the loop) would keep pushing a truly stalled run's
-        // deadline forward forever, and it would never actually fire.
+        // Every active run gets two wakes of its own, which the exchange loop above cannot see (a run
+        // with nothing open or in flight has no Open exchange in _rooms for _policy.NextWake). The
+        // wall-clock wake is unconditional (the hard cap must trip even while the run is busy, and
+        // parking stops its open exchange and in-flight spawns). The stall wake arms only while idle,
+        // SpawnTimeout after the last instant the run was known busy, never "SpawnTimeout from now":
+        // another room's activity reruns this method on every pass and would push a stalled run's
+        // deadline forward forever.
         var activeIds = new HashSet<long>();
         foreach (var run in _runs.ListActive())
         {
@@ -1373,8 +1310,8 @@ public sealed partial class SpawnerService : BackgroundService
         if (delay < TimeSpan.FromMilliseconds(10)) delay = TimeSpan.FromMilliseconds(10);
         var cts = new CancellationTokenSource();
         _wake = cts;
-        // Row 19, task 9b: the TimeProvider overload, not the bare one - a FakeTimeProvider's
-        // Advance() must be able to fire this without a test actually waiting out 8 hours.
+        // The TimeProvider overload, so a FakeTimeProvider's Advance() fires this without a test
+        // waiting out 8 hours.
         _ = Task.Delay(delay, _clock, cts.Token).ContinueWith(t => { if (!t.IsCanceled) _events.Writer.TryWrite(new TickEvent()); }, TaskScheduler.Default);
     }
 
@@ -1384,13 +1321,13 @@ public sealed partial class SpawnerService : BackgroundService
     {
         MaintainModeResources(roomId);
         CloseIdleWorktrees(roomId);
-        // I-m1 (hub F4): read once per publish - a run active OR parked in the room gates Continuable
-        // the same way for every exchange's own view and for the top-level field below (a parked run
-        // resumes on ANY human post, /continue included, so a /continue there would really steer the
-        // run rather than reopen the exchange).
+        // Read once per publish: a run active or parked in the room gates Continuable the same way for
+        // every exchange's own view and for the top-level field below (a parked run resumes on any
+        // human post, /continue included, so a /continue there would steer the run rather than
+        // reopen the exchange).
         var runBlocks = _runs.Active(roomId) is not null || _runs.Latest(roomId) is { Status: RunStatus.Parked };
-        // InFlight is the ROOM's live spawns (a superseded exchange's spawn included), not the newest
-        // exchange's list; Seq lets row 16 order a GET against an event (critique pass 2, M1, m10).
+        // InFlight is the room's live spawns (a superseded exchange's spawn included), not the newest
+        // exchange's list; Seq lets a client order a GET against an event.
         var views = ExchangesIn(roomId).Select(x => View(x, runBlocks)).ToList();
         var starts = _inFlight.Values.Where(h => h.Request.RoomId == roomId)
             .ToDictionary(h => h.Participant.Id, h => h.StartedAt, StringComparer.Ordinal);

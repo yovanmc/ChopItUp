@@ -26,7 +26,7 @@ public sealed class SpawnerServiceMemoryTests : SpawnerServiceTestBase
     public async Task R18_a_directory_room_spawn_carries_its_room_topic_and_a_plain_room_does_not()
     {
         var memory = _host.Services.GetRequiredService<MemoryStore>();
-        await MakeRoom("proj");   // SpawnerServiceTests.Rooms.cs:21 — git-inits the directory, then CreateRoom (critique P1-20)
+        await MakeRoom("proj");   // git-inits the directory, then CreateRoom
         memory.Append("room-proj", "Stack", ".NET 10.", "p");
         await PostAsOwner("@opus hi");
         var plain = await _runner.NextSpecAsync(Wait);

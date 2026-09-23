@@ -2,10 +2,10 @@ using ChopItUp.Core.Skills;
 
 namespace ChopItUp.Core.Tests.Skills;
 
-/// <summary>Row 19, task 13: the `/stop` reserved command. <see cref="RunCommands.IsStop"/> reuses
-/// <see cref="SlashCommands.TryParse"/> (ticket 13) rather than re-parsing the body itself, so it
-/// inherits the exact same "first line, `/` immediately followed by a name" shape - a `/stop` buried
-/// in prose or on a later line is not a stop request, exactly as it is not a skill invocation.</summary>
+/// <summary>The `/stop` reserved command. <see cref="RunCommands.IsStop"/> reuses
+/// <see cref="SlashCommands.TryParse"/> rather than re-parsing the body itself, so it inherits the
+/// exact same "first line, `/` immediately followed by a name" shape - a `/stop` buried in prose or
+/// on a later line is not a stop request, exactly as it is not a skill invocation.</summary>
 public sealed class RunCommandsTests
 {
     [Fact]

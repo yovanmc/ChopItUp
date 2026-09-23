@@ -310,7 +310,7 @@ public sealed class ExchangePolicyTests
         Assert.Null(ExchangePolicy.Finished(x, "opus", T0).Note);
     }
 
-    // Row 27: the run-caused stop must not read as an owner stop, and StopCause must record why.
+    // The run-caused stop must not read as an owner stop, and StopCause must record why.
     [Fact]
     public void Stop_with_run_cause_does_not_attribute_the_stop_to_the_owner_and_sets_StopCause()
     {
@@ -345,9 +345,9 @@ public sealed class ExchangePolicyTests
         Assert.Equal(2, next[0].TurnNumber);
     }
 
-    // Row 35: exclusiveOver narrows what an exclusive exchange waits on to its own in-flight set
-    // (a worktree exchange) rather than the whole room's (row 32's plain directory-room behaviour,
-    // still the default when exclusiveOver is omitted).
+    // exclusiveOver narrows what an exclusive exchange waits on to its own in-flight set (a worktree
+    // exchange) rather than the whole room's (the plain directory-room behaviour, still the default
+    // when exclusiveOver is omitted).
     [Fact]
     public void Due_and_NextWake_take_exclusiveOver_to_narrow_exclusivity_to_one_exchange()
     {
@@ -378,7 +378,7 @@ public sealed class ExchangePolicyTests
         Assert.All(Policy().Due(x, T0.AddSeconds(2), NoStarts, Nobody), d => Assert.Equal(0, d.RemainingAfter));
     }
 
-    // --- Task 4: the exchange carries the skill in force ------------------------------------------
+    // The exchange carries the skill in force
 
     private static readonly ResolvedSkill DemoSkill = new("demo", "Demo Skill", "Do the demo thing.", false);
     private static readonly ResolvedSkill TruncatedSkill = new("demo", "Demo Skill", "Do the demo thing.", true);
@@ -418,7 +418,7 @@ public sealed class ExchangePolicyTests
 
             var (next, notes) = p.OnMessage(open, Msg(2, "owner", "/x @opus"), T0.AddSeconds(1), skill: refusal);
             Assert.Same(open, next);                                    // no NEW exchange opened
-            Assert.Equal(ExchangeStatus.Superseded, open.Status);       // but the owner still spoke (D5)
+            Assert.Equal(ExchangeStatus.Superseded, open.Status);       // but the owner still spoke
             Assert.Empty(open.Pending);                                 // the overlap supersede cleared opus's queued turn
             var note = Assert.Single(notes);
             switch (refusal)
@@ -476,7 +476,7 @@ public sealed class ExchangePolicyTests
         Assert.Contains(notes, n => n.Contains("not spawning @sonnet"));
     }
 
-    // --- Task 4 (row 19): starting a run, and every refusal at the start ---------------------------
+    // Starting a run, and every refusal at the start
 
     private static readonly ResolvedSkill RunSkill = new("build-thing", "Build Thing", "Build the thing.", false, IsRun: true);
 
@@ -533,12 +533,11 @@ public sealed class ExchangePolicyTests
     [Fact]
     public void The_supersede_gate_is_a_second_line_of_defence_behind_the_run_is_not_null_return()
     {
-        // Load-bearing distinction (pass 2's F-23): step 3's early return is what actually protects
-        // an active run's exchange; the `run is null` guard on the supersede below it can never by
-        // itself be exercised through OnMessage, because step 3 always returns first when run is not
-        // null. This test pins step 3 as the one doing the work (see the test above); the classic
-        // outside-a-run supersede path (An_owner_message_mid_exchange_supersedes...) is the regression
-        // that matters and stays covered by the pre-existing suite.
+        // Load-bearing distinction: step 3's early return is what protects an active run's exchange;
+        // the `run is null` guard on the supersede below it can never by itself be exercised through
+        // OnMessage, because step 3 always returns first when run is not null. This test pins step 3
+        // as the one doing the work; the outside-a-run supersede path
+        // (An_owner_message_mid_exchange_supersedes...) stays covered by its own tests.
         var p = Policy();
         var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
         var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
@@ -546,7 +545,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal(ExchangeStatus.Open, open!.Status);
     }
 
-    // --- Task 5a (row 19): the hub re-spawning its run's conductor ----------------------------------
+    // The hub re-spawning its run's conductor
 
     [Fact]
     public void OpenForConductor_builds_a_one_turn_exchange_carrying_the_skill_and_every_trigger()
@@ -563,7 +562,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal(ExchangeStatus.Open, x.Status);
     }
 
-    // --- Task 8 (row 19): the phase tag, the D8 class rules, and the refusal counter ---------------
+    // The phase tag, the conductor class rules, and the refusal counter
 
     private static string? Refuse(ExchangePolicy p, string body, string conductor = "sonnet",
         Func<string, string?>? artifactAuthor = null, Func<string, bool>? artifactExists = null)
@@ -625,7 +624,7 @@ public sealed class ExchangePolicyTests
         Assert.Null(Refuse(Policy(), "phase: build @opus go", conductor: "fable"));     // opus: visible,judge
     }
 
-    // --- Row 20 task 3 (AC4b): a refusal names the rows that would have satisfied the rule ----------
+    // A refusal names the rows that would have satisfied the rule
 
     [Fact]
     public void A_refused_build_post_names_the_qualifying_rows()
@@ -726,7 +725,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal(expected, arms);
     }
 
-    // --- Row 36: the policy joins a reply to its exchange -------------------------------------------
+    // The policy joins a reply to its exchange
 
     private static Message Reply(long id, string author, string body, long replyTo) => new(id, "general", author, body, T0, replyTo);
 
@@ -741,7 +740,7 @@ public sealed class ExchangePolicyTests
 
         Assert.Null(opened);
         Assert.Empty(notes);
-        Assert.Equal(ExchangeStatus.Open, a!.Status);                 // row 32 would have superseded it (opus overlaps)
+        Assert.Equal(ExchangeStatus.Open, a!.Status);                 // a fresh prompt would have superseded it (opus overlaps)
         Assert.Equal(["opus", "sonnet"], a.Pending.Keys);
         Assert.Equal(3, a.TurnsCommitted);
         Assert.Contains(2L, a.MessageIds);
@@ -873,7 +872,7 @@ public sealed class ExchangePolicyTests
 
         Assert.Equal(2, opened!.RootMessageId);
         Assert.Equal("A reply that invokes /" + RunSkill.Name + " does not join an exchange; it was handled as a new prompt.", notes[0]);
-        Assert.Equal(["opus"], a!.Pending.Keys);                        // disjoint: row 32's rule, untouched
+        Assert.Equal(["opus"], a!.Pending.Keys);                        // disjoint: the overlap rule, untouched
     }
 
     [Fact]
@@ -886,7 +885,7 @@ public sealed class ExchangePolicyTests
             skill: new SkillResolution.Unknown("typo", []), joins: a);
 
         Assert.Null(opened);
-        Assert.Equal(ExchangeStatus.Superseded, a!.Status);           // row 32's overlap rule, as without reply-to
+        Assert.Equal(ExchangeStatus.Superseded, a!.Status);           // the overlap rule, as without reply-to
         Assert.Single(notes);
         Assert.StartsWith("No skill named '/typo'", notes[0]);
     }
@@ -941,7 +940,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal([1L, 2L], a!.MessageIds.Order());
     }
 
-    // --- Row 43 (D-b, D-c): only a leading mention addresses anyone; an inline id is a reference -----
+    // Only a leading mention addresses anyone; an inline id is a reference
 
     private static readonly ResolvedSkill GrillSkill = new("grill", "Grill", "Grill it.", false);
 
@@ -1081,7 +1080,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal(["opus"], Policy().ReferencedSpawnable(Msg(1, "claude", "I agree with @opus")));
     }
 
-    // --- Row 44: budget, refused hand-offs, synthesis, continue ---------------------------------------
+    // Budget, refused hand-offs, synthesis, continue
 
     [Fact]
     public void R44_an_owner_prompt_records_the_addressee_and_a_turns_token_sets_the_budget()
@@ -1131,10 +1130,10 @@ public sealed class ExchangePolicyTests
         Assert.Equal(SpawnReason.Synthesis, synthesis.Value.Reason);
         Assert.Equal([3L], synthesis.Value.TriggerIds);
         Assert.Equal((4, 3, true, false), (x.Budget, x.TurnsCommitted, x.SynthesisUsed, x.SynthesisGrewBudget));   // a free turn was left
-        Assert.Equal(T0.AddSeconds(8) + Limits.Debounce, p.NextWake(x, T0.AddSeconds(8), NoStarts, Nobody));   // claim 19: the timer launches it
+        Assert.Equal(T0.AddSeconds(8) + Limits.Debounce, p.NextWake(x, T0.AddSeconds(8), NoStarts, Nobody));   // the timer launches it
         Assert.Empty(p.Due(x, T0.AddSeconds(9), NoStarts, Nobody));
         var due = p.Due(x, T0.AddSeconds(20), NoStarts, Nobody).Single();
-        Assert.Equal((SpawnReason.Synthesis, 3, 0), (due.Reason, due.TurnNumber, due.RemainingAfter));   // I-m8 (hub F9): a synthesis is unconditionally the last turn
+        Assert.Equal((SpawnReason.Synthesis, 3, 0), (due.Reason, due.TurnNumber, due.RemainingAfter));   // a synthesis is unconditionally the last turn
         ExchangePolicy.Started(x, due);
         p.OnMessage(x, Msg(4, "opus", "summary for the owner"), T0.AddSeconds(21));
         var (end, done) = ExchangePolicy.Finished(x, "opus", T0.AddSeconds(22));
@@ -1164,7 +1163,7 @@ public sealed class ExchangePolicyTests
         Assert.Contains("queuing @opus's synthesis turn", note);
         Assert.Equal((3, 3, true), (y!.Budget, y.TurnsCommitted, y.SynthesisGrewBudget));   // no free turn: one added
         Assert.Equal("Exchange stopped by the owner: 2 of 2 turns used.", ExchangePolicy.Stop(y, ExchangeStopCause.Owner));   // the pending synthesis is dropped and its turn taken back
-        Assert.Equal((2, 2, false), (y.Budget, y.TurnsCommitted, y.SynthesisGrewBudget));   // I-m7 (hub F8): TurnsCommitted goes back with Budget
+        Assert.Equal((2, 2, false), (y.Budget, y.TurnsCommitted, y.SynthesisGrewBudget));   // TurnsCommitted goes back with Budget
 
         var (z, _) = p.OnMessage(null, Msg(6, "owner", "turns: 2 @opus @sonnet both"), T0);
         ExchangePolicy.Started(z!, p.Due(z!, T0.AddSeconds(2), NoStarts, Nobody).First(d => d.ParticipantId == "opus"));
@@ -1328,7 +1327,7 @@ public sealed class ExchangePolicyTests
         Assert.Equal([3L, 4L], x.Pending["sonnet"].TriggerIds);
     }
 
-    // --- Interrogation and review dispositions (Phase B): I-M1, I-M2, I-m1, I-m3 --------------------
+    // /continue overflow ids, app-backed posts and synthesis, continuable, refused /continue notes
 
     [Fact]
     public void I_M1_continue_overflow_keeps_the_original_refusing_id_not_the_continue_message()

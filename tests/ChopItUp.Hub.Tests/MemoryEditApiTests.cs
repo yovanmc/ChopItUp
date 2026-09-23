@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Row 40: the editor's routes. Every save goes through the rewrite trail; every refusal leaves
+/// <summary>The editor's routes. Every save goes through the rewrite trail; every refusal leaves
 /// no row; the cap is a 409 at every size above it.</summary>
 public sealed class MemoryEditApiTests : IAsyncLifetime
 {
@@ -63,8 +63,8 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
     private IEnumerable<string> Backups() =>
         Directory.GetFiles(Memory.Root, "*.bak").Concat(Directory.GetFiles(Memory.TopicsDir, "*.bak"));
 
-    /// <summary>Row 40, pass 3 P3-2: how many commits the memory repo holds, so a second save can prove
-    /// it landed as its own commit rather than replaying the first.</summary>
+    /// <summary>How many commits the memory repo holds, so a second save can prove it landed as its
+    /// own commit rather than replaying the first.</summary>
     private static async Task<int> CommitCount(string memoryRoot)
     {
         var r = await new ProcessRunner().RunAsync(
@@ -147,9 +147,9 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
 
         Assert.Empty((await GetJson("api/memory/proposals?room=general")).EnumerateArray());   // nothing left to decide
 
-        // Row 40, pass 3 P3-2: a second save, keyed off the FIRST response's hash, proves the hash
-        // re-arms rather than being usable once — the guard against silently clobbering an approval
-        // must be checked on the file as it now stands, not on some fixed value from GET time.
+        // A second save, keyed off the FIRST response's hash, proves the hash re-arms rather than
+        // being usable once: the guard against silently clobbering an approval must be checked on the
+        // file as it now stands, not on some fixed value from GET time.
         var again = written.Replace("Every morning.", "Every morning, still.");
         var r2 = await Put("user", again, body.GetProperty("hash").GetString()!);
         var body2 = JsonDocument.Parse(await r2.Content.ReadAsStringAsync()).RootElement;

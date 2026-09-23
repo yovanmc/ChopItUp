@@ -6,8 +6,8 @@ using System.Text.Json;
 
 namespace ChopItUp.Desktop.Hub;
 
-/// <summary>Row 12 T3: the real-disk half of B3's attach detection. Deliberately not seamed behind an
-/// interface — these are two cheap, synchronous file checks that mirror the hub's own shape exactly
+/// <summary>The real-disk half of attach detection. Deliberately not seamed behind an interface:
+/// these are two cheap, synchronous file checks that mirror the hub's own shape exactly
 /// (HubLock.IsHeld, HubPortFile.Read) rather than a dependency worth faking.</summary>
 public static class HubProbe
 {
@@ -43,8 +43,8 @@ public static class HubProbe
     }
 }
 
-/// <summary>Row 12 T3: the one real IHealthProbe. A single shared client with a short timeout so a
-/// hub that never answers does not stall the ready/attach poll loop.</summary>
+/// <summary>The one real IHealthProbe. A single shared client with a short timeout so a hub that
+/// never answers does not stall the ready/attach poll loop.</summary>
 public sealed class HttpHealthProbe : IHealthProbe
 {
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(2) };

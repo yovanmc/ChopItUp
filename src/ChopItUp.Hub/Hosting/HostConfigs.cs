@@ -7,24 +7,23 @@ using ChopItUp.Hub.Spawning;
 namespace ChopItUp.Hub.Hosting;
 
 /// <summary>Emits ready-to-paste MCP client configurations carrying this hub's port and a
-/// <see cref="TokenPlaceholder"/> in place of each app-backed row's real token (row 28 ticket 3: no
-/// live credential is ever written under the data dir by this path — <c>--rotate-token &lt;id&gt;</c>
-/// mints and prints the real value once, and the operator pastes it over the placeholder by hand).
+/// <see cref="TokenPlaceholder"/> in place of each app-backed row's real token: no live credential
+/// is ever written under the data dir by this path. <c>--rotate-token &lt;id&gt;</c> mints and prints
+/// the real value once, and the operator pastes it over the placeholder by hand.
 /// Claude Desktop cannot dial a plain-http loopback remote connector, so it goes through the
 /// mcp-remote stdio bridge; Codex reads the same config.toml from the ChatGPT desktop app, the CLI
 /// and the IDE extension, and accepts an http://127.0.0.1 URL directly.
 ///
-/// Everything lands under the gitignored data directory. A filled-in copy (the placeholder replaced
-/// by hand with a value <c>--rotate-token</c> printed) is never written anywhere else, and
-/// <b>never</b> into <c>%APPDATA%\Claude\claude_desktop_config.json</c>
+/// Everything lands under the gitignored data directory. A filled-in copy is never written anywhere
+/// else, and <b>never</b> into <c>%APPDATA%\Claude\claude_desktop_config.json</c>
 /// or <c>~/.codex/config.toml</c>: those are the owner's files and the owner pastes into them.</summary>
 public static class HostConfigs
 {
     public const string FolderName = "host-configs";
     public const string McpRemoteVersion = "0.8.3";
 
-    /// <summary>Stands in for a real token in every generated file (row 28 ticket 3). An operator
-    /// fills it in by hand with the value <c>--rotate-token &lt;id&gt;</c> prints once.</summary>
+    /// <summary>Stands in for a real token in every generated file. An operator fills it in by hand
+    /// with the value <c>--rotate-token &lt;id&gt;</c> prints once.</summary>
     public const string TokenPlaceholder = "{{TOKEN}}";
 
     /// <summary>One file under <see cref="FolderName"/> after <see cref="SweepLiveTokens"/>: either
@@ -32,14 +31,14 @@ public static class HostConfigs
     /// failed for <see cref="Error"/> and the file was left exactly as it was.</summary>
     public readonly record struct SweepOutcome(string Path, bool Rewritten, string? Error);
 
-    /// <summary>Row 28 ticket 3: run at every hub start against <c>&lt;data&gt;\host-configs\</c>. A
-    /// file generated before this task shipped (or hand-edited to carry a live value) still has a
-    /// real bearer embedded; <see cref="TokenScan.Candidates"/> finds every run shaped like a minted
-    /// token and <paramref name="tokens"/> confirms which ones actually resolve to a participant
-    /// before anything is touched, so an unrelated 43-character string is never mistaken for a
-    /// credential. A file that cannot be read or rewritten (a locked handle, a deny-write ACL) is
-    /// reported through <see cref="SweepOutcome.Error"/> rather than thrown — the caller decides how
-    /// loud to be, but this never stops serving on its own (AC4).</summary>
+    /// <summary>Run at every hub start against <c>&lt;data&gt;\host-configs\</c>. An older generated
+    /// file (or one hand-edited to carry a live value) may still have a real bearer embedded;
+    /// <see cref="TokenScan.Candidates"/> finds every run shaped like a minted token and
+    /// <paramref name="tokens"/> confirms which ones actually resolve to a participant before anything
+    /// is touched, so an unrelated 43-character string is never mistaken for a credential. A file that
+    /// cannot be read or rewritten (a locked handle, a deny-write ACL) is reported through
+    /// <see cref="SweepOutcome.Error"/> rather than thrown: the caller decides how loud to be, but
+    /// this never stops serving on its own.</summary>
     public static IReadOnlyList<SweepOutcome> SweepLiveTokens(string dataDir, TokenStore tokens)
     {
         var folder = Path.Combine(dataDir, FolderName);
@@ -86,7 +85,7 @@ public static class HostConfigs
         var url = $"http://127.0.0.1:{port}/mcp";
         // One file per app-backed row: a model row with no model of its own is a window some
         // program opens on the room (Claude Desktop / Claude Code, the Codex app). Spawn rows
-        // (model set) get no file; the hub itself is their client (M5). At most one app-backed
+        // (model set) get no file; the hub itself is their client. At most one app-backed
         // row per host, by construction of the seed; a second would overwrite the first here.
         foreach (var row in roster.Where(p => p.Kind == "model" && p.Model is null))
         {
@@ -97,13 +96,12 @@ public static class HostConfigs
                 default: throw new InvalidOperationException($"Participant '{row.Id}' has host '{row.Host}', which has no config template.");
             }
         }
-        // The owner's remote hand (grill ledger D3) is the one human row that needs a client config:
-        // it is a credential a Claude Code session on this machine is configured with. Claude CODE
-        // dials loopback directly - that is SpawnCommands.ClaudeMcpConfigJson, the shape every
-        // hub-spawned Claude has used since M5 and that the M5/M9/M10 live checks exercise. The
-        // mcp-remote bridge above is Claude DESKTOP's workaround, needed only because Desktop's
-        // remote connectors are dialled from Anthropic's cloud - using it here would add an npx
-        // registry fetch to every session start for nothing.
+        // The hub owner's remote hand is the one human row that needs a client config: it is a
+        // credential a Claude Code session on this machine is configured with. Claude CODE dials
+        // loopback directly (SpawnCommands.ClaudeMcpConfigJson, the shape every hub-spawned Claude
+        // uses). The mcp-remote bridge above is Claude DESKTOP's workaround, needed only because
+        // Desktop's remote connectors are dialled from Anthropic's cloud; using it here would add an
+        // npx registry fetch to every session start for nothing.
         var proxy = roster.FirstOrDefault(p => p.Id == ChopDb.OwnerRemoteParticipantId);
         if (proxy is not null && tokens.TryGetValue(proxy.Id, out var proxyToken))
             File.WriteAllText(Path.Combine(folder, "claude-code-owner-remote.json"),
@@ -198,11 +196,11 @@ public static class HostConfigs
 
         """;
 
-    // No Claude Code artifact in M2, deliberately. It would have to reuse the 'claude' token, and
-    // read_cursors is keyed (participant_id, room_id) with a stateless transport — two hosts on one
+    // No Claude Code artifact, deliberately. It would have to reuse the 'claude' token, and
+    // read_cursors is keyed (participant_id, room_id) with a stateless transport: two hosts on one
     // identity would share and race one cursor while the participation prompt promises a private
-    // one (pass 2, MAJOR-2). Claude Code as a host is M5's job and needs its own participant row,
-    // which is a schema change, not a config file.
+    // one. Claude Code as a host needs its own participant row, which is a schema change, not a
+    // config file.
 
     private static string Readme(string url, int port, IReadOnlyList<Participant> roster) => $"""
         # Host configs for Chop It Up

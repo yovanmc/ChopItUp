@@ -12,15 +12,14 @@ using ModelContextProtocol.Protocol;
 
 namespace ChopItUp.Hub.Tests.Mcp;
 
-/// <summary>Row 19, task 12 (ticket 12): <c>run_gate</c> - a participant in a run can run the checks
-/// its skill ships, and nothing else. Installs its fixture skills through the REAL write path
-/// (<see cref="SkillImport"/>), never a hand-written hash, so the whole-tree manifest (task 12a)
-/// exists and every refusal here is the one AC10 actually names.
+/// <summary><c>run_gate</c>: a participant in a run can run the checks its skill ships, and nothing
+/// else. Installs its fixture skills through the real write path (<see cref="SkillImport"/>), never a
+/// hand-written hash, so the whole-tree manifest exists and every refusal here is a real one.
 ///
-/// Every test sets <see cref="FakeProcessRunner.Handler"/> BEFORE posting the message that starts a
-/// run: the handler runs INSIDE the real spawn's own task, so calling <c>run_gate</c> from within it
+/// Every test sets <see cref="FakeProcessRunner.Handler"/> before posting the message that starts a
+/// run: the handler runs inside the real spawn's own task, so calling <c>run_gate</c> from within it
 /// (authenticated as the spawned participant, via a real MCP client) is what makes that participant
-/// genuinely "in flight" for <see cref="SpawnerService.Snapshot"/> to see - unlike calling it from
+/// genuinely "in flight" for <see cref="SpawnerService.Snapshot"/> to see, unlike calling it from
 /// outside any spawn, which is exactly what the "not in flight" test does on purpose.</summary>
 public sealed class RunToolsTests : IAsyncLifetime
 {
@@ -33,16 +32,16 @@ public sealed class RunToolsTests : IAsyncLifetime
     private HubTestHost _host = null!;
     private string _roomDir = null!;
 
-    /// <summary>Row 20, task 3b: GateProgressInterval is cut from Default's 30 s to 40 ms so the two
-    /// progress tests below see several ticks without a slow test. Every other RunLimits field stays at
-    /// Default's value - <see cref="run_gate_runs_a_script_under_GateTimeout"/> still asserts against
+    /// <summary>GateProgressInterval is cut from Default's 30 s to 40 ms so the two progress tests
+    /// below see several ticks without a slow test. Every other RunLimits field stays at Default's
+    /// value: <see cref="run_gate_runs_a_script_under_GateTimeout"/> still asserts against
     /// <see cref="RunLimits.Default"/>'s own EffectiveGateTimeout, which this leaves untouched.</summary>
     public async Task InitializeAsync()
     {
         var runLimits = new RunLimits(RunLimits.Default.Spawns, RunLimits.Default.WallClock, RunLimits.Default.SpawnTimeout,
             RunLimits.Default.PhaseEntries, GateProgressInterval: TimeSpan.FromMilliseconds(40));
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, runLimits: runLimits);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
         _roomDir = Path.Combine(_host.RoomsRoot, "lab");
         Assert.True(await new GitTrail(_roomDir).InitAsync());
         _host.Services.GetRequiredService<MessageStore>().CreateRoom("lab", "LAB", _roomDir);
@@ -52,10 +51,10 @@ public sealed class RunToolsTests : IAsyncLifetime
 
     private RunStore Runs => _host.Services.GetRequiredService<RunStore>();
 
-    /// <summary>Installs a fixture skill through the real write path so task 12a's whole-tree manifest
-    /// exists to verify against (a hand-written <see cref="SkillHashes.Record"/> only ever covers
-    /// SKILL.md). <paramref name="overlayMd"/>/<paramref name="overlayScripts"/> (row 20 task 1) compose
-    /// a hub-side overlay in through <c>--overlay</c> the same way a real import would.</summary>
+    /// <summary>Installs a fixture skill through the real write path so the whole-tree manifest exists
+    /// to verify against (a hand-written <see cref="SkillHashes.Record"/> only ever covers SKILL.md).
+    /// <paramref name="overlayMd"/>/<paramref name="overlayScripts"/> compose a hub-side overlay in
+    /// through <c>--overlay</c> the same way a real import would.</summary>
     private void ImportSkill(string name, string skillMd, IReadOnlyDictionary<string, string>? extraFiles = null,
         string? overlayMd = null, IReadOnlyDictionary<string, string>? overlayScripts = null)
     {
@@ -105,8 +104,8 @@ public sealed class RunToolsTests : IAsyncLifetime
     }
 
     /// <summary>Raw read, direct from the database: <see cref="RunStore.GateRuns"/> is keyed by a
-    /// non-null run id, but AC10 requires recording a refusal that has none (there is no run here) -
-    /// this is the only way a test can see that row.</summary>
+    /// non-null run id, but a refusal with no run ("there is no run here") is recorded too, and this
+    /// is the only way a test can see that row.</summary>
     private List<(long? RunId, string Gate, string CallerId, int? ExitCode, string Outcome)> AllGateRunRows()
     {
         using var conn = _host.Services.GetRequiredService<ChopDb>().Open();
@@ -181,7 +180,7 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Equal("exit 3", row.Outcome);
     }
 
-    // --- Row 20 task 1: run_gate on an overlay-declared gate ---------------------------------------
+    // run_gate on an overlay-declared gate
 
     [Fact]
     public async Task run_gate_executes_an_overlay_declared_gate()
@@ -308,8 +307,8 @@ public sealed class RunToolsTests : IAsyncLifetime
             ["scripts/check-it.ps1"] = "exit 0\n",
             ["scripts/baselines.json"] = "{}",
         });
-        // Tamper a file the gate's OWN manifest entry never touches - proves task 12b's whole-tree
-        // check, not merely a per-script hash.
+        // Tamper a file the gate's own manifest entry never touches: proves the whole-tree check, not
+        // merely a per-script hash.
         File.WriteAllText(Path.Combine(_dir, "skills", "gated", "scripts", "baselines.json"), "{\"tampered\":true}");
         CallToolResult? gateResult = null;
         _runner.Handler = async (spec, _, _) =>
@@ -333,7 +332,7 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(_dir, "gate-runs")) && Directory.EnumerateFileSystemEntries(Path.Combine(_dir, "gate-runs")).Any());
     }
 
-    // --- Row 20 task 3: run_gate's own process timeout is EffectiveGateTimeout, not SpawnTimeout ----
+    // run_gate's own process timeout is EffectiveGateTimeout, not SpawnTimeout
 
     [Fact]
     public async Task run_gate_runs_a_script_under_GateTimeout()
@@ -404,7 +403,7 @@ public sealed class RunToolsTests : IAsyncLifetime
         Assert.Contains(rows, r => r.Outcome == "refused: gate-running");
     }
 
-    // --- Row 20 task 3b: run_gate reports progress while the script runs ----------------------------
+    // run_gate reports progress while the script runs
 
     /// <summary>Records every <see cref="ProgressNotificationValue"/> the MCP client hands back for a
     /// <c>run_gate</c> call made with a progress sink attached.</summary>

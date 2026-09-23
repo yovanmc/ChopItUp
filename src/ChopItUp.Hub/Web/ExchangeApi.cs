@@ -3,11 +3,10 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>The exchange state for the web UI (row 16 renders it; the tests are its first client).
-/// <c>GET</c> stays unauthenticated like the rest of <c>/api</c>; <c>POST .../stop</c> needs an
-/// owner-class bearer since row 28 (<c>BearerTokenMiddleware</c>), superseding the old no-auth
-/// loopback boundary. The stop is the owner's "step in and end it" (D17): the hub kills the in-flight
-/// spawns and closes the exchange; the owner's next message opens a fresh one.
+/// <summary>The exchange state for the web UI. <c>GET</c> stays unauthenticated like the rest of
+/// <c>/api</c>; <c>POST .../stop</c> needs an owner-class bearer (<c>BearerTokenMiddleware</c>).
+/// The stop is the hub owner's "step in and end it": the hub kills the in-flight spawns and closes the
+/// exchange; the hub owner's next message opens a fresh one.
 /// <c>POST .../exchanges/{rootMessageId}/stop</c> stops one exchange and leaves the rest of the room
 /// running.</summary>
 public static class ExchangeApi

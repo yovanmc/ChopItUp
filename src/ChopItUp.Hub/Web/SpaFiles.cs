@@ -2,8 +2,8 @@ using Microsoft.Extensions.FileProviders;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>Serves the built web client (brief D3: the client is built into <c>wwwroot</c> and served
-/// by the hub, so M4 publishes one exe with no separate front-end deploy step).
+/// <summary>Serves the built web client: the client is built into <c>wwwroot</c> and served by the
+/// hub, so a publish produces one exe with no separate front-end deploy step.
 ///
 /// The web root is resolved beside the executable rather than from the process's current directory,
 /// because the hub is launched by MCP hosts whose working directory is not ours.

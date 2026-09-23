@@ -2,7 +2,7 @@ using System.IO;
 
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T3: a fresh temp dir per test, optionally seeded with an empty `ChopItUp.Hub.exe`
+/// <summary>A fresh temp dir per test, optionally seeded with an empty `ChopItUp.Hub.exe`
 /// (the start path's `File.Exists` check). Never shared across tests: this assembly disables
 /// parallelization (AssemblyInfo.cs).</summary>
 internal static class TestDirs

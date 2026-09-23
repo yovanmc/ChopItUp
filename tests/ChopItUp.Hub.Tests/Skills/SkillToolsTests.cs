@@ -7,8 +7,8 @@ using ModelContextProtocol.Protocol;
 
 namespace ChopItUp.Hub.Tests.Skills;
 
-/// <summary>Ticket 05 / plan Task 5: the <c>propose_skill</c> MCP tool. D4 confines the source to the
-/// calling room's own bound directory; D6 refuses an overlay at this point by passing none through to
+/// <summary>The <c>propose_skill</c> MCP tool. The source is confined to the calling room's own bound
+/// directory, and an overlay is refused at this point by passing none through to
 /// <see cref="SkillImport.Validate"/>, so both overlay refusals fall out of <c>Validate</c> itself.
 /// The tool never calls <see cref="SkillImport.Run"/> - nothing under the skill store changes as a
 /// result of an offer.</summary>

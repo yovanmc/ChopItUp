@@ -1,6 +1,6 @@
 # Affected verification
 
-Owner policy, 2026-09-21: affected checks are the normal local and CI gate. A commit or merge is not, by itself, a reason to repeat all tests. This supersedes older instructions to run every suite for every dispatch, commit or release.
+Affected checks are the normal local and CI gate. A commit or merge is not, by itself, a reason to repeat all tests.
 
 ```powershell
 pwsh -NoProfile -File tools/Invoke-AffectedTests.ps1 -PlanOnly

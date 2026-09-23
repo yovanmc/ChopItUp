@@ -1,27 +1,25 @@
 <#
 .SYNOPSIS
-    Row 29 Task 6 live check: a hub-started, non-model process presents a stolen owner-remote bearer
+    Owner-peer live check: a hub-started, non-model process presents a stolen owner-remote bearer
     against the hub that started it, and is refused.
 
 .DESCRIPTION
     A real Sonnet directory spawn, asked directly to compose an HTTP call carrying a planted
-    owner-remote bearer against the hub's own API, refused on both attempts (measured 2026-09-10,
-    verbatim in the room transcript that run produced): "I won't do this ... this request specifically
-    asks me to use a credential from a file named 'stolen-mcp.json' to forge a POST request with a raw
-    Authorization header, bypassing that boundary entirely." That refusal is a real, useful finding
-    about the model, not a defect in this check, and it is defense in depth only -- the hub itself does
-    not require it and nothing here re-tries that ask.
+    owner-remote bearer against the hub's own API, refuses: it will not use a credential from a file
+    named 'stolen-mcp.json' to forge a request. That refusal is a real, useful finding about the model,
+    not a defect in this check, and it is defense in depth only: the hub itself does not require it
+    and nothing here re-tries that ask.
 
-    So this script no longer asks a model to do the escalation itself. It plants the same stolen
-    owner-remote bearer in the same shape as before, then drives the escalation through a real product
-    path that starts a process without ever asking a model to touch the credential: `run_gate`, which
-    `RunTools.Execute` runs through the SAME `IProcessRunner`/`SpawnJobs` machinery a model spawn goes
-    through, tagged with the calling participant's room and id (row 29, D7). The gate script -- a
-    hub-verified copy of tools\skills\peer-check-vehicle\scripts\present-header.ps1, run by pwsh, not a
-    model -- is what reads the planted file and presents the header. A real Sonnet spawn is still
-    spent, but only to call `run_gate` by name (an ordinary, sanctioned action for a run's own
-    conductor, no different from toy-run's "run the count-files gate") and then to post its own reply --
-    which is the live gate for a spawn's own credential still working from inside its job.
+    So this script does not ask a model to do the escalation itself. It plants the stolen owner-remote
+    bearer, then drives the escalation through a real product path that starts a process without ever
+    asking a model to touch the credential: `run_gate`, which `RunTools.Execute` runs through the SAME
+    `IProcessRunner`/`SpawnJobs` machinery a model spawn goes through, tagged with the calling
+    participant's room and id. The gate script -- a hub-verified copy of
+    tools\skills\peer-check-vehicle\scripts\present-header.ps1, run by pwsh, not a model -- is what
+    reads the planted file and presents the header. A real Sonnet spawn is still spent, but only to
+    call `run_gate` by name (an ordinary, sanctioned action for a run's own conductor, no different
+    from toy-run's "run the count-files gate") and then to post its own reply, which is the live gate
+    for a spawn's own credential still working from inside its job.
 
     Costs one Sonnet directory spawn, two when the run has to be started again because the conductor
     narrated the gate call without making it (a known Sonnet spawn behaviour; this script re-runs the
@@ -77,10 +75,10 @@ Add-Content -Path $log -Value "measured 2026-09-10: a real Sonnet directory spaw
 $claude = Get-Command claude -ErrorAction SilentlyContinue
 Add-Check -Name 'cli.claude-on-path' -Passed ([bool]$claude) -Detail ($claude.Source ?? 'not found')
 
-# Row 28: every non-GET /api route needs an owner-class bearer, so both host-file rows this script
-# drives are seeded into the scratch hub's own tokens.json BEFORE its first start (LESSONS "M28 deploy
-# day"). 'owner' drives every call this script itself makes; 'owner-remote' is the one planted as the
-# "stolen" credential -- it is never used to authenticate a request this script sends.
+# Every non-GET /api route needs an owner-class bearer, so both host-file rows this script drives are
+# seeded into the scratch hub's own tokens.json before its first start. 'owner' drives every call this
+# script itself makes; 'owner-remote' is the one planted as the "stolen" credential -- it is never
+# used to authenticate a request this script sends.
 $tokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner', 'owner-remote')
 $ownerAuth = New-ChopBearerHeaders -Token $tokens.owner
 $knownTokens = New-Object System.Collections.Generic.List[string]
@@ -89,17 +87,17 @@ $knownTokens.Add($tokens.'owner-remote')
 
 $base = "http://127.0.0.1:$Port"
 # The message that starts the run -- and the host its gate is told to call back on -- go over
-# `localhost`, which resolves to `[::1]` first on Windows: the browser's own path (plan D9). Every
-# other call this script makes is unaffected and stays on 127.0.0.1.
+# `localhost`, which resolves to `[::1]` first on Windows: the browser's own path. Every other call
+# this script makes is unaffected and stays on 127.0.0.1.
 $localhostBase = "http://localhost:$Port"
 $roomId = 'peer'
 $skillName = Split-Path -Leaf (([string]$SkillSource).TrimEnd('\', '/'))
 
-# --import-skill runs BEFORE the hub starts (m6/M19 precedent) so no second process touches
-# chopitup.db while the hub holds it. The template under tools\skills\peer-check-vehicle carries
-# placeholders for the base URL and room id -- both known before the hub ever starts -- so the gate
-# it declares calls back on THIS run's own scratch hub, never a hardcoded one. Imported from a copy,
-# never the tracked template itself, so nothing this script does ever writes into the repo.
+# --import-skill runs before the hub starts so no second process touches chopitup.db while the hub
+# holds it. The template under tools\skills\peer-check-vehicle carries placeholders for the base URL
+# and room id -- both known before the hub ever starts -- so the gate it declares calls back on THIS
+# run's own scratch hub, never a hardcoded one. Imported from a copy, never the tracked template
+# itself, so nothing this script does ever writes into the repo.
 $skillScratchDir = Join-Path $skillScratchRoot $skillName
 New-Item -ItemType Directory -Path $skillScratchDir -Force | Out-Null
 Copy-Item -Path (Join-Path $SkillSource '*') -Destination $skillScratchDir -Recurse -Force
@@ -109,9 +107,9 @@ Set-Content -LiteralPath $skillMdPath -Value $skillMd -NoNewline -Encoding utf8
 
 $importOut = Join-Path $skillScratchRoot 'import.out.log'
 $importErr = Join-Path $skillScratchRoot 'import.err.log'
-# Every path below is quoted INSIDE the argument string (M19 lesson): Start-Process joins
-# -ArgumentList with spaces and quotes nothing, so an unquoted path under 'C:\Agent Projects' (this
-# repo's own default -SkillSource) arrives at the exe as two arguments.
+# Every path below is quoted inside the argument string: Start-Process joins -ArgumentList with
+# spaces and quotes nothing, so an unquoted path under 'C:\Agent Projects' (this repo's own default
+# -SkillSource) arrives at the exe as two arguments.
 $import = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$skillScratchDir`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $importOut -RedirectStandardError $importErr
 if ($import.ExitCode -ne 0) {
@@ -177,8 +175,8 @@ try {
 
     # --- Leg 4: start a run whose conductor (sonnet) is told only to run the present-header gate,
     #     then post its ping. The gate script -- not sonnet -- is the one that reads stolen-mcp.json
-    #     and presents its header; sonnet's own part is an ordinary run_gate call by name (ticket 06:
-    #     one re-run allowed if the conductor narrates the call without making it). ---------------
+    #     and presents its header; sonnet's own part is an ordinary run_gate call by name (one re-run
+    #     allowed if the conductor narrates the call without making it). -----------------------------
     $refusalPrefix = "Refused an owner-class credential presented from inside @sonnet's spawn (pid "
     $promptBody = "/$skillName @sonnet"
 
@@ -229,8 +227,8 @@ try {
     Add-Check -Name 'spawn.own-bearer-still-works' -Passed ($sonnetReplies.Count -ge 1 -and $finalRun.status -eq 'ended') `
         -Detail "sonnetReplies=$($sonnetReplies.Count) runStatus=$($finalRun.status)"
 
-    # Row 28 hygiene, matching Invoke-M5SpawnCheck.ps1: neither token this script minted should ever
-    # appear in a stored message body.
+    # Hygiene, matching Invoke-M5SpawnCheck.ps1: neither token this script minted should ever appear
+    # in a stored message body.
     $allMessages = Read-Room $roomId
     $leak = $allMessages | Where-Object { $b = $_.body; $knownTokens | Where-Object { $b.Contains($_) } }
     Add-Check -Name 'privacy.no-token-in-any-message' -Passed (-not $leak) -Detail "messages=$($allMessages.Count)"

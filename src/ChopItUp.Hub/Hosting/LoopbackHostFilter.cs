@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace ChopItUp.Hub.Hosting;
 
-/// <summary>Row 29 finding (ticket 04): Windows PowerShell 5.1's <c>Invoke-WebRequest</c> (on .NET
+/// <summary>Windows PowerShell 5.1's <c>Invoke-WebRequest</c> (on .NET
 /// Framework's <c>HttpWebRequest</c>) sends the loopback IPv6 address as the fully expanded,
 /// non-compressed literal - <c>[0000:0000:0000:0000:0000:0000:0000:0001]</c> - never the RFC 5952
 /// canonical <c>[::1]</c>. That is the same address spelled two ways, so a Host-header gate that

@@ -8,7 +8,7 @@ namespace ChopItUp.Core.Messaging;
 ///
 /// This is also the ONE place a post announces itself outward: <see cref="Posted"/> fires whenever
 /// <see cref="Publish(string,Message)"/> is called, carrying the stored message. The SignalR bridge
-/// (Hub/Realtime/RoomHub.cs) subscribes to it, so every posting path — MCP tool or the M3 web API —
+/// (Hub/Realtime/RoomHub.cs) subscribes to it, so every posting path (MCP tool or the web API)
 /// wakes <c>wait_for_message</c> and reaches connected browsers from this single call, never two
 /// that could drift.</summary>
 public sealed class MessageSignal

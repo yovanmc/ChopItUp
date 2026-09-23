@@ -296,7 +296,7 @@ public sealed class MemoryStoreTests : IDisposable
     [InlineData("Text.\n```\n# not a heading in a fence? still refused: the parser cannot tell\n```")]
     public void R18_Validate_refuses_a_body_line_that_would_start_an_entry(string body)
     {
-        // Writer and parser agree (critique P1-1): a line starting "# " or "## " is an entry boundary everywhere.
+        // Writer and parser agree: a line starting "# " or "## " is an entry boundary everywhere.
         if (body.Contains("# not")) Assert.Throws<ArgumentException>(() => MemoryStore.Validate("T", body));
         else MemoryStore.Validate("T", body);
     }
@@ -328,7 +328,7 @@ public sealed class MemoryStoreTests : IDisposable
     {
         var store = Store;
         store.EnsureLayout();
-        File.WriteAllText(Path.Combine(store.Root, ".gitignore"), "*.tmp\n");   // an M10-era store
+        File.WriteAllText(Path.Combine(store.Root, ".gitignore"), "*.tmp\n");   // an older store
         store.EnsureLayout();
         store.EnsureLayout();
         Assert.Equal("*.tmp\n*.bak\n", File.ReadAllText(Path.Combine(store.Root, ".gitignore")));
@@ -451,10 +451,10 @@ public sealed class MemoryStoreTests : IDisposable
     [Fact]
     public void R23_Rewrite_propagates_a_non_already_exists_backup_failure_and_writes_nothing()
     {
-        // Review finding: Rewrite must swallow ONLY an already-exists IOException on the backup copy.
-        // A directory at the backup path makes File.Copy throw IOException while File.Exists(bak) is
-        // false (File.Exists is false for a directory) - the old unconditional `catch (IOException)`
-        // swallowed this too and went on to destroy the topic file with no backup.
+        // Rewrite must swallow ONLY an already-exists IOException on the backup copy. A directory at
+        // the backup path makes File.Copy throw IOException while File.Exists(bak) is false
+        // (File.Exists is false for a directory); an unconditional `catch (IOException)` would
+        // swallow this too and go on to destroy the topic file with no backup.
         var store = Store;
         store.Append("user", "A", "old a.", "p1");
         var path = Path.Combine(store.TopicsDir, "user.md");
@@ -477,10 +477,10 @@ public sealed class MemoryStoreTests : IDisposable
     [Fact]
     public void R23_ValidateRewrite_does_not_overcharge_new_or_renamed_headings_and_still_refuses_a_genuinely_over_cap_body()
     {
-        // Review finding: ComposeRewrite only carries a provenance line forward for a SURVIVING live
+        // ComposeRewrite only carries a provenance line forward for a SURVIVING live
         // entry - never for a new or renamed heading - so charging MaxProvenanceChars per heading makes
         // the floor an over-estimate. Many new headings, comfortably under the real cap, must not be
-        // refused just because the old arithmetic multiplied a per-heading charge that never applies.
+        // refused by arithmetic that multiplies a per-heading charge that never applies.
         var titles = Enumerable.Range(0, 200).Select(i => $"H{i}").ToArray();
         var sb = new System.Text.StringBuilder("# manyheadings\n");
         foreach (var t in titles) sb.Append("## ").Append(t).Append('\n').Append("b.\n");

@@ -1,26 +1,23 @@
 <#
 .SYNOPSIS
-    Row 28 Task 7: shared helper the tools/Invoke-*.ps1 live-check harnesses dot-source, so a scratch
-    hub's own owner (and, where a harness drives /mcp as a host-file participant, that participant's)
-    bearer can be minted once and reused, instead of re-deriving the same fix twelve times.
+    Shared helper the tools/Invoke-*.ps1 live-check harnesses dot-source, so a scratch hub's own
+    owner (and, where a harness drives /mcp as a host-file participant, that participant's) bearer
+    can be minted once and reused.
 
 .DESCRIPTION
-    Row 28 Task 4 widened `BearerTokenMiddleware.RequiresAuth` to every non-GET /api request, and
-    Task 1 changed tokens.json from a flat plaintext map to a hashed-at-rest shape for host-file rows
-    (owner, owner-remote, claude, codex) with spawnable rows (opus, sonnet, fable, the gpt-* rows)
-    minted straight into memory and never written at all. Both changes broke this repo's tools/
-    live-check harnesses in different ways: the ones that POST to /api now 401 with no credential,
-    and the ones that read tokens.json after the hub started and used a value straight off disk as a
-    bearer (for /mcp, or for an /api decision route) now get a SHA-256 hex string instead of a
-    plaintext token.
+    `BearerTokenMiddleware.RequiresAuth` covers every non-GET /api request, and tokens.json stores
+    host-file rows (owner, owner-remote, claude, codex) hashed at rest, with spawnable rows (opus,
+    sonnet, fable, the gpt-* rows) minted straight into memory and never written at all. So a harness
+    that POSTs to /api needs a credential, and a value read off tokens.json after the hub started is
+    a SHA-256 hex string, not a usable bearer.
 
     `TokenStore.Load`'s migration guarantee is what this helper leans on: a plaintext STRING entry
     already present in tokens.json when the hub first starts against a data directory is hashed in
     place, not re-minted -- the exact plaintext that was seeded keeps authenticating, forever, exactly
-    as any host-file credential does after the migration (this is AC3's schema-evolution guarantee,
-    and TokenStoreTests' schema-evolution guard proves it at the unit level). So seeding a known
-    plaintext value for 'owner' (and, where a script drives /mcp as 'claude'/'codex'/'owner-remote',
-    those ids too) into a FRESH tokens.json before Start-Process ever launches the scratch hub means:
+    as any host-file credential does after the migration (TokenStoreTests' schema-evolution guard
+    proves it at the unit level). So seeding a known plaintext value for 'owner' (and, where a script
+    drives /mcp as 'claude'/'codex'/'owner-remote', those ids too) into a FRESH tokens.json before
+    Start-Process ever launches the scratch hub means:
       - the token authenticates from the very first request the hub serves -- no stop/rotate/restart
         dance, no dependency on --rotate-token's own "hub must be stopped" refusal;
       - the file itself holds only that value's SHA-256 from the hub's first start onward -- the
@@ -83,8 +80,8 @@ function Initialize-ChopScratchTokens {
 function New-ChopBearerHeaders {
     <# Authorization: Bearer header hashtable for Invoke-RestMethod/Invoke-WebRequest -Headers.
        Merges into (never overwrites) any headers the caller already needs -- e.g. MCP's own Accept
-       header for SSE -- matching the "merge, never overwrite" rule row 28 Task 5 set for the client's
-       own Authorization header. Returns a NEW hashtable; never mutates $Merge. #>
+       header for SSE -- matching the client's own "merge, never overwrite" rule for its
+       Authorization header. Returns a NEW hashtable; never mutates $Merge. #>
     param(
         [Parameter(Mandatory)][string]$Token,
         [hashtable]$Merge

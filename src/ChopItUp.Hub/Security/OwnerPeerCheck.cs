@@ -11,8 +11,8 @@ public abstract record OwnerPeerVerdict
     public sealed record InsideSpawn(int Pid, SpawnJobEntry Entry, bool NoteDue) : OwnerPeerVerdict;
 }
 
-/// <summary>Row 29: the one question the middleware asks about an owner-class bearer — where is it
-/// coming from? Seamed so tests can answer it without a real child process.</summary>
+/// <summary>The one question the middleware asks about an owner-class bearer: where is it coming
+/// from? Seamed so tests can answer it without a real child process.</summary>
 public interface IOwnerPeerCheck
 {
     OwnerPeerVerdict Check(ConnectionInfo connection);

@@ -3,8 +3,8 @@ using Xunit;
 
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 review fix (B): desktop.log follows the same 5 MB rotation rule the plan (Task 3)
-/// already applies to hub.log — rename to desktop.1.log, replacing any previous one, before appending.
+/// <summary>desktop.log follows the same 5 MB rotation rule as hub.log: rename to desktop.1.log,
+/// replacing any previous one, before appending.
 /// The real 5 MB threshold is impractical to hit in a unit test, so the internal ctor takes an
 /// injectable byte threshold (InternalsVisibleTo already covers this test project).</summary>
 public sealed class ShellLogTests

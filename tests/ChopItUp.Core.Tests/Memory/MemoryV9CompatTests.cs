@@ -4,21 +4,21 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Tests.Memory;
 
-/// <summary>Row 23, ticket 08 (item 9 in the plan): this row changes how memory files are written
-/// (<c>Rewrite</c>) and adds a value to a persisted field (<c>kind = 'rewrite'</c>), but runs no schema
-/// migration — v9 stands (claim 2). The argument that nothing breaks is only as good as the test behind
-/// it, so every fixture here is a RAW LITERAL in the shape the row 18 build actually wrote, never
-/// produced by this row's own code — except the last test, which closes the loop by reading back a file
-/// this row's own writer produced, the shape every future consolidation will have to parse. Each
-/// assertion is its own test so a failure names itself.</summary>
+/// <summary>Consolidation changes how memory files are written (<c>Rewrite</c>) and adds a value to a
+/// persisted field (<c>kind = 'rewrite'</c>), but runs no schema migration: v9 stands. The argument
+/// that nothing breaks is only as good as the test behind it, so every fixture here is a RAW LITERAL
+/// in the shape the earlier build actually wrote, never produced by the current code, except the
+/// last test, which closes the loop by reading back a file the current writer produced, the shape
+/// every future consolidation will have to parse. Each assertion is its own test so a failure names
+/// itself.</summary>
 public sealed class MemoryV9CompatTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_v9compat_" + Guid.NewGuid().ToString("N"));
     private MemoryStore Store => new(Path.Combine(_dir, "memory"));
 
-    // A row 18 topic file, written by hand exactly as MemoryStore.Append/Supersede composed it at that
+    // An older topic file, written by hand exactly as MemoryStore.Append/Supersede composed it at that
     // build: two live entries with an "approved ..." provenance comment, and one entry retired by
-    // Supersede — heading and provenance kept, body replaced by a "superseded: ..." comment.
+    // Supersede (heading and provenance kept, body replaced by a "superseded: ..." comment).
     private const string Row18TopicFile = """
         # user
 

@@ -1,4 +1,4 @@
-/** Row 12: the page's half of the desktop shell's wire. `ChopItUp.Desktop` hosts this same client in a
+/** The page's half of the desktop shell's wire. `ChopItUp.Desktop` hosts this same client in a
  *  chromeless WebView2 window, which means the page draws the title bar and has to be able to ask the
  *  window to minimise, maximise and close itself. WebView2 gives exactly one channel for that,
  *  `window.chrome.webview`, and this module is the only place in the client that knows it exists.

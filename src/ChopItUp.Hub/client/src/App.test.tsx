@@ -12,16 +12,16 @@ import {
 import { isCredentialRefusal } from './api';
 import type { ExchangeSnapshot, Message } from './types';
 
-/** Row 28, AC5's first half. A deliberate action the hub refused for want of a credential has to say
- *  what did not happen and give the owner somewhere to put the token — "Send" that silently ate the
- *  message is the failure this row is closing, not a smaller version of it.
+/** A deliberate action the hub refused for want of a credential has to say what did not happen and
+ *  give the hub owner somewhere to put the token: a "Send" that silently ate the message is the failure,
+ *  not a smaller version of it.
  *
  *  `renderToStaticMarkup` for the same reason as the other component tests here: no jsdom. What that
- *  cannot prove is the wiring in `App` that decides to show this — which write raised it, and that a
+ *  cannot prove is the wiring in `App` that decides to show this: which write raised it, and that a
  *  refused `markRead` never does. `api.test.ts` covers the value those branches key off.
  *
  *  `./markdown` is stubbed because importing `App` reaches `SkillPanel` and so DOMPurify, which needs
- *  a real DOM — the same stub `MemoryPanel.test.tsx` and `SkillPanel.test.tsx` use, and nothing here
+ *  a real DOM: the same stub `MemoryPanel.test.tsx` and `SkillPanel.test.tsx` use, and nothing here
  *  renders a message body. */
 vi.mock('./markdown', () => ({ renderBody: (body: string) => `<p>${body}</p>` }));
 
@@ -80,9 +80,9 @@ describe('M57 exchange replies across reconnect and room switch', () => {
   });
 });
 
-/** Row 34, AC3: one strip's Stop. The component half (which root a press hands up, which button greys)
- *  is `ExchangeBar.test.tsx`'s; this is App's half — the call that root makes and what happens to its
- *  answer — lifted out of the component so it can run without a DOM. `fetch` is a recording stub, as
+/** One strip's Stop. The component half (which root a press hands up, which button greys) is
+ *  `ExchangeBar.test.tsx`'s; this is App's half (the call that root makes and what happens to its
+ *  answer), lifted out of the component so it can run without a DOM. `fetch` is a recording stub, as
  *  in `api.test.ts`, and no `window` means a tokenless client, which is all a stub reply needs. */
 describe('stopping one exchange from its strip', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -149,10 +149,10 @@ describe('stopping one exchange from its strip', () => {
   });
 });
 
-/** Row 44, AC5: App's half of the Continue button, lifted out of the component for the same reason the
- *  stop above is — there is no DOM here to press in. D-e routes the press through the ordinary message
- *  endpoint rather than an endpoint of its own, so what this pins is the body and the reply target: a
- *  Continue that posted anything else would leave the hub nothing to read the command from. */
+/** App's half of the Continue button, lifted out of the component for the same reason the stop above
+ *  is: there is no DOM here to press in. The press goes through the ordinary message endpoint rather
+ *  than an endpoint of its own, so what this pins is the body and the reply target: a Continue that
+ *  posted anything else would leave the hub nothing to read the command from. */
 describe('continuing one exchange from its strip', () => {
   afterEach(() => vi.unstubAllGlobals());
 

@@ -6,11 +6,10 @@ namespace ChopItUp.Hub.Memory;
 
 public sealed record MemoryDraft(string Topic, string Title, string Body, string File);
 
-/// <summary>Turns a vendor's memory directory into proposals (D15: "seeded by importing both vendors'
-/// existing memory as proposals"). Pure: reads files, returns drafts; the API decides who authors them.
-/// <c>claude</c> = Claude Code's memory directory, one frontmatter file per fact (plan decision 10;
-/// verified shape). <c>codex</c> = <c>~/.codex/memories/</c>, known by file names only (F9), so its
-/// files are split on headings; a Claude file without frontmatter takes the same path. Reads only
+/// <summary>Turns a vendor's memory directory into proposals. Pure: reads files, returns drafts; the
+/// API decides who authors them. <c>claude</c> = Claude Code's memory directory, one frontmatter file
+/// per fact (verified shape). <c>codex</c> = <c>~/.codex/memories/</c>, known by file names only, so
+/// its files are split on headings; a Claude file without frontmatter takes the same path. Reads only
 /// top-level <c>*.md</c>, at most <see cref="MaxFiles"/>, each at most <see cref="MaxFileBytes"/>;
 /// both vendors' <c>MEMORY.md</c> is an index and skipped.</summary>
 public static class MemoryImport
@@ -18,7 +17,7 @@ public static class MemoryImport
     public const int MaxFiles = 300;
     public const int MaxFileBytes = 64 * 1024;
     /// <summary>Drafts, not files: one file splits into many sections. Over this the API refuses the
-    /// whole folder with the count, before a single row is created (plan decision 16).</summary>
+    /// whole folder with the count, before a single row is created.</summary>
     public const int MaxDrafts = 200;
     public static readonly string[] Sources = ["claude", "codex"];
     private static readonly string[] ClaudeTopics = ["user", "feedback", "project", "reference"];
@@ -77,8 +76,8 @@ public static class MemoryImport
         var title = FirstLine(fields.GetValueOrDefault("description") ?? fields.GetValueOrDefault("name") ?? stem);
         var type = (fields.GetValueOrDefault("type") ?? "").Trim().ToLowerInvariant();
         var topic = ClaudeTopics.Contains(type, StringComparer.Ordinal) ? type : "imported";
-        // Pass 2 P2-4: the Claude shape passes a whole file body through, and the owner's own memory
-        // files carry "## " sections, so demote before capping - the structure survives as "###", which
+        // The Claude shape passes a whole file body through, and the hub owner's own memory files carry
+        // "## " sections, so demote before capping: the structure survives as "###", which
         // MemoryStore's entry parser ignores.
         body = Regex.Replace(body, @"(?m)^(#{1,2}) ", "### ");
         return new MemoryDraft(topic, title, Cap(body.Length == 0 ? title : body), file);

@@ -10,8 +10,8 @@ const CORE = 'core';
  *  the textarea is the number for the text on screen by the time it is read. */
 const PREVIEW_DEBOUNCE = 300;
 
-/** AC6. The hub answers 409 while any spawn is in flight, so the dialog says so before the click
- *  rather than after it. Its own sentence, not `MemoryPanel`'s: what is refused here is a save. */
+/** The hub answers 409 while any spawn is in flight, so the dialog says so before the click rather
+ *  than after it. Its own sentence, not `MemoryPanel`'s: what is refused here is a save. */
 export const LOCKED_HINT = 'A spawn is running; save when the exchange has finished.';
 
 /** The 401 sentence, taken from `describeError` rather than copied, so this dialog cannot drift from
@@ -22,7 +22,7 @@ export const NEEDS_TOKEN = describeError(new ApiError(401, 'unauthorized'));
  *  that says nothing about which write it refused (`RolesDialog.saveStanding`, same reason). */
 export const DID_NOT_HAPPEN = 'That edit was not saved.';
 
-/** R6: the trail's own body rule, said before the 400 rather than after it. */
+/** The trail's own body rule, said before the 400 rather than after it. */
 export const SAVE_HINT =
   'Saving files an approved rewrite in this room: the previous text is kept beside the file, the write is one commit, and the room gets a note. The file needs at least one ## entry heading.';
 
@@ -39,14 +39,14 @@ export function fileLabel(file: MemoryFile): string {
   return `${name} · ${grouped(file.chars)} of ${grouped(file.cap)}`;
 }
 
-/** Plain inequality: the hub LF-normalises every read (R12) and a browser textarea holds LF, so the
- *  text loaded and the text typed are comparable as they are. */
+/** Plain inequality: the hub LF-normalises every read and a browser textarea holds LF, so the text
+ *  loaded and the text typed are comparable as they are. */
 export function isDirty(loaded: string, text: string): boolean {
   return loaded !== text;
 }
 
-/** AC7. The cap is enforced on the composed file — the marker line and every carried approval record
- *  included — so the textarea's length is not the number that decides a save. It is still what is
+/** The cap is enforced on the composed file (the marker line and every carried approval record
+ *  included), so the textarea's length is not the number that decides a save. It is still what is
  *  shown until the hub has answered once, labelled as the typed one so it cannot be mistaken for the
  *  count Save is gated on. */
 export function countLine(preview: MemoryPreview | null, rawLength: number): string {
@@ -55,7 +55,7 @@ export function countLine(preview: MemoryPreview | null, rawLength: number): str
   return preview.over ? `${line} — over the cap by ${grouped(preview.chars - preview.cap)}` : line;
 }
 
-/** AC7. Which count the Save gate obeys. The hub's `over` is the authority, because it is taken on the
+/** Which count the Save gate obeys. The hub's `over` is the authority, because it is taken on the
  *  composed file the cap is enforced on. Until the first preview answers, the typed length against the
  *  cap is the closest thing the dialog has, and it is enough for the obvious case: the composed file
  *  puts a marker line and every surviving entry's approval record on top of the typed text, so a text
@@ -101,10 +101,10 @@ export interface EditHooks {
   end: () => void;
 }
 
-/** One save. `baseHash` is the hash the read returned (R3), so a file that moved on in between is a
- *  409 that Reload recovers from rather than a silent clobber. Every refusal is shown as
+/** One save. `baseHash` is the hash the read returned, so a file that moved on in between is a 409
+ *  that Reload recovers from rather than a silent clobber. Every refusal is shown as
  *  `describeError` reads it: the credential sentence for 401/403, and the hub's own sentence verbatim
- *  for everything else — those are written to be read by a human, and this dialog has nothing better
+ *  for everything else; those are written to be read by a human, and this dialog has nothing better
  *  to say. */
 export async function saveEdit(
   slug: string,
@@ -146,13 +146,13 @@ export interface MemoryEditorProps {
   onClose: () => void;
 }
 
-/** The editor itself, taking the loaded file as a prop so it renders without a fetch — which is what
+/** The editor itself, taking the loaded file as a prop so it renders without a fetch, which is what
  *  lets it be tested at all in a client with no jsdom, exactly as `RolesEditor` does.
  *
  *  Save is gated on the four states the hub would refuse (nothing changed, a spawn in flight, over the
  *  cap, no owner token) and on one it cannot answer yet (a save already in flight). Reload is gated on
- *  none of the refusals: it is the way back from a stale file, and a 409 is the state it exists for
- *  (M25). A save in flight is the one state that shuts Reload, and Close with it. */
+ *  none of the refusals: it is the way back from a stale file, and a 409 is the state it exists for.
+ *  A save in flight is the one state that shuts Reload, and Close with it. */
 export function MemoryEditor({
   roomName,
   files,
@@ -243,7 +243,7 @@ export function MemoryEditor({
         <button type="button" className="quiet" onClick={onClose} disabled={saving}>
           Close
         </button>
-        {/* Open in every other state, a refusal included: it is the way back from a stale file (M25).
+        {/* Open in every other state, a refusal included: it is the way back from a stale file.
             Shut only while the save it would race is in flight. */}
         <button type="button" className="quiet" onClick={onReload} disabled={saving}>
           Reload
@@ -263,17 +263,17 @@ export function MemoryEditor({
 
 interface Props {
   room: Room;
-  /** True while the room's exchange has spawns in flight: the hub refuses a save then (AC3), so the
-   *  hint says so instead of inviting a click that can only produce a banner. */
+  /** True while the room's exchange has spawns in flight: the hub refuses a save then, so the hint
+   *  says so instead of inviting a click that can only produce a banner. */
   locked: boolean;
   onClose: () => void;
 }
 
-/** Row 40 (AC1, AC6, AC7): the surface for the memory files themselves — the one door into
- *  them from a phone, and a gated one everywhere else (the text editor on disk stays ungated).
+/** The surface for the memory files themselves: the one door into them from a phone, and a gated one
+ *  everywhere else (the text editor on disk stays ungated).
  *
  *  Shown to everyone, exactly like every other panel here: there is no client-side "am I allowed"
- *  gate, because the hub is the thing that knows. What IS asked locally is whether this browser holds
+ *  gate, because the hub is the thing that knows. What is asked locally is whether this browser holds
  *  a token at all, because without one every count request and every save could only be a 401. */
 export default function MemoryEditorDialog({ room, locked, onClose }: Props) {
   const [files, setFiles] = useState<MemoryFile[]>([]);
@@ -358,9 +358,9 @@ export default function MemoryEditorDialog({ room, locked, onClose }: Props) {
         setError(null);
         setStatus(null);
       },
-      // The response is the file as the hub WROTE it, which differs from the submitted text whenever a
-      // surviving entry carried its approval record forward (AC2). Taking it here is what makes the
-      // box clean again and gives the next save its base hash.
+      // The response is the file as the hub wrote it, which differs from the submitted text whenever a
+      // surviving entry carried its approval record forward. Taking it here is what makes the box
+      // clean again and gives the next save its base hash.
       done: (result) => {
         setLoaded(result);
         setText(result.text);

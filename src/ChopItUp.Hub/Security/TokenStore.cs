@@ -7,17 +7,16 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Security;
 
-/// <summary>Row 28: two credential classes, split by <see cref="ExchangePolicy.IsSpawnable"/> (the
-/// predicate is total over <c>ChopDb.SeedRoster</c> — verified this task, not inferred). A row the
-/// hub can spawn (<c>Kind == "model"</c> with a <c>Model</c> of its own) gets an EPHEMERAL bearer:
-/// minted fresh into memory on every <see cref="Load"/> and never written anywhere. Everything else
-/// except <c>Kind == "system"</c> (the hub itself, which authenticates nothing) is a HOST-FILE row —
-/// a value someone pastes into a Claude/Codex config — and its credential is hashed at rest: the
-/// plaintext is shown once, at the moment it is minted (<see cref="MintFor"/>), and never stored.
-/// Reading every file under the data dir therefore yields nothing that authenticates as a host-file
-/// participant (AC6); it still yields nothing at all for a spawnable one, because nothing was ever
-/// written for it in the first place. Row 12 adds a third class: one launch-scoped owner bearer
-/// supplied by the desktop shell, memory only.</summary>
+/// <summary>Two credential classes, split by <see cref="ExchangePolicy.IsSpawnable"/> (total over
+/// <c>ChopDb.SeedRoster</c>). A row the hub can spawn (<c>Kind == "model"</c> with a <c>Model</c> of
+/// its own) gets an ephemeral bearer: minted fresh into memory on every <see cref="Load"/> and never
+/// written anywhere. Everything else except <c>Kind == "system"</c> (the hub itself, which
+/// authenticates nothing) is a host-file row (a value someone pastes into a Claude/Codex config), and
+/// its credential is hashed at rest: the plaintext is shown once, at the moment it is minted
+/// (<see cref="MintFor"/>), and never stored. Reading every file under the data dir therefore yields
+/// nothing that authenticates as a host-file participant, and nothing at all for a spawnable one,
+/// because nothing was ever written for it. A third class: one launch-scoped owner bearer supplied by
+/// the desktop shell, memory only.</summary>
 public sealed class TokenStore
 {
     public const string FileName = "tokens.json";
@@ -27,7 +26,7 @@ public sealed class TokenStore
     private readonly Dictionary<string, string> _hashed;      // host-file participantId -> sha256 hex, persisted
     private readonly Dictionary<string, string> _ephemeral;   // spawnable participantId -> plaintext, in-memory only
     private readonly Dictionary<string, string> _justMinted;  // host-file participantId -> plaintext, this instance's one-time reveal (Load's own backfill, or a later MintFor)
-    private readonly string? _shellOwner;                     // row 12: the desktop shell's launch-scoped owner bearer, memory only, never persisted
+    private readonly string? _shellOwner;                     // the desktop shell's launch-scoped owner bearer, memory only, never persisted
 
     /// <summary>How many participants currently hold a credential of either class. Excludes
     /// <c>system</c> rows, which hold none.</summary>
@@ -94,8 +93,8 @@ public sealed class TokenStore
                     justMinted[p.Id] = minted;
                     changed = true;
                     if (existed)
-                        // Row 28: --print-config never reveals a live value any more (it writes a
-                        // {{TOKEN}} placeholder) - --rotate-token is the only route to one now.
+                        // --print-config never reveals a live value (it writes a {{TOKEN}} placeholder);
+                        // --rotate-token is the only route to one.
                         Console.Error.WriteLine($"tokens.json had no token for '{p.Id}'; minted one. If that participant has a host file, run --rotate-token {p.Id} to get a value to paste into it.");
                 }
             }
@@ -107,12 +106,12 @@ public sealed class TokenStore
 
     /// <summary>Reads tokens.json as it stands, minting nothing and writing nothing. Used by the
     /// non-serving verbs, which must never create a credential as a side effect of being run against
-    /// the wrong directory (pass 2, MINOR-12): <see cref="Load"/> back-fills any missing participant
-    /// and rewrites the file, which would silently rotate a hand-edited token from a read-only
-    /// command. Narrowed to host-file rows (row 28): a spawnable or system row is legitimately absent
-    /// from the file and must never be reported "missing" — only a host-file row without an entry is
-    /// an error. The values returned are hashes, not credentials: nothing that reads this file back
-    /// can ever recover a host-file row's plaintext (AC6).</summary>
+    /// the wrong directory: <see cref="Load"/> back-fills any missing participant and rewrites the
+    /// file, which would silently rotate a hand-edited token from a read-only command. Narrowed to
+    /// host-file rows: a spawnable or system row is legitimately absent from the file and must never be
+    /// reported "missing"; only a host-file row without an entry is an error. The values returned are
+    /// hashes, not credentials: nothing that reads this file back can ever recover a host-file row's
+    /// plaintext.</summary>
     public static IReadOnlyDictionary<string, string> ReadExisting(string dataDir, IReadOnlyList<Participant> participants)
     {
         var path = Path.Combine(dataDir, FileName);
@@ -170,17 +169,16 @@ public sealed class TokenStore
         return true;
     }
 
-    /// <summary>The ONE mint entry point (row 28): returns a fresh plaintext once, persisting only its
-    /// hash, for a host-file row. Shared by <c>--rotate-token</c> and the test fixture — the only two
-    /// callers that ever legitimately need a host-file row's plaintext after the first reveal. Reads
-    /// the file fresh under the mutex before writing (like the old <c>Rotate</c> did) so a concurrent
-    /// change to a different key is never clobbered; only <paramref name="participantId"/>'s entry
-    /// changes.
+    /// <summary>The one mint entry point: returns a fresh plaintext once, persisting only its hash, for
+    /// a host-file row. Shared by <c>--rotate-token</c> and the test fixture, the only two callers that
+    /// ever legitimately need a host-file row's plaintext after the first reveal. Reads the file fresh
+    /// under the mutex before writing so a concurrent change to a different key is never clobbered;
+    /// only <paramref name="participantId"/>'s entry changes.
     ///
     /// A running hub holds its TokenStore for the life of the process, so writing this file while a
-    /// hub is up revokes nothing — the leaked token keeps full access to every room until someone
+    /// hub is up revokes nothing: the leaked token keeps full access to every room until someone
     /// remembers to restart. The caller must therefore refuse to rotate while a hub owns the data dir
-    /// (see <c>HostCommands.RotateToken</c>): ordering, not vigilance (pass 2, MAJOR-6).</summary>
+    /// (see <c>HostCommands.RotateToken</c>): ordering, not vigilance.</summary>
     public string MintFor(string participantId)
     {
         if (!_allIds.Contains(participantId, StringComparer.Ordinal))
@@ -204,10 +202,9 @@ public sealed class TokenStore
     }
 
     /// <summary>The value from one tokens.json entry, hashed if it is not already: a JSON string is
-    /// the pre-row-28 plaintext shape (hashed here, never stored back as-is), a
-    /// <c>{"sha256":"..."}</c> object is already migrated and its hash is taken verbatim. Anything
-    /// else fails with one clear line naming the file and the entry, never a raw
-    /// <see cref="JsonException"/> (row 28 Task 1's requirement).</summary>
+    /// the older plaintext shape (hashed here, never stored back as-is), a <c>{"sha256":"..."}</c>
+    /// object is already migrated and its hash is taken verbatim. Anything else fails with one clear
+    /// line naming the file and the entry, never a raw <see cref="JsonException"/>.</summary>
     private static string HashFromEntry(JsonElement entry, string participantId, string path) => entry.ValueKind switch
     {
         JsonValueKind.String when entry.GetString() is { Length: > 0 } plaintext => Hash(plaintext),

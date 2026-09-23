@@ -9,7 +9,7 @@ interface Props {
   /** True while the room's exchange has spawns in flight: the hub refuses decisions then (409), the
    *  same defence `MemoryPanel` takes, so the buttons say so instead of inviting a click. */
   locked: boolean;
-  /** D2: whether the owner has pasted a bearer token. Without one the card is read-only. */
+  /** Whether the hub owner has pasted a bearer token. Without one the card is read-only. */
   hasToken: boolean;
   /** The hub's refusal text from the last decision attempt, per proposal id. */
   refusals: Record<number, string>;
@@ -18,7 +18,7 @@ interface Props {
   onToken: (token: string | null) => void;
 }
 
-/** D7's reviewable-text allowlist is `.md .ps1 .psm1 .psd1 .txt .json .yml .yaml`; these three are the
+/** The reviewable-text allowlist is `.md .ps1 .psm1 .psd1 .txt .json .yml .yaml`; these three are the
  *  half that EXECUTES. `RunTools.Execute` copies an installed skill and runs `scripts/<gate>.ps1`
  *  under `pwsh -NoProfile -NonInteractive -File`, so approving a skill with a script in it is
  *  authorising that script to run on this machine later, as the owner. The card says that in words
@@ -40,7 +40,7 @@ function byteText(bytes: number): string {
 }
 
 /** The executable files first, then `SKILL.md`, then everything else — each group in the hub's own
- *  ordinal path order. The brief for this card is that the PowerShell is impossible to miss, and the
+ *  ordinal path order. The requirement for this card is that the PowerShell is impossible to miss, and the
  *  cheapest way to make something unmissable is to put it where the eye lands first rather than
  *  N screens below a rendered document. The file LIST above keeps the hub's order untouched, so
  *  nothing here changes what the owner is told is in the tree. */
@@ -54,12 +54,11 @@ function inAuditOrder(entries: SkillFile[]): SkillFile[] {
  *  so nothing a proposer wrote can execute, style or restructure this page.
  *
  *  `SKILL.md` additionally shows its LITERAL bytes below the render, because markdown does not show
- *  all of them. Measured against the real `renderBody` 2026-09-09: an HTML comment is dropped outright
- *  and a link's target never appears — `[docs](https://evil.example/x)` renders as the word "docs".
- *  `SKILL.md` is the file whose text is rendered into every spawn of an exchange this skill roots, so
- *  a card that showed only the rendered form would show the owner strictly less than the model
- *  receives, and D7's "the owner is shown every byte" would be untrue of the one file that matters
- *  most. The render stays because it is what makes the document readable. */
+ *  all of them: an HTML comment is dropped outright and a link's target never appears
+ *  (`[docs](https://evil.example/x)` renders as the word "docs"). `SKILL.md` is the file whose text
+ *  is rendered into every spawn of an exchange this skill roots, so a card that showed only the
+ *  rendered form would show the hub owner strictly less than the model receives. The render stays
+ *  because it is what makes the document readable. */
 function FileBlock({ file }: { file: SkillFile }) {
   const script = isScript(file.path);
   const isSkillDoc = file.path === 'SKILL.md';
@@ -86,19 +85,19 @@ function FileBlock({ file }: { file: SkillFile }) {
   );
 }
 
-/** The owner's approval surface for a proposed skill import (M25, D1/D15's shape repeated from
- *  `MemoryPanel`). One card per undecided proposal of the open room.
+/** The hub owner's approval surface for a proposed skill import (the same shape as `MemoryPanel`). One
+ *  card per undecided proposal of the open room.
  *
  *  What this card is FOR: an installed skill is executable, so approving one authorises code. The
- *  whole control is disclosure — the owner sees every byte the install would write, before deciding.
+ *  whole control is disclosure: the hub owner sees every byte the install would write, before deciding.
  *  Everything below follows from that and is not decoration:
  *   - every file's full text is on the card, expanded, with no disclosure widget and no truncation
- *     (D7 refuses an over-`MaxSkillChars` file at propose time, so nothing here is un-showable);
+ *     (an over-`MaxSkillChars` file is refused at propose time, so nothing here is un-showable);
  *   - the executable files come first and are labelled as executable;
  *   - the pinned tree hash is shown, because that is the value the approval sends back and the value
- *     the staged copy is checked against before the swap (D5);
+ *     the staged copy is checked against before the swap;
  *   - `sourceChanged`/`sourceMissing` are banners, because in both cases what the card CAN show is no
- *     longer what would install, and the hub suppresses the text rather than showing a second read —
+ *     longer what would install, and the hub suppresses the text rather than showing a second read,
  *     except on a retry row the hub still marks approvable, where the install is already on disk and
  *     the source is beside the point (`alreadyInstalled` below).
  *
@@ -156,14 +155,13 @@ function SkillPanel({ proposals, busyId, locked, hasToken, refusals, onDecide, o
         {proposals.map((p) => {
           const busy = busyId === p.id;
           const retry = p.status === 'approved' && p.installedAt === null;
-          /** Branch review, AC8. The hub finishes a retry row by hashing the INSTALLED tree and
-           *  recording it, before it reads the source at all — so it reports such a row approvable even
-           *  with the source gone or changed (`SkillsApi.IsApprovable`), and this is the one state where
-           *  a source banner would be actively misleading. Its "Reject it and propose it again" is a
-           *  dead end here: `Reject` only acts from Pending, which is why the card hides that button on
-           *  a retry row. What is true instead is that the skill is already on disk and Retry only
-           *  finishes recording it, so that is what this state says. Derived from the hub's own flag,
-           *  never re-derived from the tree — the card does not hash anything. */
+          /** The hub finishes a retry row by hashing the INSTALLED tree and recording it, before it
+           *  reads the source at all, so it reports such a row approvable even with the source gone
+           *  or changed (`SkillsApi.IsApprovable`), and this is the one state where a source banner would
+           *  be actively misleading. Its "Reject it and propose it again" is a dead end here: `Reject`
+           *  only acts from Pending, which is why the card hides that button on a retry row. The skill
+           *  is already on disk and Retry only finishes recording it, so that is what this state says.
+           *  Derived from the hub's own flag, never re-derived from the tree. */
           const alreadyInstalled = retry && p.approvable && (p.sourceMissing || p.sourceChanged);
           const canDecide = hasToken && !busy && !locked;
           const refusal = refusals[p.id];

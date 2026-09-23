@@ -4,11 +4,11 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>What the room's run strip reads (row 19, task 14). One GET, shaped like
-/// <see cref="ExchangeApi"/>: unauthenticated, since row 28's owner-bearer gate
-/// (<c>BearerTokenMiddleware</c>) only guards non-GET <c>/api</c> requests, and a room the hub does
-/// not know is a 404 rather than an empty answer. A room that has simply never had a run is 204 —
-/// "nothing here", which the strip renders as nothing at all.</summary>
+/// <summary>What the room's run strip reads. One GET, shaped like <see cref="ExchangeApi"/>:
+/// unauthenticated, since the hub's owner-bearer gate (<c>BearerTokenMiddleware</c>) only guards non-GET
+/// <c>/api</c> requests, and a room the hub does not know is a 404 rather than an empty answer. A room
+/// that has simply never had a run is 204: "nothing here", which the strip renders as nothing at
+/// all.</summary>
 public static class RunsApi
 {
     public static void MapRunsApi(this WebApplication app)
@@ -32,10 +32,10 @@ public static class RunsApi
 /// tags, because the cap it is read against is per tag (<see cref="RunLimits.PhaseEntries"/>).
 ///
 /// <see cref="PhaseHistory"/> is every tag the run has entered, with its own count. The strip does not
-/// draw it; the M19 live check reads it, because "the run entered two distinct phases" is otherwise
-/// only answerable by polling this endpoint and unioning whatever the polls happen to catch — and a
+/// draw it; the run live check reads it, because "the run entered two distinct phases" is otherwise
+/// only answerable by polling this endpoint and unioning whatever the polls happen to catch, and a
 /// phase the run left between two polls would then FAIL exactly like a conductor that never entered
-/// it. Task 15d exists to remove that ambiguity, not to add another source of it.
+/// it.
 ///
 /// <see cref="ElapsedMinutes"/> comes from <see cref="RunStore.ActiveElapsed"/> and nowhere else: the
 /// wall-clock cap counts time the run spent ACTIVE, so parked time is excluded and a parked run's

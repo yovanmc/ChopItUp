@@ -3,11 +3,9 @@ using Microsoft.AspNetCore.Http;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Row 28 Task 4, D-28-a: the guarded-route matcher itself, isolated from a live host.
-/// Supersedes M25 ticket 06's narrower rule (exactly <c>POST /api/skills/proposals/{id}/approve|reject</c>,
-/// matched on exact path segments) — that route list is gone; the rule is now "authenticate by
-/// method, not by route list": every <c>/api</c> request needs a credential unless its method is GET,
-/// HEAD or OPTIONS, so a new write endpoint is guarded by construction rather than by someone
+/// <summary>The guarded-route matcher itself, isolated from a live host. The rule is "authenticate
+/// by method, not by route list": every <c>/api</c> request needs a credential unless its method is
+/// GET, HEAD or OPTIONS, so a new write endpoint is guarded by construction rather than by someone
 /// remembering to add it to a list here.</summary>
 public sealed class BearerTokenMiddlewareTests
 {
@@ -23,9 +21,9 @@ public sealed class BearerTokenMiddlewareTests
     [InlineData("/api/skills/proposals/1/approve")]
     [InlineData("/api/skills/proposals/42/reject")]
     [InlineData("/api/rooms/general/messages")]
-    [InlineData("/api/memory/proposals/1/approve")]     // row 28: this used to be the deliberately-unauthenticated example; now it is guarded like every other write
+    [InlineData("/api/memory/proposals/1/approve")]     // guarded like every other write
     [InlineData("/api/rooms")]
-    [InlineData("/api/anything-not-yet-invented")]       // D-28-a: a new write route is guarded by construction, not by being added to a list
+    [InlineData("/api/anything-not-yet-invented")]       // a new write route is guarded by construction, not by being added to a list
     public void POST_to_any_api_route_requires_auth(string path) => Assert.True(Requires("POST", path));
 
     [Theory]

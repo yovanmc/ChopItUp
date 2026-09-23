@@ -23,7 +23,7 @@ public sealed class RoomsApiTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync()
@@ -185,7 +185,7 @@ public sealed class RoomsApiTests : IAsyncLifetime
     [Fact]
     public async Task M9_A3_A5_unread_is_what_lies_past_the_owners_cursor_and_mark_read_zeroes_it()
     {
-        // M49 ordinary owner posts start on-call work. Hold the synthetic answer so this
+        // Ordinary owner posts start on-call work. Hold the synthetic answer so this
         // cursor test observes only the explicitly posted messages, not a racing completion note.
         _runner.Handler = (_, _, cancel) => FakeProcessRunner.HangUntilKilled(TimeSpan.FromSeconds(30), cancel);
         await using var claude = await _host.ClientFor("claude");

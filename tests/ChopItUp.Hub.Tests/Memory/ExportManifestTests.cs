@@ -116,8 +116,8 @@ public sealed class ExportManifestTests : IDisposable
     [Fact]
     public void T2_a_hand_written_v1_manifest_still_reads()
     {
-        // Raw JSON string literal, never produced by ExportManifest.Write — the schema-evolution
-        // guard (pass 2 M8): an older-shape record must still READ, not be treated as unreadable.
+        // Raw JSON string literal, never produced by ExportManifest.Write: the schema-evolution
+        // guard. An older-shape record must still READ, not be treated as unreadable.
         var targetDir = NewDir("v1-fixture");
         const string v1Json = """
             {
@@ -247,9 +247,8 @@ public sealed class ExportManifestTests : IDisposable
     [Fact]
     public void T2_Verify_is_Unreadable_and_names_the_real_files_beside_a_corrupt_manifest()
     {
-        // Carried-over fix from the T2 review: acceptance criterion 6 requires the unparseable-manifest
-        // refusal to list every affected path by recursive relative path. Before this fix, Unreadable
-        // always carried an empty Paths list regardless of what else was in the directory.
+        // The unparseable-manifest refusal must list every affected path by recursive relative path,
+        // not an empty Paths list regardless of what else is in the directory.
         var store = NewStore(NewDir("verify-unreadable-named-store"));
         var targetDir = NewDir("verify-unreadable-named-target");
         Directory.CreateDirectory(Path.Combine(targetDir, "sub"));
@@ -279,7 +278,7 @@ public sealed class ExportManifestTests : IDisposable
         var manifest = WriteExport(storeA, targetDir);
 
         // storeB's entries are byte-identical to storeA's, so nothing about the FILES distinguishes
-        // them (D4) — only the manifest's SourceRoot, bound to storeA, does.
+        // them; only the manifest's SourceRoot, bound to storeA, does.
         var verdict = ExportManifest.Verify(manifest, targetDir, storeB);
 
         Assert.Equal(TargetState.DifferentSource, verdict.State);

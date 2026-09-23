@@ -1,8 +1,7 @@
 namespace ChopItUp.Core.Model;
 
-/// <summary>The roles a roster row can hold (grill ledger D5, owner ruling 2026-09-07: a SET, not
-/// one value — `opus` is both the owner-visible builder and a judge). Row 11 stores and surfaces
-/// these; row 19 enforces them (D8) and picks effort from them (D10).</summary>
+/// <summary>The roles a roster row can hold: a SET, not one value (`opus` is both the hub's owner-visible
+/// builder and a judge). Runs enforce them and pick effort from them.</summary>
 public static class ParticipantClasses
 {
     public const string Plumbing = "plumbing";

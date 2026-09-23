@@ -36,7 +36,7 @@ public sealed class SpawnerServiceImportTests : SpawnerServiceTestBase
         var created = await ImportInto(room, ImportedHistory);
         Assert.Equal(5, created.GetProperty("messages").GetArrayLength());
 
-        // Barrier + control (M24): a live post AFTER the import. Its spec arriving proves the FIFO loop
+        // Barrier + control: a live post AFTER the import. Its spec arriving proves the FIFO loop
         // has processed all five imported events; that it spawns proves the instrument binds.
         await PostAsOwnerIn(room, "@opus control: what do you think?");
         var spec = await _runner.NextSpecAsync(Wait);

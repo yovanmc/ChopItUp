@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Renders src\ChopItUp.Desktop\chopitup.ico — the desktop shell's application, window and tray
-    icon (row 12, task 6).
+    Renders src\ChopItUp.Desktop\chopitup.ico: the desktop shell's application, window and tray
+    icon.
 
 .DESCRIPTION
     The mark is a dark rounded plate (#0e1013, the client's --bg) with a hairline #242a34 edge
@@ -176,7 +176,7 @@ if ($DumpLargestPng) {
 #
 # The 256 layer is checked by decoding its payload rather than by asking Icon for it:
 # System.Drawing.Icon's managed best-fit search does not map an entry's bWidth of 0 back to 256, so
-# Icon(path, 256, 256) hands back the 48 layer (measured here, 2026-09-15). That is a limitation of
+# Icon(path, 256, 256) hands back the 48 layer (measured). That is a limitation of
 # that class; the consumers that matter read the entry correctly (the shell reads the exe's Win32
 # icon resource, WPF's Window.Icon goes through WIC, and the tray asks for the small size).
 $problems = @()

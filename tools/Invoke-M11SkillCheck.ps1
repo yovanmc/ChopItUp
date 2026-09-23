@@ -1,20 +1,19 @@
 <#
 .SYNOPSIS
-    M11 live check: imports a skill into a scratch hub, proves the store's refusal and integrity
+    Skill live check: imports a skill into a scratch hub, proves the store's refusal and integrity
     rules, invokes the skill against one Claude row and one Codex row and checks both replies carry
     the skill's prescribed shape, proves the owner-remote credential can post and open an exchange,
     and probes (without gating) whether a directory-room spawn is stopped from writing into the data
     directory.
 
 .DESCRIPTION
-    Row 11 (skill substrate), plan Task 8a. Spends one Claude call (-Claude, default opus), one
-    Codex call (-Codex, default gpt-6-astra) and three short Sonnet calls (checks 7, 10, 11) on the
-    owner's subscriptions. Never touches C:\Self Apps, %USERPROFILE%\ChopItUp or any real data
-    directory: -DataDir and -RoomsRoot default to fresh folders under $env:TEMP and are left behind
-    with the log. The fixture skill is imported from -SkillSource (default: the harness `grilling`
-    skill, ledger claim 12) — the check asserts only structural markers (a numbered-question form, a
-    `?`, an arrow or the word "recommend"), never a phrase lifted from that file, and both reply
-    bodies go to the log under $env:TEMP, never into this repo (D-g).
+    Spends one Claude call (-Claude, default opus), one Codex call (-Codex, default gpt-6-astra) and
+    three short Sonnet calls (checks 7, 10, 11) on the owner's subscriptions. Never touches
+    C:\Self Apps, %USERPROFILE%\ChopItUp or any real data directory: -DataDir and -RoomsRoot default
+    to fresh folders under $env:TEMP and are left behind with the log. The fixture skill is imported
+    from -SkillSource (default: the harness `grilling` skill); the check asserts only structural
+    markers (a numbered-question form, a `?`, an arrow or the word "recommend"), never a phrase
+    lifted from that file, and both reply bodies go to the log under $env:TEMP, never into this repo.
 
     Every check prints PASS/FAIL (or INFO-PASS/INFO-FAIL for the one report-only check, #11, which
     never affects the exit code); the last line is "Results: n/m PASS". The hub is stopped by PID,
@@ -113,10 +112,10 @@ Add-Check -Name 'skill.import.second-refused' -Passed ($import2.ExitCode -eq 2) 
 $hashAfterSecondAttempt = if (Test-Path -LiteralPath $installedSkillMd) { Get-Sha256 $installedSkillMd } else { '' }
 Add-Check -Name 'skill.import.second-refusal-wrote-nothing' -Passed ($hashAfterFirstImport -ne '' -and $hashAfterFirstImport -eq $hashAfterSecondAttempt) -Detail 'SKILL.md unchanged'
 
-# Row 28: every non-GET /api route now needs an owner-class bearer, and owner-remote's own MCP call
-# (check 7) needs a bearer too -- seed both into this scratch hub's own tokens.json BEFORE it ever
-# starts (ChopTokenHelpers.ps1: the plaintext keeps authenticating after the hub's first-start
-# migration hashes the file). Never a real installation's credential.
+# Every non-GET /api route needs an owner-class bearer, and owner-remote's own MCP call (check 7) needs
+# a bearer too -- seed both into this scratch hub's own tokens.json before it ever starts
+# (ChopTokenHelpers.ps1: the plaintext keeps authenticating after the hub's first-start migration
+# hashes the file). Never a real installation's credential.
 $chopSeeded = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner', 'owner-remote')
 $ownerToken = $chopSeeded.owner
 $ownerRemoteToken = $chopSeeded.'owner-remote'
@@ -156,7 +155,7 @@ try {
     Add-Check -Name 'health.schema-is-15' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
     # --- Check 3: GET /api/skills lists the imported skill with a non-empty description ------------
-    # M10 lesson: a top-level JSON array comes back as one nested Object[]; enumerate before filtering.
+    # A top-level JSON array comes back as one nested Object[]; enumerate before filtering.
     $skills = @(Invoke-Api GET '/api/skills' | ForEach-Object { $_ })
     $listed = $skills | Where-Object name -eq $skillName
     Add-Check -Name 'skills.listed' -Passed ($listed.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace($listed[0].description)) `
@@ -178,15 +177,12 @@ try {
         -Detail "status=$($opened.status) turnsCommitted=$($opened.turnsCommitted) (expected $expectedTurns)"
 
     # --- Check 5: both rows reply within budget, and each reply carries the skill's round shape -----
-    # D-g/m-11: structural markers ONLY - never a phrase lifted from the imported SKILL.md. The three
-    # markers below (a numbered "Q<n>" label, a literal '?', and an arrow-or-the-word-"recommend") are
-    # this plan's own wording (Task 8a check 5), not text copied out of the third-party file.
-    # 2026-09-07, row 11's first live run: Codex used U+27A1 and passed, but Opus used a different
-    # arrow glyph and never wrote the word "recommend", even though its reply was textbook grilling
-    # (**Q1**..**Q4**, one question per round) - demanding one prescribed codepoint was the same
-    # over-tight-assertion failure the plan's critique already logged as M2. Accept any arrow-like
-    # character: the general Arrows block (U+2190-U+21FF: <- -> <-> => etc) and the Dingbat arrows
-    # block (U+2794-U+27BF, which includes U+27A1) at minimum.
+    # Structural markers only, never a phrase lifted from the imported SKILL.md: a numbered "Q<n>"
+    # label, a literal '?', and an arrow-or-the-word-"recommend". Models pick different arrow glyphs
+    # (one used U+27A1, another a different arrow and never wrote "recommend" in a textbook reply), so
+    # one prescribed codepoint is an over-tight assertion. Accept any arrow-like character: the
+    # general Arrows block (U+2190-U+21FF: <- -> <-> => etc) and the Dingbat arrows block
+    # (U+2794-U+27BF, which includes U+27A1) at minimum.
     $arrowPattern = "[$([char]0x2190)-$([char]0x21FF)$([char]0x2794)-$([char]0x27BF)]"
     function Test-RoundShape([string]$Body) {
         ($Body -match 'Q\d+') -and $Body.Contains('?') -and ($Body -match $arrowPattern -or ($Body -match '(?i)\brecommend'))
@@ -230,9 +226,9 @@ try {
     Add-Check -Name 'unknown.no-spawn' -Passed ($unknownSpawned.Count -eq 0) -Detail "status-before=$($beforeUnknown.status) status-after=$($afterUnknown.status)"
 
     # --- Check 7: owner-remote can post and open an exchange over /mcp -----------------------------
-    # Row 28: $ownerRemoteToken was seeded into tokens.json before the hub ever started (above); it
-    # is a host-file row, so the file now holds only its SHA-256 -- the plaintext this script chose
-    # is the only usable copy, and it is what still authenticates.
+    # $ownerRemoteToken was seeded into tokens.json before the hub ever started (above); it is a
+    # host-file row, so the file holds only its SHA-256 -- the plaintext this script chose is the only
+    # usable copy, and it is what still authenticates.
     Add-Check -Name 'owner-remote.token-minted' -Passed (-not [string]::IsNullOrWhiteSpace($ownerRemoteToken)) -Detail 'seeded into tokens.json before the hub started'
     $remoteOutPath = Join-Path $DataDir 'owner-remote-mcp.json'
     $remoteOutLog = Join-Path $DataDir 'owner-remote-mcp.out.log'
@@ -251,7 +247,7 @@ try {
     }
     Add-Check -Name 'owner-remote.mcp-post-succeeded' -Passed ($remoteProc.ExitCode -eq 0) -Detail "exit=$($remoteProc.ExitCode)"
     # Precise rather than windowed: the mcp-check tool hands back the exact id it posted, so look that
-    # message up directly instead of guessing an afterId cutoff (M10 lesson's spirit: measure, don't infer).
+    # message up directly instead of guessing an afterId cutoff.
     $remoteAuthored = @()
     if ($remoteProc.ExitCode -eq 0 -and (Test-Path -LiteralPath $remoteOutPath)) {
         $remoteResult = Get-Content -LiteralPath $remoteOutPath -Raw | ConvertFrom-Json
@@ -271,9 +267,8 @@ try {
     Add-Check -Name 'owner-remote.stopped-cleanly' -Passed ($remoteStopped.status -in @('stopped', 'concluded')) -Detail "status=$($remoteStopped.status)"
 
     # --- Check 8: --print-config wrote the owner-remote host config with the {{TOKEN}} placeholder --
-    # Row 28 D-28-d: --print-config never emits a live value any more (HostConfigs.TokenPlaceholder);
-    # --rotate-token is the only command that ever prints one. This check used to assert the file
-    # carried $ownerRemoteToken itself -- that is no longer true for ANY host-file row by design.
+    # --print-config never emits a live value (HostConfigs.TokenPlaceholder); --rotate-token is the
+    # only command that ever prints one, so no host-file row's config carries $ownerRemoteToken.
     $printOut = Join-Path $DataDir 'print-config.out.log'
     $printErr = Join-Path $DataDir 'print-config.err.log'
     $printProc = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--print-config') -PassThru -Wait -NoNewWindow `
@@ -309,13 +304,12 @@ try {
         -RedirectStandardOutput $reimportOut -RedirectStandardError $reimportErr
     Add-Check -Name 'tamper.reimport-exit-zero' -Passed ($reimport.ExitCode -eq 0) -Detail "exit=$($reimport.ExitCode)"
     $afterReimportPosted = Invoke-Api POST '/api/rooms/general/messages' @{ body = "/$skillName @sonnet $ask" }
-    # 2026-09-07, row 11's first live run: this leg used to assert a live sonnet reply, but the
-    # exchange was stopped at 1 of 4 turns before sonnet replied - an outcome the hub's own transcript
-    # shows was unrelated to whether the re-import worked. The deterministic proof that re-import
-    # worked is the hub's in-force note (ExchangePolicy.cs), which fires synchronously the moment a
-    # /skillName invocation resolves to a Found (non-tampered, non-unknown) skill - well before any
-    # model spawns or replies. That note text is ChopItUp's own (not the skill file's), so matching a
-    # stable substring of it is fine under D-g, same as the refusal-note checks above.
+    # A live sonnet reply is not proof that re-import worked: an exchange can stop before sonnet
+    # replies for unrelated reasons. The deterministic proof is the hub's in-force note
+    # (ExchangePolicy.cs), which fires synchronously the moment a /skillName invocation resolves to a
+    # Found (non-tampered, non-unknown) skill, well before any model spawns or replies. That note text
+    # is ChopItUp's own (not the skill file's), so matching a stable substring of it is fine, same as
+    # the refusal-note checks above.
     $inForceNote = $null
     $reimportTamperNote = $null
     foreach ($i in 1..15) {
@@ -331,7 +325,7 @@ try {
     Add-Check -Name 'tamper.no-failure-notes-after-reimport' -Passed (-not ($afterReimportHubNotes | Where-Object { $_.body -match 'did not reply|without posting|could not be started|exited with code' })) `
         -Detail (($afterReimportHubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')
 
-    # --- Check 11: deny-rule probe (D-i measure (a)) - REPORTS, does not gate ----------------------
+    # --- Check 11: data-directory deny-rule probe - REPORTS, does not gate --------------------------
     $probeRoom = Invoke-Api POST '/api/rooms' @{ name = 'Deny probe' }
     $probeMarker = 'PWNED-' + (Get-Random -Minimum 100 -Maximum 999)
     $probeTargetWindows = Join-Path $DataDir 'deny-probe-test.txt'
@@ -342,9 +336,8 @@ try {
     Start-Sleep -Seconds 3
     $probeWriteHappened = (Test-Path -LiteralPath $probeTargetWindows) -and ((Get-Content -LiteralPath $probeTargetWindows -Raw) -like "*$probeMarker*")
     $probeRefused = -not $probeWriteHappened
-    # Report-only per M-3 of the plan's critique: this line must never gate the exit code, but a
-    # reader must be able to tell the outcome from stdout/the log alone, without going to check the
-    # filesystem themselves (row 11's first live run required exactly that to interpret this line).
+    # Report-only: this line must never gate the exit code, but a reader must be able to tell the
+    # outcome from stdout/the log alone, without going to check the filesystem themselves.
     Add-Check -ReportOnly -Name 'deny-rule.data-dir-write-refused' -Passed $probeRefused `
         -Detail "refused=$probeRefused target=$probeTargetWindows; FAIL here means the absolute-path deny form does not bind on this CLI version (row 13's finding, not a row-11 blocker - the hash pin is the real control)"
 }

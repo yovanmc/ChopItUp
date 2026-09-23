@@ -19,9 +19,9 @@ interface Props {
 }
 
 /** Import and export live here, quiet, rather than competing with the conversation. Export is a
- *  plain same-origin download link — the hub already returns text/markdown. M9 adds the room's
- *  directory (or the one-time Bind control on a room made before M9), Archive/Unarchive (never on
- *  general — the hub refuses it), and the Trail dialog. */
+ *  plain same-origin download link: the hub already returns text/markdown. Also the room's
+ *  directory (or the one-time Bind control on an older room without one), Archive/Unarchive (never
+ *  on general: the hub refuses it), and the Trail dialog. */
 function RoomHeader({
   room,
   loadedCount,

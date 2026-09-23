@@ -191,9 +191,8 @@ public sealed class MessageStoreTests : IDisposable
         // The loser of the race can also come back as SQLITE_BUSY (code 5, extended 5 or 261)
         // rather than 2067, because busy_timeout=5000 is the only thing holding it open long
         // enough for the retry to complete; the 2067 filter does not catch that case. If any of
-        // the 10 iterations below produces a SqliteException with code 5, that is a STOP-and-report
-        // per the dispatch: the fix would be a bounded retry around the insert, and whether that
-        // belongs in M2 is the orchestrator's call, not mine.
+        // the 10 iterations below produces a SqliteException with code 5, the fix is a bounded retry
+        // around the insert.
         for (int i = 0; i < 10; i++)
         {
             var key = $"race-{i}-{Guid.NewGuid():N}";

@@ -1,12 +1,11 @@
 <#
 .SYNOPSIS
-    M4 self-check (HIGH-tier gate): proves the *published* ChopItUp.Hub exe -- not the build output --
+    Release self-check: proves the *published* ChopItUp.Hub exe -- not the build output --
     finds its data beside itself, serves the chat UI, speaks the MCP protocol, and survives a restart;
     then, given a real deploy target, proves what actually landed there matches staging byte-for-byte.
 
 .DESCRIPTION
-    See docs/superpowers/plans/m4-release.md, "Task 3 -- tools/Invoke-M4SelfCheck.ps1", and
-    .scratch/m4-release/issues/03-self-check.md. Two stages:
+    Two stages:
 
       Stage 1 (always runs, needs -PublishDir): robocopy -PublishDir to a scratch location under
       $env:TEMP with a GUID nonce -- with `/E /XD data`, never a plain recursive copy, because a
@@ -15,8 +14,8 @@
       already exists in that scratch copy before the first launch: C2's whole claim is that the
       database is *created* beside the exe by this run, and a pre-existing folder would let the
       check pass without proving anything. Then:
-        C1 -- the published layout is exactly what release publish is supposed to produce (row 12,
-              T8: both ChopItUp.Hub.exe and ChopItUp.Desktop.exe, each present and at/above its own
+        C1 -- the published layout is exactly what release publish is supposed to produce (both
+              ChopItUp.Hub.exe and ChopItUp.Desktop.exe, each present and at/above its own
               size floor; C2/C3/Restart below launch and probe the hub only -- the desktop shell needs
               a real WebView2 profile and a hub to attach to, out of scope for this script).
         C2 -- launched with no --data and --port 0, from a *different* working directory than the
@@ -34,10 +33,10 @@
               HTML shell and a tag-grep would pass over a blank page.
         Restart -- stop the hub by the PID this script started (after confirming its image path),
               WaitForExit (the hub lock is FileShare.None), delete hub.port (HubPortFile never
-              deletes it and its own doc comment calls it "the running OR LAST-RUNNING" port -- M2
-              precedent: tools/Invoke-M2DryRun.ps1:105-117), start again, and re-post the *same*
-              client_key from C3: a deduplicated hit with the same message id proves the conversation
-              survived the restart, not just that the process came back up.
+              deletes it and its own doc comment calls it "the running OR LAST-RUNNING" port), start
+              again, and re-post the *same* client_key from C3: a deduplicated hit with the same
+              message id proves the conversation survived the restart, not just that the process came
+              back up.
 
       Stage 2 (only if -TargetDir is given): file-level assertions ONLY against the real deploy
       target -- SHA-256 of the exe, a recursive file-list-and-hash comparison of wwwroot against
@@ -255,10 +254,10 @@ try {
         Add-Check -Name 'c1.exe-size-floor-30mb' -Passed $false -Detail 'skipped: exe missing'
     }
 
-    # Row 12 (T8): the desktop shell exe ships beside the hub now. Same shape as the hub's own checks
-    # above -- existence, then a size floor separating a self-contained build from a stub -- but this
-    # script never launches ChopItUp.Desktop.exe (it needs a real WebView2 profile and a hub to attach
-    # to); C2/C3/Restart below stay hub-only.
+    # The desktop shell exe ships beside the hub. Same shape as the hub's own checks above --
+    # existence, then a size floor separating a self-contained build from a stub -- but this script
+    # never launches ChopItUp.Desktop.exe (it needs a real WebView2 profile and a hub to attach to);
+    # C2/C3/Restart below stay hub-only.
     $desktopExePath = Join-Path $scratch 'ChopItUp.Desktop.exe'
     $desktopExeExists = Test-Path -LiteralPath $desktopExePath -PathType Leaf
     Add-Check -Name 'c1.desktop-exe-exists' -Passed $desktopExeExists -Detail $desktopExePath
@@ -306,14 +305,12 @@ try {
     $hubPortFile = Join-Path $dataDir 'hub.port'
     if (Test-Path -LiteralPath $hubPortFile) { Remove-Item -LiteralPath $hubPortFile -Force } # never trust a stale/last-running port
 
-    # Row 28: /mcp always required a bearer, but tokens.json now hashes host-file rows at rest
-    # instead of storing them as plaintext -- seeding 'claude' here BEFORE the hub's first launch
-    # means the exact plaintext seeded keeps authenticating after the hub's own startup migration
-    # hashes the file in place (ChopTokenHelpers.ps1's doc comment; AC3's schema-evolution guarantee).
+    # tokens.json hashes host-file rows at rest, so seeding 'claude' here BEFORE the hub's first
+    # launch means the exact plaintext seeded keeps authenticating after the hub's startup migration
+    # hashes the file in place (see ChopTokenHelpers.ps1).
     # $dataDir does not exist yet at this point (robocopy's /XD data and the "no pre-existing data\"
-    # guard above both hold), so this is also what CREATES it -- the C2 checks below still verify
-    # chopitup.db itself is created fresh by the hub's own first start, which is the thing they exist
-    # to prove; only tokens.json is pre-seeded.
+    # guard above both hold), so this is also what CREATES it. The C2 checks below still verify
+    # chopitup.db itself is created fresh by the hub's own first start; only tokens.json is pre-seeded.
     $claudeToken = (Initialize-ChopScratchTokens -DataDir $dataDir -ParticipantIds @('claude')).claude
 
     $hub1OutLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_hub1.out.log"
@@ -349,9 +346,9 @@ try {
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
     Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
-    # Row 28: tokens.json (which the hub's own start-up migration already rewrote to the hashed
-    # shape by now -- /health above only answers once startup finishes) no longer holds a plaintext
-    # to read back; $claudeToken (seeded above, before the hub ever started) is the bearer.
+    # tokens.json has been rewritten to the hashed shape by now (/health above only answers once
+    # startup finishes), so it holds no plaintext to read back; $claudeToken (seeded above, before the
+    # hub ever started) is the bearer.
     $clientKey = [guid]::NewGuid().ToString('N')
     $mcpOutPath = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp1.json"
     $mcpOutLog = Join-Path $env:TEMP "chopitup_m4selfcheck_${nonce}_mcp1.out.log"

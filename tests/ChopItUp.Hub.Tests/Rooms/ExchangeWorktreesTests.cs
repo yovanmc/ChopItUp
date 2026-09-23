@@ -242,7 +242,7 @@ public sealed class ExchangeWorktreesTests : IDisposable
         var branchSubject = (await GitOut(dir, "log", "-1", "--format=%s", "chopitup/x2")).Trim();
         Assert.Equal("Uncommitted when the hub restarted", branchSubject);
         var branchAuthor = (await GitOut(dir, "log", "-1", "--format=%an <%ae>", "chopitup/x2")).Trim();
-        Assert.Equal("Room Owner <room-owner@example.test>", branchAuthor);   // AC6: the repository identity, no explicit author
+        Assert.Equal("Room Owner <room-owner@example.test>", branchAuthor);   // the repository identity, no explicit author
         var branchBody = await GitOut(dir, "log", "-1", "--format=%B", "chopitup/x2");
         Assert.DoesNotContain("Co-authored-by", branchBody);
 

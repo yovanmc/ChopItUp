@@ -7,10 +7,10 @@ using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Tests.Skills;
 
-/// <summary>Task 5 (--import-skill): the rename-swap write procedure, its refusals (all checked
-/// before anything is written), the mutex it shares with <see cref="SkillStore.Read"/>/
-/// <see cref="SkillStore.List"/> (grill ledger M-4), and the fingerprint recorded in the `skills`
-/// table rather than beside the skill (D-i). Row 11 fixtures only - no third-party skill text (D-g).</summary>
+/// <summary>--import-skill: the rename-swap write procedure, its refusals (all checked before
+/// anything is written), the mutex it shares with <see cref="SkillStore.Read"/>/
+/// <see cref="SkillStore.List"/>, and the fingerprint recorded in the `skills` table rather than
+/// beside the skill. Synthetic fixtures only, no third-party skill text.</summary>
 public sealed class SkillImportTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "chopitup_import_" + Guid.NewGuid().ToString("N"));
@@ -36,7 +36,7 @@ public sealed class SkillImportTests : IDisposable
     private const string ValidSkillBody =
         "---\nname: demo\ndescription: A demo skill for tests.\n---\n# Demo Skill\n\nBody text here.\n";
 
-    /// <summary>A synthetic (never third-party, D-g) source directory outside the store, named
+    /// <summary>A synthetic (never third-party) source directory outside the store, named
     /// <paramref name="name"/>, holding SKILL.md and (optionally) a references/ file.</summary>
     private string NewSourceDir(string name, string skillMd, bool withReference = false)
     {
@@ -55,9 +55,9 @@ public sealed class SkillImportTests : IDisposable
     private void AssertTargetAbsent(string name) =>
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, name)));
 
-    /// <summary>A synthetic hub-side overlay directory (row 20 task 1): <c>OVERLAY.md</c> plus,
-    /// optionally, <c>scripts/*.ps1</c> named by <paramref name="scripts"/> (file name including the
-    /// <c>.ps1</c> extension to content).</summary>
+    /// <summary>A synthetic hub-side overlay directory: <c>OVERLAY.md</c> plus, optionally,
+    /// <c>scripts/*.ps1</c> named by <paramref name="scripts"/> (file name including the <c>.ps1</c>
+    /// extension to content).</summary>
     private string NewOverlayDir(string overlayMd, IReadOnlyDictionary<string, string>? scripts = null)
     {
         var dir = Path.Combine(_root, "overlays", "overlay_" + Guid.NewGuid().ToString("N"));
@@ -109,10 +109,10 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent("Invalid_Name");
     }
 
-    // Row 19, task 13: the reserved `/stop` command cannot be shadowed by an installed skill. Checked
-    // purely on the directory name, before the frontmatter is even read - ValidSkillBody's own
-    // `name: demo` would otherwise mismatch the "stop" directory and refuse for a DIFFERENT reason
-    // (Refusal 5), which would prove nothing about the reserved-name rule itself.
+    // The reserved `/stop` command cannot be shadowed by an installed skill. Checked purely on the
+    // directory name, before the frontmatter is read: ValidSkillBody's own `name: demo` would
+    // otherwise mismatch the "stop" directory and refuse for a different reason (Refusal 5), which
+    // would prove nothing about the reserved-name rule itself.
     [Fact]
     public void Refuses_to_import_a_skill_named_stop_the_reserved_run_command()
     {
@@ -125,8 +125,8 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent(RunCommands.StopName);
     }
 
-    // Row 44: the reserved `/continue` command cannot be shadowed by an installed skill either, checked
-    // the same way and for the same reason as `/stop` above.
+    // The reserved `/continue` command cannot be shadowed by an installed skill either, checked the
+    // same way and for the same reason as `/stop` above.
     [Fact]
     public void Refuses_the_reserved_continue_name()
     {
@@ -226,9 +226,8 @@ public sealed class SkillImportTests : IDisposable
         catch (Exception e) when (e is UnauthorizedAccessException or IOException)
         {
             // Symlink creation needs developer mode or elevation, not guaranteed on the build/test
-            // machine (LESSONS, "Could not verify" note on this plan). The junction test above
-            // exercises the same refusal without that dependency. Early return, not Assert.Skip -
-            // this stack is xunit 2.9.3 (claim 18), which has no such API.
+            // machine. The junction test above exercises the same refusal without that dependency.
+            // Early return, not Assert.Skip: this stack is xunit 2.9.3, which has no such API.
             return;
         }
 
@@ -266,10 +265,10 @@ public sealed class SkillImportTests : IDisposable
     [Fact]
     public void A_source_exactly_at_MaxFiles_plus_a_one_file_overlay_is_refused_with_the_cap_message()
     {
-        // Source alone lands EXACTLY at the cap (MaxFiles total, including SKILL.md) - not over it on
-        // its own. The composed tree is what gets pinned (task 1), so the overlay's own OVERLAY.md
-        // must count too: one more file tips it over. Directory name must match ValidSkillBody's own
-        // frontmatter name ("demo") so refusal 5 (frontmatter/directory mismatch) does not fire first.
+        // Source alone lands exactly at the cap (MaxFiles total, including SKILL.md), not over it on
+        // its own. The composed tree is what gets pinned, so the overlay's own OVERLAY.md must count
+        // too: one more file tips it over. Directory name must match ValidSkillBody's own frontmatter
+        // name ("demo") so refusal 5 (frontmatter/directory mismatch) does not fire first.
         var source = NewSourceDir("demo", ValidSkillBody);
         for (var i = 0; i < SkillStore.MaxFiles - 1; i++)   // + SKILL.md itself = MaxFiles total
             File.WriteAllText(Path.Combine(source, $"f{i}.txt"), "x");
@@ -383,7 +382,7 @@ public sealed class SkillImportTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
     }
 
-    // --- Row 19 task 12a: the whole-tree manifest -------------------------------------------------
+    // The whole-tree manifest
 
     [Fact]
     public void A_valid_import_records_a_manifest_of_every_installed_file_hashed_after_the_copy()
@@ -462,7 +461,7 @@ public sealed class SkillImportTests : IDisposable
         var newSource = NewSourceDir("demo", "---\nname: demo\ndescription: v2.\n---\n# v2\n");
 
         // Without --force this call sees the RESTORED target and refuses - proof the restore ran,
-        // rather than the dangling backup being silently discarded (grill ledger M-4).
+        // rather than the dangling backup being silently discarded.
         var refused = SkillImport.Run(newSource, _skillsRoot, force: false, _hashes);
         Assert.Equal(SkillImportOutcome.BadArgument, refused.Outcome);
         Assert.False(Directory.Exists(replacedDir));
@@ -474,7 +473,7 @@ public sealed class SkillImportTests : IDisposable
         Assert.Contains("v2", File.ReadAllText(Path.Combine(_skillsRoot, "demo", "SKILL.md")));
     }
 
-    // --- Row 20 task 1: overlay composition and pinned rendering ------------------------------------
+    // Overlay composition and pinned rendering
 
     [Fact]
     public void An_overlay_dir_is_composed_into_the_skill_and_every_file_is_pinned()
@@ -601,15 +600,15 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent("demo");
     }
 
-    // --- M25 task 1: SkillImport.Validate - the refusal battery with no side effects -------------
+    // SkillImport.Validate: the refusal battery with no side effects
 
     [Fact]
     public void Validate_refuses_when_the_target_already_exists_and_writes_nothing_even_when_the_skills_root_never_existed()
     {
-        // The skills root's own directory never gets created by this test - only the `.replaced`
-        // fixture's own nested-directory creation brings it into being, never Validate itself. A
-        // torn store left holding ONLY `demo.replaced` (no `demo`) must still be judged "installed"
-        // by Validate, without Validate restoring it (task 1, pass 1 finding).
+        // The skills root's own directory never gets created by this test: only the `.replaced`
+        // fixture's own nested-directory creation brings it into being, never Validate itself. A torn
+        // store left holding only `demo.replaced` (no `demo`) must still be judged "installed" by
+        // Validate, without Validate restoring it.
         var freshRoot = Path.Combine(_root, "fresh-skills");
         var replacedDir = Path.Combine(freshRoot, "demo.replaced");
         Directory.CreateDirectory(replacedDir);
@@ -725,10 +724,10 @@ public sealed class SkillImportTests : IDisposable
     [Fact]
     public void Run_does_not_enforce_D7s_reviewable_allowlist_the_CLI_path_stays_open_to_binaries()
     {
-        // D7 (plan lines 172-183) is a propose-time refusal: "Skills needing a binary stay on the
-        // CLI path, where the owner is already at the keyboard." Same fixture as
+        // The extension allowlist is a propose-time refusal: skills needing a binary stay on the CLI
+        // path, where the hub owner is already at the keyboard. Same fixture as
         // A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name above, which
-        // proves Validate still refuses it - this proves Run (the CLI path) does not.
+        // proves Validate still refuses it; this proves Run (the CLI path) does not.
         var source = NewSourceDir("demo", ValidSkillBody);
         File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
 
@@ -792,12 +791,12 @@ public sealed class SkillImportTests : IDisposable
         // Same literal prefix SkillImport and SkillStore both key their mutex on (M-4) - duplicated
         // here on purpose, the way SkillStore.cs already duplicates it rather than exposing it.
         var mutexName = PathMutex.Name("Global\\ChopItUp.Skills.", _skillsRoot);
-        // A named Mutex is reentrant for the THREAD that owns it (measured this session: calling
+        // A named Mutex is reentrant for the THREAD that owns it (measured: calling
         // Validate on the SAME thread that holds `external` sails straight through, no contention at
         // all), so the holder must be a genuinely different OS thread - a plain Thread, not
         // Task.Run/await, which can also resume a continuation on a different pool thread than the
         // one that started it and make ReleaseMutex throw "unsynchronized block of code" (also
-        // measured this session). A fake lock is not a substitute: it has neither of those semantics.
+        // measured). A fake lock is not a substitute: it has neither of those semantics.
         using var external = new Mutex(initiallyOwned: true, mutexName);
         SkillImportResult? result = null;
         Exception? workerException = null;
@@ -862,7 +861,7 @@ public sealed class SkillImportTests : IDisposable
         Assert.Equal(SkillImport.ManifestDigest(installedManifest), SkillImport.ManifestDigest(sourceManifest));
     }
 
-    // --- M25 task 2: SkillImport.Run pins the staged copy (D5) ------------------------------------
+    // SkillImport.Run pins the staged copy
 
     [Fact]
     public void FindTreeMismatch_names_the_first_differing_path_and_returns_null_when_the_manifests_agree()

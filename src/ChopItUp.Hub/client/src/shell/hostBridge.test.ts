@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { call, host, isHosted, onState, type ShellState } from './hostBridge';
 
-/** Row 12, AC3. The page half of the shell's wire. There is no jsdom here (the same choice every
+/** The page half of the shell's wire. There is no jsdom here (the same choice every
  *  other client test makes), so `window` is a stub and the WebView2 object is a recording fake: the
  *  questions are what goes out on `postMessage`, which replies a pending call accepts, and that a
  *  page loaded in a plain browser — which is what a bare node environment looks like — never touches
@@ -9,7 +9,7 @@ import { call, host, isHosted, onState, type ShellState } from './hostBridge';
  *
  *  The last one is the load-bearing case. `App.tsx` calls `isHosted()` and `ChromeBar` imports this
  *  module, so anything here that read `window` while the module was being evaluated would take out
- *  every existing test in this suite rather than just the new ones. */
+ *  every other test in this suite rather than just these. */
 
 interface Sent {
   id?: number;

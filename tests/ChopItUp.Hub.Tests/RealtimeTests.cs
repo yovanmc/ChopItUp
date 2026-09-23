@@ -99,8 +99,8 @@ public sealed class RealtimeTests : IAsyncLifetime
         Assert.Equal(rootId, payload.GetProperty("replyToId").GetInt64());
     }
 
-    /// <summary>Row 42 AC3: the SignalR payload carries the imported flag too, so a connected browser
-    /// can tell pasted history from a live post.</summary>
+    /// <summary>The SignalR payload carries the imported flag too, so a connected browser can tell
+    /// pasted history from a live post.</summary>
     [Fact]
     public async Task Row42_AC3_an_import_broadcast_carries_imported_true_and_a_post_false()
     {

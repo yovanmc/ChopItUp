@@ -5,13 +5,13 @@ using System.Runtime.Versioning;
 
 namespace ChopItUp.Hub.Security;
 
-/// <summary>Row 29: which local process owns the client end of a loopback TCP connection. Reads the
+/// <summary>Which local process owns the client end of a loopback TCP connection. Reads the
 /// owner-PID table for the peer's address family (the same tables <c>netstat -ano</c> prints) and
 /// matches the row whose LOCAL address and port are the peer Kestrel reports, in the ESTABLISHED
-/// state — the port alone is not enough, a TIME_WAIT row can share it. The hub listens on both
+/// state: the port alone is not enough, a TIME_WAIT row can share it. The hub listens on both
 /// <c>127.0.0.1</c> and <c>[::1]</c> (HubHost), and <c>localhost</c> resolves to <c>::1</c> first on
-/// Windows, so the browser's connections are IPv6 — both tables are read. Measured 2026-09-10 for
-/// IPv4 in-process: server-seen remote port == client local port, owning PID == the client.</summary>
+/// Windows, so the browser's connections are IPv6: both tables are read. Measured for IPv4
+/// in-process: server-seen remote port == client local port, owning PID == the client.</summary>
 [SupportedOSPlatform("windows")]
 public static partial class PeerProcess
 {
@@ -47,10 +47,10 @@ public static partial class PeerProcess
     [LibraryImport("iphlpapi.dll", SetLastError = true)]
     internal static partial uint GetExtendedTcpTable(nint table, ref int size, [MarshalAs(UnmanagedType.Bool)] bool sorted, int family, int tableClass, uint reserved);
 
-    /// <summary>Row 29 finding: the shape of the one Win32 call <see cref="Scan"/> makes twice per
-    /// attempt, so a test can substitute it. Matches <see cref="GetExtendedTcpTable"/>'s signature
-    /// exactly (marshalling attributes are only meaningful at the P/Invoke boundary itself, already
-    /// applied by the generated implementation, so the delegate type omits them).</summary>
+    /// <summary>The shape of the one Win32 call <see cref="Scan"/> makes twice per attempt, so a test
+    /// can substitute it. Matches <see cref="GetExtendedTcpTable"/>'s signature exactly (marshalling
+    /// attributes are only meaningful at the P/Invoke boundary itself, already applied by the
+    /// generated implementation, so the delegate type omits them).</summary>
     internal delegate uint TcpTableFn(nint table, ref int size, bool sorted, int family, int tableClass, uint reserved);
 
     private const int MaxScanAttempts = 5;
@@ -70,10 +70,9 @@ public static partial class PeerProcess
     /// read, or no ESTABLISHED row joins that peer address:port to that hub address:port.</summary>
     public static int? OwningPid(Endpoints e) => OwningPid(e, tableCall: null);
 
-    /// <summary>Test-only seam (row 29 finding): <paramref name="tableCall"/> is null on every
-    /// production call site and <see cref="Scan"/> then calls the real
-    /// <see cref="GetExtendedTcpTable"/> exactly as before; a test can pass a fake to force the
-    /// retry path without a real table ever needing to grow mid-scan.</summary>
+    /// <summary>Test-only seam: <paramref name="tableCall"/> is null on every production call site and
+    /// <see cref="Scan"/> then calls the real <see cref="GetExtendedTcpTable"/>; a test can pass a
+    /// fake to force the retry path without a real table ever needing to grow mid-scan.</summary>
     internal static int? OwningPid(Endpoints e, TcpTableFn? tableCall)
     {
         var peer = e.RemoteAddress.IsIPv4MappedToIPv6 ? e.RemoteAddress.MapToIPv4() : e.RemoteAddress;
@@ -111,14 +110,14 @@ public static partial class PeerProcess
         return (int)r.OwningPid;
     }
 
-    /// <summary>Row 29 finding: the table can grow between the size query and the read that follows,
-    /// which used to make the read return ERROR_INSUFFICIENT_BUFFER and this whole method null — the
-    /// middleware reads that as an unresolvable peer and locks the owner out on ordinary network
-    /// churn, not an attack. Sizes fresh on every attempt (never reuses a stale size), pads the
-    /// allocation with <see cref="ScanHeadroomBytes"/> so a small growth in the gap does not by
-    /// itself force a retry, and gives up only after <see cref="MaxScanAttempts"/> attempts or a
-    /// failure that is not ERROR_INSUFFICIENT_BUFFER. Frees the buffer on every path, including the
-    /// retry path, via the <c>finally</c>.</summary>
+    /// <summary>The table can grow between the size query and the read that follows, making the read
+    /// return ERROR_INSUFFICIENT_BUFFER. Returning null then would read to the middleware as an
+    /// unresolvable peer and lock the hub owner out on ordinary network churn, not an attack. Sizes fresh
+    /// on every attempt (never reuses a stale size), pads the allocation with
+    /// <see cref="ScanHeadroomBytes"/> so a small growth in the gap does not by itself force a retry,
+    /// and gives up only after <see cref="MaxScanAttempts"/> attempts or a failure that is not
+    /// ERROR_INSUFFICIENT_BUFFER. Frees the buffer on every path, including the retry path, via the
+    /// <c>finally</c>.</summary>
     private static int? Scan(int family, int rowSize, Wanted want, Func<nint, Wanted, int?> match, TcpTableFn? tableCall = null)
     {
         var call = tableCall ?? GetExtendedTcpTable;

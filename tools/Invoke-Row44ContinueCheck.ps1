@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
-    Row 44 dry run: proves the turns: token, the range-note refusal and /continue end to end against
-    the built hub, with a stub Codex CLI that holds every spawn open and no real model ever reachable.
+    /continue dry run: proves the turns: token, the range-note refusal and /continue end to end
+    against the built hub, with a stub Codex CLI that holds every spawn open and no real model ever
+    reachable.
 
 .DESCRIPTION
     Mirrors Invoke-Row43MentionCheck.ps1's frame (itself mirroring Invoke-Row42ImportCheck.ps1): a
@@ -9,8 +10,8 @@
     ChopTokenHelpers.ps1 seeding 'owner' before the hub's first start, the hub started by PID and
     stopped in a finally block, "Results: n/m PASS", exit 0 only when every check passes and the
     total is exactly 7. Every array read off Invoke-RestMethod/Invoke-Api is piped through
-    ForEach-Object { $_ } before Where-Object (LESSONS M10: a bare top-level JSON array comes back as
-    one nested Object[]).
+    ForEach-Object { $_ } before Where-Object (a bare top-level JSON array comes back as one nested
+    Object[]).
 
     Every scratch path this script writes -- the hub's data dir, the stub PATH dir -- lives under one
     root, -ScratchRoot ($env:TEMP\chopitup_row44dryrun_<guid> by default): data\ and stub\ underneath
@@ -19,18 +20,18 @@
     removes the root once the hub's own process (if it ever started) has vanished, so a throw before
     the hub even starts leaves nothing behind either.
 
-    PATH for the child hub is a scratch 'stub\' directory holding codex.cmd (the Row 34 shape: @echo
-    off / ping -n 600 127.0.0.1 >nul / exit /b 0) plus $env:SystemRoot\System32 and $env:SystemRoot
-    only, so neither a real claude.exe nor a real codex.exe/codex.cmd is reachable (CliResolver takes
-    name.exe anywhere on PATH before a shim, then wraps a .cmd as "cmd.exe /d /c <shim>"). Every
-    participant this script mentions (gpt-5.6-terra, gpt-5.6-sol) is a Codex-hosted row in
-    ChopDb.SeedRoster, so the stub answers every spawn attempt the legs below can trigger and holds
-    each open for ten minutes -- ample for a script that finishes in well under a minute and
-    explicitly stops everything in leg 7. The script's own PATH is saved before Start-Process and
-    restored in a finally, so git/dotnet stay available afterward regardless of how the run ends.
+    PATH for the child hub is a scratch 'stub\' directory holding codex.cmd (@echo off / ping -n 600
+    127.0.0.1 >nul / exit /b 0) plus $env:SystemRoot\System32 and $env:SystemRoot only, so neither a
+    real claude.exe nor a real codex.exe/codex.cmd is reachable (CliResolver takes name.exe anywhere
+    on PATH before a shim, then wraps a .cmd as "cmd.exe /d /c <shim>"). Every participant this script
+    mentions (gpt-5.6-terra, gpt-5.6-sol) is a Codex-hosted row in ChopDb.SeedRoster, so the stub
+    answers every spawn attempt the legs below can trigger and holds each open for ten minutes --
+    ample for a script that finishes in well under a minute and explicitly stops everything in leg 7.
+    The script's own PATH is saved before Start-Process and restored in a finally, so git/dotnet stay
+    available afterward regardless of how the run ends.
 
     THE SEVEN LEGS, in order, each a barrier on a hub note or on the exchange snapshot's own state,
-    never a bare timer (Row 42 lesson):
+    never a bare timer:
       1. health.ok -- a plain /health poll.
       2. turns.override -- 'turns: 2 @gpt-5.6-terra hold this open' opens an exchange whose own
          exchanges[] entry shows budget 2 with gpt-5.6-terra in flight (the stub holds it there).
@@ -54,19 +55,15 @@
 
     Because legs 2, 4 and 5 keep reusing the same root (root2), every assertion below reads the
     snapshot's exchanges[] array for a match on that message's own id, never the top-level fields
-    (which the newest open exchange, not necessarily this one, still owns) -- same discipline as Row
-    43's script.
+    (which the newest open exchange, not necessarily this one, still owns).
 
-    NEGATIVE LEG (AC7, M24 lesson: a guard only binds something once its mechanism has been reverted
-    and seen to fail). With the `if (ExchangeCommands.IsContinue(m.Body) && ...)` block commented out
-    of SpawnerService.OnMessage, rebuilt, and this script re-run against the same stub PATH:
-
-        measured 2026-09-18, reverted build, 4/7 PASS. FAILED: continue.open-refused, continue.after-
-        stop, continue.nothing (each /continue post now falls through to skill resolution and draws
-        "No skill named '/continue'" instead of any of the three notes above). health.ok,
-        turns.override and turns.range-note kept passing: neither leg touches /continue.
-
-    Restored, rebuilt, re-run: 7/7 PASS (measured 2026-09-18).
+    NEGATIVE LEG (a guard only binds something once its mechanism has been reverted and seen to
+    fail). With the `if (ExchangeCommands.IsContinue(m.Body) && ...)` block commented out of
+    SpawnerService.OnMessage, rebuilt, and this script re-run against the same stub PATH: 4/7 PASS.
+    continue.open-refused, continue.after-stop and continue.nothing FAIL (each /continue post falls
+    through to skill resolution and draws "No skill named '/continue'" instead of any of the three
+    notes above); health.ok, turns.override and turns.range-note keep passing, since neither touches
+    /continue. Restored: 7/7 PASS.
 
     Never touches C:\Self Apps or any real data directory: -ScratchRoot defaults to a fresh folder
     under $env:TEMP and the outer finally removes it once the hub's own PID (if any was ever started)
@@ -163,24 +160,24 @@ try {
     New-Item -ItemType Directory -Path $DataDir | Out-Null
     New-Item -ItemType Directory -Path $StubDir | Out-Null
 
-    # The Row 34 stub: a Codex row's CLI is a .cmd shim, and CliResolver wraps that as
-    # "cmd.exe /d /c <shim>". Holding the process open for ten minutes means every spawn this script
-    # triggers stays in flight (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill
-    # the tree on its own) for well longer than this script needs.
+    # A Codex row's CLI is a .cmd shim, and CliResolver wraps that as "cmd.exe /d /c <shim>". Holding
+    # the process open for ten minutes means every spawn this script triggers stays in flight
+    # (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill the tree on its own) for
+    # well longer than this script needs.
     @'
 @echo off
 ping -n 600 127.0.0.1 >nul
 exit /b 0
 '@ | Set-Content -LiteralPath (Join-Path $StubDir 'codex.cmd') -Encoding ascii
 
-    # Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER directory
-    # creation and BEFORE the hub's first start.
+    # 'owner' is a host-file row -- seed its plaintext into tokens.json after directory creation and
+    # before the hub's first start.
     $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
     $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
-    # Fail fast (Row 40 lesson): a stale process already listening on $Port would either make the hub
-    # fail to bind (burning this whole run's timeout waiting on a server that never starts) or, worse,
-    # answer /health itself and let every leg run against the wrong process.
+    # Fail fast: a stale process already listening on $Port would either make the hub fail to bind
+    # (burning this whole run's timeout waiting on a server that never starts) or, worse, answer
+    # /health itself and let every leg run against the wrong process.
     $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
     try { $portProbe.Start() } catch { throw "port $Port is already listening; pick a free -Port or stop whatever is using it." }
     finally { $portProbe.Stop() }
@@ -230,9 +227,9 @@ exit /b 0
 
     # 4. continue.open-refused -- root2's exchange is still open (gpt-5.6-terra still held in flight
     # by the stub): /continue as a reply to it is refused with the still-open note, and Refused/Pending
-    # are untouched, so no new spawn appears anywhere in the room. I-m2 (hub F5): asserted directly --
-    # inFlight still gpt-5.6-terra, pending empty, exchanges.Count unchanged -- not a budget number that
-    # would hold true even if the refusal had silently re-recorded something.
+    # are untouched, so no new spawn appears anywhere in the room. Asserted directly -- inFlight still
+    # gpt-5.6-terra, pending empty, exchanges.Count unchanged -- not a budget number that would hold
+    # true even if the refusal had silently re-recorded something.
     $exchangesBeforeLeg4 = (Get-Exchanges).Count
     $post3 = Invoke-Api -Method Post -Path '/api/rooms/general/messages' -Headers $ownerAuth -Body @{ body = '/continue'; replyToId = $root2 }
     $note4 = Wait-HubNotePrefix -AfterId $post3.Body.id -Prefix "Exchange started at #$root2 is still open with 1 turn(s) left; /continue once it has concluded." -Seconds $TimeoutSeconds

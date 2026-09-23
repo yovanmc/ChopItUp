@@ -3,9 +3,9 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>One test per row of task 3's transition table (row19-runs.md), plus the termination
-/// property test the ticket requires. <see cref="Limits"/> uses small numbers purely for test
-/// ergonomics - D9's real numbers live in RunLimitsTests.</summary>
+/// <summary>One test per transition of <see cref="RunPolicy"/>, plus the termination property
+/// test. <see cref="Limits"/> uses small numbers purely for test ergonomics; the real numbers live
+/// in RunLimitsTests.</summary>
 public sealed class RunPolicyTests
 {
     private static readonly RunLimits Limits = new(
@@ -21,7 +21,7 @@ public sealed class RunPolicyTests
         RefusalsThisPhase: 0, SilencesThisPhase: 0,
         ExchangeOpen: false, AnythingInFlight: false, RootMessageId: 100);
 
-    // Row 1: any event but StopRequested, spawn cap spent -> hard Park, regardless of what else is true.
+    // Any event but StopRequested, spawn cap spent -> hard Park, regardless of what else is true.
     [Fact]
     public void Row1_spawn_cap_parks_hard_ahead_of_everything_else()
     {
@@ -33,7 +33,7 @@ public sealed class RunPolicyTests
         Assert.Contains("5", park.Reason);
     }
 
-    // Row 2: wall-clock cap spent -> hard Park.
+    // Wall-clock cap spent -> hard Park.
     [Fact]
     public void Row2_wall_clock_cap_parks_hard()
     {
@@ -44,7 +44,7 @@ public sealed class RunPolicyTests
         Assert.True(park.CapSpent);
     }
 
-    // Row 3: first refused conductor post asks again.
+    // First refused conductor post asks again.
     [Fact]
     public void Row3_first_refusal_asks_again()
     {
@@ -57,7 +57,7 @@ public sealed class RunPolicyTests
         Assert.Equal(42, ask.TriggerMessageId);
     }
 
-    // Row 4: a second refused post in the same phase parks - and does not re-ask.
+    // A second refused post in the same phase parks, and does not re-ask.
     [Fact]
     public void Row4_second_refusal_parks_without_asking_again()
     {
@@ -69,7 +69,7 @@ public sealed class RunPolicyTests
         Assert.False(park.CapSpent);
     }
 
-    // Row 5: a valid ping ends the run.
+    // A valid ping ends the run.
     [Fact]
     public void Row5_valid_ping_ends_the_run()
     {
@@ -80,7 +80,7 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.End>(decision);
     }
 
-    // Row 27: a ping-caused End must carry the Run cause, never Owner - the run ended itself.
+    // A ping-caused End must carry the Run cause, never Owner: the run ended itself.
     [Fact]
     public void Row5_valid_ping_ends_the_run_with_the_run_cause_not_the_owner()
     {
@@ -92,7 +92,7 @@ public sealed class RunPolicyTests
         Assert.Equal(ExchangeStopCause.Run, end.Cause);
     }
 
-    // Row 6: a valid post into a phase already entered the cap number of times parks hard.
+    // A valid post into a phase already entered the cap number of times parks hard.
     [Fact]
     public void Row6_phase_re_entry_cap_parks_hard()
     {
@@ -104,7 +104,7 @@ public sealed class RunPolicyTests
         Assert.True(park.CapSpent);
     }
 
-    // Row 7: a valid post under the phase cap opens the workers it mentions.
+    // A valid post under the phase cap opens the workers it mentions.
     [Fact]
     public void Row7_valid_post_opens_workers()
     {
@@ -119,7 +119,7 @@ public sealed class RunPolicyTests
         Assert.Equal(tag, open.Tag);
     }
 
-    // Row 8: the room's current exchange concluded, nothing open, nothing in flight -> re-spawn the
+    // The room's current exchange concluded, nothing open, nothing in flight -> re-spawn the
     // conductor with the concluding message plus every pending steer.
     [Fact]
     public void Row8_exchange_concluded_with_nothing_driving_respawns_conductor_with_steers()
@@ -132,7 +132,7 @@ public sealed class RunPolicyTests
         Assert.Equal([50, 7, 8], open.TriggerIds);
     }
 
-    // Row 9: something else is still driving (open exchange, or in flight) -> do nothing.
+    // Something else is still driving (open exchange, or in flight) -> do nothing.
     [Theory]
     [InlineData(true, false)]
     [InlineData(false, true)]
@@ -144,7 +144,7 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.Nothing>(decision);
     }
 
-    // Row 10: the conductor's first silence in this phase asks again with the same triggers.
+    // The conductor's first silence in this phase asks again with the same triggers.
     [Fact]
     public void Row10_first_silence_asks_again()
     {
@@ -156,7 +156,7 @@ public sealed class RunPolicyTests
         Assert.Equal([9, 10], open.TriggerIds);
     }
 
-    // Row 11: a second silence, with the current phase already at its entry cap, parks (soft).
+    // A second silence, with the current phase already at its entry cap, parks (soft).
     [Fact]
     public void Row11_second_silence_at_phase_cap_parks_soft()
     {
@@ -172,7 +172,7 @@ public sealed class RunPolicyTests
         Assert.False(park.CapSpent);
     }
 
-    // Row 12: a second silence under the phase cap asks again (the service counts a phase entry).
+    // A second silence under the phase cap asks again (the service counts a phase entry).
     [Fact]
     public void Row12_second_silence_under_phase_cap_asks_again()
     {
@@ -187,7 +187,7 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.OpenConductor>(decision);
     }
 
-    // Row 13: a non-conductor spawn going silent is not this policy's business.
+    // A non-conductor spawn going silent is not this policy's business.
     [Fact]
     public void Row13_non_conductor_silence_does_nothing()
     {
@@ -197,7 +197,7 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.Nothing>(decision);
     }
 
-    // Row 14: a human posting into an active run does nothing here - the service records the steer.
+    // A human posting into an active run does nothing here: the service records the steer.
     [Fact]
     public void Row14_human_post_into_active_run_does_nothing()
     {
@@ -207,7 +207,7 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.Nothing>(decision);
     }
 
-    // Row 15: a human posting into a parked-but-not-cap-spent run wakes the conductor.
+    // A human posting into a parked-but-not-cap-spent run wakes the conductor.
     [Fact]
     public void Row15_human_post_into_softly_parked_run_wakes_conductor()
     {
@@ -219,10 +219,10 @@ public sealed class RunPolicyTests
         Assert.Equal([15], open.TriggerIds);
     }
 
-    // Row 16: a human posting into a run parked because a hard cap is spent gets refused, not resumed.
-    // SpawnsUsed and Elapsed are kept under their caps here so rows 1/2 cannot be the ones firing -
-    // this state is "parked because the phase-entry cap tripped", which sets CapSpent without also
-    // tripping rows 1/2's own checks.
+    // A human posting into a run parked because a hard cap is spent gets refused, not resumed.
+    // SpawnsUsed and Elapsed are kept under their caps here so the spawn/wall-clock checks cannot be
+    // the ones firing: this state is "parked because the phase-entry cap tripped", which sets
+    // CapSpent without tripping those checks.
     [Fact]
     public void Row16_human_post_into_hard_capped_park_is_refused()
     {
@@ -233,10 +233,10 @@ public sealed class RunPolicyTests
         Assert.Equal("this run is parked because a cap is spent; /stop and start a new one", refuse.Note);
     }
 
-    // Orchestrator diff-review finding against task 9f: rows 1/2 must not re-fire for a run that is
-    // not active. A hard-capped park's SpawnsUsed/Elapsed stay at or over the cap forever; without the
-    // Status == Active guard, this HumanPosted resume attempt would hit row 1 before row 16 ever ran,
-    // re-Parking instead of refusing.
+    // The spawn/wall-clock cap checks must not re-fire for a run that is not active. A hard-capped
+    // park's SpawnsUsed/Elapsed stay at or over the cap forever; without the Status == Active guard,
+    // this HumanPosted resume attempt would hit the spawn cap check first and re-Park instead of
+    // refusing.
     [Fact]
     public void Row16_refuses_even_though_the_spawn_and_wall_clock_caps_are_still_over_their_limits()
     {
@@ -251,9 +251,8 @@ public sealed class RunPolicyTests
         Assert.Equal(RunPolicy.CapSpentRefusal, refuse.Note);
     }
 
-    // Row 17: /stop always ends the run, even one whose spawn cap is already spent - proving rows 1/2
-    // are skipped for StopRequested (AC11: the owner must get End, never Park, on the state that most
-    // needs it).
+    // /stop always ends the run, even one whose spawn cap is already spent, proving the cap checks
+    // are skipped for StopRequested (the hub owner must get End, never Park).
     [Fact]
     public void Row17_stop_ends_the_run_even_when_a_hard_cap_is_already_spent()
     {
@@ -262,10 +261,10 @@ public sealed class RunPolicyTests
 
         var end = Assert.IsType<RunDecision.End>(decision);
         Assert.Equal("stopped by the owner", end.Reason);
-        Assert.Equal(ExchangeStopCause.Owner, end.Cause);   // Row 27: the owner's own /stop, never inferred.
+        Assert.Equal(ExchangeStopCause.Owner, end.Cause);   // the owner's own /stop, never inferred
     }
 
-    // Row 18: a tick on an idle active run with steers pending wakes the conductor.
+    // A tick on an idle active run with steers pending wakes the conductor.
     [Fact]
     public void Row18_tick_with_pending_steers_wakes_conductor()
     {
@@ -277,7 +276,7 @@ public sealed class RunPolicyTests
         Assert.Equal([21, 22], open.TriggerIds);
     }
 
-    // Row 19: a tick on an idle active run with nothing pending parks as stalled - the termination
+    // A tick on an idle active run with nothing pending parks as stalled: the termination
     // obligation's own arm.
     [Fact]
     public void Row19_tick_with_nothing_pending_parks_as_stalled()
@@ -290,7 +289,7 @@ public sealed class RunPolicyTests
         Assert.Equal("the run stalled", park.Reason);
     }
 
-    // Row 20: a tick while something is still open, in flight, or the run isn't active does nothing.
+    // A tick while something is still open, in flight, or the run isn't active does nothing.
     [Theory]
     [InlineData(RunStatus.Active, true, false)]
     [InlineData(RunStatus.Active, false, true)]
@@ -304,12 +303,10 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.Nothing>(decision);
     }
 
-    /// <summary>The termination property test the ticket requires: for every RunState with
-    /// Status == active, !ExchangeOpen and !AnythingInFlight, Decide(s, Tick, steers) is always
-    /// OpenConductor, Park or End - never Nothing. This is the test that makes a silent stall
-    /// impossible rather than unlikely; it is necessary but not sufficient (pass 2's F-2), since the
-    /// counters it reads are hand-built here rather than pinned end-to-end (that pin is tasks 8/10's
-    /// job).</summary>
+    /// <summary>The termination property: for every RunState with Status == active, !ExchangeOpen and
+    /// !AnythingInFlight, Decide(s, Tick, steers) is always OpenConductor, Park or End, never Nothing.
+    /// This makes a silent stall impossible rather than unlikely. It is necessary but not
+    /// sufficient: the counters it reads are hand-built here, not pinned end-to-end.</summary>
     [Fact]
     public void An_in_progress_run_always_has_something_driving_it_on_a_tick()
     {

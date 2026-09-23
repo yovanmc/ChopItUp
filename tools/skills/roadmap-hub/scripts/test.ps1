@@ -3,7 +3,7 @@
 # src/*/client that declares a test script (npm ci first when node_modules is absent).
 [CmdletBinding()] param()
 $ErrorActionPreference = 'Continue'
-$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured 2026-09-07)
+$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured)
 $root = (Get-Location).Path
 $sln = Get-ChildItem -LiteralPath $root -File | Where-Object { $_.Extension -in '.slnx', '.sln' } | Sort-Object Name | Select-Object -First 1
 if (-not $sln) { Write-Host "test: no .slnx or .sln at $root"; exit 2 }

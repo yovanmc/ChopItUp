@@ -19,9 +19,9 @@ namespace ChopItUp.Hub.Tests;
 public sealed class HostCommandsTests : IDisposable
 {
     private static readonly string[] Roster = ChopDb.SeedRoster.Select(p => p.Id).ToArray();
-    // Row 28: TokenStore.Load/ReadExisting/MintFor classify by Participant, not by bare id - kept
-    // separate from Roster (still used everywhere a plain id string is what's under test) rather than
-    // retyping every existing string-based assertion in this file.
+    // TokenStore.Load/ReadExisting/MintFor classify by Participant, not by bare id. Kept separate
+    // from Roster (used everywhere a plain id string is what's under test) rather than retyping every
+    // string-based assertion in this file.
     private static readonly IReadOnlyList<Participant> Participants = ChopDb.SeedRoster;
     private readonly List<string> _dirs = new();
 
@@ -46,9 +46,9 @@ public sealed class HostCommandsTests : IDisposable
         TokenStore.Load(dir, Participants);
     }
 
-    /// <summary>v1 shape plus exactly what ApplyV2 adds (M8 Task 1's fixture, duplicated here with a
+    /// <summary>v1 shape plus exactly what ApplyV2 adds (Core's fixture, duplicated here with a
     /// parameterised path: a Hub test cannot reach Core's private test helper, and the fixture must
-    /// stay raw SQL in both places — LESSONS M2).</summary>
+    /// stay raw SQL in both places).</summary>
     private static void WriteRawV2(string path)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -100,19 +100,18 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal(before["owner"], after["owner"]);
         Assert.Equal(before["codex"], after["codex"]);
 
-        // These are hashes (row 28), never the plaintext rotate now prints - so this stays a
-        // meaningful check that the hash never leaks, distinct from the new plaintext assertion below.
+        // These are hashes, never the plaintext rotate prints, so this stays a meaningful check that
+        // the hash never leaks, distinct from the plaintext assertion below.
         var stdout = output.ToString();
         foreach (var t in before.Values) Assert.DoesNotContain(t, stdout);
         foreach (var t in after.Values) Assert.DoesNotContain(t, stdout);
     }
 
-    /// <summary>D-28-d: this reverses critique pass 1's "never print" ruling. --print-config no
-    /// longer embeds a live value (it writes a {{TOKEN}} placeholder - see the print-config tests
-    /// below), so a rotated token has no other way to reach the operator. The bounding clause
-    /// (rotate is owner-typed only, never agent-run) lives in docs/verification.md, not in test
-    /// assertions - this test only proves the mechanism: printed once, resolves to the right
-    /// participant, and lands in no file.</summary>
+    /// <summary>--print-config embeds no live value (it writes a {{TOKEN}} placeholder; see the
+    /// print-config tests below), so printing a rotated token once is the only way it reaches the
+    /// operator. That rotate is owner-typed only, never agent-run, is stated in
+    /// docs/verification.md, not in test assertions: this test proves the mechanism (printed once,
+    /// resolves to the right participant, lands in no file).</summary>
     [Fact]
     public void A6_rotate_prints_the_new_token_once_and_writes_it_to_no_file()
     {
@@ -189,10 +188,9 @@ public sealed class HostCommandsTests : IDisposable
             ownerToken = host1.TokenFor("owner");
         }
 
-        // Row 28, D-28-d: --rotate-token does not print the new value yet (that reversal is a later
-        // task), so the plaintext this test needs to present has to come from the same mint entry
-        // point the CLI verb itself calls - MintFor - rather than from stdout. A6_rotate_replaces_one_
-        // token_and_leaves_the_others_alone already covers the CLI verb's own exit code and isolation.
+        // The plaintext this test presents comes from MintFor, the mint entry point the CLI verb
+        // itself calls, rather than from stdout. A6_rotate_replaces_one_token_and_leaves_the_others_alone
+        // covers the CLI verb's own exit code and isolation.
         var newToken = TokenStore.Load(dir, Participants).MintFor("claude");
         Assert.NotEqual(old, newToken);
 
@@ -238,17 +236,16 @@ public sealed class HostCommandsTests : IDisposable
     {
         var dir = NewDir();
         StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Participants);   // hashes only (row 28); never a credential
+        var tokens = TokenStore.ReadExisting(dir, Participants);   // hashes only; never a credential
 
         var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
 
         var folder = ConfigFolder(dir);
-        // Four files: no separate Claude DESKTOP artifact for Claude Code — it still joins as
-        // 'claude' by pasting the Claude Desktop entry (owner ruling 2026-09-04, one Claude identity,
-        // a shared read cursor accepted). But row 11 adds a fourth: 'owner-remote' is a second,
-        // distinct human-kind row, and it gets its own config (task 6b). Spawn rows (M8) still add
-        // no files: the hub is their client.
+        // Four files. Claude Code has no separate artifact: it joins as 'claude' by pasting the
+        // Claude Desktop entry (one Claude identity, a shared read cursor accepted). 'owner-remote' is
+        // a second, distinct human-kind row and gets its own config. Spawn rows add no files: the hub
+        // is their client.
         Assert.Equal(
             new[] { "README.md", "claude-code-owner-remote.json", "claude-desktop.json", "codex-config.toml" },
             Directory.GetFiles(folder).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray());
@@ -260,12 +257,12 @@ public sealed class HostCommandsTests : IDisposable
         // Windows ships no npx.exe - only npx, npx.cmd and npx.ps1 - and Claude Desktop spawns a
         // stdio server with a direct process create rather than through a shell, so "command":
         // "npx" resolves to nothing and the bridge dies before mcp-remote loads. Observed on a
-        // stock Node install 2026-09-04: zero /mcp traffic until the entry was rewritten to this
-        // form, then the bridge came up on the next launch. Windows is the only platform this app
-        // targets, so the shell form is the default, not a documented fallback.
+        // stock Node install: zero /mcp traffic until the entry was rewritten to this form, then the
+        // bridge came up on the next launch. Windows is the only platform this app targets, so the
+        // shell form is the default, not a documented fallback.
         Assert.Equal("cmd", server.GetProperty("command").GetString());
-        // Row 28 ticket 3: generation never embeds a real value - a {{TOKEN}} placeholder stands in
-        // for it, and --rotate-token <id> is how the operator gets a real one to paste over it.
+        // Generation never embeds a real value: a {{TOKEN}} placeholder stands in for it, and
+        // --rotate-token <id> is how the operator gets a real one to paste over it.
         Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("env").GetProperty("CHOPITUP_TOKEN").GetString());
         var args = server.GetProperty("args").EnumerateArray().Select(a => a.GetString()).ToArray();
         Assert.Equal("/c", args[0]);
@@ -286,9 +283,9 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("# args = [\"/c\", \"npx\", \"-y\", \"mcp-remote@", codex);
         Assert.Contains("\"Authorization:${CHOPITUP_TOKEN}\"", codex);
 
-        // claude-code-owner-remote.json (task 6b): the direct type:"http" + Authorization: Bearer
-        // shape every hub-spawned Claude has used since M5 — NOT the mcp-remote bridge above, which
-        // is Claude Desktop's workaround for a problem Claude Code does not have.
+        // claude-code-owner-remote.json: the direct type:"http" + Authorization: Bearer shape every
+        // hub-spawned Claude uses, not the mcp-remote bridge above, which is Claude Desktop's
+        // workaround for a problem Claude Code does not have.
         using var proxyDoc = JsonDocument.Parse(File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json")));
         var proxyServer = proxyDoc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
         Assert.Equal("http", proxyServer.GetProperty("type").GetString());
@@ -297,8 +294,8 @@ public sealed class HostCommandsTests : IDisposable
         var proxyText = File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json"));
         Assert.EndsWith(Environment.NewLine, proxyText);   // indented + trailing newline, like its neighbours (m-12)
 
-        // No generated file ever carries a real hash or a real token - the only credential-shaped
-        // text anywhere in the folder is the placeholder itself (AC6, extended to generation).
+        // No generated file ever carries a real hash or a real token: the only credential-shaped
+        // text anywhere in the folder is the placeholder itself.
         foreach (var file in Directory.GetFiles(folder))
         {
             var text = File.ReadAllText(file);
@@ -323,12 +320,12 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("claude-code-owner-remote.json", readme);
         Assert.Contains("## The remote hand", readme);
         Assert.Contains("--rotate-token owner-remote", readme);
-        // Ticket 06: the readme must state which alternative connection form is untested (the
-        // mcp-remote bridge, for this identity).
+        // The readme must state which alternative connection form is untested (the mcp-remote
+        // bridge, for this identity).
         Assert.Contains("untested", readme);
-        // Row 29: the readme must say that an owner-class credential presented from inside a spawn
-        // is refused, and must name the switch that turns that off - a refusal the owner meets with
-        // no explanation anywhere is the failure mode this assertion exists to prevent.
+        // The readme must say that an owner-class credential presented from inside a spawn is
+        // refused, and must name the switch that turns that off: a refusal the hub owner meets with no
+        // explanation anywhere is the failure mode this assertion exists to prevent.
         Assert.Contains("inside a spawn", readme);
         Assert.Contains("--owner-peer-check off", readme);
         Assert.Contains("## Roster classes", readme);
@@ -339,7 +336,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("chopitup.db-wal", readme);
         Assert.Contains("chopitup.db-shm", readme);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, readme);
-        // Row 28 ticket 3: generation must name how to get a real value.
+        // Generation must name how to get a real value.
         Assert.Contains(HostConfigs.TokenPlaceholder, readme);
         Assert.Contains("--rotate-token", readme);
     }
@@ -381,7 +378,7 @@ public sealed class HostCommandsTests : IDisposable
         var printed = output.ToString() + error.ToString();
         Assert.Contains(ConfigFolder(dir), printed);
         foreach (var t in tokens.Values) Assert.DoesNotContain(t, printed);
-        // Row 28 ticket 3: the command must name the placeholder and how to fill it in.
+        // The command must name the placeholder and how to fill it in.
         Assert.Contains(HostConfigs.TokenPlaceholder, printed);
         Assert.Contains("--rotate-token", printed);
     }
@@ -420,7 +417,7 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         StartedOnce(dir);
         var path = Path.Combine(dir, TokenStore.FileName);
-        // Row 28: entries are now { "sha256": "..." } objects, not raw strings.
+        // Entries are { "sha256": "..." } objects, not raw strings.
         var tokens = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(path))!;
         tokens.Remove("codex");
         File.WriteAllText(path, JsonSerializer.Serialize(tokens, new JsonSerializerOptions { WriteIndented = true }));
@@ -522,23 +519,23 @@ public sealed class HostCommandsTests : IDisposable
         var claude = File.ReadAllText(Path.Combine(folder, "claude-desktop.json"));
         var codex = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
         var readme = File.ReadAllText(Path.Combine(folder, "README.md"));
-        // Row 28 ticket 3: every app-backed row's file carries the placeholder, never its real hash.
+        // Every app-backed row's file carries the placeholder, never its real hash.
         Assert.Contains(HostConfigs.TokenPlaceholder, claude);
         Assert.Contains(HostConfigs.TokenPlaceholder, codex);
         foreach (var p in ChopDb.SeedRoster)
         {
             Assert.Contains($"`{p.Id}`", readme);
-            // Only a host-file row has an entry to check for at all (row 28); a spawnable/system row
-            // never appears in `tokens`, so there is nothing here to leak into the README.
+            // Only a host-file row has an entry to check for at all; a spawnable/system row never
+            // appears in `tokens`, so there is nothing here to leak into the README.
             if (tokens.TryGetValue(p.Id, out var t)) Assert.DoesNotContain(t, readme);
         }
         Assert.Contains("usage credits", readme);
         Assert.Contains("no file", readme);
 
-        // Rotating one host-file row's token changes only that key. Rotating a hub-launched model's
-        // token (e.g. "gpt-5.5") no longer applies post-row-28: it is ephemeral and has no entry in
-        // the file to rotate at all - MintFor_replaces_one_host_file_token_and_refuses_a_spawnable_or_
-        // system_id (TokenStoreTests.cs) covers that refusal directly.
+        // Rotating one host-file row's token changes only that key. A hub-launched model's token
+        // (e.g. "gpt-5.5") is ephemeral and has no entry in the file to rotate at all:
+        // MintFor_replaces_one_host_file_token_and_refuses_a_spawnable_or_system_id (TokenStoreTests.cs)
+        // covers that refusal directly.
         var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "owner-remote"), new StringWriter(), new StringWriter());
         Assert.Equal(0, exit);
         var after = TokenStore.ReadExisting(dir, Participants);
@@ -562,7 +559,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rotate-token"], _ => null));
     }
 
-    // --- Row 11 task 5: --import-skill -----------------------------------------------------
+    // --import-skill
 
     [Fact]
     public void Options_parse_recognises_import_skill_and_force()
@@ -578,7 +575,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill"], _ => null));
     }
 
-    // --- Row 20 task 1: --overlay -----------------------------------------------------------
+    // --overlay
 
     [Fact]
     public void Options_parse_recognises_overlay_alongside_import_skill()
@@ -599,7 +596,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--overlay", "C:\\somewhere\\odir"], _ => null));
     }
 
-    /// <summary>A synthetic (never third-party, D-g) skill source directory outside the data dir.</summary>
+    /// <summary>A synthetic (never third-party) skill source directory outside the data dir.</summary>
     private string NewSkillSource(string name, string skillMd)
     {
         var dir = Path.Combine(NewDir(), name);
@@ -669,7 +666,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.True(File.Exists(Path.Combine(dir, "skills", "demo", "SKILL.md")));
     }
 
-    // --- Row 20 task 2: --set-classes ---------------------------------------------------------
+    // --set-classes
 
     [Fact]
     public void Options_parse_recognises_set_classes()
@@ -767,7 +764,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.False(File.Exists(Path.Combine(dir, TokenStore.FileName)));
     }
 
-    // --- Row 11 task 6: the owner-remote host config and acceptance 6's unit half -----------
+    // The hub's owner-remote host config, and the unit half of its acceptance check
 
     [Fact]
     public void A7_print_config_writes_the_owner_remote_config_with_only_its_own_token()
@@ -796,9 +793,9 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Contains("| Classes |", readme);
     }
 
-    /// <summary>Unit half of acceptance 6 (critique pass 2, m-10); the live half is M11 check 7.
-    /// A post authenticated as <c>owner-remote</c> through the real MCP surface is stamped
-    /// <c>owner-remote</c> and opens an exchange exactly as an <c>owner</c> post does.</summary>
+    /// <summary>A post authenticated as <c>owner-remote</c> through the real MCP surface is stamped
+    /// <c>owner-remote</c> and opens an exchange exactly as an <c>owner</c> post does. The live half
+    /// is Invoke-M11SkillCheck.ps1.</summary>
     private static readonly SpawnLimits Fast = new(Budget: 4, Debounce: TimeSpan.FromMilliseconds(150), MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
 
     [Fact]
@@ -807,7 +804,7 @@ public sealed class HostCommandsTests : IDisposable
         var dir = NewDir();
         var runner = new FakeProcessRunner { Handler = (_, timeout, ct) => FakeProcessRunner.HangUntilKilled(timeout, ct) };
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
-        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: the cleanup stop below is a write and now needs a credential too
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // the cleanup stop below is a write and needs a credential too
         await using var proxy = await host.ClientFor("owner-remote");
 
         var posted = HubTestHost.Json(await proxy.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "@sonnet hello from the phone" }));
@@ -822,7 +819,7 @@ public sealed class HostCommandsTests : IDisposable
         await host.Client.PostAsync("api/rooms/general/exchange/stop", null);   // clean up the hanging spawn before dispose
     }
 
-    // --- Row 24 task 4: --export-memory -----------------------------------------------------
+    // --export-memory
 
     private static void SeedOneLiveMemory(string dataDir) =>
         new MemoryStore(Path.Combine(dataDir, "memory")).Append("user", "A", "Body A.", "prov");
@@ -858,8 +855,8 @@ public sealed class HostCommandsTests : IDisposable
     [Fact]
     public void Accept_new_source_or_overlay_used_with_the_wrong_verb_is_refused()
     {
-        // --accept-new-source belongs to --export-memory only (D9), the same idiom --overlay
-        // already follows for --import-skill (claim 15).
+        // --accept-new-source belongs to --export-memory only, the same idiom --overlay follows for
+        // --import-skill.
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--accept-new-source"], _ => null));
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--accept-new-source"], _ => null));
         Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory", "C:\\somewhere\\odir", "--overlay", "C:\\somewhere\\odir2"], _ => null));

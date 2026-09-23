@@ -6,9 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Row 44 (D-d): /continue posted while its target exchange is still open, or while the room
-/// has nothing to continue at all. Its own fixture (pass 2 m5): the one test here holds a spawn open
-/// past SpawnerServiceTests' ordinary short Fast.Timeout, so it needs a longer one that cannot be swept
+/// <summary>/continue posted while its target exchange is still open, or while the room has nothing
+/// to continue at all. Its own fixture: the one test here holds a spawn open past
+/// SpawnerServiceTests' ordinary short Fast.Timeout, so it needs a longer one that cannot be swept
 /// by another test's assertions racing it.</summary>
 public sealed class ContinueWhileOpenTests : IAsyncLifetime
 {
@@ -22,7 +22,7 @@ public sealed class ContinueWhileOpenTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Held);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();

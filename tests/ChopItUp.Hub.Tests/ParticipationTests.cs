@@ -26,12 +26,12 @@ public sealed class ParticipationTests : IAsyncLifetime
         // written as one raw string with a trailing blank line (a raw string drops its final newline).
         Assert.Contains("host and model.\n\nTaking part", instructions);
         Assert.Contains("at or below 50", instructions);
-        // The key is useless unless the model is told to send one on the FIRST attempt - but it is
-        // an OPTIONAL parameter, and saying so is not a nicety. Codex read the old imperative
+        // The key is useless unless the model is told to send one on the FIRST attempt, but it is
+        // an OPTIONAL parameter, and saying so is not a nicety. Codex read an imperative wording
         // ("Give every post_message call a fresh, unique client_key - a UUID, ...") as a hard
         // requirement to mint a UUID, called into a crypto API its runtime does not have, and died
-        // with ReferenceError before post_message was ever reached (2026-09-05). The schema always
-        // said optional; only the prose lied, and the model believed the prose.
+        // with ReferenceError before post_message was ever reached. The schema said optional; only
+        // the prose lied, and the model believed the prose.
         Assert.Contains("client_key is optional", instructions);
         Assert.Contains("never reuse", instructions);
         Assert.DoesNotContain("Give every post_message call a fresh, unique client_key", instructions);
@@ -39,8 +39,8 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("nothing is remembered until approved", instructions);
     }
 
-    /// <summary>Task 2, 2c: the Rules constant's "only human here" line becomes a {HUMANS} placeholder
-    /// naming every human id and saying the hub stamps which one typed.</summary>
+    /// <summary>The Rules constant's "only human here" line becomes a {HUMANS} placeholder naming every
+    /// human id and saying the hub stamps which one typed.</summary>
     [Fact]
     public async Task Instructions_name_every_human_id_and_say_the_hub_stamps_which()
     {
@@ -51,8 +51,8 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.Contains("the hub stamps which", instructions);
     }
 
-    /// <summary>Row 43, Task 3 (AC5): every reader of the instructions is told the leading-mention
-    /// rule, in the same words as the spawn prompt, the README and the room overlay.</summary>
+    /// <summary>Every reader of the instructions is told the leading-mention rule, in the same words as
+    /// the spawn prompt, the README and the room overlay.</summary>
     [Fact]
     public async Task Row43_AC5_instructions_state_the_leading_rule()
     {

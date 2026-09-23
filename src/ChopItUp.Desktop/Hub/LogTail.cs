@@ -1,6 +1,6 @@
 namespace ChopItUp.Desktop.Hub;
 
-/// <summary>Row 12 T3: a bounded ring buffer of the last <paramref name="capacity"/> lines a hub
+/// <summary>A bounded ring buffer of the last <paramref name="capacity"/> lines a hub
 /// child printed, shown on the failure boot page. Thread-safe: output lines arrive on the process's
 /// own read-loop thread while the UI thread can snapshot it at any time.</summary>
 public sealed class LogTail(int capacity)

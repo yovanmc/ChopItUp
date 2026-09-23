@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Row 42 dry run: fabricates a v2 corpus, migrates it to v13 through the real built hub, and proves
-    the backup, the pre-existing rows staying unmarked, an import of the five-turn AC1 transcript
+    Transcript-import dry run: fabricates a v2 corpus, migrates it through the real built hub, and
+    proves the backup, the pre-existing rows staying unmarked, an import of a five-turn transcript
     stored and flagged with no spawn and no note, a live control post that does move the room, and the
     flags surviving a hub restart. No model CLI is ever reachable while this runs.
 
@@ -10,40 +10,37 @@
     $env:TEMP)/-Port, Add-Check, ChopTokenHelpers.ps1 seeding 'owner' before the hub's first start, the
     hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0 only when every
     check passes and the total is exactly 8. Every Invoke-RestMethod/Invoke-Api array is piped through
-    ForEach-Object { $_ } before Where-Object (LESSONS M10: a bare top-level JSON array comes back as
-    one nested Object[]).
+    ForEach-Object { $_ } before Where-Object (a bare top-level JSON array comes back as one nested
+    Object[]).
 
     THE FIXTURE is built by the corpus exe itself (--schema-version 2), never a copy of anything real:
-    a small v2 corpus (200 messages, 2 rooms). The corpus seeds 'owner', 'claude' and 'codex' (row 42
-    claim 18); only 'owner' needs a bearer here, seeded into a fresh tokens.json AFTER the corpus build
-    and BEFORE the hub's first start (safe: row 42 claim 28 — the token-seeding helper never opens the
-    database, so it cannot race the corpus build).
+    a small v2 corpus (200 messages, 2 rooms). The corpus seeds 'owner', 'claude' and 'codex'; only
+    'owner' needs a bearer here, seeded into a fresh tokens.json after the corpus build and before the
+    hub's first start (safe: the token-seeding helper never opens the database, so it cannot race the
+    corpus build).
 
     WHAT THE LEGS PROVE, SAID PLAINLY: this scratch hub has no skill installed and the corpus's rooms
-    have no directory bound, so at HEAD the imported `/build-thing` and `/stop` turns would (if they
-    reached the spawner) produce an unknown-skill note, and a run-start here is structurally impossible
-    regardless — the run-start and run-stop suppression is proven by task 3's in-process tests, not by
-    this script. THE BARRIER (leg 6) is the control post's own spawn attempt, not the exchange root: an
+    have no directory bound, so the imported `/build-thing` and `/stop` turns would (if they reached
+    the spawner) produce an unknown-skill note, and a run-start here is structurally impossible
+    regardless; the run-start and run-stop suppression is proven by in-process tests, not by this
+    script. THE BARRIER (leg 6) is the control post's own spawn attempt, not the exchange root: an
     exchange can root at the control message the instant it is parsed, well before
     `SpawnLimits.Debounce` (2s) elapses and a launch actually fires, so the root alone proves nothing
-    about the FIFO loop having drained the five imported PostedEvents first. Leg 6 now polls up to 30s
-    for the control's own "could not be started" hub note (PATH is stripped, so every spawn attempt
+    about the FIFO loop having drained the five imported PostedEvents first. Leg 6 polls up to 30s for
+    the control's own "could not be started" hub note (PATH is stripped, so every spawn attempt
     produces one) and treats only that note's arrival as the barrier. Leg 7 then asserts the exact note
     sequence since the import, not just a count: a clean control exchange always yields exactly two hub
-    notes (the control's "could not be started" attempt, then ExchangePolicy.cs's `Finished()` posting
+    notes (the control's "could not be started" attempt, then ExchangePolicy's `Finished()` posting
     "Exchange concluded: 1 of N turns used." the instant that attempt empties the exchange), so leg 7
-    checks both notes' ids, order and bodies. Measured 2026-09-18: with the row 42 guard
-    (`SpawnerService.OnMessage`'s `if (m.Imported) return;`) in place, 8/8 PASS, note0=#207 "could not be
-    started", note1=#208 "Exchange concluded: 1 of 4". With the guard commented out, leg 7 FAILs
-    (noteCount=6, total=112 vs expected=108): the imported `@opus`, `@gpt-6-astra` and `@sonnet` mentions
-    each produced their own "could not be started"/"Exchange concluded" pair ahead of the control's,
-    pushing controlNoteId to #211. This script is real evidence for AC3/AC4/AC7 (schema, backup, flags,
-    restart) and now also for mention-path inertness at the transport boundary; task 3's in-process tests
-    separately cover the fake-clock, sub-debounce timing this script cannot control.
+    checks both notes' ids, order and bodies. With the guard in `SpawnerService.OnMessage`
+    (`if (m.Imported) return;`) removed, leg 7 FAILs: the imported `@opus`, `@gpt-6-astra` and
+    `@sonnet` mentions each produce their own "could not be started"/"Exchange concluded" pair ahead
+    of the control's. In-process tests separately cover the fake-clock, sub-debounce timing this
+    script cannot control.
 
     PATH IS STRIPPED for each hub child (`$env:SystemRoot\System32;$env:SystemRoot` only) so neither
     `claude` nor `codex` can be found: a spawn attempt that escapes the guard shows up as an open
-    exchange plus a "could not be started" hub note (SpawnerService.cs's `FileNotFoundException` path),
+    exchange plus a "could not be started" hub note (SpawnerService's `FileNotFoundException` path),
     never as a real model call. The script's own PATH is restored immediately after each Start-Process
     call, in a finally, so git/dotnet stay available to the rest of the script.
 
@@ -77,7 +74,7 @@ function Add-Check {
 }
 
 # One request, uniformly: GET has no -Body; a write carries $ownerAuth. Never throws on a non-2xx
-# status (M23's Invoke-WebRequest -SkipHttpErrorCheck idiom) so a refusal is a value to assert on,
+# status (the Invoke-WebRequest -SkipHttpErrorCheck idiom) so a refusal is a value to assert on,
 # not an exception to catch.
 function Invoke-Api {
     param([string]$Method, [string]$Path, [hashtable]$Body, [hashtable]$Headers)
@@ -106,8 +103,8 @@ Write-Host "Hub: $HubExe"
 Write-Host "Corpus: $CorpusExe"
 Write-Host "Data dir: $DataDir"
 
-# The AC1 transcript: a labelled turn (mentions, a run-skill invocation, /stop and a build request),
-# five messages, always resolved as the human roster row on import.
+# The imported transcript: a labelled turn (mentions, a run-skill invocation, /stop and a build
+# request), five messages, always resolved as the human roster row on import.
 $ImportedHistory = "Owner: @opus what do you think of the plan?`nOpus: I think so. @gpt-6-astra, a second opinion?`nOwner: /build-thing @sonnet begin`nOwner: /stop`nOwner: @sonnet build the thing now"
 
 $base = "http://127.0.0.1:$Port"
@@ -125,8 +122,8 @@ try {
     $corpusOk = ($corpusProc.ExitCode -eq 0) -and (Test-Path -LiteralPath $fp)
     Add-Check -Name 'corpus.v2-built' -Passed $corpusOk -Detail "exit=$($corpusProc.ExitCode) fingerprint=$(Test-Path -LiteralPath $fp)"
 
-    # Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER the corpus build
-    # and BEFORE the hub's first start (ChopTokenHelpers.ps1). Never a real installation's credential.
+    # 'owner' is a host-file row -- seed its plaintext into tokens.json after the corpus build and
+    # before the hub's first start (ChopTokenHelpers.ps1). Never a real installation's credential.
     $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
     $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
@@ -171,9 +168,9 @@ try {
     Add-Check -Name 'backup.count-is-one' -Passed ($baks.Count -eq 1 -and $bakNameOk) -Detail "count=$($baks.Count) name=$bakName"
 
     # 4. existing.not-imported -- EVERY corpus room, every pre-existing row imported == false. Each
-    # page is capped at MessageStore.MaxLimit (200, ChatApi.cs/MessageStore.cs:9,297): hasMore must be
-    # false in every room or the counts below are a silent undercount, not the room's real total (row
-    # 42 fix F2/F8). $room stays the first room, the one every later leg imports into and controls.
+    # page is capped at MessageStore.MaxLimit (200): hasMore must be false in every room or the counts
+    # below are a silent undercount, not the room's real total. $room stays the first room, the one
+    # every later leg imports into and controls.
     $roomsResp = Invoke-Api -Method Get -Path '/api/rooms'
     $rooms = @($roomsResp.Body | ForEach-Object { $_ })
     $room = $rooms[0].id
@@ -211,10 +208,9 @@ try {
     # the mention is parsed, well before SpawnLimits.Debounce (2s) elapses and the launch actually
     # fires -- so it proves an exchange opened, not that a spawn was attempted. The real barrier is the
     # control's own spawn attempt: PATH is stripped, so that attempt always surfaces as a "could not be
-    # started" hub note (SpawnerService.cs:1100's FileNotFoundException path). Poll up to 30s (debounce
-    # plus margin) for that note; only its arrival proves the FIFO loop already drained the five
-    # imported PostedEvents ahead of the control post (row 42 claim 26). The root, when seen, is still
-    # recorded in Detail.
+    # started" hub note (SpawnerService's FileNotFoundException path). Poll up to 30s (debounce plus
+    # margin) for that note; only its arrival proves the FIFO loop already drained the five imported
+    # PostedEvents ahead of the control post. The root, when seen, is still recorded in Detail.
     $controlResp = Invoke-Api -Method Post -Path "/api/rooms/$room/messages" -Headers $ownerAuth -Body @{ body = '@opus control post' }
     $controlId = $controlResp.Body.id
     $deadline = (Get-Date).AddSeconds(30)
@@ -235,16 +231,16 @@ try {
 
     # 7. import.no-spawn-no-note -- THE NEGATIVES, exact note SEQUENCE, asserted only after the barrier.
     # A clean control exchange deterministically produces exactly two hub notes, in order: the control's
-    # own "could not be started" note (SpawnerService.cs:1100), then ExchangePolicy.cs's Finished()
-    # posting "Exchange concluded: 1 of <budget> turns used." the instant that failed attempt empties
-    # the exchange (ExchangePolicy.cs:383-389) -- a single-participant mention always yields both notes,
-    # not one. notesSinceImport is every hub note with id > lastImportedId, in id order: asserting its
-    # count is exactly 2, note 0 is the control's own attempt (id > controlId, right body prefix), and
-    # note 1 is its conclusion with the right turn count and a contiguous id is what makes an unguarded
-    # import fail -- its own spawn attempts and conclusions would either push the count past 2, land
-    # with an id below controlId, or (if it added a turn some other way) change "1 of" to something
-    # else. limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or the arithmetic
-    # below compares against a silently truncated page, not the room's real total (row 42 fix F2/F8).
+    # own "could not be started" note, then ExchangePolicy's Finished() posting "Exchange concluded: 1
+    # of <budget> turns used." the instant that failed attempt empties the exchange; a
+    # single-participant mention always yields both notes, not one. notesSinceImport is every hub note
+    # with id > lastImportedId, in id order: asserting its count is exactly 2, note 0 is the control's
+    # own attempt (id > controlId, right body prefix), and note 1 is its conclusion with the right turn
+    # count and a contiguous id is what makes an unguarded import fail -- its own spawn attempts and
+    # conclusions would either push the count past 2, land with an id below controlId, or (if it added
+    # a turn some other way) change "1 of" to something else. limit=200 matches MessageStore.MaxLimit
+    # exactly; hasMore must be false or the arithmetic below compares against a silently truncated
+    # page, not the room's real total.
     $runResp = Invoke-Api -Method Get -Path "/api/rooms/$room/run"
     $runIs204 = $runResp.Status -eq 204
     $afterResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
@@ -289,7 +285,7 @@ try {
     if ($null -eq $health2) { throw "hub2 on port $Port did not become healthy (pid=$($hub2.Id))" }
 
     # limit=200 matches MessageStore.MaxLimit exactly; hasMore must be false or this page is a silent
-    # undercount of the room's real total (row 42 fix F2/F8).
+    # undercount of the room's real total.
     $finalResp = Invoke-Api -Method Get -Path "/api/rooms/$room/messages?afterId=0&limit=200"
     $allFinal = @($finalResp.Body.messages | ForEach-Object { $_ })
     $finalHasMoreOk = $finalResp.Body.hasMore -eq $false

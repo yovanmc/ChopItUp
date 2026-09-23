@@ -2,11 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace ChopItUp.Hub.Security;
 
-/// <summary>Row 28 Task 2: the one place that answers "which substrings of this text could be a
-/// minted bearer token" (see <c>TokenStore.NewToken</c>). Task 3's start-time sweep of
-/// <c>data\host-configs\</c> and Task 6's proof that walks the whole data dir both need this, and a
-/// critique pass flagged that two separate extractors would silently disagree — one definition, both
-/// consumers.
+/// <summary>The one place that answers "which substrings of this text could be a minted bearer
+/// token" (see <c>TokenStore.NewToken</c>). The start-time sweep of <c>data\host-configs\</c> and the
+/// test that walks the whole data dir both need this, and two separate extractors would silently
+/// disagree: one definition, both consumers.
 ///
 /// A minted token is 32 random bytes, base64-encoded, padding trimmed and made URL-safe (<c>+</c>/
 /// <c>/</c> replaced with <c>-</c>/<c>_</c>): always exactly <see cref="TokenLength"/> characters

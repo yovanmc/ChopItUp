@@ -9,26 +9,26 @@ public sealed class ChopDb
 {
     public const int LatestSchemaVersion = 15;
 
-    /// <summary>The hub's own row (M5): author of exchange notes — timeouts, budget refusals, a
-    /// spawn's reply when it failed to post, conclusions. Kind <c>system</c>: not a human, not a
-    /// model, never spawned, never in a mention list.</summary>
+    /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
+    /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
+    /// spawned, never in a mention list.</summary>
     public const string HubParticipantId = "hub";
 
-    /// <summary>The owner's own row. Kind 'human' is no longer unique (v7 adds the remote proxy), so
-    /// "the owner" is this id and not "the one human": every owner-scoped read — the room list's
-    /// unread counts, the web UI's post author, the spawner's trail identity — resolves through
+    /// <summary>The hub owner's own row. Kind 'human' is not unique (the remote proxy is human too), so
+    /// "the hub owner" is this id and not "the one human": every owner-scoped read (the room list's
+    /// unread counts, the web UI's post author, the spawner's trail identity) resolves through
     /// <see cref="ParticipantStore.OwnerId"/> to this row.</summary>
     public const string OwnerParticipantId = "owner";
 
-    /// <summary>The owner's hand on another machine's keyboard (grill ledger D3). Kind 'human' so its
-    /// posts start and steer exchanges exactly as the owner's do; a distinct id so the transcript and
-    /// the commit trail show which hand typed. Revoking its token cuts the path.</summary>
+    /// <summary>The hub owner's hand on another machine's keyboard. Kind 'human' so its posts start and
+    /// steer exchanges exactly as the hub owner's do; a distinct id so the transcript and the commit trail
+    /// show which hand typed. Revoking its token cuts the path.</summary>
     public const string OwnerRemoteParticipantId = "owner-remote";
 
     /// <summary>The roster a fresh database starts with, in display order. Ids of spawn rows are the
-    /// model names their host accepts on the command line, so M5 reads <c>Model</c> straight off the
-    /// row (grill D14, F7, F8). Existing ids owner/claude/codex are kept: renaming them would rewrite
-    /// every message's author on the live database for nothing the owner asked for.</summary>
+    /// model names their host accepts on the command line, so the spawner reads <c>Model</c> straight
+    /// off the row. Existing ids owner/claude/codex are kept: renaming them would rewrite every
+    /// message's author on the live database.</summary>
     public static readonly IReadOnlyList<Participant> SeedRoster =
     [
         new("owner",         "Owner",         "human", "human",  null,            null),
@@ -89,14 +89,14 @@ public sealed class ChopDb
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(DatabasePath))!);
         PathMutex.Run("Global\\ChopItUp.Migrate.", DatabasePath, TimeSpan.FromSeconds(30), () =>
         {
-            LastBackupPath = null;                        // per-call, not per-instance (pass 2, N3)
+            LastBackupPath = null;                        // per-call, not per-instance
             SweepPartialBackups();
             using var conn = Open();
             int version = GetUserVersion(conn);
 
             // An older build must never touch a newer store. Without this, an exe left in
             // C:\Self Apps beside a newer repo build silently reads and writes a schema it does not
-            // understand (pass 2, MINOR-14).
+            // understand.
             if (version > LatestSchemaVersion)
                 throw new InvalidOperationException(
                     $"'{DatabasePath}' is at schema v{version}; this build understands v{LatestSchemaVersion}. Run a newer build.");
@@ -104,8 +104,8 @@ public sealed class ChopDb
             if (version >= LatestSchemaVersion) return 0;
 
             // Back up whenever there is anything to lose. Version 0 usually means "never finished
-            // being created" — but a database rebuilt by `.dump`/`.read`, or hand-repaired, also
-            // loses its user_version stamp while keeping every message (pass 2, MINOR-15).
+            // being created", but a database rebuilt by `.dump`/`.read`, or hand-repaired, also
+            // loses its user_version stamp while keeping every message.
             if (version > 0 || HasAnyMessages(conn))
                 LastBackupPath = BackupBeforeMigration(conn, version);   // throws => nothing is migrated
 
@@ -148,8 +148,8 @@ public sealed class ChopDb
     }
 
     /// <summary>Test seam: how the backup destination is opened. Production passes the real thing;
-    /// the A2 abort test injects one that throws, which is the only way to execute the abort path
-    /// (pass 2, MAJOR-4 — a read-only source throws in <see cref="Open"/> and never reaches here).</summary>
+    /// the abort test injects one that throws, which is the only way to execute the abort path (a
+    /// read-only source throws in <see cref="Open"/> and never reaches here).</summary>
     internal Func<string, SqliteConnection> BackupDestinationFactory { get; set; } = path =>
     {
         var conn = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -164,13 +164,13 @@ public sealed class ChopDb
 
     /// <summary>Online SQLite backup (not a file copy: the live database has a WAL, and copying the
     /// main file alone can capture a torn state). Written beside the database, under the same mutex,
-    /// before any DDL runs, and then VERIFIED — integrity, version stamp and message-count parity —
+    /// before any DDL runs, and then verified (integrity, version stamp and message-count parity),
     /// because an unverified backup is worse than none: it looks like a way back and is not.
     ///
     /// The copy is made under a <c>.bak.partial</c> name and renamed only after it verifies, so the
     /// <c>.bak</c> extension means "this one was checked". A process killed mid-copy runs no catch
     /// block; without the two-phase name it would leave a truncated file under the real name, and
-    /// the restore procedure invites the owner to use exactly that file (pass 2, MAJOR-5).</summary>
+    /// the restore procedure invites the hub owner to use exactly that file.</summary>
     private string BackupBeforeMigration(SqliteConnection source, int fromVersion)
     {
         var stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'");
@@ -220,8 +220,8 @@ public sealed class ChopDb
     /// <summary>The sidecars exist because verification opened the copy; a backup with a stray -wal
     /// beside it still restores correctly, but a half-written one must leave nothing behind. The
     /// catch is deliberately wider than IOException: this runs from inside the abort path's catch
-    /// block, and an ACL failure here would replace the real backup-failure message — the owner's
-    /// only lead — with a delete failure (pass 2, MINOR-16).</summary>
+    /// block, and an ACL failure here would replace the real backup-failure message (the hub owner's
+    /// only lead) with a delete failure.</summary>
     private static void TryDeleteBackup(string path)
     {
         foreach (var f in new[] { path, path + "-wal", path + "-shm" })
@@ -295,8 +295,8 @@ public sealed class ChopDb
 
     /// <summary>v2 adds the retry key that makes <c>post_message</c> safe to repeat: an optional
     /// per-author key, unique per room. SQLite has no <c>ADD COLUMN IF NOT EXISTS</c>, so the column is
-    /// probed inside the transaction — that is what makes a torn v2 re-runnable. The stamp is the last
-    /// statement of the same transaction (LESSONS, M1).</summary>
+    /// probed inside the transaction, which makes a torn v2 re-runnable. The stamp is the last
+    /// statement of the same transaction.</summary>
     private static void ApplyV2(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -320,11 +320,11 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v3 makes the roster data (M8): <c>host</c>, <c>model</c> and <c>note</c> on
+    /// <summary>v3 makes the roster data: <c>host</c>, <c>model</c> and <c>note</c> on
     /// participants, the three original rows told which host they are, and the spawn rows seeded.
     /// Each column is probed before its ALTER (SQLite has no ADD COLUMN IF NOT EXISTS) so a torn v3
     /// is re-runnable; INSERT OR IGNORE keeps a hand-edited roster; the stamp is the last statement
-    /// of the same transaction (LESSONS, M1).</summary>
+    /// of the same transaction.</summary>
     private static void ApplyV3(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -360,10 +360,10 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v4 seeds the hub's own row (M5, decision 2). Nothing else changes shape. The seed
-    /// is the same OR IGNORE pass V3 runs, so a fresh database (which reaches V3 with the row already
-    /// in <see cref="SeedRoster"/>) and a migrated v3 one end identical; the stamp is the last
-    /// statement of the same transaction (LESSONS, M1).</summary>
+    /// <summary>v4 seeds the hub's own row. Nothing else changes shape. The seed is the same OR
+    /// IGNORE pass V3 runs, so a fresh database (which reaches V3 with the row already in
+    /// <see cref="SeedRoster"/>) and a migrated v3 one end identical; the stamp is the last
+    /// statement of the same transaction.</summary>
     private static void ApplyV4(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -377,9 +377,8 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v5 adds the memory proposals table (M10, plan decision 6). IF NOT EXISTS so a torn v5
-    /// re-runs; the stamp is the last statement of the same transaction (LESSONS, M1). Nothing
-    /// existing changes shape.</summary>
+    /// <summary>v5 adds the memory proposals table. IF NOT EXISTS so a torn v5 re-runs; the stamp is
+    /// the last statement of the same transaction. Nothing existing changes shape.</summary>
     private static void ApplyV5(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -407,9 +406,9 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v6 (M9): a room can carry a directory (its git working tree) and an archive stamp. Two
-    /// nullable columns, each probed before its ALTER so a torn v6 — columns present, stamp still 5 —
-    /// re-runs safely (the v3 shape), stamped last in the same transaction (LESSONS M1).</summary>
+    /// <summary>v6: a room can carry a directory (its git working tree) and an archive stamp. Two
+    /// nullable columns, each probed before its ALTER so a torn v6 (columns present, stamp still 5)
+    /// re-runs safely, stamped last in the same transaction.</summary>
     private static void ApplyV6(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -429,15 +428,15 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v7 (row 11): participants gain <c>classes</c> (plumbing / visible / judge, grill
-    /// ledger D5), the roster gains <c>owner-remote</c> (D3), and the <c>skills</c> table records the
-    /// fingerprint <c>--import-skill</c> takes of each skill's SKILL.md (D-i). The fingerprint lives
-    /// here rather than in a file beside the skill precisely because the directory it would sit in is
-    /// writable by the thing it guards against. The column is probed before its ALTER and the table is
-    /// IF NOT EXISTS, so a torn v7 re-runs; the seed is the same OR IGNORE pass V3 runs, so a fresh
-    /// database and a migrated one end identical; classes are back-filled only where the column is
-    /// still NULL, so a class the owner set by hand is never overwritten. The stamp is the last
-    /// statement of the same transaction (LESSONS, M1).</summary>
+    /// <summary>v7: participants gain <c>classes</c> (plumbing / visible / judge), the roster gains
+    /// <c>owner-remote</c>, and the <c>skills</c> table records the fingerprint
+    /// <c>--import-skill</c> takes of each skill's SKILL.md. The fingerprint lives here rather than in
+    /// a file beside the skill because the directory it would sit in is writable by the thing it
+    /// guards against. The column is probed before its ALTER and the table is IF NOT EXISTS, so a
+    /// torn v7 re-runs; the seed is the same OR IGNORE pass V3 runs, so a fresh database and a
+    /// migrated one end identical; classes are back-filled only where the column is still NULL, so a
+    /// class the hub owner set by hand is never overwritten. The stamp is the last statement of the same
+    /// transaction.</summary>
     private static void ApplyV7(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -475,20 +474,17 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v8 (row 19): runs. A run is the only hub state that outlives an exchange, so unlike
-    /// Exchange it is a table. ux_runs_one_active_per_room is the invariant the row rests on — two active
-    /// runs in one room would give a conductor two loops to be re-spawned by. parked_seconds excludes
-    /// time a parked run was not running from the D9 wall clock, without which an overnight restart-park
-    /// re-parks the moment it is resumed (AC15). run_phases counts re-entries per full phase tag;
+    /// <summary>v8: runs. A run is the only hub state that outlives an exchange, so unlike Exchange it
+    /// is a table. ux_runs_one_active_per_room is the invariant runs rest on: two active runs in one
+    /// room would give a conductor two loops to be re-spawned by. parked_seconds excludes time a
+    /// parked run was not running from the wall clock, without which an overnight restart-park
+    /// re-parks the moment it is resumed. run_phases counts re-entries per full phase tag;
     /// run_artifacts records authorship read out of the spawn's own git diff; run_gate_runs is the
-    /// hub-written record the live check reads, and its run_id is NULLABLE because the refusals AC10
-    /// requires it to record include "there is no run here". skill_files is task 12's whole-tree
-    /// manifest (P5): one row per file under a skill's installed directory, recorded at import
-    /// alongside the SKILL.md hash the `skills` table already carried since v7 — never beside the
-    /// skill itself (D-i), for the same reason the SKILL.md hash lives here and not there. Folded into
-    /// v8 rather than a new version because nothing has deployed v8 yet (task 16 is the first deploy of
-    /// this row); once that happens this table's shape is as frozen as every other v8 table. Stamp
-    /// last (LESSONS, M1).</summary>
+    /// hub-written record the live check reads, and its run_id is nullable because the refusals it
+    /// records include "there is no run here". skill_files is the whole-tree manifest: one row per
+    /// file under a skill's installed directory, recorded at import alongside the SKILL.md hash,
+    /// never beside the skill itself, for the same reason the SKILL.md hash lives here. v8 is
+    /// deployed, so its tables' shapes are frozen. Stamp last.</summary>
     private static void ApplyV8(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -557,11 +553,11 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v9 (row 18): memory proposals gain <c>kind</c> (append | supersede; row 23 adds
-    /// rewrite without a migration), <c>replaces</c> (the title of the same-topic entry a supersede
-    /// retires) and <c>flags</c> (comma-joined review hints the panel shows). Each column is probed
-    /// before its ALTER so a torn v9 re-runs; the stamp is the last statement of the same transaction
-    /// (LESSONS, M1). Nothing existing changes shape.</summary>
+    /// <summary>v9: memory proposals gain <c>kind</c> (append | supersede | rewrite; rewrite needs no
+    /// migration), <c>replaces</c> (the title of the same-topic entry a supersede retires) and
+    /// <c>flags</c> (comma-joined review hints the panel shows). Each column is probed before its
+    /// ALTER so a torn v9 re-runs; the stamp is the last statement of the same transaction. Nothing
+    /// existing changes shape.</summary>
     private static void ApplyV9(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -581,22 +577,20 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v10 (row 25, task 3): <c>skill_proposals</c> — the same "agent proposes, owner
-    /// approves" shape row 18's <c>memory_proposals</c> already carries, repeated for skill imports
-    /// over the hub's own MCP/API surface rather than the CLI. <c>tree_sha256</c> is
-    /// <c>SkillImport.ManifestDigest(SkillImport.HashSourceTree(sourceDir))</c> — one value binding the
+    /// <summary>v10: <c>skill_proposals</c>, the same "agent proposes, owner approves" shape
+    /// <c>memory_proposals</c> carries, repeated for skill imports over the hub's own MCP/API surface
+    /// rather than the CLI. <c>tree_sha256</c> is
+    /// <c>SkillImport.ManifestDigest(SkillImport.HashSourceTree(sourceDir))</c>: one value binding the
     /// proposal to the exact bytes shown to the owner, re-checked against the staged copy before the
-    /// swap (D5, task 2). <c>replaces_installed</c> and <c>files</c>/<c>bytes</c> are what the listing
-    /// shows without re-walking the tree on every unauthenticated GET. <c>force</c> is persisted at
-    /// propose time rather than derived at approve time: deriving it from <c>replaces_installed</c>
-    /// would let a stale value decide a destructive replace, and hard-coding it true would let a card
-    /// the owner read as "new" silently overwrite a skill installed since (pass 2 blocker 2) — approve
-    /// (task 7) re-checks the installed state against it rather than trusting either extreme.
-    /// <c>installed_at</c> stays NULL between "marked approved" and "the install finished", which is
-    /// what lets a repeat approval detect and complete an install that was already applied (task 7's
-    /// Retry arm) instead of re-running one. A brand-new table, so IF NOT EXISTS is enough — no
-    /// per-column ALTER probe is needed the way v6/v7/v9's added columns need one. Index mirrors
-    /// <c>ix_memory_proposals_status</c>. Stamp last (LESSONS, M1).</summary>
+    /// swap. <c>replaces_installed</c> and <c>files</c>/<c>bytes</c> are what the listing shows
+    /// without re-walking the tree on every unauthenticated GET. <c>force</c> is persisted at propose
+    /// time rather than derived at approve time: deriving it from <c>replaces_installed</c> would let a
+    /// stale value decide a destructive replace, and hard-coding it true would let a card the hub owner
+    /// read as "new" silently overwrite a skill installed since. Approve re-checks the installed state
+    /// against it rather than trusting either extreme. <c>installed_at</c> stays NULL between "marked
+    /// approved" and "the install finished", which lets a repeat approval detect and complete an
+    /// install that was already applied instead of re-running one. A new table, so IF NOT EXISTS is
+    /// enough. Index mirrors <c>ix_memory_proposals_status</c>. Stamp last.</summary>
     private static void ApplyV10(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -626,11 +620,11 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>v11 (row 36): <c>messages.reply_to_id</c>, the message a post replies to, or NULL for
-    /// every message written before it and every post that is not a reply. Same room is enforced by
+    /// <summary>v11: <c>messages.reply_to_id</c>, the message a post replies to, or NULL for every
+    /// message written before it and every post that is not a reply. Same room is enforced by
     /// <see cref="MessageStore.Post(string,string,string,string?,long?)"/>, not by the schema. The column
-    /// is probed inside the transaction (a torn v11 re-runs cleanly) and the stamp is the last statement
-    /// (LESSONS, M1). No index: nothing queries by it.</summary>
+    /// is probed inside the transaction (a torn v11 re-runs cleanly) and the stamp is the last
+    /// statement. No index: nothing queries by it.</summary>
     private static void ApplyV11(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -650,11 +644,10 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>Row 14: the two nullable text columns and the one join table that carry roles and
-    /// personas. Both ALTERs are probed first (SQLite has no ADD COLUMN IF NOT EXISTS), so a database
-    /// whose columns were added by some other path is finished rather than failing on a duplicate
-    /// column. Nothing is backfilled: a NULL role and a NULL persona mean "the prompt this build
-    /// already renders" (AC5).</summary>
+    /// <summary>The two nullable text columns and the one join table that carry roles and personas.
+    /// Both ALTERs are probed first (SQLite has no ADD COLUMN IF NOT EXISTS), so a database whose
+    /// columns were added by some other path is finished rather than failing on a duplicate column.
+    /// Nothing is backfilled: a NULL role and a NULL persona mean "the default prompt".</summary>
     private static void ApplyV12(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
@@ -685,10 +678,10 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>Row 42: provenance for transcript turns brought in by import. <c>imported</c> is 1 only on
+    /// <summary>Provenance for transcript turns brought in by import. <c>imported</c> is 1 only on
     /// rows written through <see cref="MessageStore.Import"/>; every row that existed before v13 reads 0,
-    /// because nothing recorded how it arrived. Probe-then-ALTER and the stamp in the same transaction
-    /// (LESSONS M1): a start torn between the ALTER and the stamp is finished, not crashed.</summary>
+    /// because nothing recorded how it arrived. Probe-then-ALTER and the stamp in the same
+    /// transaction: a start torn between the ALTER and the stamp is finished, not crashed.</summary>
     private static void ApplyV13(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();

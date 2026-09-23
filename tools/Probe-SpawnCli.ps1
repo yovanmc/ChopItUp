@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS
-    Re-measures the two headless spawn command lines the hub relies on (M5 plan, claims 13 and 14)
-    against a running hub, through the same ProcessStartInfo.ArgumentList + redirected-stdin shape
+    Re-measures the two headless spawn command lines the hub relies on against a running hub, through the same ProcessStartInfo.ArgumentList + redirected-stdin shape
     the hub's ProcessRunner uses.
 
 .DESCRIPTION
@@ -36,8 +35,8 @@ New-Item -ItemType Directory -Path (Join-Path $work 'claude') -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $work 'codex') -Force | Out-Null
 
 # NOTE: the parameter is $argv, never $args - PowerShell reserves $args, and a helper that names a
-# parameter $args silently receives nothing (measured 2026-09-05: both CLIs launched with no
-# arguments and the probe reported a false negative).
+# parameter $args silently receives nothing (measured: both CLIs launched with no arguments and the
+# probe reported a false negative).
 function Invoke-Child {
     param([string]$FileName, [string[]]$argv, [hashtable]$Env, [string]$Stdin, [string]$WorkDir)
     $psi = [System.Diagnostics.ProcessStartInfo]::new()
@@ -70,7 +69,7 @@ try {
     Set-Content -LiteralPath (Join-Path $claudeDir 'mcp.json') -Value $mcpJson -NoNewline -Encoding utf8
     # Source of truth: SpawnCommands.ClaudeToolAllowed (src/ChopItUp.Hub/Spawning/SpawnCommands.cs) - a
     # PowerShell script can't reference the C# constant, so this literal is a copy; keep it in sync by
-    # hand when that constant changes (row 23 added propose_rewrite as its fourth entry).
+    # hand when that constant changes.
     $claudeArgs = @('-p', '--tools', '', '--strict-mcp-config', '--mcp-config', (Join-Path $claudeDir 'mcp.json'),
         '--allowedTools', 'mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory,mcp__chopitup__propose_rewrite', '--no-session-persistence', '--model', 'sonnet',
         '--output-format', 'json', '--disable-slash-commands', '--setting-sources', '')

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Row 40 dry run: proves the editor routes end to end — list order and caps, an uncut over-cap
+    Memory-editor dry run: proves the editor routes end to end — list order and caps, an uncut over-cap
     read, CRLF read as LF, the unauthenticated refusal, the preview count, a save with its file,
     backup, carried provenance, note and commit, a second save proving the hash re-arms, the stale
     refusal, the core cap refusal at two sizes, the no-heading refusal, shrinking an over-cap topic,
@@ -8,12 +8,12 @@
     against a fabricated memory store on a scratch hub. No model is ever spawned; nothing here spends.
 
 .DESCRIPTION
-    Mirrors Invoke-M23DryRun.ps1's frame: a param block with -HubExe/-DataDir (fresh, under
+    Same frame as Invoke-M23DryRun.ps1: a param block with -HubExe/-DataDir (fresh, under
     $env:TEMP)/-Port, Add-Check, ChopTokenHelpers.ps1 seeding 'owner' before the hub's first start,
-    the hub started by PID and stopped in a finally block (idempotent; this row also stops it
+    the hub started by PID and stopped in a finally block (idempotent; this script also stops it
     inline for the restore leg), "Results: n/m PASS", exit 0 only when every check passes. Every
-    Invoke-RestMethod array is piped through ForEach-Object { $_ } first (LESSONS M10: a bare
-    top-level JSON array comes back as one nested Object[]). Every git call goes through Invoke-Git,
+    Invoke-RestMethod array is piped through ForEach-Object { $_ } first (a bare top-level JSON
+    array comes back as one nested Object[]). Every git call goes through Invoke-Git,
     which checks $LASTEXITCODE itself: a git failure comes back as a value ($r.Ok -eq $false) that
     fails whichever check reads it, never a terminating error that would abort the whole run.
 
@@ -49,7 +49,7 @@ function Add-Check {
 }
 
 # One request, uniformly: GET has no -Body; a write carries $ownerAuth. Never throws on a non-2xx
-# status (M23's Invoke-WebRequest -SkipHttpErrorCheck idiom) so a refusal is a value to assert on,
+# status (Invoke-WebRequest -SkipHttpErrorCheck) so a refusal is a value to assert on,
 # not an exception to catch.
 function Invoke-Api {
     param([string]$Method, [string]$Path, [hashtable]$Body, [hashtable]$Headers)
@@ -109,7 +109,7 @@ Add-Content -Path $log -Value ("Row 40 dry run {0} exe={1} data={2} port={3}" -f
 Write-Host "Binary: $HubExe"
 Write-Host "Data dir: $DataDir"
 
-# Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json BEFORE the hub's first
+# 'owner' is a host-file row: seed its plaintext into tokens.json BEFORE the hub's first
 # start (ChopTokenHelpers.ps1). Never a real installation's credential.
 $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
 $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
@@ -154,7 +154,7 @@ try {
     try { $portProbe.Start() } catch { throw "port $Port is already listening; pick a free -Port or stop whatever is using it." }
     finally { $portProbe.Stop() }
 
-    # Every path element quoted (2026-09-07 lesson): Start-Process -ArgumentList space-joins its
+    # Every path element quoted: Start-Process -ArgumentList space-joins its
     # array rather than using ProcessStartInfo.ArgumentList, so an unquoted path containing a space
     # gets word-split by the child process's own argv parser.
     $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--port', "$Port") -WindowStyle Hidden -PassThru `

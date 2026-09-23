@@ -5,15 +5,15 @@ using ChopItUp.Hub.Security;
 
 namespace ChopItUp.Hub.Tests.Security;
 
-/// <summary>Row 29 Task 2 / issues/02-peer-pid.md: which local process owns the client end of a
-/// loopback TCP connection, read from the same owner-PID tables <c>netstat -ano</c> prints. The IPv6
-/// test is what binds <see cref="PeerProcess"/>'s <c>MIB_TCP6ROW_OWNER_PID</c> field order — the plan
-/// flags that order as recalled, not measured.
+/// <summary>Which local process owns the client end of a loopback TCP connection, read from the same
+/// owner-PID tables <c>netstat -ano</c> prints. The IPv6 test is what binds
+/// <see cref="PeerProcess"/>'s <c>MIB_TCP6ROW_OWNER_PID</c> field order, which was recalled, not
+/// measured.
 ///
 /// Marked <see cref="SupportedOSPlatform"/>("windows") to match <see cref="PeerProcess"/>'s own
 /// attribute: CA1416 otherwise treats every call into a Windows-only API from this (unattributed by
 /// default) test project as a platform-compat warning, which is an error under -warnaserror. CI is
-/// windows-latest only (D12), so this test class never needs to run anywhere else.</summary>
+/// windows-latest only, so this test class never needs to run anywhere else.</summary>
 [SupportedOSPlatform("windows")]
 [Collection(ProcessStateCollection.Name)]
 public sealed class PeerProcessTests
@@ -101,17 +101,16 @@ public sealed class PeerProcessTests
         finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
     }
 
-    /// <summary>Row 29 finding: <c>Scan</c> sized its buffer once and read once, so a table that grew
-    /// between the two <c>GetExtendedTcpTable</c> calls made the read return ERROR_INSUFFICIENT_BUFFER
-    /// and <c>OwningPid</c> null for a connection that was genuinely established - the middleware would
-    /// read that as an unresolvable peer and lock the owner out on ordinary network churn.
+    /// <summary>A table that grows between the two <c>GetExtendedTcpTable</c> calls makes the read
+    /// return ERROR_INSUFFICIENT_BUFFER; <c>OwningPid</c> must still resolve a connection that is
+    /// genuinely established, or the middleware would read it as an unresolvable peer and lock the
+    /// owner out on ordinary network churn.
     ///
-    /// Real socket churn was tried first to reproduce this end to end, but the table on a dev box
-    /// already carries hundreds of established rows, so churn from a handful of test sockets tends to
-    /// shrink the net row count between the two calls at least as often as it grows it - not a
-    /// reliable trigger. <see cref="PeerProcess.GetExtendedTcpTable"/> and the new
-    /// <see cref="PeerProcess.TcpTableFn"/> delegate it is exposed through are <c>internal</c> (not
-    /// <c>private</c>) for exactly this: a fake can fall through to the real syscall for the honest
+    /// Real socket churn is not a reliable trigger: the table on a dev box already carries hundreds of
+    /// established rows, so churn from a handful of test sockets tends to shrink the net row count
+    /// between the two calls at least as often as it grows it. <see cref="PeerProcess.GetExtendedTcpTable"/>
+    /// and the <see cref="PeerProcess.TcpTableFn"/> delegate it is exposed through are <c>internal</c>
+    /// (not <c>private</c>) for exactly this: a fake can fall through to the real syscall for the honest
     /// size query and force ERROR_INSUFFICIENT_BUFFER on the read for a controlled number of attempts,
     /// which drives <c>Scan</c>'s retry loop deterministically without altering
     /// <see cref="PeerProcess.OwningPid(PeerProcess.Endpoints)"/>'s production call path (it always

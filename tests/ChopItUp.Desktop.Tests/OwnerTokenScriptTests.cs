@@ -2,7 +2,7 @@ using ChopItUp.Desktop.Bridge;
 
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T4 (B2): the launch-scoped owner bearer reaches the page as an in-memory global on
+/// <summary>The launch-scoped owner bearer reaches the page as an in-memory global on
 /// every document of the hub origin — never localStorage, never the WebView2 profile, so no copy
 /// outlives Quit and no spawn running as this user can read one off disk.</summary>
 public class OwnerTokenScriptTests

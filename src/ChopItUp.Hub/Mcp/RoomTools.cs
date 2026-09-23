@@ -11,7 +11,7 @@ using ModelContextProtocol.Server;
 
 namespace ChopItUp.Hub.Mcp;
 
-/// <summary>The room contract every host is configured against (M2). Results are JSON text so any
+/// <summary>The room contract every host is configured against. Results are JSON text so any
 /// client renders them; the author of a post is always the authenticated participant.</summary>
 [McpServerToolType]
 public sealed class RoomTools(MessageStore store, ParticipantStore participants, MessageSignal signal, IHttpContextAccessor http, SpawnerService spawner)
@@ -79,8 +79,8 @@ public sealed class RoomTools(MessageStore store, ParticipantStore participants,
         RequireRoom(room_id);
         if (string.IsNullOrWhiteSpace(body)) throw new McpException("body is empty.");
         if (body.Length > MaxBodyChars) throw new McpException($"body exceeds {MaxBodyChars} characters.");
-        // Check the TRIMMED length, matching what the store stores (pass 2, N4): otherwise a key
-        // with leading spaces is rejected here and accepted one layer down.
+        // Check the TRIMMED length, matching what the store stores: otherwise a key with leading
+        // spaces is rejected here and accepted one layer down.
         if (client_key?.Trim() is { Length: > MessageStore.MaxClientKeyChars })
             throw new McpException($"client_key exceeds {MessageStore.MaxClientKeyChars} characters.");
         PostResult result;

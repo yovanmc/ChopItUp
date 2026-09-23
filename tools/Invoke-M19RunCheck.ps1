@@ -1,27 +1,26 @@
 <#
 .SYNOPSIS
-    M19 live check: proves that a run — the hub's conductor loop from row 19 — gets a two-phase toy
-    skill from start to its ping with no owner post between the phases, using real command-line
-    models against a scratch hub.
+    Run live check: proves that a run (the hub's conductor loop) gets a two-phase toy skill from
+    start to its ping with no owner post between the phases, using real command-line models against a
+    scratch hub.
 
 .DESCRIPTION
-    Row 19 (runs), plan Task 15. Spends real Claude calls on the owner's subscription: the conductor
-    (-Conductor, default opus, re-spawned at least twice) and the worker (-Worker, default sonnet,
-    once). Effort is passed high for both, per AC7 (conductor and judge classes) — opus is
-    visible,judge so it gets --effort high as conductor regardless; sonnet does not, being plumbing
-    only. Never touches C:\Self Apps, %USERPROFILE%\ChopItUp or any real data directory: -DataDir
-    and -RoomsRoot default to fresh folders under $env:TEMP and are left behind with the log. The
-    toy skill imported is -SkillSource (default: this repo's own tools\skills\toy-run) — a
-    throwaway, not something anyone would slash-invoke for real work.
+    Spends real Claude calls on the owner's subscription: the conductor (-Conductor, default opus,
+    re-spawned at least twice) and the worker (-Worker, default sonnet, once). Effort follows the
+    classes: opus is visible,judge so it gets --effort high as conductor regardless; sonnet does not,
+    being plumbing only. Never touches C:\Self Apps, %USERPROFILE%\ChopItUp or any real data
+    directory: -DataDir and -RoomsRoot default to fresh folders under $env:TEMP and are left behind
+    with the log. The toy skill imported is -SkillSource (default: this repo's own
+    tools\skills\toy-run), a throwaway, not something anyone would slash-invoke for real work.
 
-    Task 15d: run.two-phases, run.file-created, run.artifact-author and gate.ran-in-run are asserted
-    on records the HUB wrote, but each record only exists if the conductor or worker chose to act on
-    it — a FAIL on any of the four is ambiguous between a hub defect and a model that did not comply
-    with the toy skill's instructions. Distinguishing the two needs the transcript. The one thing
-    this script CAN do without reading it is say whether the worker exchange (the build phase's
-    @sonnet mention) opened at all and whether the run reached a terminal state — which at least
-    tells the orchestrator "the hub drove some spawns" versus "nothing happened after the first
-    post". Every one of those four checks prints that diagnostic on FAIL; it never affects PASS.
+    run.two-phases, run.file-created, run.artifact-author and gate.ran-in-run are asserted on records
+    the HUB wrote, but each record only exists if the conductor or worker chose to act on it, so a
+    FAIL on any of the four is ambiguous between a hub defect and a model that did not comply with the
+    toy skill's instructions. Distinguishing the two needs the transcript. The one thing this script
+    CAN do without reading it is say whether the worker exchange (the build phase's @sonnet mention)
+    opened at all and whether the run reached a terminal state, which at least tells the reader "the
+    hub drove some spawns" versus "nothing happened after the first post". Every one of those four
+    checks prints that diagnostic on FAIL; it never affects PASS.
 
     Every check prints PASS/FAIL; the last line is "Results: n/m PASS". The hub is stopped by PID,
     always, and every orphan whose command line names this run's -DataDir is swept in the same
@@ -55,9 +54,9 @@ function Add-Check {
     Add-Content -Path $log -Value $line
 }
 
-# Task 15d: the four checks below read hub-written records that only exist if a model complied.
-# On FAIL, append what the hub itself can say about whether anything ran at all, so a FAIL here does
-# not require reading the transcript to triage as "hub bug" vs "conductor/worker did not comply".
+# The four checks below read hub-written records that only exist if a model complied. On FAIL, append
+# what the hub itself can say about whether anything ran at all, so a FAIL here does not require
+# reading the transcript to triage as "hub bug" vs "conductor/worker did not comply".
 function Add-ModelTriggeredCheck {
     param([string]$Name, [bool]$Passed, [string]$Detail, [string]$RoomId)
     if (-not $Passed) {
@@ -95,8 +94,8 @@ $skillName = Split-Path -Leaf (([string]$SkillSource).TrimEnd('\', '/'))
 Add-Content -Path $log -Value ("M19 run check {0} exe={1} data={2} rooms={3} port={4} skill={5} conductor={6} worker={7}" `
     -f (Get-Date -Format o), $HubExe, $DataDir, $RoomsRoot, $Port, $skillName, $Conductor, $Worker)
 
-# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
-# hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
+# Every non-GET /api route needs an owner-class bearer -- seed one into this scratch hub's own
+# tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
 $ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
 
 $base = "http://127.0.0.1:$Port"
@@ -121,11 +120,11 @@ function Get-Messages([string]$RoomId, [long]$AfterId = 0, [int]$Limit = 500) {
     try { @((Invoke-RestMethod -Uri "$base/api/rooms/$RoomId/messages?afterId=$AfterId&limit=$Limit" -TimeoutSec 10).messages) }
     catch { Add-Content -Path $log -Value "read room failed: $($_.Exception.Message)"; @() }
 }
-# Row 19: polls the run record itself (never message text — M10's array-unwrap lesson applies here
-# too, but a single-object GET needs none of that). Collects every distinct `phase` value seen along
-# the way into $script:SeenPhases, because the run's OWN record of "which tags it entered" (run_phases)
-# has no REST surface of its own — the room's current phase, sampled over the run's whole life, is the
-# same information read a different way, and it is still hub state, never a model's wording.
+# Polls the run record itself, never message text. Collects every distinct `phase` value seen along
+# the way into $script:SeenPhases, because the run's own record of "which tags it entered"
+# (run_phases) has no REST surface of its own; the room's current phase, sampled over the run's whole
+# life, is the same information read a different way, and it is still hub state, never a model's
+# wording.
 $script:SeenPhases = New-Object System.Collections.Generic.HashSet[string]
 function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
     $deadline = (Get-Date).AddSeconds($Seconds)
@@ -142,17 +141,15 @@ function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
     return $state
 }
 
-# --import-skill runs BEFORE the hub starts, same order M11 uses (row 11's m6 precondition), and
-# avoids a second process touching chopitup.db while the hub holds it. Not itself one of task 15c's
-# named checks; a failure here is a setup problem, so it stays a hard guard (exit 2), matching the
-# fresh-directory guards above.
+# --import-skill runs before the hub starts, so no second process touches chopitup.db while the hub
+# holds it. A failure here is a setup problem, not a named check, so it stays a hard guard (exit 2),
+# matching the fresh-directory guards above.
 $importOut = Join-Path $DataDir 'import.out.log'
 $importErr = Join-Path $DataDir 'import.err.log'
-# Every path below is quoted INSIDE the argument string. Start-Process joins -ArgumentList with
+# Every path below is quoted inside the argument string. Start-Process joins -ArgumentList with
 # spaces and quotes nothing, so an unquoted path containing a space arrives at the exe as two
-# arguments: this script's own default -SkillSource lives under 'C:\Agent Projects', and unquoted
-# it imported as the skill named 'Agent'. The M11 script this scaffolding came from has the same
-# shape and never tripped it only because its default path has no space in it.
+# arguments: this script's own default -SkillSource lives under 'C:\Agent Projects', and unquoted it
+# imports as the skill named 'Agent'.
 $import = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $importOut -RedirectStandardError $importErr
 if ($import.ExitCode -ne 0) {
@@ -174,8 +171,8 @@ try {
     Add-Check -Name 'health.schema-is-15' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
     # --- run.no-directory-refused: the 'general' room has no directory (seeded that way), so the
-    # same invocation there must refuse rather than start a run (AC2). Checked BEFORE the real toy
-    # room exists, so there is no active run anywhere yet to confuse the refusal path with. -----------
+    # same invocation there must refuse rather than start a run. Checked before the real toy room
+    # exists, so there is no active run anywhere yet to confuse the refusal path with. ----------------
     $noDirPosted = Invoke-Api POST '/api/rooms/general/messages' @{ body = "/$skillName @$Conductor" }
     $noDirNote = $null
     foreach ($i in 1..15) {
@@ -249,7 +246,7 @@ try {
     Add-ModelTriggeredCheck -Name 'run.artifact-author' -Passed ($helloArtifact.Count -eq 1) `
         -Detail "artifacts=$(($finalRun.artifacts | ForEach-Object { "$($_.path):$($_.authorId)" }) -join ' | ')" -RoomId $roomId
 
-    # --- run.no-failure-notes: same fixed substrings M11's live check already trusts ----------------
+    # --- run.no-failure-notes: same fixed substrings Invoke-M11SkillCheck.ps1 already trusts ----------
     $hubNotes = @($allMessages | Where-Object authorId -eq 'hub')
     Add-Check -Name 'run.no-failure-notes' -Passed (-not ($hubNotes | Where-Object { $_.body -match 'did not reply|without posting|could not be started|exited with code' })) `
         -Detail (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')

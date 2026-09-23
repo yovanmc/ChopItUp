@@ -15,9 +15,9 @@ public enum SkillImportOutcome
     /// reparse point anywhere in the source, or the target already existing without <c>--force</c>.
     /// Maps to exit code 2.</summary>
     BadArgument,
-    /// <summary>A rename-swap move failed even after the bounded retry (5c), most likely because a
-    /// reader has a handle open on the installed skill, or another unexpected disk failure. Maps to
-    /// exit code 3.</summary>
+    /// <summary>A rename-swap move failed even after the bounded retry, most likely because a reader
+    /// has a handle open on the installed skill, or another unexpected disk failure. Maps to exit
+    /// code 3.</summary>
     IoFailure,
     /// <summary>The source directory does not exist, or holds no <c>SKILL.md</c> directly in it.
     /// Maps to exit code 4.</summary>
@@ -26,32 +26,30 @@ public enum SkillImportOutcome
 
 /// <summary>What one <see cref="SkillImport.Run"/> or <see cref="SkillImport.Validate"/> call found.
 /// <c>Name</c>, <c>Files</c>, <c>Bytes</c> and <c>ReplacesInstalled</c> are set only on
-/// <see cref="SkillImportOutcome.Ok"/> (task 1: <c>Bytes</c> and <c>ReplacesInstalled</c> are new —
-/// task 5 records all three into a skill proposal).</summary>
+/// <see cref="SkillImportOutcome.Ok"/>; a skill proposal records them.</summary>
 public sealed record SkillImportResult(SkillImportOutcome Outcome, string Message, string? Name = null, int Files = 0, long Bytes = 0, bool ReplacesInstalled = false);
 
-/// <summary>The write side of the skill store (row 11 task 5): <c>--import-skill &lt;dir&gt;</c>
-/// copies a folder holding a valid <c>SKILL.md</c> into <c>&lt;skillsRoot&gt;/&lt;name&gt;/</c> and
-/// records a fingerprint of the installed <c>SKILL.md</c> in the <c>skills</c> table (D-i) — never
-/// beside the skill itself, which the threat model says a spawn can write.
+/// <summary>The write side of the skill store: <c>--import-skill &lt;dir&gt;</c> copies a folder
+/// holding a valid <c>SKILL.md</c> into <c>&lt;skillsRoot&gt;/&lt;name&gt;/</c> and records a
+/// fingerprint of the installed <c>SKILL.md</c> in the <c>skills</c> table, never beside the skill
+/// itself, which a spawn can write.
 ///
-/// This is a RENAME SWAP, never delete-then-write (grill ledger M6): a reader running at the same
-/// moment sees either the old skill or the new one, never a half-removed directory. Two invocations of
-/// the same name, and a reader observing the swap mid-flight, are both closed by ONE mechanism: the
-/// whole procedure — every refusal check and the write itself — runs inside the same named mutex
-/// <see cref="SkillStore"/>'s <c>Read</c>/<c>List</c> take (grill ledger M-4), keyed on the skills
-/// root directory.
+/// This is a rename swap, never delete-then-write: a reader running at the same moment sees either
+/// the old skill or the new one, never a half-removed directory. Two invocations of the same name,
+/// and a reader observing the swap mid-flight, are both closed by one mechanism: the whole
+/// procedure (every refusal check and the write itself) runs inside the same named mutex
+/// <see cref="SkillStore"/>'s <c>Read</c>/<c>List</c> take, keyed on the skills root directory.
 ///
-/// The verb runs before any hub has ever started against this data directory (m6), so it creates the
+/// The verb can run before any hub has started against this data directory, so it creates the
 /// skills root itself and, via <see cref="SkillHashes"/>, brings the database's <c>skills</c> table
-/// into existence the same idempotent way a hub start does (<c>ChopDb.EnsureDatabase</c>) — it does
-/// NOT check <c>HubLock</c> and does NOT read or rotate <c>tokens.json</c>: unlike <c>--rotate-token</c>
-/// it needs no hub stopped (D-d — the store is read on demand, not cached).</summary>
+/// into existence the same idempotent way a hub start does (<c>ChopDb.EnsureDatabase</c>). It does
+/// not check <c>HubLock</c> or touch <c>tokens.json</c>: unlike <c>--rotate-token</c> it needs no
+/// hub stopped, because the store is read on demand, not cached.</summary>
 public static class SkillImport
 {
-    // Same literal prefix/timeout SkillStore.Read/List use (M-4): the mutex name is a hash of the
-    // path, so importing and reading the SAME skillsRoot always contend for the SAME mutex even
-    // though the two classes share no field.
+    // Same literal prefix/timeout SkillStore.Read/List use: the mutex name is a hash of the path, so
+    // importing and reading the same skillsRoot always contend for the same mutex even though the
+    // two classes share no field.
     private const string MutexPrefix = "Global\\ChopItUp.Skills.";
 
     /// <summary>The wait every caller gets unless it asks for a shorter one. Public because it is the
@@ -68,30 +66,29 @@ public static class SkillImport
     /// maps to — it never escapes <see cref="Run"/>.</summary>
     private sealed class SkillMoveException(string message) : Exception(message);
 
-    /// <summary><paramref name="expectedTree"/> (task 2, D5): the manifest the caller pinned before
-    /// this call — typically <see cref="ManifestDigest"/>'s input, <see cref="HashSourceTree"/> of the
-    /// source read at propose time. When non-null, the STAGED copy (not the source) is re-hashed and
-    /// compared against it before either <see cref="MoveWithRetry"/> runs, closing the window between
-    /// the read that produced the pin and the read <see cref="CopyTree"/> performs here. The CLI path
-    /// (<see cref="ChopItUp.Hub.Hosting.HostCommands"/>) passes null and is unaffected.</summary>
+    /// <summary><paramref name="expectedTree"/>: the manifest the caller pinned before this call,
+    /// typically <see cref="HashSourceTree"/> of the source read at propose time. When non-null, the
+    /// staged copy (not the source) is re-hashed and compared against it before either
+    /// <see cref="MoveWithRetry"/> runs, closing the window between the read that produced the pin and
+    /// the read <see cref="CopyTree"/> performs here. The CLI path
+    /// (<see cref="ChopItUp.Hub.Hosting.HostCommands"/>) passes null.</summary>
     public static SkillImportResult Run(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir = null, IReadOnlyDictionary<string, string>? expectedTree = null) =>
         PathMutex.Run(MutexPrefix, skillsRoot, DefaultMutexTimeout, () => RunCore(sourceDir, skillsRoot, force, hashes, overlayDir, expectedTree));
 
-    /// <summary>Task 1: the whole refusal battery (refusals 1-9), with no side effect — nothing under
+    /// <summary>The whole refusal battery with no side effect: nothing under
     /// <paramref name="skillsRoot"/> changes and no database row is written, whether or not the skills
-    /// root has ever existed. Takes the SAME named mutex <see cref="Run"/> does, with the same 10 s
-    /// timeout (the locking contract, pass 2), so a caller asking while another import is mid-swap
-    /// never gets a half-true answer; on contention it returns <see cref="SkillImportOutcome.IoFailure"/>
-    /// rather than throwing, with a message the MCP caller can act on. Unlike <see cref="Run"/>, this
-    /// never restores a torn `.replaced` — it judges the store exactly as it finds it, treating a
-    /// present `&lt;name&gt;.replaced` with an absent `&lt;name&gt;` as installed (pass 1 finding), so
-    /// <see cref="Validate"/> and <see cref="Run"/> can never disagree about whether a skill is
-    /// installed.
+    /// root has ever existed. Takes the same named mutex <see cref="Run"/> does, with the same timeout,
+    /// so a caller asking while another import is mid-swap never gets a half-true answer; on
+    /// contention it returns <see cref="SkillImportOutcome.IoFailure"/> rather than throwing, with a
+    /// message the MCP caller can act on. Unlike <see cref="Run"/>, this never restores a torn
+    /// `.replaced`: it judges the store as it finds it, treating a present `&lt;name&gt;.replaced`
+    /// with an absent `&lt;name&gt;` as installed, so <see cref="Validate"/> and <see cref="Run"/>
+    /// never disagree about whether a skill is installed.
     ///
     /// <paramref name="mutexTimeout"/> overrides the wait for this call alone and defaults to
-    /// <see cref="DefaultMutexTimeout"/>; every shipped caller leaves it null. It exists so a test can
-    /// observe the contention refusal against the real named mutex without spending the full default
-    /// wait doing it - the refusal path is identical either way, only the wait differs.</summary>
+    /// <see cref="DefaultMutexTimeout"/>; every shipped caller leaves it null. It lets a test observe
+    /// the contention refusal against the real named mutex without spending the full default
+    /// wait.</summary>
     public static SkillImportResult Validate(string sourceDir, string skillsRoot, bool force, string? overlayDir = null, TimeSpan? mutexTimeout = null)
     {
         try
@@ -106,17 +103,15 @@ public static class SkillImport
 
     private static SkillImportResult RunCore(string sourceDir, string skillsRoot, bool force, SkillHashes hashes, string? overlayDir, IReadOnlyDictionary<string, string>? expectedTree = null)
     {
-        // m6: nothing before this point may assume a hub, or even this data directory, has ever
-        // existed.
+        // Nothing before this point may assume a hub, or even this data directory, has ever existed.
         Directory.CreateDirectory(skillsRoot);
 
         // A previous run that died between the two moves of the write procedure leaves `.replaced`
-        // as the ONLY surviving copy of the installed skill, with `<name>` absent. Restore it before
+        // as the only surviving copy of the installed skill, with `<name>` absent. Restore it before
         // Validate looks at the store, so Validate and the write path never disagree about whether
-        // `<name>` is installed (pass 1 finding) — deleting it here (the first draft's bug, grill
-        // ledger M-4) would destroy the very backup the swap exists to keep. A garbage
-        // (refusal-2-failing) name simply has no `.replaced` to restore, so this is harmless to run
-        // unconditionally, before the name is even validated.
+        // `<name>` is installed. Deleting it here would destroy the very backup the swap exists to
+        // keep. A garbage name has no `.replaced` to restore, so this is harmless to run before the
+        // name is validated.
         if (Directory.Exists(sourceDir))
         {
             var candidateName = Path.GetFileName(Path.TrimEndingDirectorySeparator(sourceDir));
@@ -126,12 +121,11 @@ public static class SkillImport
                 Directory.Move(candidateReplaced, candidateTarget);
         }
 
-        // D7's reviewable-extension allowlist (refusal 6b) is a propose-time refusal, not an
-        // import-time one (plan lines 172-183): "Skills needing a binary stay on the CLI path, where
-        // the owner is already at the keyboard." RunCore is the CLI path, so it asks ValidateCore for
-        // everything else but leaves that one refusal off; Validate (the propose path, task 5) turns
-        // it on. The root/ancestor link check (refusal 1b) is a security refusal and is NOT gated -
-        // it always runs, inside ValidateCore, regardless of this flag.
+        // The reviewable-extension allowlist is a propose-time refusal, not an import-time one:
+        // skills needing a binary stay on the CLI path, where the hub owner is already at the keyboard.
+        // RunCore is the CLI path, so it leaves that one refusal off; Validate (the propose path)
+        // turns it on. The root/ancestor link check is a security refusal and always runs, inside
+        // ValidateCore, regardless of this flag.
         var validation = ValidateCore(sourceDir, skillsRoot, force, overlayDir, enforceReviewAllowlist: false);
         if (validation.Outcome != SkillImportOutcome.Ok)
             return validation;
@@ -148,7 +142,7 @@ public static class SkillImport
         var overlayMdPath = overlayDir is not null ? Path.Combine(overlayDir, SkillStore.OverlayFileName) : null;
         var overlayScriptsDir = overlayDir is not null ? Path.Combine(overlayDir, SkillStore.ScriptsDirName) : null;
 
-        // Leftover staging can only be this mutex-holder's own debris — nobody else can be mid-import
+        // Leftover staging can only be this mutex-holder's own debris: nobody else can be mid-import
         // of the same name while this mutex is held.
         if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
 
@@ -169,10 +163,10 @@ public static class SkillImport
                 }
             }
 
-            // Task 2, D5: the pin is checked against the STAGED copy CopyTree just produced, not a
-            // second read of the source — the two reads (the one that produced expectedTree, and this
-            // one) are the window pass 1 found, and this is where it closes. Runs before either move,
-            // so a mismatch never touches anything already installed.
+            // The pin is checked against the staged copy CopyTree just produced, not a second read of
+            // the source: the gap between the read that produced expectedTree and this one is the
+            // window this closes. Runs before either move, so a mismatch never touches anything
+            // already installed.
             if (expectedTree is not null)
             {
                 var mismatch = FindTreeMismatch(HashTree(staging), expectedTree);
@@ -191,20 +185,19 @@ public static class SkillImport
             }
             MoveWithRetry(staging, target);
 
-            // Hash the bytes AS COPIED INTO THE TARGET, not the source bytes read above: what gets
-            // fingerprinted is what a later Read will see. Recording AFTER the move means a crash
+            // Hash the bytes as copied into the target, not the source bytes read above: what gets
+            // fingerprinted is what a later Read will see. Recording after the move means a crash
             // between them leaves an installed skill with a stale-or-absent hash, which reads back
-            // as Tampered and refuses — the safe direction (D-i).
+            // as Tampered and refuses: the safe direction.
             var installedBytes = File.ReadAllBytes(Path.Combine(target, "SKILL.md"));
             var hash = Convert.ToHexString(SHA256.HashData(installedBytes)).ToLowerInvariant();
             hashes.Record(name, hash, sourceDir);
 
-            // Row 19, task 12a (P5): the WHOLE tree, hashed as installed (same "after the move"
-            // rule as the SKILL.md hash above) — a per-script hash alone would let a spawn rewrite a
-            // sibling data file a gate reads (the roadmap gate's baselines.json is exactly this) and
-            // make the gate pass a violating result. Replaces whatever was recorded before in one
-            // transaction (RecordTree), so a forced re-import never leaves a stale entry for a file
-            // the new version dropped.
+            // The whole tree, hashed as installed (same "after the move" rule as the SKILL.md hash
+            // above). A per-script hash alone would let a spawn rewrite a sibling data file a gate
+            // reads (the roadmap gate's baselines.json is exactly this) and make the gate pass a
+            // violating result. RecordTree replaces the previous record in one transaction, so a forced
+            // re-import never leaves a stale entry for a file the new version dropped.
             hashes.RecordTree(name, HashTree(target));
 
             if (replacedTargetMoved) Directory.Delete(replaced, recursive: true);
@@ -224,53 +217,50 @@ public static class SkillImport
         }
     }
 
-    /// <summary>Task 1: refusals 1-9 (plus, when <paramref name="enforceReviewAllowlist"/> is set,
-    /// D7's extension allowlist and per-file character cap — and, unconditionally, the root/ancestor
-    /// link check), with no side effect. Assumes nothing about <paramref name="skillsRoot"/> having
-    /// ever existed, and never restores a torn `.replaced` — <paramref name="skillsRoot"/> may not
-    /// even exist on disk. Callers hold the store mutex already (<see cref="Validate"/> takes it
-    /// itself; <see cref="RunCore"/> is already inside <see cref="Run"/>'s).
+    /// <summary>Every refusal (plus, when <paramref name="enforceReviewAllowlist"/> is set, the
+    /// extension allowlist and per-file character cap; the root/ancestor link check always runs), with
+    /// no side effect. Assumes nothing about <paramref name="skillsRoot"/> having ever existed, and
+    /// never restores a torn `.replaced`. Callers hold the store mutex already
+    /// (<see cref="Validate"/> takes it itself; <see cref="RunCore"/> is already inside
+    /// <see cref="Run"/>'s).
     ///
-    /// <paramref name="enforceReviewAllowlist"/>: D7 is a propose-time refusal, not an import-time
-    /// one (plan lines 172-183) — a skill needing a binary stays on the CLI path, where the owner is
-    /// already at the keyboard. <see cref="Validate"/> (the propose path, task 5) passes true;
-    /// <see cref="RunCore"/> (the CLI path) passes false. The root/ancestor link check (refusal 1b) is
-    /// a security refusal, not a disclosure one, and is NOT gated by this flag — it runs for both
-    /// paths.</summary>
+    /// <paramref name="enforceReviewAllowlist"/>: the allowlist is a propose-time refusal, not an
+    /// import-time one; a skill needing a binary stays on the CLI path, where the hub owner is already at
+    /// the keyboard. <see cref="Validate"/> (the propose path) passes true; <see cref="RunCore"/> (the
+    /// CLI path) passes false. The root/ancestor link check is a security refusal, not a disclosure
+    /// one, and runs for both paths.</summary>
     private static SkillImportResult ValidateCore(string sourceDir, string skillsRoot, bool force, string? overlayDir, bool enforceReviewAllowlist)
     {
         // Refusal 1: source exists.
         if (!Directory.Exists(sourceDir))
             return new SkillImportResult(SkillImportOutcome.SourceMissing, $"Source directory '{sourceDir}' does not exist.");
 
-        // Refusal 1b (task 1, pass 1 finding 3): the source itself, or any existing ancestor segment
-        // of its path, resolves through a link or junction. FindReparsePoint below only walks the
-        // CHILDREN of the source, so a junction NAMED <slug> would otherwise pass unnoticed. Reuses
-        // RoomPaths' own per-segment resolver (RoomPaths.cs:84-118) rather than a second
-        // implementation.
+        // Refusal 1b: the source itself, or any existing ancestor segment of its path, resolves
+        // through a link or junction. FindReparsePoint below only walks the children of the source,
+        // so a junction named <slug> would otherwise pass unnoticed. Reuses RoomPaths' per-segment
+        // resolver rather than a second implementation.
         var sourceFull = RoomPaths.Normalize(sourceDir);
         var resolvedSource = RoomPaths.ResolveLinks(sourceFull);
         if (!RoomPaths.Same(resolvedSource, sourceFull))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{sourceFull}' is a link or junction; refusing to import a tree that contains one.");
 
-        // Refusal 2: name. Trimming first (m5) is what stops a trailing separator from turning
-        // GetFileName into an empty string and refusing a perfectly good path as "invalid name".
+        // Refusal 2: name. Trimming first stops a trailing separator from turning GetFileName into an
+        // empty string and refusing a good path as "invalid name".
         var name = Path.GetFileName(Path.TrimEndingDirectorySeparator(sourceDir));
         if (!SkillStore.NamePattern.IsMatch(name))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' is not a valid skill name: lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.");
 
-        // Refusal 2b (row 19, task 13): the reserved `/stop` command cannot be shadowed by an
-        // installed skill (ticket 13). Checked on the name alone, before anything about the
-        // frontmatter is even read, so a directory named "stop" is refused for THIS reason
-        // regardless of what its SKILL.md claims.
+        // Refusal 2b: the reserved `/stop` command cannot be shadowed by an installed skill. Checked
+        // on the name alone, before the frontmatter is read, so a directory named "stop" is refused
+        // for this reason whatever its SKILL.md claims.
         if (string.Equals(name, RunCommands.StopName, StringComparison.Ordinal))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' is a reserved name (the run stop command) and cannot be installed as a skill.");
 
-        // Row 44: the reserved `/continue` command cannot be shadowed by an installed skill either,
-        // for the same reason and checked the same way as `/stop` above.
+        // The reserved `/continue` command cannot be shadowed by an installed skill either, for the
+        // same reason and checked the same way as `/stop` above.
         if (string.Equals(name, ExchangeCommands.ContinueName, StringComparison.Ordinal))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' is a reserved name (the exchange continue command) and cannot be installed as a skill.");
@@ -292,7 +282,7 @@ public static class SkillImport
                 $"SKILL.md is {sourceText.Length} characters; the cap is {SkillStore.MaxSkillChars}.");
 
         // Refusal 5: frontmatter name, when present, must agree with the directory. CRLF-normalised
-        // first (claim 19) so a harness-authored CRLF SKILL.md is still read correctly.
+        // first so a CRLF SKILL.md is still read correctly.
         var frontmatterName = FrontmatterName(sourceText);
         if (frontmatterName is not null && !string.Equals(frontmatterName, name, StringComparison.Ordinal))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
@@ -305,13 +295,12 @@ public static class SkillImport
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{reparse}' is a link or junction; refusing to import a tree that contains one.");
 
-        // Refusal 6b (task 1, D7): every file in the source tree must be reviewable text a card can
-        // show in full — an extension outside the allowlist (matched case-insensitively; a file with
-        // no extension counts as outside it) is refused by name, and so is a file over
-        // SkillStore.MaxSkillChars, so an oversized file is refused HERE rather than minting a
-        // proposal the owner's card could never show in full (pass 2 finding 4). Propose-time only
-        // (enforceReviewAllowlist) — the CLI path (RunCore) leaves binaries alone; D7 disclosure is
-        // for the room card, not the keyboard the owner is already at (plan lines 172-183).
+        // Refusal 6b: every file in the source tree must be reviewable text a card can show in full.
+        // An extension outside the allowlist (case-insensitive; no extension counts as outside) is
+        // refused by name, and so is a file over SkillStore.MaxSkillChars, so an oversized file is
+        // refused here rather than minting a proposal the hub owner's card could never show in full.
+        // Propose-time only (enforceReviewAllowlist): the CLI path leaves binaries alone, because the
+        // disclosure is for the room card, not the keyboard the hub owner is already at.
         if (enforceReviewAllowlist)
         {
             var reviewIssue = FindReviewIssue(sourceDir);
@@ -319,15 +308,14 @@ public static class SkillImport
                 return new SkillImportResult(SkillImportOutcome.BadArgument, reviewIssue);
         }
 
-        // Refusal 7b (task 1): an overlay is hub-side and travels only through --overlay; a source
-        // that carries its own OVERLAY.md would let a third-party skill claim overlay standing for
-        // itself.
+        // Refusal 7b: an overlay is hub-side and travels only through --overlay; a source that carries
+        // its own OVERLAY.md would let a third-party skill claim overlay standing for itself.
         if (File.Exists(Path.Combine(sourceDir, SkillStore.OverlayFileName)))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' source carries OVERLAY.md; an overlay is hub-side and travels only through --overlay.");
 
-        // Refusal 7c (task 1): the overlay directory itself, validated before anything is staged —
-        // it must exist, hold OVERLAY.md under the character cap, and contain nothing else besides
+        // Refusal 7c: the overlay directory itself, validated before anything is staged. It must
+        // exist, hold OVERLAY.md under the character cap, and contain nothing else besides
         // scripts/*.ps1 (no other files, no subdirectories beyond scripts, no reparse points, and no
         // script name that collides with one the source already ships).
         string? overlayMdPath = null;
@@ -377,10 +365,9 @@ public static class SkillImport
             }
         }
 
-        // Refusal 7 (moved here so it runs after 7c validates the overlay): file/byte caps over the
-        // COMPOSED tree, not just the source. The overlay's OVERLAY.md and scripts/*.ps1 are copied
-        // into the installed skill alongside the source (task 1's composition step) and pinned as one
-        // manifest, so they count toward the same caps the source alone used to be checked against.
+        // Refusal 7 (after 7c validates the overlay): file/byte caps over the composed tree, not just
+        // the source. The overlay's OVERLAY.md and scripts/*.ps1 are copied into the installed skill
+        // alongside the source and pinned as one manifest, so they count toward the same caps.
         var (sourceTreeFiles, sourceTreeBytes) = CountTree(sourceDir);
         var (overlayFileCount, overlayByteCount) = overlayDir is not null ? CountTree(overlayDir) : (0, 0L);
         var files = sourceTreeFiles + overlayFileCount;
@@ -390,28 +377,27 @@ public static class SkillImport
         if (totalBytes > SkillStore.MaxBytes)
             return new SkillImportResult(SkillImportOutcome.BadArgument, $"Source is {totalBytes} bytes; the cap is {SkillStore.MaxBytes}.");
 
-        // Refusal 8: target already exists — read-only (never restores `.replaced`), so a present
+        // Refusal 8: target already exists. Read-only (never restores `.replaced`), so a present
         // `<name>.replaced` with an absent `<name>` counts as installed exactly as it will once
-        // RunCore's restore runs (pass 1 finding): the two can never disagree.
+        // RunCore's restore runs: the two never disagree.
         var existingDir = Directory.Exists(target) ? target : (Directory.Exists(replaced) ? replaced : null);
         var installedExists = existingDir is not null;
         if (installedExists && !force)
             return new SkillImportResult(SkillImportOutcome.BadArgument, $"'{name}' already exists. Re-import with --force to replace it.");
 
-        // Refusal 8b (task 1): a forced re-import that would silently drop or rewrite an installed
-        // overlay is refused — the import never touches an overlay on its own; the caller must repeat
-        // it with --overlay to keep it.
+        // Refusal 8b: a forced re-import that would silently drop or rewrite an installed overlay is
+        // refused. The import never touches an overlay on its own; the caller must repeat it with
+        // --overlay to keep it.
         if (installedExists && force && overlayDir is null && existingDir is not null && File.Exists(Path.Combine(existingDir, SkillStore.OverlayFileName)))
             return new SkillImportResult(SkillImportOutcome.BadArgument,
                 $"'{name}' carries an overlay; re-import with --overlay <dir> to keep it. The import never rewrites or drops an overlay on its own.");
 
-        // Refusal 9 (row 19, task 12a; extended task 1): a declared gate whose script the import does
-        // not ship is a hard failure, checked against the SOURCE (nothing has moved yet) with the SAME
-        // frontmatter parser SkillStore.Read uses at every later call (SkillStore.StripFrontmatter,
-        // made internal for exactly this) — import-time and read-time can never disagree on what a
-        // skill declares. The check now runs over the UNION of SKILL.md's gates and OVERLAY.md's gates
-        // against the union of the source's scripts/ and the overlay's scripts/; a name declared by
-        // both frontmatters is refused before either script is even looked for.
+        // Refusal 9: a declared gate whose script the import does not ship is a hard failure, checked
+        // against the source (nothing has moved yet) with the same frontmatter parser SkillStore.Read
+        // uses at every later call (SkillStore.StripFrontmatter), so import-time and read-time never
+        // disagree on what a skill declares. The check runs over the union of SKILL.md's and
+        // OVERLAY.md's gates against the union of the source's and the overlay's scripts/; a name
+        // declared by both frontmatters is refused before either script is looked for.
         var (_, _, _, _, sourceGates) = SkillStore.StripFrontmatter(sourceText.Replace("\r\n", "\n"), name);
         IReadOnlyList<GateDeclaration> overlayGates = [];
         if (overlayMdPath is not null)
@@ -433,17 +419,17 @@ public static class SkillImport
                 $"Skill declares gate '{missingGate.Name}' but 'scripts/{missingGate.Name}.ps1' is not in the import.");
 
         // Every refusal above returns before this line: nothing has been written, and nothing below
-        // writes anything either — Validate's Ok case reports what Run would do, not what it did.
+        // writes anything either. Validate's Ok case reports what Run would do, not what it did.
         return new SkillImportResult(SkillImportOutcome.Ok,
             $"'{name}' would be imported ({files} file{(files == 1 ? "" : "s")}, overlay: {(overlayDir is null ? "no" : "yes")}).",
             name, files, totalBytes, installedExists);
     }
 
-    /// <summary>Step 4 of the write procedure: delete the staging directory (never the target — it
+    /// <summary>Step 4 of the write procedure: delete the staging directory (never the target: it
     /// may be exactly what a partially-completed rename left behind, and it is a copy, not the
-    /// source), and if the FIRST move (target -&gt; replaced) succeeded but the second one did not,
-    /// put the previously-installed skill back rather than stranding it under `.replaced` with
-    /// nothing at `&lt;name&gt;` (grill ledger M-4).</summary>
+    /// source), and if the first move (target -&gt; replaced) succeeded but the second did not, put
+    /// the previously-installed skill back rather than stranding it under `.replaced` with nothing at
+    /// `&lt;name&gt;`.</summary>
     private static void RollBack(string target, string replaced, string staging, bool replacedTargetMoved)
     {
         if (replacedTargetMoved && !Directory.Exists(target) && Directory.Exists(replaced))
@@ -453,13 +439,13 @@ public static class SkillImport
             catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* best effort cleanup */ }
     }
 
-    /// <summary>Both moves of the rename swap fail exactly when a reader is live (measured this
-    /// session: <c>Directory.Move</c> throws <see cref="UnauthorizedAccessException"/> even under
-    /// <c>FileShare.ReadWrite | FileShare.Delete</c>) — <see cref="SkillStore.Read"/> opens SKILL.md
+    /// <summary>Both moves of the rename swap fail exactly when a reader is live
+    /// (<c>Directory.Move</c> throws <see cref="UnauthorizedAccessException"/> even under
+    /// <c>FileShare.ReadWrite | FileShare.Delete</c>). <see cref="SkillStore.Read"/> opens SKILL.md
     /// at every exchange root and <see cref="SkillStore.List"/> opens every skill's on every
     /// <c>GET /api/skills</c>, which the composer fetches on mount. Under a live hub the unretried
-    /// swap fails in the ORDINARY case, so this must not report a bare I/O failure: on exhaustion it
-    /// names a live reader as the likely cause.</summary>
+    /// swap fails in the ordinary case, so on exhaustion this names a live reader as the likely cause
+    /// rather than reporting a bare I/O failure.</summary>
     private static void MoveWithRetry(string from, string to)
     {
         for (var attempt = 1; attempt <= MoveRetryAttempts; attempt++)
@@ -482,8 +468,8 @@ public static class SkillImport
         }
     }
 
-    /// <summary>Normalises CRLF to LF first (claim 19: the harness skills are CRLF) so a frontmatter
-    /// scan comparing a split line to <c>"---"</c> does not see <c>"---\r"</c> and miss it.</summary>
+    /// <summary>Normalises CRLF to LF first so a frontmatter scan comparing a split line to
+    /// <c>"---"</c> does not see <c>"---\r"</c> and miss it.</summary>
     private static string? FrontmatterName(string text)
     {
         var lines = text.Replace("\r\n", "\n").Split('\n');
@@ -553,18 +539,16 @@ public static class SkillImport
         }
     }
 
-    /// <summary>D7's reviewable-text allowlist, matched case-insensitively — an extension outside it
-    /// (including having none at all) is what the owner's approval card could never show as anything
-    /// but a raw download, so <see cref="FindReviewIssue"/> refuses it before it ever becomes a
-    /// proposal.</summary>
+    /// <summary>The reviewable-text allowlist, matched case-insensitively. An extension outside it
+    /// (including none at all) is something the hub owner's approval card could only show as a raw
+    /// download, so <see cref="FindReviewIssue"/> refuses it before it becomes a proposal.</summary>
     private static readonly string[] ReviewableExtensions = [".md", ".ps1", ".psm1", ".psd1", ".txt", ".json", ".yml", ".yaml"];
 
-    /// <summary>Task 1 / D7: the first file under <paramref name="root"/> that is not reviewable text —
-    /// an extension outside <see cref="ReviewableExtensions"/> (case-insensitive; no extension counts
-    /// as outside it), or one within it whose UTF-8 character count exceeds
-    /// <see cref="SkillStore.MaxSkillChars"/> — naming the offending file; null when every file
-    /// qualifies. A `.git` directory at the root is skipped exactly as <see cref="FindReparsePoint"/>,
-    /// <see cref="CountTree"/> and <see cref="CopyTree"/> skip it.</summary>
+    /// <summary>The first file under <paramref name="root"/> that is not reviewable text (an
+    /// extension outside <see cref="ReviewableExtensions"/>, or one within it whose UTF-8 character
+    /// count exceeds <see cref="SkillStore.MaxSkillChars"/>), naming the offending file; null when
+    /// every file qualifies. A `.git` directory at the root is skipped exactly as
+    /// <see cref="FindReparsePoint"/>, <see cref="CountTree"/> and <see cref="CopyTree"/> skip it.</summary>
     private static string? FindReviewIssue(string root)
     {
         var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
@@ -591,14 +575,12 @@ public static class SkillImport
         }
     }
 
-    /// <summary>Row 19, task 12a: every file under <paramref name="root"/>, forward-slashed relative
-    /// path to SHA-256 — the exact shape <see cref="SkillHashes.RecordTree"/> stores and
-    /// <see cref="SkillStore.VerifyTree"/> later re-checks against. <paramref name="skipRootGit"/> is
-    /// false for the INSTALLED target (the default, unchanged from before task 1): <see cref="CopyTree"/>
-    /// already excluded `.git` there, so it can never contain one. <see cref="HashSourceTree"/> passes
-    /// true, because a SOURCE tree — unlike an installed one — may still hold a `.git` directory
-    /// CopyTree would itself skip; without the same skip here the two hashes of the same tree would
-    /// disagree (task 1, D5's "the source tree's hash matches what installing it would record").</summary>
+    /// <summary>Every file under <paramref name="root"/>, forward-slashed relative path to SHA-256:
+    /// the shape <see cref="SkillHashes.RecordTree"/> stores and <see cref="SkillStore.VerifyTree"/>
+    /// re-checks against. <paramref name="skipRootGit"/> is false for the installed target:
+    /// <see cref="CopyTree"/> already excluded `.git` there. <see cref="HashSourceTree"/> passes true,
+    /// because a source tree may still hold a `.git` directory CopyTree would skip; without the same
+    /// skip here the two hashes of the same tree would disagree.</summary>
     private static Dictionary<string, string> HashTree(string root, bool skipRootGit = false)
     {
         var rootFull = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
@@ -621,15 +603,14 @@ public static class SkillImport
         }
     }
 
-    /// <summary>Task 1: the SOURCE tree's own manifest — the same shape <see cref="HashTree"/> computes
-    /// for an installed target, generalised to skip a root `.git` the way <see cref="CopyTree"/> does,
-    /// so a source tree's hash and the tree CopyTree would install from it are the same value (D5's
-    /// staged-copy pin, task 2).</summary>
+    /// <summary>The source tree's own manifest: the same shape <see cref="HashTree"/> computes for an
+    /// installed target, skipping a root `.git` the way <see cref="CopyTree"/> does, so a source
+    /// tree's hash and the tree CopyTree would install from it are the same value.</summary>
     public static Dictionary<string, string> HashSourceTree(string root) => HashTree(root, skipRootGit: true);
 
-    /// <summary>Task 1: one value standing for a whole tree manifest — an ordinal sort of the
-    /// manifest's own `path\n&lt;sha&gt;\n` lines, folded to one SHA-256 — so the `tree_sha256` column
-    /// and a request body's hash have exactly one defined meaning (D5).</summary>
+    /// <summary>One value standing for a whole tree manifest: an ordinal sort of the manifest's own
+    /// `path\n&lt;sha&gt;\n` lines, folded to one SHA-256, so the `tree_sha256` column and a request
+    /// body's hash have exactly one defined meaning.</summary>
     public static string ManifestDigest(IReadOnlyDictionary<string, string> manifest)
     {
         var sb = new StringBuilder();
@@ -638,12 +619,10 @@ public static class SkillImport
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()))).ToLowerInvariant();
     }
 
-    /// <summary>Task 2, D5: the first relative path, in the ordinal order <see cref="ManifestDigest"/>
-    /// itself sorts by, where <paramref name="actual"/> and <paramref name="expected"/> disagree — hashing
-    /// to a different value in each, or present in only one of the two — or null when the manifests are
-    /// identical. Internal (not private) so the RED test required by lesson M24 can exercise the
-    /// comparison directly, before any real staging tree is involved, and a second real-path test can
-    /// then prove it is wired into <see cref="RunCore"/>.</summary>
+    /// <summary>The first relative path, in the ordinal order <see cref="ManifestDigest"/> sorts by,
+    /// where <paramref name="actual"/> and <paramref name="expected"/> disagree (a different hash, or
+    /// present in only one), or null when the manifests are identical. Internal so a test can exercise
+    /// the comparison directly, without a real staging tree.</summary>
     internal static string? FindTreeMismatch(IReadOnlyDictionary<string, string> actual, IReadOnlyDictionary<string, string> expected)
     {
         foreach (var path in actual.Keys.Union(expected.Keys, StringComparer.Ordinal).OrderBy(k => k, StringComparer.Ordinal))

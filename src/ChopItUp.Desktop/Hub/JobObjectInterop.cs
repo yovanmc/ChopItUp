@@ -4,11 +4,11 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ChopItUp.Desktop.Hub;
 
-// Row 12 T3: copied from the hub's row 29 file (src/ChopItUp.Hub/Spawning/JobObjectInterop.cs); the
-// Desktop project has no reference to the Hub exe (B10), so this Win32 surface is duplicated rather
-// than shared. Keep it in sync with the source file if it ever changes.
-/// <summary>Row 29: the Win32 surface for one Job Object per hub-started process. Only what the row
-/// needs — create, set kill-on-close, assign, membership query — nothing else.</summary>
+// Copied from src/ChopItUp.Hub/Spawning/JobObjectInterop.cs: the Desktop project has no reference to
+// the Hub exe, so this Win32 surface is duplicated rather than shared. Keep it in sync with the
+// source file if it ever changes.
+/// <summary>The Win32 surface for one Job Object per hub-started process. Only what is needed
+/// (create, set kill-on-close, assign, membership query), nothing else.</summary>
 [SupportedOSPlatform("windows")]
 internal static partial class JobObjectInterop
 {
