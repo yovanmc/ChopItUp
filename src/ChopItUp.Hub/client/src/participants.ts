@@ -6,11 +6,10 @@ let roster = new Map<string, Participant>();
 let mention: RegExp | null = null;
 let reference: RegExp | null = null;
 
-/** Client-side twins of `ChopDb.OwnerParticipantId` and `ChopDb.OwnerRemoteParticipantId`. Two rows of
- *  kind `human`: the hub owner at the desk, and the hub owner's hand on another device. They are the same
- *  person (same accent, same `mine` styling in the thread), but the transcript is supposed to show
- *  which hand typed, so name and badge must differ. */
-export const OWNER_ID = 'owner';
+/** Client-side twin of `ChopDb.OwnerRemoteParticipantId`. Two rows of kind `human`: the hub owner at
+ *  the desk, and the hub owner's hand on another device. They are the same person (same accent, same
+ *  `mine` styling in the thread), but the transcript is supposed to show which hand typed, so name
+ *  and badge must differ. */
 export const OWNER_REMOTE_ID = 'owner-remote';
 
 /** One place, so nothing below spells the id by hand. Case-folded like every other lookup here: the

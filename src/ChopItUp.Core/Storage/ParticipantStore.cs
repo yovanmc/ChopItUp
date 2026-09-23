@@ -42,11 +42,6 @@ public sealed class ParticipantStore(ChopDb db)
             ? ChopDb.OwnerParticipantId
             : throw new InvalidOperationException($"The roster has no '{ChopDb.OwnerParticipantId}' row; this database was not created or migrated by this build.");
 
-    /// <summary>Every row that may speak with the owner's authority (kind 'human'). The exchange
-    /// policy keys on kind, not on this list; this is for prose and diagnostics.</summary>
-    public IReadOnlyList<string> HumanIds() =>
-        List().Where(p => p.Kind == "human").Select(p => p.Id).ToList();
-
     /// <summary>Persists a class set on one roster row (a Codex row included), the host command's only
     /// write path; normal service never assigns classes. <paramref name="classes"/> is normalized
     /// through <see cref="ParticipantClasses.Parse"/> before it is stored: unrecognised tokens are

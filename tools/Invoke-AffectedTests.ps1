@@ -39,7 +39,7 @@ try {
         }
     }
     # Each selected suite retains its count guard; an empty/partial green run is not evidence.
-    $floors = @{ 'ChopItUp.Core.Tests' = 341; 'ChopItUp.Hub.Tests' = 1000; 'ChopItUp.Desktop.Tests' = 108 }
+    $floors = @{ 'ChopItUp.Core.Tests' = 340; 'ChopItUp.Hub.Tests' = 1000; 'ChopItUp.Desktop.Tests' = 108 }
     # A handful of tests wait out a production timeout on purpose: they prove the shipped duration and
     # nothing else, so they are marked Category=RealDuration and left to the periodic whole-suite run.
     # Filtered-out tests are absent from the TRX entirely, so the counters above stay consistent.
