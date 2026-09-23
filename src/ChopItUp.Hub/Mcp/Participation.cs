@@ -38,13 +38,15 @@ public static class Participation
           as anyone else, and nobody can post as you.
         - Address a participant by starting your message with @ and its id: {MENTIONS}. Several ids
           may follow each other at the start. An @id elsewhere in the text is a reference and reaches
-          nobody. A leading @word that matches nobody gets a hub note.
-        - Only an owner post starts an exchange. A model's leading mentions hand the turn on only
-          inside an ordinary exchange that is already open. Otherwise, and inside a room-mode
-          exchange, they spawn nobody, and a model message with no leading mention is for the room.
-        - An owner message with no leading mention, outside a run and not a reply or a /command,
-          runs the room's mode: list_rooms shows each room's mode_settings and the participants
-          the mode spawns. The owner changes it with /mode primary|relay|panel [@first [@second]].
+          nobody. A leading @word that matches nobody also reaches nobody, and a model gets no
+          warning for it, so take ids from that list.
+        - The hub decides who is spawned. A model's leading mentions hand the turn on inside an
+          ordinary exchange that is already open, and a run's conductor dispatches workers the same
+          way. While a room-mode leg is running, the mode picks who answers next, so a model's
+          mentions there spawn nobody. A model message with no leading mention is for the room.
+        - An owner message with no leading mention normally runs the room's mode: list_rooms shows
+          each room's mode_settings and the participants the mode spawns. The owner changes it with
+          /mode primary|relay|panel [@first [@second]].
         - The owner can type /continue (a reply to a message of the exchange, or bare for the room's
           latest one) to reopen a concluded or stopped exchange with more turns; from anyone else it
           is prose.
