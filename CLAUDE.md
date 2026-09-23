@@ -23,7 +23,7 @@ pwsh -File tools/Invoke-AffectedTests.ps1  # local affected gate; -PlanOnly / -F
 dotnet run --project src/ChopItUp.Hub -- --data .data --print-config      # host configs into .data\host-configs\
 dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 ```
-`src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · `src/ChopItUp.Desktop` (WPF + WebView2 shell, row 12; dev: `dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe`).
+`src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · `src/ChopItUp.Desktop` (WPF + WebView2 shell, dev: `dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe`).
 
 Affected checks are the default. CI is the final gate. Full fallback/reuse: `docs/affected-tests.md`.
 

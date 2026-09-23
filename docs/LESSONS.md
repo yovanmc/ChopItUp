@@ -1,253 +1,27 @@
 # Lessons
 
-Pull-based. Entries are `### [keywords] M<row> (<date>, <hash>)` + one paragraph, written only when a shipped milestone changes a future decision on the same surface. Grep headings before planning.
+Pull-based. Entries are `### [keywords] <the trap>` plus one short paragraph about the current code. Grep headings before planning work on a surface.
 
-### [xunit, parallel-tests, measurement, ci] Row 70 (2026-09-22)
-Three things about making this suite parallel. The xUnit start banner reports the runner's setting, not `[assembly: CollectionBehavior(...)]`: with the attribute at 4 it printed 16 threads on this desk while execution held at 4, and a runsettings value or a `-- xUnit.MaxParallelThreads=` argument silently overrides the attribute for that run. The evidence that a cap held is the TRX: overlap the per-test `startTime`/`endTime` and the peak is the answer, and the same sweep shows the `DisableParallelization` collection starting only after the last parallel test ends. Second, a test-only measurement still has to be taken on the machine that will run it. On this 16-core desk four collections beat two; on the four-vCPU runner they measured the same (medians 316 s and 356 s against 757 s serial), so the desk would have picked the riskier setting for no gain. Third, the desk is not a venue while anything else runs: another session's suite, and later ordinary desktop applications, moved serial runs between 568 s and 2538 s and aborted two runs outright when a host start hit WSAENOBUFS, which kills the whole test host because hosting throws it on its own thread. The arm runner now refuses to start while a foreign `testhost` is alive, and the arms that chose the cap were run one per CI runner instead. Every local failure across those contended runs was a fixed 15 s wait or a temp-directory cleanup, the flake family already queued as bugs 67 and 68, not anything parallelism introduced.
+### [schema, migrations, check-scripts, tests] A schema bump breaks the scripts that verify it
+Version literals live outside `ChopDb.LatestSchemaVersion`: the dry runs and live checks under `tools/` assert stamped versions (for example `Invoke-M25DryRun.ps1` checks the migrated stamp), and tests pin the roster size. Before a bump deploys, grep `tools/` and `tests/` for the old integer and the old roster count. A migration test asserts the columns its version adds by name. A bare `pragma_table_info` count breaks on every later migration.
 
-### [schema-literals, check-scripts, live-check, verification] M11 (2026-09-07, 4607779)
-A schema bump breaks the gates that verify it. Nine v6 literals were spread across the suite and `tools\Invoke-M*.ps1`, and four sat inside the very checks row 11's own verification section runs, so the dry run and three live checks would each assert the old version until swept — `owner-remote` also moved `tokenKeys` 13 to 14. Row 9's plan carried that sweep as a ledger claim, row 11's first draft dropped it, and only critique pass 2 caught it: bumping `LatestSchemaVersion` means grepping `tools/` and `tests/` for the old integer AND the roster size before anything deploys. The same row taught the converse about live checks: `Invoke-M11SkillCheck.ps1` failed twice on its first run while the product was correct, because it asserted on the *model's* reply — one specific arrow codepoint that Opus did not use, and a reply landing before a timeout on an exchange another leg had already stopped. A live check may assert only what the hub itself controls: its own note text, exchange status, exit codes. Anything the model chose how to word is not a gate, and a check that cries wolf on a working product is worse than no check.
+### [sqlite, wal, testing, backup] Disposing a WAL writer checkpoints away the state under test
+A WAL-mode connection checkpoints and deletes its `-wal` file on a plain `Dispose()`. A test or tool that means to prove something about writes still sitting in the WAL (a backup captured them, a torn shutdown survives) loses that state when its writer closes normally, and the assertion then passes against a checkpointed file. `tools/ChopItUp.Corpus` holds its writer open and leaves through `Environment.Exit` for this reason. Prove the on-disk state is present (the `-wal` file exists, or rows the main file cannot hold yet) before asserting on it.
 
-### [sqlite, schema, migrations] M1 (2026-09-04, a80ba0c)
-A create-only schema still needs its `PRAGMA user_version` stamp inside the same transaction as the DDL and the seeds. Critique pass 1 declined a migration guard here on the reasoning that v1 has nothing to migrate; pass 2 reproduced what that reasoning misses — a first start interrupted between the DDL commit and the stamp leaves the tables present at version 0, so the next start's `if (version < 1)` re-runs the creates against existing tables and bricks the data directory permanently. "Nothing to migrate yet" is never a reason to skip transactional versioning. Make the DDL `IF NOT EXISTS`, the seeds `OR IGNORE`, and the stamp the last statement inside the transaction, so a torn start repairs itself instead of crashing.
+### [process, async-io, tests, harness] A timed WaitForExit returns before output is drained
+`Process.WaitForExit(ms)` returns when the child exits without waiting for `BeginOutputReadLine` handlers to deliver buffered lines, so a final sentinel line can still be in flight. It only shows under load, so it passes locally and fails on a busy CI runner. Any code that reads a child's output asynchronously calls the parameterless `WaitForExit()` after a timed one succeeds and before reading the buffers, as `ProcessRunner` does.
 
-### [sqlite, wal, testing, migrations] M2 (2026-09-04, 5e84675)
-A WAL-mode SQLite connection checkpoints and deletes its `-wal` file on a plain `Dispose()`. Any test or tool that means to prove something about writes *still sitting in the WAL* — that a backup captured them, that a torn shutdown is survivable — silently loses the state it was built to exercise the moment its writer connection closes normally, and the assertion then passes against a fully-checkpointed database while claiming to have tested the opposite. The M2 corpus builder had to hold its writer open and leave the process via `Environment.Exit` to reproduce the shape a killed process leaves. The general rule: when a test's premise is an on-disk state that only exists between operations, prove the state is actually present (check for the `-wal` file, count rows the main file cannot yet have) before asserting anything about it, or the test is green for the wrong reason.
+### [xunit, assertions, control-chars] String DoesNotContain ignores control characters
+xUnit's `Assert.DoesNotContain(string, string)` is culture-sensitive and treats U+001B as ignorable, so an assertion that output carries no escape character passes whatever the output holds. Pass `StringComparison.Ordinal` on any assertion about control characters.
 
-### [msbuild, node, csproj] M3 (2026-09-04, a4bc007)
-MSBuild evaluates a `Target`'s `Condition` *before* running its `DependsOnTargets`, so a target gated on a property that an earlier dependency was supposed to set is skipped silently — dependencies and all — with no mention in even a `-v diag` log. Wiring the web client's npm build as `<Target Name="ClientBuild" Condition="'$(HasNode)'=='true'" DependsOnTargets="ProbeNode">` therefore never ran and never explained itself. Put every such gate on the *task*, not the target, and leave a comment saying why so nobody tidies it back. The same shape will bite any future conditional build step that has to probe for a tool first.
+### [powershell, check-scripts, live-check] Check scripts: array wrapper, argument quoting, model wording
+PowerShell 7 `Invoke-RestMethod` returns a top-level JSON array as one nested `Object[]`, so `Where-Object prop -eq x` matches nothing. Pipe the response through `ForEach-Object { $_ }` before filtering. `Start-Process -ArgumentList` joins its items with spaces and quotes nothing, so a path under `C:\Agent Projects\` splits into two arguments. Quote every path inside its argument string, even when the default path has no space. A live check asserts only what the hub controls (its note text, exchange status, exit codes), never the wording a model chose. One failed tool leg in a live check is re-run once before it counts as a defect.
 
-### [process, async-io, ci-flake] M4 (2026-09-04, deb52c4)
-A timed `Process.WaitForExit(ms)` returns the instant the child exits; it does not wait for `BeginOutputReadLine`/`BeginErrorReadLine` handlers to finish delivering already-buffered data, so the last line the child wrote — often the one line a test parses, like a `RESULT:` sentinel — can still be in flight when the read completes. Only the parameterless `WaitForExit()` guarantees the async streams are drained. This only surfaces under load (a busy CI runner), so a harness with headroom passes locally every time and fails green-locally on shared build hosts. Any harness that spawns a child, reads its output asynchronously, and parses a sentinel line must call the parameterless `WaitForExit()` after a timed one succeeds, before touching the captured buffers.
+### [claude-code, mcp, timeouts, run_gate, progress] A silent MCP tool call is cut at 300 s
+A hub-spawned Claude CLI cuts a silent MCP tool call at 300 s whatever `MCP_TOOL_TIMEOUT`, the per-server `timeout` or `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` say. The cut sits in the runtime's HTTP client and only bytes on the wire reset it. `run_gate` reports an MCP progress notification every 30 s for this reason. Any new server-side call that can run long needs the same progress cadence, not a bigger timeout knob.
 
-### [windows, spawn, cli-shims] M5 (2026-09-05, ebd8c20)
-Node-ecosystem and Rust-packaged CLIs install on Windows as `.cmd` shims with no `.exe` beside them, and a host that spawns them by bare name with a direct process create finds nothing to execute. This has now cost this project twice: `npx` in the generated Claude Desktop config (fixed in `6bcb0a4`), and `codex`, which exists only as `~\.localin\codex.cmd`. Both fail silently - no error surfaces, the server simply never appears - because the failure is in the parent's `CreateProcess`, before the child can report anything. Any code here that launches an external CLI resolves it through one helper that checks for a real `.exe` and otherwise goes through a shell; two call sites getting this right independently is how it happened the second time.
+### [spawns, sandbox, codex, claude-code, credentials] No spawn CLI can fence reads
+Neither spawn CLI confines what a spawn can read. Claude's `Read()` deny rules bind the tool, not the shell, so `Bash` bypasses them. Codex on Windows confines writes only: `--sandbox read-only` (used by panel spawns in `PanelExecution`) and `sandbox_permissions=[]` still read files outside the workspace, and `--sandbox-state-readable-root` is unreachable from `codex exec`. A design that protects a credential file cannot rely on hiding it from a spawn. It has to limit what the credential can do. Probe a sandbox claim with `codex sandbox -- cmd /c type <path>`, which costs no model call.
 
-### [codex, headless, mcp, approvals] M5 (2026-09-05, ebd8c20)
-`codex exec` runs with `approval: never`, and under that policy an MCP tool call is **denied outright** - `MCP tool call requires approval, but approval policy is never`. The server attaches (`mcp: <name>/<tool> started`) and the call then fails, so a headless Codex reaches the hub and cannot post. `--approve-for-me` is the only route that works; `-c approval_policy='on-request'` is accepted and **silently ignored**, with the run still reporting `approval: never`. `--approve-for-me` is also mutually exclusive with `--sandbox` (hard error), so a Codex that can post necessarily runs workspace-write rather than read-only - point `-C` at a dedicated empty directory and treat that as the containment, not the sandbox flag.
-
-### [claude-code, headless, tool-surface] M5 (2026-09-05, ebd8c20)
-`claude -p --tools ""` strips every built-in tool and leaves MCP tools untouched, which is what makes a single-purpose spawned agent possible (verified: with `--tools ""` the only tool present was the MCP one; with `--tools Read` it was `Read` plus the MCP one, proving the flag bound rather than being dropped as an empty argument). The reason to use it is not only least-privilege: with the full built-in set loaded, MCP tools were **deferred behind `ToolSearch`** and not directly callable, so an agent would have to spend a turn searching for the tool it was spawned to use. Subscription auth survives a spawn from a detached, console-less parent in the same user session; a session-0 Windows service is untested and is a different question.
-
-### [browser-pane, launch-json, verification] M8 (2026-09-05, c92d578)
-The Browser pane's `preview_start` resolves `.claude/launch.json` against the directory the session was opened in, not the repo a plan names, so a plan that tells a builder to create `<repo>\.claude\launch.json` yields a file the tool never reads; the M8 builder found this mid-task and added its entry to the session cwd's launch.json instead. A plan whose browser check needs a dev server must name the launch.json under the session's working directory (the orchestrator knows it when the plan is written) and pin a port the deployed install does not hold (8790 is the live hub's).
-
-### [ci, path, seams, tests] M5 (2026-09-05, 0f32ae7)
-Every spawn-expecting Hub test passed on the workstation and all 11 failed on the CI runner: `SpawnerService` resolved `claude`/`codex` from PATH inside the launch, the runner has neither, and the resolver's exception became a "could not be started" note before the fake process runner was ever reached. Anything the hub looks up from the machine (PATH tools, installed programs, user profile files) goes behind a DI seam with a fake default in `HubTestHost`, and a plan whose tests boot the real service names that seam in the task table. Two smaller traps from the same day: a relative `--data` handed children relative config paths (root every path at option parsing), and xunit's culture-sensitive `Assert.DoesNotContain(string, string)` treats U+001B as ignorable, so assertions on control characters need `StringComparison.Ordinal`.
-
-### [browser-pane, input-events, headless-capture, verification] M16 (2026-09-05, m16-live-exchange-ui)
-The Browser pane drops typed text and clicks while the pane is hidden (`document.visibilityState === 'hidden'`, which it stays even after `tabs_select`): the tool reports the click dispatched, the app never sees it, and `find` keeps returning a stale accessibility ref. The gate for row 16 worked by posting the trigger over the API with curl, checking state with `find`/`read_page` plus a `javascript_tool` DOM query, and firing the button through `element.click()` — which still runs the React handler and the real POST, so the server log is the proof. Headless Edge (`--headless=new --screenshot`) captures an SPA before React paints unless `--virtual-time-budget=8000` is passed (both captures came back near-uniform and `Test-CaptureSane.ps1` caught it). A UI gate against a live spawn must also expect the model to finish faster than the click: a one-line reply concluded in ~10 s, so the open-state check needs a long task (120 numbered lines held Sonnet ~30 s+).
-
-### [powershell, invoke-restmethod, check-scripts, live-check] M10 (2026-09-06, e838645)
-PowerShell 7.6 `Invoke-RestMethod` hands a top-level JSON array back as ONE nested `Object[]`: `@(Invoke-RestMethod …) | Where-Object prop -eq x` reads the property off the wrapper and matches nothing, while `Where-Object { $_.prop -eq x }` matches through member enumeration. Every check script pipes an array response through `ForEach-Object { $_ }` before filtering. The same live check's first run showed Sonnet narrating a tool call as markdown ("**Tool Call: post_message** … Status: Completed") and exiting 0 without calling it; a two-form probe proved the comma-joined `--allowedTools` value binds all three tools with zero permission denials, so a failed tool leg in a live check is one re-run first and a defect only on repeat.
-
-### [signalr, cross-room-ui, verification] M9 (2026-09-06, cf237e8)
-The M9 rail shows every room's unread count and orders rooms by recency, but `MessagePosted` is broadcast with `Clients.Group(roomId)` and the client joined only the room it had open, so a message in any other room reached the browser only on the next full refresh: the badge never rose, the count went stale and the order froze. Unit tests and the type-checker were both silent because the bug is in which group the client subscribes to, not in the handler, whose non-open branch was simply unreachable. A UI that renders state for rooms it is not showing must subscribe to all of them, and a plan that adds cross-room state to a per-room fan-out has to say so in the task that touches the client. Only the live interactive gate caught it, which is the argument for driving the real hub rather than trusting a green suite.
-
-### [2026-09-07] Start-Process joins -ArgumentList with spaces and quotes nothing
-
-`Invoke-M19RunCheck.ps1`'s first real run died in setup with `'Agent' is not a valid skill name`: its
-default `-SkillSource` is this repo's own `tools\skills\toy-run`, the repo lives under `C:\Agent
-Projects\`, and `Start-Process -ArgumentList @('--import-skill', $SkillSource)` handed the exe
-`--import-skill C:\Agent` plus a stray positional. Four sibling check scripts carry the identical
-shape and had never tripped it only because their default paths sit under `%USERPROFILE%`. So: any
-path passed through `-ArgumentList` is quoted inside the argument string, always, not only when the
-current default happens to contain a space — quoting a space-free path is a no-op, and the next
-caller who passes a spaced path is not the person who should discover this.
-
-### [claude-code, mcp, timeouts, run_gate, progress, live-check] M20 (2026-09-08, 2f787c8)
-
-A silent MCP tool call from a hub-spawned Claude CLI (2.1.220, Bun-compiled) is cut at 300 s even with `MCP_TOOL_TIMEOUT`, the per-server `timeout` field and `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` all at 25 min: the CLI's own idle timer is `min(max(idle env, per-server timeout, 1 s), hard timeout)` polled every 30 s (so a 5 s idle knob cuts at the first tick, about 31 s), and the 300-s cut sits below it in the runtime's HTTP client, where only bytes on the wire reset it. `run_gate` therefore reports an MCP progress notification every 30 s while a script runs; the probe's rescue leg (a 400-s gate surviving, run ended by ping) is the proof, and a leg-4 FAIL with legs 1-3 passing means the progress is not reaching the client. Any future long server-side call over this transport needs the same cadence, not a bigger knob.
-
-### [roadmap, board-gate, rooms] M21 (2026-09-08, room run)
-
-The board gate resolves the `Plan` cell as a literal path, so a cell written the markdown way —
-`` `.scratch/m21-…/brief.md` `` in backticks — FAILs with "Plan path does not resolve" while the bare
-path passes. Every other cell on the board is prose where backticks are house style; this one is not.
-
-### [build-gate, warnaserror, incremental-build] M18 (2026-09-08, ddfb053)
-
-`dotnet build ChopItUp.slnx -c Debug -warnaserror -v minimal` reports "0 Warning(s), 0 Error(s)"
-without recompiling a project whose inputs it thinks are unchanged, so a real error can sit in a file
-that no green build ever saw. Two consecutive builders reported the gate clean while
-`MemoryTools.cs:94` held two CS8604s (null-checking a non-nullable parameter narrows its flow state to
-maybe-null for the rest of the method, which the later `Create(…)` call then trips); CI would have
-caught it, the local gate did not. The build gate is `dotnet clean` first, then the `-warnaserror`
-build — an incremental 0-warning build is not evidence. When the deploy target's exe is locked by a
-running hub, `--artifacts-path <fresh dir>` gives the same cold compile without touching it.
-
-### [ui-gate, browser-pane, click-verification] M23 (2026-09-09, 034167a)
-
-The interactive gate for a web card could not use a real click: the Browser pane was hidden, and
-injected input into a hidden pane silently dispatches nothing — listeners on the button, the document
-and `pointerdown`/`mousedown`/`click` recorded zero events across three attempts, with no error from
-the tool, which reported the click as delivered at the right coordinate. Claude in Chrome was not
-connected either. Row 18 hit the same wall and shipped "handler proven programmatically", which
-leaves the hit-testing half unverified. The substitute that does cover it: assert
-`document.elementFromPoint(centre)` returns the button itself (that is the overlay and mis-position
-check, and it is better evidence than a screenshot), assert the button's box is non-zero and inside
-`innerHeight`, then dispatch `.click()` on the real rendered DOM and verify the server-side effect.
-Set a viewport first — a hidden pane reports `innerHeight` 0, which silently collapsed a
-`max-height: min(30vh, 220px)` to `0px` and made the first layout measurement meaningless.
-Row 22 added two more edges to the same trap. First, `requestAnimationFrame` never fires while the pane
-is hidden, so a gate that samples state on the next frame does not just lose the sample -- it hangs the
-whole `javascript_tool` call until the 45 s timeout and throws away everything after it. Sample with
-`setTimeout(..., 0)` instead, and keep any single injected script short enough that losing it costs one
-assertion rather than the run. Second, the way to reach an expensive state cheaply: run states guarded by
-hard caps (8 h wall clock, 80 spawns, three phase entries) are unreachable inside a build, but a row
-inserted straight into the `runs` table of a throwaway `--data` directory is read back by the real
-`RunsApi`, rendered by the real strip and ended by the real `OnStop` -- everything but run creation is
-the production path, and it costs no model call. Never point that at the deployed `data\`.
-
-### [subagents, critique-gate, dispatch, background-tasks] M23 (2026-09-08, 98e88a3)
-
-A `dissect-critic` dispatched with `run_in_background: true` spent its entire budget — 239k tokens,
-28 tool uses — and returned no verdict, ending its turn on "waiting on the completion notification".
-A subagent never receives task notifications, so any turn it ends in order to wait is a turn it never
-resumes; the parent sees a completed agent whose result is a status line. The documented recovery
-(continue it with `SendMessage`) did not exist either: `SendMessage` is disabled in some sessions,
-including that one, and the failure only surfaces at the call. Re-running the identical critique with
-`run_in_background: false` and a prompt that forbids the Agent tool, forbids backgrounding or polling
-anything, and states that the final message MUST be the verdict, returned a full verdict on the first
-try — and the stalled agent later returned one too, so the two passes corroborated rather than
-duplicated. So: a judge, critic or any other single-shot subagent whose output the current turn is
-blocked on is dispatched SYNCHRONOUSLY, with the anti-wait clause written into the prompt, and with
-an instruction to label unobtainable evidence "unverified" and move on rather than chase it — an
-unverified finding is useful, a missing verdict is worthless. Background dispatch stays correct for
-work whose result the turn does not need, such as the parallel code-comprehension digests that fed
-this same plan.
-
-### [tests, guard-tests, race, clock, mutation-testing] M24 (2026-09-09, f964ece)
-A guard test that reproduces its hazard only when the clock cooperates can pass without ever touching
-the mechanism it protects. The export's timestamped previous-directory name collided at second
-granularity, and the first test written for the fix drove two real exports back to back and asserted
-both exited 0 with distinct names — which is true either way, because two runs that straddle a second
-boundary get distinct names for free. It bound nothing. The deterministic version calls the dedup
-helper directly, pre-creates the exact name the helper just returned to force a real collision, and
-fails on every machine when the helper is reverted. Generalised: when a test's RED depends on timing,
-coincidence or load, test the deciding function directly instead of racing the real path — and keep
-the real-path test as well, since it is the one that proves the function is actually wired in. The
-cheap way to know which of your tests bind anything is to revert each mechanism one at a time and
-record what fails; four of this row's five named mechanisms produced a specific failure that way, and
-the fifth turned out to have no failing test at all until one was written.
-
-### [ui, state-machine, recovery, caching, windows, review] M25 (2026-09-09, 63e7df3)
-A recovery arm in a state machine is only real if the UI can reach it in every state the arm exists
-for. This row's propose-and-approve panel got that wrong twice from different directions: critique
-pass 2 caught the first plan revision listing four card states and omitting approved-but-not-installed,
-which left the Retry arm unreachable, and after that was fixed the branch review found the same arm
-disabled again — the server computed `approvable` as "source present and unchanged", but the arm's
-whole purpose is finishing an install whose source is already gone, and the reject path only accepts
-pending rows, so such a proposal was stuck undecided forever. Whenever a design adds a recovery
-operation, enumerate the states it must be callable from and check the control that issues it is
-enabled in each; the server-side rule that gates a button is part of the state machine, not
-presentation. Second, unrelated trap from the same row: a listing cache keyed on a tree's newest
-`LastWriteTimeUtc` is not a change detector on Windows, because `Copy-Item` and `robocopy` preserve
-timestamps by default — regenerating a folder by copying over it changes contents without moving that
-maximum, so the card would have shown the owner stale bytes while reporting the source unchanged. Key
-such a cache on a per-file (path, length, write-ticks) fingerprint, which is still stat-only.
-
-### [notes, attribution, static-helpers, review] M27 (2026-09-09, ff6aa43)
-A note-builder that names an actor in its text but does not take that actor as a parameter is a lie
-waiting for its second caller. `ExchangePolicy.Stop` was written for the owner's stop button and
-hardcoded "stopped by the owner"; runs later reused it for every cap-driven park and for a run the
-conductor ended itself, so the hub told the owner he had stopped a run he was asleep for, and the
-exchange bar's `stopped` label repeated it. No test caught it because every existing assertion on that
-string was on an owner-driven path, which was correct. This hub's whole UX is posted notes, so the
-review lens is: when a note names WHO did something, the function that builds it takes who, with no
-default, and every call site is read. The fix shape is the same one P7 already demands - the policy
-decides the cause and passes it, the service only carries it out; inferring the actor from the reason
-string would have re-created the defect one layer up.
-
-### [credentials, test-harnesses, plan-decomposition, review] M28 (2026-09-10, 6ffad42)
-When you stop a credential store from being readable, your own test harnesses are among the readers.
-Ten of the twelve `tools/` live-check harnesses drove the hub by reading a bearer straight out of
-`tokens.json` — which is precisely the move the attack makes — so hashing the store broke the
-project's own gates while `dotnet test` stayed green, because it cannot see a `.ps1` file. Two of
-those harness legs used a *spawnable* row's token, and there is now no cheap way to get one: that read
-was the vulnerability, so losing it is the fix working. Generalised: a credential change has to
-enumerate every reader, and "the test suite is green" is not evidence about the readers the suite
-cannot see. Second, from the same row: a plan can specify a type's new public surface completely and
-still be unbuildable, because the surface says nothing about whether the constructor's INPUT can
-express the new distinction. `TokenStore.Load` took `IReadOnlyList<string>`, ids carry no kind, and the
-whole design turned on classifying rows by kind — two adversarial critique passes both missed it and a
-builder caught it in one read by refusing to guess. Cheap insurance: name the call sites of any
-signature you are changing in the task that changes it, and let a builder STOP rather than improvise
-into a file no task owns.
-
-### [runbooks, deploy, verification, claim-discipline] M28 deploy day (2026-09-10, 32847a8)
-A runbook nobody has executed is a LEAD, not a verified artifact, and shipping it inside the very
-script that gates the deploy hides that. `Invoke-Row28SelfCheck.ps1`'s DEPLOY-DAY ORDER read stop →
-deploy → start → rotate; `HostCommands.RotateToken` gates on `HubLock.IsHeld` and exits 5 against a
-live hub, and `HostCommandsTests.A6b_rotate_is_refused_while_a_hub_owns_the_data_dir` had asserted
-exactly that since the row was built. So the product was right, the test was right, and the prose in
-between contradicted both — a test can pin behaviour but cannot reach an operator's ordering written
-in a comment. Following the header deploy day cost a stop/start cycle and produced the exit 5 the test
-predicts. Generalised: when a row ships with an owner-run sequence, either execute that sequence once
-before the row leaves the board, or mark the sequence unverified in the same words the board uses for
-any other unrun claim. The second half is cheaper than it sounds: the ordering here was derivable from
-a gate the repo already tested, so "does this runbook contradict a gate the product enforces" is a
-grep, not an experiment.
-
-### [spawns, sandbox, credentials, codex, measurement] M29 scoping (2026-09-10, c971b58)
-Neither spawn CLI can be given a read fence, so no amount of deny-list work confines a credential
-file from a spawn. Claude's side was already measured (`SpawnCommands.cs:130`: read fences ineffective
-on 2.1.220, and `Bash` bypasses `Read()` rules anyway because those bind the tool, not the shell). The
-Codex side was assumed worse and measured better-sounding, then measured honestly: on codex-cli
-0.153.3, `codex sandbox` reads a file OUTSIDE the workspace under the default, under
-`sandbox_permissions=[]`, and under `sandbox_mode="read-only"` — the Windows restricted-token sandbox
-confines writes, and "read-only" names what the model may do to the disk, not what it may see.
-`--sandbox-state-readable-root` looks like the missing knob and is not reachable: it requires
-`--sandbox-state-json` from an internal `codex/sandbox-state-meta` surface that `codex exec` never
-passes. The trap worth remembering is the reasoning error, not the flag list — a flag named
-`readable-root` and a mode named `read-only` both read as read confinement and neither is. Design
-consequence for M29: defence has to shrink the prize (expire or rotate `owner-remote`, cap what a
-post from it may do, alert when a human row posts during a spawn window), because guarding the file
-is not on the table. Probes were `codex sandbox -- cmd /c type <path outside workspace>`; they cost no
-model call, which is why an assumption like this should never survive a planning session unmeasured.
-
-### [security, fail-closed, live-checks, models, host-headers] M29 (2026-09-10, 5ad8c57)
-A fail-closed check needs a "nothing to guard" arm or it becomes the outage it was meant to prevent.
-The peer check refuses an owner-class bearer it cannot place, which is right while a spawn is live and
-absurd when none is: with zero live jobs the answer is always Outside, so any lookup failure was a
-pure lockout of the owner. Two of the four review findings on this row were that same shape once
-(`GetExtendedTcpTable` sized then read in two calls, so a table that grew between them refused the
-owner), so when a design says "refuse on doubt", enumerate the states where doubt cannot mean danger
-and short-circuit them first. Second, a live check must not depend on a model agreeing to misbehave.
-Asked directly to read a planted `owner-remote` credential and forge a post with it, a real Sonnet
-spawn refused on both attempts, coherently, citing the MCP boundary. That is defence in depth, it is
-not enforced by the hub, and nothing should be built on it — the check now drives the escalation
-through a hub-started gate script, a real spawn in a real job with no model asked to cross a line.
-Third, a Host-header allowlist that matches strings refuses addresses it means to allow: Windows
-PowerShell 5.1 sends `[0000:0000:0000:0000:0000:0000:0000:0001]`, never `[::1]`, and got 400 before
-auth ran. Parse the address, do not compare spellings.
-
-### [ui-gate, spawns, stub-cli, credentials] Row 34 (2026-09-15, 095e9c7)
-A UI gate that needs exchanges held open costs no model call: put a stub `codex.cmd` (a `ping -n 600 127.0.0.1` and `exit /b 0`) first on the scratch hub's PATH through a launch entry, post owner messages mentioning different GPT participants, and each opens its own exchange with a live in-flight spawn for ten minutes. It only works for Codex rows: `CliResolver` takes `name.exe` anywhere on PATH before any shim, and Claude Code is a real `claude.exe`. The owner bearer is the other wall: writing a scratch hub's token into the page's localStorage was denied by the auto-mode classifier as credential materialization, so the in-page click reaches the right endpoint (a 401 in the network log proves the URL) but not the authenticated effect. Drive that effect over the API from a script reading the token file and confirm the page re-renders over SignalR.
-
-### [git, worktrees, merges, room-trail] Row 35 (2026-09-15, ebde29a)
-Three git facts decided this row's design and will bite any future code that touches a room repository. First, a linked worktree's `.git` is a file, not a folder: every `GitTrail` check of the form `Directory.Exists(Root\.git)` read a worktree as "not a repository", so it saw no changes and `CommitAllAsync` would have run `git init` inside the worktree; test for a folder or a file. Second, `git add -A; git commit` over a merge or cherry-pick in progress exits 0 and finalises it with conflict markers in the tree, so any hub or owner commit must first refuse while `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`, a rebase directory or `ls-files -u` is present, and a start-up abort may only touch the hub's own merge (its `MERGE_MSG` and a `chopitup/` tip), never the owner's. Third, a bare `git worktree prune` deletes the registration of every worktree whose folder is missing, including the owner's own on an unmounted drive; remove only the one admin directory whose `gitdir` names the exchange's path. Worktrees also carry no gitignored files, which is why the spawn prompt names the mapping.
-
-### [ci, git-flow, merges, flaky-tests] Row 36 (2026-09-15, b90c6bf)
-Never pipe `gh pr checks` in a chain that merges. `gh pr checks 96 | tail -3 && gh pr merge` merged row 36 while the Hub job was red, because the pipe's exit code is `tail`'s, not `gh`'s. Run `gh pr checks <n> --watch` as its own command, read its exit code, and merge in a separate call. The red job was `Run10_a_persistently_silent_conductor_is_asked_until_the_phase_cap_parks_the_run_never_leaving_it_active` hitting its 15 s wait on the CI runner (the Hub job ran 12 m there against 5 to 8 s for this test locally). A rerun passed and main stayed green, but that test's fixed wait is a known CI flake candidate: rerun it before diagnosing a real regression. Same class, 2026-09-17: `R36_a_reopened_exchange_in_a_directory_room_leases_its_worktree_again_after_the_merge` failed once locally while two critics loaded the machine (the Hub suite took 15 min instead of 11) and passed alone in 6 s.
-
-### [webview2, navigation, wire-protocol, ui-gate, corpus, wpf] Row 12 (2026-09-15, 75cd938)
-Four traps from the desktop shell. First, on WebView2 runtime 152 a `NavigateToString` raises `NavigationStarting` with a `data:text/html;base64,...` URI while the completed document reports `about:blank`, so an origin guard or a bridge trust rule written against the documented `about:blank` cancels or refuses the shell's own boot page; accept both shapes (`NavigationPolicy.IsBootPageUri`). Second, a page-to-host wire protocol whose two ends are each unit-tested against a fake passed every test while every chrome button was dead: the page numbered its request ids, the host's DTO typed them `string`, and System.Text.Json rejects a number for a string property. Only the UIA harness (`tools\Invoke-Row12ShellCheck.ps1`, legs 4 and 6) saw it; run that harness before calling any shell change verified, and keep one test per side that uses the other side's literal message. Third, a `UseWPF` + `UseWindowsForms` project has no `System.IO` implicit using, its DPI manifest trips WFO0003 (not WFAC010) under `-warnaserror`, and XAML comments cannot contain `--`. Fourth, `tools\ChopItUp.Corpus` writes schema v1 or v2 only; a plan that seeds "at the current schema" cannot run, and the real 2→11 migration of 200 messages costs about half a second inside a start budget, so seed at v2 and let it migrate.
-
-### [review, migrations, tests, ledger-rechecks] Row 14 (2026-09-16, b38648e)
-A branch review that maps acceptance criteria to test names is not a review of the code. Row 14's branch review reported Spec 0 findings; a post-merge pass that read each store, handler and component against the behaviour its criterion describes, and confirmed every suspicion with a failing test, found two MAJOR defects (`SetRoomRole` stored untrimmed text while its two siblings trimmed, and `Defence` split on `\n` alone so a fence line behind a bare `\r` rendered verbatim) plus five smaller ones, one of them a test whose name asserted row-scoped disabling the component never had. On a HIGH row, run that implemented-but-wrong pass on `main` before deploy, and treat a test whose assertions pass identically under the claimed and the opposite behaviour as a defect. Two smaller rules from the same row: a migration test must assert the presence of the columns its version adds, never a bare `pragma_table_info` count, because the count breaks on every later migration (two v6 tests carried a `6L` that row 14 had to explain in a comment and the review then removed); and a ledger recheck run through `pwsh -c` cannot carry a nested escaped double quote (PowerShell's native-argument parser drops it), so every recheck uses `-NoProfile -Command` with a single-quoted pattern and prints a count.
-
-### [check-scripts, credentials, owner-legs, startup-invariants] Row 31 (2026-09-16, e97ccd2)
-A check script with a `[Parameter(Mandatory)]` credential is owner-only in its entirety, including every leg that never touches the credential: row 28's self-check sat as an owner row for six days while five of its seven legs needed no token. Make the credential optional and SKIP its legs with a reason naming who holds it. Second, a leg that reads under `data\` to re-confirm what the hub enforces at every start (`TokenStore.Load` rehashes plaintext, `HostConfigs.SweepLiveTokens` rewrites live tokens) is a protected read for nothing; when the product already reports its own failure (a `hub` note in `general`), read that over the API instead. Both facts the row took as owner-only were provable from the room transcript and `/health` in under ten minutes.
-
-### [claude-code, credentials, spawns, live-check] Row 26 (2026-09-17)
-The desktop app's Claude session and the standalone `claude.exe` hold separate credentials: the app was signed in while `claude auth status` said `loggedIn: false`, so every `claude -p` leg of the row 26 probe failed with `OAuth session expired`, and unsetting every `CLAUDE_*` variable changed nothing. The same exe backs the live hub's Claude spawns, so a signed-out CLI breaks them too without any hub-side symptom. Before any live check or spawn-driven run (`Invoke-M5SpawnCheck`, `Invoke-M20RoadmapCheck`, `Invoke-Row26MemoryProbe`, a room `/roadmap` run), run `claude auth status` and stop on `loggedIn: false`; only the owner can run `claude auth login`. Once signed in the probe ran clean first try, so the day lost was the pre-check, not the script.
-
-### [dry-run, guard-tests, debounce, barrier, prompt-injection] Row 42 (2026-09-18, 5f6815f)
-A dry-run script is not a gate until its negative leg has been seen RED with the mechanism reverted. `Invoke-Row42ImportCheck.ps1` first passed 8/8 with the spawner guard deleted: the 2 s `SpawnLimits.Debounce` put every spawn attempt after the script's own kill, so "no note after the control post" was true whatever the code did. The barrier is now the control's own failed attempt (its `could not be started` note, then `Exchange concluded: 1 of N`), and the negative asserts that exact note sequence after the import rather than a count; with the guard deleted it fails on six notes. Every future dry run gets that reverted-mechanism run before its commit, quoted in the script's description. Second, any pasted text rendered into a spawn prompt can carry a line shaped like the renderer's own per-message header and forge a live turn; imported bodies get the same neutralising the standing text gets (`SpawnPrompt.DefenceHeader`).
-
-### [regex, parity, dotnet, v8, golden-literals] Row 43 (2026-09-18, bb9c524)
-A regex "twin" shared between .NET and V8 is only a twin on the alphabet the fixture covers. .NET matches UTF-16 code units, so an astral letter after `@opus` is category `Cs` and a `\p{L}` lookahead passes while V8 under `u` sees the code point and fails it: spell `\uD800-\uDBFF` into the .NET class. `\w` is Unicode in .NET and ASCII in JS, so a twin that keeps `\w` on either side is not one. And a shape a prompt SHOWS (`phase: <kind>`) is a literal a test asserts on: the M11 sweep for a wording change includes tests that pin prompt shapes, not only the golden file.
-
-### [regex, token-grammar, prompts, state, review] Row 44 (2026-09-18, 4811212)
-A sticky token that can fail after its keyword matched breaks the whole walk: `turns:16x` at the head of a message left `@opus` unread on both engines and the hub posted the wrong note, and no fixture case had a malformed token in leading position. Once a keyword is recognised the twin consumes the rest of the token and refuses it, never leaves it to the next matcher; the fixture pins the boundaries (16, 17) and the malformed shapes, not only typical values. Second, a prompt sentence that names a message reads the exchange's recorded state (`LastModelPost`, `RefusedAt`), never the position of a trigger id: a debounce merge appends triggers, so `TriggerIds[^1]` named the owner's reply as the last hand-off. Third, `LastModelPost` counted an app-backed row's post, which is a model to the roster but never a hand-off; a rule keyed on "a participant other than X" names the class it means (spawnable). The diff interrogation found all three after two plan critiques, five builders and the branch review.
+### [regex, mentions, dotnet, v8, parity] .NET and V8 regex twins diverge outside the fixture alphabet
+The mention reader in `Mentions.cs` and its client twin agree only on the characters `tests/mention-cases.json` covers. `\w` is Unicode in .NET and ASCII in JavaScript. .NET matches UTF-16 code units, so an astral letter after `@opus` is a surrogate (`Cs`) that passes a `\p{L}` lookahead in .NET and fails it in V8 under `u`, which means the .NET class has to spell `\uD800-\uDBFF` out. A twin that keeps `\w` on either side is not a twin. A shape a prompt shows, such as `phase: <kind>`, is a literal that tests assert on, so a wording change sweeps those tests along with the golden file.
