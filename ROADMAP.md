@@ -7,8 +7,6 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 49 | Room modes and on-call answers | 📝 | READY | [plan](docs/superpowers/plans/2026-09-19-m49-room-modes.md) | Full primary/relay/panel delivery in progress: persisted ordered pair, bounded turns, blind advisory panel and revision-bound previews. |
-| 70 | Capped parallel Hub tests | ✅ | DONE | [doc](docs/testing/hub-test-resources.md) | DONE 2026-09-22: PR 145. Cap 2 (CI medians 356 s at 2, 316 s at 4, 757 s serial); process/machine-state classes in one non-parallel collection with a guard test; SpawnerServiceTests split per area. Hub 1000/1000 at 447 s and 527 s against 599 s. |
 | 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
 | 52 | Research tools in plain rooms | [ ] | BACKLOG | — | Web search and fetch for plain-room spawns with honest unavailable-tool messages; files and shell stay directory-room only (SpawnCommands.cs:26-34). |
 | 53 | Task usage telemetry | [ ] | BACKLOG | — | Model, effort, duration, tool and retry counts, termination reason, token metrics when reported (else unknown), per task. |
