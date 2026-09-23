@@ -10,3 +10,4 @@
 - 73 `Invoke-Row28SelfCheck.ps1` leg `health.responds-200-expected-schema` fails against any current build: it expects schema 13 while `ChopDb.LatestSchemaVersion` is 15 · `tools/Invoke-Row28SelfCheck.ps1:227` "`$expectedSchema = 13`", `src/ChopItUp.Core/Storage/ChopDb.cs:10` "`LatestSchemaVersion = 15`" · [V 2026-09-23 2eb30477]
 - 74 `Invoke-M23MemoryCheck.ps1` row `health.schema` fails by default against a v15 hub · `tools/Invoke-M23MemoryCheck.ps1:27` "`[int]$ExpectedSchema = 13`" · [V 2026-09-23 2eb30477]
 - 75 `Invoke-Row14RolesCheck.ps1` contradicts itself: it asserts the hub reports schema 15, then that the same migrated database is stamped 14 · `tools/Invoke-Row14RolesCheck.ps1:304` "`health.schema-is-15`", `:308` "`migrated.stamped-v14`" · [V 2026-09-23 2eb30477]
+- 76 `Invoke-M25DryRun.ps1` expects the migrated database stamped 14 while `ChopDb.LatestSchemaVersion` is 15 · `tools/Invoke-M25DryRun.ps1:464` "`migrated.stamped-v14`" · [V 2026-09-23 44b0e6b3]

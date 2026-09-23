@@ -84,13 +84,13 @@ try {
     # === Documentation: docs/verification.md carries the runbook T6 requires =======================
     Add-Check -Name 'docs.exit-code-4-documented' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\b4\b.*[Nn]o memory') -Detail 'exit 4'
     Add-Check -Name 'docs.exit-code-6-documented' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\b6\b.*[Rr]efused') -Detail 'exit 6'
-    Add-Check -Name 'docs.d1-operating-rule-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'D1') -Detail 'the export owns its directory'
+    Add-Check -Name 'docs.d1-operating-rule-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'The export owns its directory') -Detail 'the export owns its directory'
     Add-Check -Name 'docs.reusable-previous-name-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-previous(?!-)') -Detail 'the plain, reusable recovery name'
     Add-Check -Name 'docs.timestamped-previous-name-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-previous-') -Detail 'the timestamped recovery name'
     Add-Check -Name 'docs.staging-tmp-disposal-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '\.chopitup-export-tmp-') -Detail "the owner's sanctioned cleanup"
     Add-Check -Name 'docs.accept-new-source-guidance-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '--accept-new-source') -Detail 'when it is (and is not) the right answer'
     Add-Check -Name 'docs.manifest-source-root-sentence-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)manifest.*(records|holds).*(absolute|source)') -Detail 'the manifest records the absolute source path'
-    Add-Check -Name 'docs.owner-probe-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)owner probe') -Detail 'the not-machine-checkable question'
+    Add-Check -Name 'docs.owner-probe-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern '(?i)does a session read the export') -Detail 'the not-machine-checkable question'
     Add-Check -Name 'docs.owner-probe-type-discriminator-stated' -Passed (Test-FileContains -Path $verificationDoc -Pattern 'room-general') -Detail 'an out-of-enum metadata.type'
     Add-Check -Name 'docs.owner-probe-index-discriminators-stated' -Passed ((Test-FileContains -Path $verificationDoc -Pattern '198') -and (Test-FileContains -Path $verificationDoc -Pattern '199')) -Detail 'the 198/199-entry boundary'
 
