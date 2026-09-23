@@ -1,6 +1,6 @@
 # Chop It Up — agent/developer contract
 
-State: `ROADMAP.md` (whitelist-v3). Lessons: `docs/LESSONS.md`. Decisions: `.scratch/decisions/` (gitignored). Declined: `.out-of-scope/`. Keep this contract under 4 KB.
+State: `ROADMAP.md` (whitelist-v3). Lessons: `docs/LESSONS.md`. Keep this contract under 4 KB.
 
 ## What this is
 Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop) and GPT (Codex UI in the ChatGPT desktop app) talk in one thread. Every model joins through **MCP on its own subscription**. One long-running .NET process owns SQLite, the MCP Streamable HTTP endpoint and the web UI; hosts reach it over loopback (Claude Desktop via `mcp-remote`, Codex UI by URL).
@@ -9,7 +9,7 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 - **No API keys, ever.** The app holds no Anthropic or OpenAI credential and makes no model calls itself. A plan that adds one is wrong.
 - **No automation of claude.ai / chatgpt.com** (browser driving, session cookies, reverse-engineered endpoints): banned by both consumer ToS.
 - **Loopback only.** The hub binds `127.0.0.1`; no tunnel, no LAN bind, without a board row that says why.
-- **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo will be public.
+- **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo is public.
 - **No confidentiality gate here.** This is a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
 - Never `Stop-Process -Name` a GUI app (Claude, ChatGPT); kill only PIDs you launched.
 - **No agent writes the deployed hub's data directory** — not via `--import-skill` in any argument form (omitting `--data` defaults there), and its `tokens.json` is never read for a credential; skills reach a deployed hub only through propose-and-approve.

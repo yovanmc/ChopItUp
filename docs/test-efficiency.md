@@ -30,13 +30,13 @@ The JSON report records each suite's elapsed interval, slowest individual tests 
 
 ## Coverage decisions
 
-| Change | Coverage preserved |
+| Behavior | Where it is covered |
 | --- | --- |
-| Remove the separate idle-stop 409 test | Existing idle/unknown-room stop test now asserts 409 as well as 404. |
-| Remove the separate owner `stoppedBy` test | Full stop/SignalR test now checks both response and subsequent snapshot report `owner`. |
-| Replace 20 Git commits with two deliberately overlapping real commits | Hold the first process call; a second `WithRoot` must share the gate. Both commits must succeed. An independent-gate mutation must fail with peak concurrency two. |
-| Replace debounce/spacing wall-clock sleeps | Advance a fake clock across the exact boundaries; observe timer registration after the scheduler's launch pass before negative assertions. Real spawn/process tests remain. |
-| Repair queued snapshot races | Wait for published in-flight/stopped state; hold the continuation spawn while checking its open budget. A visible note or drained event alone is not a published-snapshot barrier. |
+| Idle stop answers 409 | The idle/unknown-room stop test asserts 409 as well as 404. There is no separate test. |
+| Owner stop reports `stoppedBy: owner` | The full stop/SignalR test checks both the response and the next snapshot. There is no separate test. |
+| `WithRoot` shares the Git gate | Two deliberately overlapping real commits: hold the first process call, and a second `WithRoot` must share the gate. Both commits must succeed. An independent-gate mutation must fail with peak concurrency two. |
+| Debounce and spacing | Advance a fake clock across the exact boundaries. Observe timer registration after the scheduler's launch pass before negative assertions. Real spawn/process tests remain. |
+| Queued snapshot state | Wait for published in-flight/stopped state. Hold the continuation spawn while checking its open budget. A visible note or drained event alone is not a published-snapshot barrier. |
 
 Tests with distinct inputs, authentication boundaries, persisted state or process integration remain separate. Lower test counts are not the objective; retained failure detection is. Deployment path coverage adds forward-slash variants and rejects ambiguous/root paths before any writes. Normalize paths before both process guards and containment checks; keep the sibling-prefix guard, data-preservation assertions and restoration checks.
 

@@ -15,7 +15,7 @@ Consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, 
 `propose_rewrite` and the approve path itself): `pwsh tools\Invoke-M23DryRun.ps1`.
 Memory editor dry run (no model calls, scratch hub, fabricated corpus, drives the editor routes, the
 trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.ps1`.
-Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v13, CLI PATH
+Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v15, CLI PATH
 stripped so an accidental spawn fails loudly, drives the import route and a live control post):
 `pwsh tools\Invoke-Row42ImportCheck.ps1`.
 Continue, the turns token and the synthesis turn (stub Codex, no model calls): `pwsh tools\Invoke-Row44ContinueCheck.ps1`.
@@ -173,7 +173,7 @@ Claude leg with no hub-side symptom. `-SkipClaude` / `-SkipCodex` re-run one leg
 Codex's sandbox tolerates a real `git commit` there; this script's Codex leg measures whether a real
 `codex exec` accepts operating inside the worktree at all. Its `file.codex-present-on-default-branch`
 check FAILs by name alone (never a message body) if Codex's file never reaches the default branch,
-which is a real, recorded outcome, not a defect in the script. Record whichever way it goes here.
+which is a real, recorded outcome, not a defect in the script.
 
 A silent-MCP-call caveat also applies to a spawn under this script, the same as inside a run: see
 "Timeouts inside a run" above (a hub-spawned Claude CLI cuts a silent MCP call at 300 s regardless of
@@ -211,7 +211,7 @@ database half of the rollback mandatory rather than optional.
    case nobody wants to debug. Stop it by the PID whose image path is inside the install directory —
    `Deploy-ChopItUp.ps1` refuses to run while one exists and names it.
 2. `pwsh tools\Deploy-ChopItUp.ps1`. It publishes into staging, sanity-checks the staged output,
-   copies the current install aside to a sibling backup directory, and replaces the executable last.
+   copies the current install aside to a sibling backup directory, and replaces the executables last.
    It never touches `data\`. Writes under `C:\Self Apps\` raise one approval prompt each; those are
    gates, not failures.
 3. Verify the staged output with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`.
@@ -229,14 +229,14 @@ directory, so database restoration is an operator action. Prefer a forward repai
 2. Restore the pre-migration backup `ChopDb` wrote over `data\chopitup.db`. `BackupBeforeMigration`
    names it `<database path>.v<version it is leaving>.<yyyyMMddTHHmmssZ>.bak`, beside the database, so
    the file to restore is the newest `chopitup.db.v<N-1>.*.bak` in that folder, where N is the schema
-   version the new build reports on `/health` (for the v9 deploy that is `chopitup.db.v8.*.bak`; an
-   older `.v7.` file is a previous deploy's backup and restoring it loses everything since). This step
+   version the new build reports on `/health` (for a v15 build that is `chopitup.db.v14.*.bak`; an
+   older `.v13.` file is a previous deploy's backup and restoring it loses everything since). This step
    is not optional: the old executable cannot open a database at the new schema version.
 3. Redeploy the previous executable from the backup-aside directory that `Deploy-ChopItUp.ps1` left
    beside the install: `pwsh tools\Deploy-ChopItUp.ps1 -RestoreFrom <that directory>`, which runs the
    same guarded pipeline in reverse rather than a hand-copy. The directory for the most recent deploy is
-   the one named in the shipped ✅ row's Notes on `ROADMAP.md` (the deploy script prints it, and the
-   board flip records it); do not rely on a date remembered from an earlier deploy.
+   the `backup_dir` in the `DEPLOY_RESULT` line that deploy printed; do not rely on a date remembered
+   from an earlier deploy.
 4. Start the hub and confirm `/health` reports the old schema version.
 
 ## Exporting memory to a Claude Code directory

@@ -1,6 +1,6 @@
 ---
 name: probe-sleep
-description: Rescue leg for the MCP timeout probe (row 20, task 5) - one gate that sleeps past the CLI's documented 5-minute idle default, to prove the raised knobs keep the call alive. Not for real use.
+description: Rescue leg for the MCP timeout probe - one gate that sleeps past the CLI's 300-second cut on a silent MCP call, to prove run_gate's progress notifications keep the call alive. Not for real use.
 run: true
 gates: sleep
 ---

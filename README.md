@@ -10,7 +10,7 @@ Developer checks: [focused verification, test profiling and coverage decisions](
 
     dotnet run --project src/ChopItUp.Hub -- --data .data --port 8790
 
-Tokens for each participant are generated into `.data/tokens.json` on first start and are read once at startup (restart the hub after editing the file). MCP endpoint: `http://127.0.0.1:8790/mcp` (bearer token required). One hub per data directory: a second instance on the same `--data` refuses to start (`hub.lock`). Host wiring lands in M2.
+Tokens for each participant are generated on first start. `.data/tokens.json` keeps only their hashes and is read once at startup (restart the hub after editing the file). A model row the hub spawns gets a fresh in-memory token on every start instead. MCP endpoint: `http://127.0.0.1:8790/mcp` (bearer token required). One hub per data directory: a second instance on the same `--data` refuses to start (`hub.lock`).
 
 ## Connecting a host
 
@@ -18,11 +18,11 @@ Start the hub once (it mints the tokens), then:
 
     dotnet run --project src/ChopItUp.Hub -- --data .data --print-config
 
-That writes `claude-desktop.json`, `codex-config.toml` and a `README.md` into `.data/host-configs/`, each carrying that host's real token and the port the hub actually bound. Merge `claude-desktop.json` into `%APPDATA%\Claude\claude_desktop_config.json` and append `codex-config.toml` to `%USERPROFILE%\.codex\config.toml`, then restart that host. The hub never writes into those files itself — it emits the snippet, you paste it. The command prints the folder path and never a token.
+That writes `claude-desktop.json`, `codex-config.toml`, `claude-code-owner-remote.json` and a `README.md` into `.data/host-configs/`, each carrying the port the hub actually bound and a `{{TOKEN}}` placeholder where the token goes. Get a host's token with `--rotate-token <id>` (below) and paste it over the placeholder. Merge `claude-desktop.json` into `%APPDATA%\Claude\claude_desktop_config.json` and append `codex-config.toml` to `%USERPROFILE%\.codex\config.toml`, then restart that host. The hub never writes into those files itself — it emits the snippet, you paste it. The command prints the folder path and never a token.
 
-Claude Code is deliberately not configured: it would have to join as the same `claude` participant Claude Desktop uses, and two hosts on one identity share one read cursor.
+Claude Code is deliberately not configured as a model participant (`claude-code-owner-remote.json` is for driving the hub as its human owner, see `docs/verification.md`): it would have to join as the same `claude` participant Claude Desktop uses, and two hosts on one identity share one read cursor.
 
-To revoke a token: `dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude` (with the hub stopped). The old token stops working at the next hub start; re-run `--print-config` and re-paste that host's file.
+To revoke a token: `dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude` (with the hub stopped). It prints the new token once and writes it to no file. The old token stops working at the next hub start; paste the new one into that host's config in place of the old.
 
 Recovery: if a data directory is ever in a bad state, stop the hub and delete `chopitup.db*`, `tokens.json` and `hub.lock`. Consequence: room history is gone and every host must be given its new token.
 
@@ -38,19 +38,20 @@ restore.
 The output folder holds `ChopItUp.Hub.exe` — self-contained and single-file, so no .NET runtime
 needs to be installed to run it — plus a `wwwroot\` folder beside it (a single-file bundle can't
 serve static files from inside itself, so the web client ships alongside the exe instead) and a
-`data\` folder that the exe creates on first run. That is the whole release folder: exe, `wwwroot\`,
-`data\`.
+`data\` folder that the exe creates on first run. A deploy (below) also publishes the desktop shell,
+so the installed folder holds `ChopItUp.Hub.exe`, `ChopItUp.Desktop.exe`, `wwwroot\` and `data\`.
 
 ### Deploying
 
     pwsh tools\Deploy-ChopItUp.ps1 -TargetDir "C:\Self Apps\ChopItUp"
 
-`tools\Deploy-ChopItUp.ps1` publishes into a staging directory, sanity-checks the result (the exe
-is present and at least 30 MB, `wwwroot\index.html` and a non-empty `wwwroot\assets\` exist),
+`tools\Deploy-ChopItUp.ps1` publishes the hub and the desktop shell into a staging directory,
+sanity-checks the result (the hub exe at least 30 MB, the desktop exe at least 100 MB,
+`wwwroot\index.html` and a non-empty `wwwroot\assets\` exist),
 copies the previous install aside as a sibling backup directory, then copies the new one in — it
 replaces `wwwroot\` wholesale (after the backup, so the old copy still exists there) and copies
-everything else additively, never touching `data\` or `logs\` — and replaces the exe last via a
-copy-aside-and-rename so a deploy killed mid-copy never leaves a
+everything else additively, never touching `data\` or `logs\` — and replaces the exes last (hub,
+then desktop) via a copy-aside-and-rename so a deploy killed mid-copy never leaves a
 half-written executable under the name you launch. It refuses to run at all, before touching
 anything, if any running process's image path is inside the target directory.
 
@@ -93,7 +94,8 @@ turns remain.
 
 Caps, all hard-coded: 8 turns per exchange by default (a `turns: N` token among the leading mentions
 sets 1 to 16), a 2 second debounce on repeated mentions, at least 10 seconds between two spawns of
-the same participant across rooms, a 5 minute wall clock per spawn, and never two spawns of one
+the same participant across rooms, a 5 minute wall clock per spawn in a plain room (30 minutes in a
+directory room or a run), and never two spawns of one
 participant in flight in the same room at once.
 
 The hub posts its own notes as `hub` (kind `system`, badge `HU`): a spawn that times out, one that
@@ -104,9 +106,10 @@ Exchange state lives in memory only. A hub restart mid-exchange drops the budget
 in-flight spawns, the owner's next message starts fresh, and a spawn that outlives the restart still
 posts harmlessly when it finishes.
 
-There's no stop button yet (that's row 16). Until then, stop an open exchange with:
+The Stop exchange button on an exchange's strip stops that exchange. From a shell, with an
+owner-class token (every `/api` write needs one), stop an open exchange with:
 
-    Invoke-RestMethod -Method Post http://127.0.0.1:8790/api/rooms/general/exchange/stop
+    Invoke-RestMethod -Method Post http://127.0.0.1:8790/api/rooms/general/exchange/stop -Headers @{ Authorization = 'Bearer <token>' }
 
 That stop ends every exchange in the room. To stop one exchange and leave the others in the room
 running, POST to `/api/rooms/<room>/exchanges/<root message id>/stop` (the id is in the `exchanges`
@@ -130,9 +133,6 @@ mentions the `/continue` message carries, or the addressee. A hub restart forget
 A `claude` spawn runs `claude.exe -p` with the prompt on stdin and its token in a per-spawn
 `mcp.json`, never `--bare`, which switches auth to an API key. A `codex` spawn runs `codex.cmd exec`
 (a PATH shim, not an `.exe`) with the prompt on stdin and its token in `CHOPITUP_TOKEN`.
-
-Rollback: the previous exe refuses a v4 database. To roll M5 back, restore the `.v3.` backup per the
-host-configs README, then run the previous exe.
 
 Checks: `pwsh tools\Invoke-M5SpawnCheck.ps1` drives one real exchange against a scratch hub with both
 CLIs. `pwsh tools\Probe-SpawnCli.ps1` re-measures the two command lines on their own.
@@ -161,8 +161,7 @@ record, and nothing is written until the owner approves that. The previous file 
 Code's memory folder (one file per memory) or Codex's `~\.codex\memories\` (split on headings). Every
 file or section becomes a pending proposal authored as `claude` or `codex`; re-importing adds nothing.
 
-Rollback: the previous exe refuses a v5 database. Restore the `.v4.` backup per the host-configs
-README, then run the previous exe; `data\memory\` is plain markdown and needs no rollback.
+Rollback: `data\memory\` is plain markdown and needs no rollback.
 
 Checks: `pwsh tools\Invoke-M10MemoryCheck.ps1` drives one real Sonnet spawn against a scratch hub,
 proves it read the core, and approves its proposal end to end.
@@ -212,8 +211,7 @@ commits. Nothing is ever pushed.
 Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own sandbox
 (workspace-write, network on); Claude Code runs as the owner's own Windows user, confined only by a
 deny list and the prompt, because Claude Code 2.1.220 has no read fence this hub can switch on — a
-read outside the room is a rule the model is told to follow, not a wall it cannot cross. Row 13 on the
-board is the OS-level route (a restricted Windows account) that would close this gap for both hosts.
+read outside the room is a rule the model is told to follow, not a wall it cannot cross.
 
 The crash window: if the hub itself dies between the model's CLI exiting and the after-spawn commit,
 the model's edits are left uncommitted, and the *next* pre-spawn commit sweeps them in authored as the

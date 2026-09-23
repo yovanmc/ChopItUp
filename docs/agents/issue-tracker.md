@@ -27,7 +27,7 @@ Run `gh issue view <number> --comments`.
 
 ## Roadmap milestone tickets
 
-The roadmap workflow cuts per-milestone build tickets under gitignored `.scratch/m<row#>-<slug>/issues/`, not on GitHub. GitHub issues hold owner-filed defects, decisions and wayfinder maps.
+The roadmap workflow cuts per-milestone build tickets under gitignored `.scratch/m<row#>-<slug>/issues/`, not on GitHub. Bugs, flakes and chores queue in `docs/BUGS.md`. GitHub issues hold decisions and wayfinder maps.
 
 ## Wayfinding operations
 
