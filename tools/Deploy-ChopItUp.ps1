@@ -4,22 +4,22 @@
     data directory that sits beside it.
 
 .DESCRIPTION
-    See docs/superpowers/plans/m4-release.md, "Task 2 -- tools/Deploy-ChopItUp.ps1". This script's
-    whole job is to be unable to destroy the thing it is standing next to: the install folder holds
+    This script's whole job is to be unable to destroy the thing it is standing next to: the install
+    folder holds
     the program (replaced on every deploy) and `data\` (the owner's only copy of their room history,
     which must survive every deploy forever).
 
     Order of operations, in the order below -- the ordering IS the safety property:
       1. Refuse to run if any process's image path is inside -TargetDir. Aborts before anything is
          touched, naming the PID and path. This already matches any process image under the target,
-         so a running ChopItUp.Desktop.exe (row 12) blocks a deploy exactly the way a running hub does
+         so a running ChopItUp.Desktop.exe blocks a deploy exactly the way a running hub does
          -- no shell-specific check needed.
-      2. Publish both projects -- the hub, then the desktop shell (row 12) -- into -StagingDir (never
+      2. Publish both projects -- the hub, then the desktop shell -- into -StagingDir (never
          straight into the target), unless -SkipPublish.
       3. Sanity-check the staging output (every exe in -ExeFloors present at/above its floor,
          wwwroot\index.html present, wwwroot\assets\ non-empty) before it is allowed near the target.
-         A restore checks only the exes the restore source actually has: every backup made before row
-         12 is hub-only, and that is a valid restore source, not a failure.
+         A restore checks only the exes the restore source actually has: an older backup may be
+         hub-only, and that is a valid restore source, not a failure.
       4. Copy the existing install aside (excluding `data` and `logs`) to a directory that is a
          SIBLING of -TargetDir, derived from -TargetDir itself -- never a hardcoded path, so driving
          this script at a scratch directory in tests never touches the owner's real install.
@@ -63,11 +63,11 @@
 .PARAMETER RestoreFrom
     Path to a previous backup directory (as written by a prior deploy). Copies it back over
     -TargetDir under the same guards as a normal deploy. Mutually exclusive with -StagingDir and
-    -SkipPublish -- restoring never publishes. Every backup made before row 12 is hub-only, so a
+    -SkipPublish -- restoring never publishes. An older backup may be hub-only, so a
     restore source missing an exe that -ExeFloors names is valid, not a sanity failure.
 
 .PARAMETER ExeFloors
-    Row 12 (T8): a map of exe file name -> minimum byte size, checked by the sanity check and used to
+    A map of exe file name -> minimum byte size, checked by the sanity check and used to
     decide which exes this script looks for. Defaults to the real floors: 30 MB for ChopItUp.Hub.exe,
     100 MB for ChopItUp.Desktop.exe (both self-contained single-file builds; a floor this low mostly
     catches a non-self-contained build or a stub). Tests pass small KB-scale floors so the fixture
@@ -136,8 +136,8 @@ function Test-NoProcessRunningFromTarget {
        path plus a trailing backslash, so a bare prefix match on "C:\Self Apps\ChopItUp" does not
        also match "C:\Self Apps\ChopItUp.backup-2026...\ChopItUp.Hub.exe". Get-Process returns a
        null (or throwing) Path for processes this session cannot inspect -- those are logged as a
-       count, never silently ignored, per the plan's "a blind spot that is reported is a caveat; one
-       that is silent is a lie". #>
+       count, never silently ignored: a blind spot that is reported is a caveat; one that is silent
+       is a lie. #>
     param([Parameter(Mandatory)][string]$NormalizedTargetDir)
 
     $prefix = ($NormalizedTargetDir + '\').ToLowerInvariant()
@@ -158,7 +158,7 @@ function Test-NoProcessRunningFromTarget {
 
 function Assert-ProcessGuardClear {
     <# Matches any process whose image path is under the target -- ChopItUp.Hub.exe or
-       ChopItUp.Desktop.exe (row 12) alike, with no shell-specific case needed: a running desktop
+       ChopItUp.Desktop.exe alike, with no shell-specific case needed: a running desktop
        shell blocks a deploy exactly the way a running hub does. #>
     param([Parameter(Mandatory)][string]$NormalizedTargetDir, [Parameter(Mandatory)][string]$WhenLabel)
 
@@ -181,7 +181,7 @@ function Test-StagingOutput {
 
        -RequireAllExes:$false (restore mode) checks only the exes present in $Dir against their
        floors in $ExeFloors; an exe named in $ExeFloors but absent from $Dir is skipped rather than
-       failing, because every backup made before row 12 is hub-only and is a valid restore source. A
+       failing, because an older backup may be hub-only and is a valid restore source. A
        fresh publish (-RequireAllExes) must produce every exe named in $ExeFloors. #>
     param([Parameter(Mandatory)][string]$Dir, [Parameter(Mandatory)][hashtable]$ExeFloors, [switch]$RequireAllExes)
 
@@ -283,7 +283,7 @@ function Invoke-GuardedCopyIn {
        never leaves a half-written executable under a real name). /E is load-bearing: robocopy's
        default is top-level files only, and /XD data logs alone would leave wwwroot\ behind entirely
        -- the app would still start and /health would still be green while the owner got a blank
-       page. An exe absent from $Source (a hub-only restore source, row 12) is simply not copied in;
+       page. An exe absent from $Source (a hub-only restore source) is simply not copied in;
        the caller removes any such exe left behind in the target separately. #>
     param([Parameter(Mandatory)][string]$Source, [Parameter(Mandatory)][string]$NormalizedTargetDir, [Parameter(Mandatory)][string[]]$ExeNames)
 
@@ -301,7 +301,7 @@ function Invoke-GuardedCopyIn {
 }
 
 function Remove-OrphanedTargetExes {
-    <# Row 12 T8: every deploy backup made before this row is hub-only. Restoring one over a target
+    <# An older deploy backup may be hub-only. Restoring one over a target
        that has a desktop exe must not leave that desktop exe behind, still pointing at whatever hub
        token it had before -- a stale shell beside a restored old hub would 401. Deletes, from the
        target, any exe in $ExeNames that $Source does not provide. #>

@@ -4,29 +4,28 @@ using Microsoft.Web.WebView2.Core;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12 T5: the startup order (ticket 05) — args, then the single-instance verbs, then the
-/// runtime check, then primary, then log/hub/window/tray, then start-or-attach — and the matching
-/// shutdown path (<see cref="QuitAsync"/>). Untestable by construction (STA thread, a real WebView2, a
-/// real mutex): every piece it wires — <see cref="ShellArgs"/>, <see cref="SingleInstance"/>,
-/// <see cref="HubChild"/>, <c>MainWindow</c>, <see cref="TrayIcon"/>, <see cref="Bridge.HostBridge"/> —
-/// is tested on its own; this file is exercised by the builder smoke test and Task 9's harness.</summary>
+/// <summary>The startup order (args, then the single-instance verbs, then the runtime check, then
+/// primary, then log/hub/window/tray, then start-or-attach) and the matching shutdown path
+/// (<see cref="QuitAsync"/>). Untestable by construction (STA thread, a real WebView2, a real mutex):
+/// every piece it wires (<see cref="ShellArgs"/>, <see cref="SingleInstance"/>,
+/// <see cref="HubChild"/>, <c>MainWindow</c>, <see cref="TrayIcon"/>, <see cref="Bridge.HostBridge"/>)
+/// is tested on its own; this file is exercised by a manual smoke test.</summary>
 public partial class App : System.Windows.Application
 {
-    /// <summary>Row 12 T4: false for every close the owner makes with the Close button or Alt+F4 — the
-    /// window hides and the hub keeps running (AC4). Only Quit (tray menu, the page's Quit, or a second
-    /// launch with <c>--quit</c>) sets it, and it is what tells <c>OnClosing</c> to let the window
-    /// actually close.</summary>
+    /// <summary>False for every close the hub owner makes with the Close button or Alt+F4: the window
+    /// hides and the hub keeps running. Only Quit (tray menu, the page's Quit, or a second launch with
+    /// <c>--quit</c>) sets it, and it is what tells <c>OnClosing</c> to let the window actually
+    /// close.</summary>
     public static bool Quitting { get; set; }
 
-    /// <summary>Row 12 B8: minted once per process. The boot pages are loaded with
-    /// <c>NavigateToString</c>; the documented source WebView2 reports for that is <c>about:blank</c>,
-    /// but on this machine's runtime (152.0.4191.66) it is instead a
-    /// <c>data:text/html;charset=utf-8;base64,...</c> URI (measured; see
+    /// <summary>Minted once per process. The boot pages are loaded with <c>NavigateToString</c>; the
+    /// documented source WebView2 reports for that is <c>about:blank</c>, but on runtime
+    /// 152.0.4191.66 it was measured as a <c>data:text/html;charset=utf-8;base64,...</c> URI (see
     /// <see cref="NavigationPolicy.IsBootPageUri"/>) rather than the hub origin. Every message the boot
     /// page posts carries this value, and the bridge's origin rule
     /// (<see cref="Bridge.HostBridge.IsTrusted"/>) is widened for either shape of non-hub source only
-    /// when the nonce matches (pass 1, finding 12; boot-page trust fix, review pass). 16 hex chars from
-    /// the CSPRNG: it never leaves this process except into a page this process itself wrote.</summary>
+    /// when the nonce matches. 16 hex chars from the CSPRNG: it never leaves this process except into
+    /// a page this process itself wrote.</summary>
     public static string LaunchNonce { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
 
     private SingleInstance? _singleInstance;
@@ -82,7 +81,7 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        // 4. Primary: one shell per data dir (B6). Not primary → show the one that is, and exit.
+        // 4. Primary: one shell per data dir. Not primary → show the one that is, and exit.
         var key = SingleInstance.Key(args.DataDir);
         _singleInstance = SingleInstance.TryBecomePrimary(key);
         if (_singleInstance is null)
@@ -115,8 +114,8 @@ public partial class App : System.Windows.Application
     }
 
     /// <summary>HubChild.StatusChanged fires on whatever thread set the status (a poll loop, an
-    /// Exited callback) — never the UI thread. This is the one subscriber, and it hops before touching
-    /// either the window or the tray (pass 1, finding 19).</summary>
+    /// Exited callback), never the UI thread. This is the one subscriber, and it hops before touching
+    /// either the window or the tray.</summary>
     private void OnHubStatusChanged(HubStatus status) =>
         Dispatcher.BeginInvoke(() =>
         {
@@ -124,7 +123,7 @@ public partial class App : System.Windows.Application
             _tray?.Update(status);
         });
 
-    /// <summary>B4: kills the hub this shell started (idempotent; a no-op when attached) and does not
+    /// <summary>Kills the hub this shell started (idempotent; a no-op when attached) and does not
     /// wait for it, tears the tray down, closes the window and exits 0. Cancels the readiness poll
     /// FIRST, so a Quit that lands during Starting cannot keep logging HUB STATE lines after EXIT.</summary>
     public Task QuitAsync()

@@ -5,7 +5,7 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Rooms;
 
-/// <summary>Row 35: where an exchange's git worktree lives, how it is created, and what a close does
+/// <summary>Where an exchange's git worktree lives, how it is created, and what a close does
 /// with it - merge and delete the branch, or keep the branch and say why. Every write goes through the
 /// room directory's <see cref="GitTrail"/> (via <see cref="RoomTrails"/>), so a worktree spawn, the
 /// owner's own commit and a close never race: the gate is shared (<see cref="GitTrail.WithRoot"/>).</summary>
@@ -33,9 +33,9 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
     public sealed record Lease(string? Path, string? Refusal);
 
     /// <summary>Creates (or, idempotently, confirms) the worktree for exchange <paramref name="root"/>
-    /// of the room at <paramref name="roomDirectory"/>. Never starts a spawn anywhere when it refuses
-    /// (AC8): the caller is expected to post the refusal and start nothing. <paramref name="continueBranch"/>
-    /// (row 36) is set only for an exchange a reply reopened: an existing <c>chopitup/x&lt;root&gt;</c> is
+    /// of the room at <paramref name="roomDirectory"/>. Never starts a spawn anywhere when it refuses:
+    /// the caller is expected to post the refusal and start nothing. <paramref name="continueBranch"/>
+    /// is set only for an exchange a reply reopened: an existing <c>chopitup/x&lt;root&gt;</c> is
     /// then that exchange's own kept work, and the worktree is added onto it.</summary>
     public async Task<Lease> EnsureAsync(string roomDirectory, long root, CancellationToken cancellation, bool continueBranch = false)
     {
@@ -55,7 +55,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         if ((await main.WorktreePathsAsync(cancellation)).Any(p => RoomPaths.Same(p, path)))
         {
             if (Directory.Exists(path)) return new(path, null);
-            // A registration with no folder behind it (row 35): the folder was deleted
+            // A registration with no folder behind it: the folder was deleted
             // between two spawns of the same exchange. Prune only this exchange's own stale entry
             // (never every stale entry in the repository - that could also drop an owner's own
             // worktree elsewhere whose folder merely happens to be missing) and re-add below, onto the
@@ -112,7 +112,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
         if (!registered)
         {
             if (leased && await main.BranchExistsAsync(branch, cancellation)) return Keep("its worktree folder was gone at close");
-            return null;   // never got a worktree (a refused lease, AC8): this branch, if any, is not the hub's to touch
+            return null;   // never got a worktree (a refused lease): this branch, if any, is not the hub's to touch
         }
         if (Directory.Exists(path))
         {
@@ -209,7 +209,7 @@ public sealed class ExchangeWorktrees(MessageStore store, RoomTrails trails, Roo
                 // part of removing it), so nothing further is needed for this exchange's own entry here -
                 // and nothing blanket-prunes the rest of the repository's worktrees, which could otherwise
                 // drop an owner's own registered worktree elsewhere whose folder merely happens to be
-                // missing (row 35).
+                // missing.
                 kept.Add($"{branch} (its worktree at {path} was not removed: {removeFailed})");
                 continue;
             }

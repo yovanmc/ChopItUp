@@ -5,28 +5,25 @@ using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Skills;
 
-/// <summary>One gate a skill declares in its (fingerprinted) frontmatter (row 19, task 2d): a name
-/// resolved to <c>data/skills/&lt;skill&gt;/scripts/&lt;gate&gt;.ps1</c> and the exact argument tokens
-/// <c>run_gate</c> (task 12) passes and no others. The argument string lives inside the same
-/// frontmatter bytes <see cref="SkillHashes"/> hashes, so it is exactly as tamper-protected as the
-/// gate name itself.</summary>
+/// <summary>One gate a skill declares in its (fingerprinted) frontmatter: a name resolved to
+/// <c>data/skills/&lt;skill&gt;/scripts/&lt;gate&gt;.ps1</c> and the exact argument tokens
+/// <c>run_gate</c> passes and no others. The argument string lives inside the same frontmatter bytes
+/// <see cref="SkillHashes"/> hashes, so it is exactly as tamper-protected as the gate name
+/// itself.</summary>
 public sealed record GateDeclaration(string Name, IReadOnlyList<string> Arguments);
 
-/// <summary>What the prompt renders for one skill. <see cref="Overlay"/> is row 20 (R2): the D-j
-/// objection from row 11 — an unpinned file inside the pinned fence would defeat the pin — is answered
-/// by composing an installed overlay into the SAME tree manifest <c>SkillHashes.RecordTree</c> pins, so
-/// it is exactly as tamper-protected as the skill body itself; null for a skill with no overlay, so
-/// every pre-row-20 construction site still compiles. <see cref="IsRun"/> and <see cref="Gates"/> are
-/// row 19 (D1/D9): a skill whose frontmatter carries <c>run: true</c> starts a run when invoked, and
-/// <c>Gates</c> is what <c>run_gate</c> may execute inside one — row 20 extends both to the union of
-/// SKILL.md and OVERLAY.md. All three default so every earlier construction site still compiles.</summary>
+/// <summary>What the prompt renders for one skill. <see cref="Overlay"/> is composed into the same
+/// tree manifest <c>SkillHashes.RecordTree</c> pins, so it is exactly as tamper-protected as the
+/// skill body (an unpinned file inside the pinned fence would defeat the pin); null for a skill with
+/// no overlay. A skill whose frontmatter carries <c>run: true</c> (<see cref="IsRun"/>) starts a run
+/// when invoked, and <see cref="Gates"/> is what <c>run_gate</c> may execute inside one; both are the
+/// union of SKILL.md and OVERLAY.md.</summary>
 public sealed record ResolvedSkill(string Name, string Title, string Body, bool Truncated,
     bool IsRun = false, IReadOnlyList<GateDeclaration>? Gates = null, string? Overlay = null);
 
-/// <summary>One row of GET /api/skills and of the import verb's output. This is THE shape: tasks 6a,
-/// 6's tests, 7a and ticket 06 all quote it verbatim and none of them invents a field. <c>Chars</c>
-/// is the body length after frontmatter stripping. <see cref="IsRun"/> is row 19: the skill list the
-/// UI shows says which skills start a run.</summary>
+/// <summary>One row of GET /api/skills and of the import verb's output. The API, its tests and the
+/// UI all use this shape; do not add a field in one place only. <c>Chars</c> is the body length
+/// after frontmatter stripping. <see cref="IsRun"/> tells the UI which skills start a run.</summary>
 public sealed record SkillSummary(string Name, string Title, string Description, int Chars, bool IsRun = false);
 
 /// <summary>What <see cref="SkillStore.Read"/> found.</summary>
@@ -37,11 +34,11 @@ public abstract record SkillRead
     public sealed record Ok(ResolvedSkill Skill) : SkillRead;
 }
 
-/// <summary>What <see cref="SkillStore.VerifyTree"/> found (row 19, task 12b): re-hashes every entry
-/// the manifest recorded at import against what is on disk NOW, and treats an unrecorded file present
-/// on disk as tampering too — a spawn cannot smuggle a helper file past the manifest by adding one
-/// the import never saw. <see cref="Missing"/> and <see cref="Tampered"/> both name the one path that
-/// failed first (ordinal order), never every path at once — one bad path is proof enough to refuse.</summary>
+/// <summary>What <see cref="SkillStore.VerifyTree"/> found: re-hashes every entry the manifest
+/// recorded at import against what is on disk now, and treats an unrecorded file present on disk as
+/// tampering too, so a spawn cannot smuggle a helper file past the manifest by adding one the import
+/// never saw. <see cref="Missing"/> and <see cref="Tampered"/> both name the one path that failed
+/// first (ordinal order), never every path at once: one bad path is proof enough to refuse.</summary>
 public abstract record TreeVerification
 {
     public sealed record Ok : TreeVerification;
@@ -49,11 +46,10 @@ public abstract record TreeVerification
     public sealed record Tampered(string Path) : TreeVerification;
 }
 
-/// <summary>What <see cref="SkillStore.ReadGate"/> found for one gate name of one skill (row 19, task
-/// 12b), checked independently of <see cref="TreeVerification"/> — a gate can be <see cref="Ok"/>
-/// while the SKILL surrounding it is <see cref="TreeVerification.Tampered"/> because a NEIGHBOURING
-/// file changed, which is exactly the case P5 exists to catch, so <c>run_gate</c> (task 12d) requires
-/// both checks, never either alone.</summary>
+/// <summary>What <see cref="SkillStore.ReadGate"/> found for one gate name of one skill, checked
+/// independently of <see cref="TreeVerification"/>. A gate can be <see cref="Ok"/> while the skill
+/// around it is <see cref="TreeVerification.Tampered"/> because a neighbouring file changed, so
+/// <c>run_gate</c> requires both checks, never either alone.</summary>
 public abstract record GateRead
 {
     public sealed record NotDeclared : GateRead;
@@ -63,9 +59,9 @@ public abstract record GateRead
 }
 
 /// <summary>The <c>skills</c> table (schema v7): one row per imported skill, recording the SHA-256 of
-/// its <c>SKILL.md</c> at import time. Kept off the surface a spawn can write (grill ledger D-i) — a
-/// manifest file sitting beside the skill it guards would be exactly as writable as the skill itself.
-/// Same collaborator shape as <c>MemoryProposalStore</c>: a thin wrapper the store composes with.</summary>
+/// its <c>SKILL.md</c> at import time. Kept off the surface a spawn can write: a manifest file
+/// sitting beside the skill it guards would be exactly as writable as the skill itself. Same
+/// collaborator shape as <c>MemoryProposalStore</c>: a thin wrapper the store composes with.</summary>
 public sealed class SkillHashes(ChopDb db)
 {
     public string? Expected(string name)
@@ -113,10 +109,10 @@ public sealed class SkillHashes(ChopDb db)
         tx.Commit();
     }
 
-    /// <summary>Row 19, task 12a (P5): the whole-tree manifest — every file under a skill's installed
-    /// directory, relative path (forward-slashed) to its SHA-256, replacing whatever was recorded
-    /// before in one transaction so a forced re-import never leaves a stale entry for a file the new
-    /// version dropped. Never beside the skill itself (D-i), same rationale as <see cref="Record"/>.</summary>
+    /// <summary>The whole-tree manifest: every file under a skill's installed directory, relative path
+    /// (forward-slashed) to its SHA-256, replacing whatever was recorded before in one transaction so a
+    /// forced re-import never leaves a stale entry for a file the new version dropped. Never beside
+    /// the skill itself, same rationale as <see cref="Record"/>.</summary>
     public void RecordTree(string name, IReadOnlyDictionary<string, string> filesBySha256)
     {
         using var conn = db.Open();
@@ -159,35 +155,33 @@ public sealed class SkillHashes(ChopDb db)
 }
 
 /// <summary>The hub's skill store: `<data>/skills/<name>/SKILL.md`, plus whatever references and
-/// scripts the skill brought with it (grill ledger D7), which row 11 copies but never reads. Read on
-/// demand and never cached: a skill is a document, not a credential, and an import must take effect
-/// without restarting the hub. Nothing here writes — the import verb does.
+/// scripts the skill brought with it. Read on demand and never cached: a skill is a document, not a
+/// credential, and an import must take effect without restarting the hub. Nothing here writes; the
+/// import verb does.
 ///
-/// Row 11 rendered SKILL.md into the prompt and nothing else. Row 20 (R2) renders a PINNED
-/// OVERLAY.md too, composed into the same tree manifest at import — the D-j objection (an unpinned
-/// file inside the pinned fence defeats the pin) is answered by pinning it, not by excluding it.
-/// References are still never rendered: no spawn is told it may read them, and reaching them is
-/// `run_gate`, which is row 19.</summary>
+/// The prompt renders SKILL.md and a pinned OVERLAY.md, composed into the same tree manifest at
+/// import (an unpinned file inside the pinned fence would defeat the pin). References are never
+/// rendered: no spawn is told it may read them, and reaching them is `run_gate`.</summary>
 public sealed class SkillStore(string root, SkillHashes hashes)
 {
-    /// <summary>Sized in the plan (D-f) against the roadmap skill row 20 must carry — 20,161
-    /// characters today, on a file the owner edits. The worst-case prompt is this plus the transcript
-    /// window (24,000) plus the memory core (6,000).</summary>
+    /// <summary>Sized against the roadmap skill, about 20,000 characters on a file the hub owner edits.
+    /// The worst-case prompt is this plus the transcript window (24,000) plus the memory core
+    /// (6,000).</summary>
     public const int MaxSkillChars = 32_000;
 
-    /// <summary>A FILE-length refusal, checked before a byte is read, and not the same thing as
+    /// <summary>A file-length refusal, checked before a byte is read, and not the same thing as
     /// <see cref="MaxSkillChars"/>: the character cap is enforced by the import verb, but this class
-    /// reads a directory that the threat model (D-i) says something else may have written to, on the
-    /// spawner's single event-loop thread. Without this, one huge file stalls every room's exchange
-    /// handling and the owner's stop button behind a read and a hash.</summary>
+    /// reads a directory something else may have written to, on the spawner's single event-loop
+    /// thread. Without this, one huge file stalls every room's exchange handling and the hub owner's stop
+    /// button behind a read and a hash.</summary>
     public const long MaxSkillFileBytes = 1L * 1024 * 1024;
 
     public const int MaxFiles = 200;
     public const long MaxBytes = 2L * 1024 * 1024;
 
-    /// <summary>Task 1 (row 20): the hub-side overlay file name and the folder its gate scripts live
-    /// in, both composed into the skill tree by <c>SkillImport</c> and pinned in the same manifest as
-    /// SKILL.md — an overlay is not a separate, unpinned surface (D-j answered: pinned, not unpinned).</summary>
+    /// <summary>The hub-side overlay file name and the folder its gate scripts live in, both composed
+    /// into the skill tree by <c>SkillImport</c> and pinned in the same manifest as SKILL.md: an
+    /// overlay is not a separate, unpinned surface.</summary>
     public const string OverlayFileName = "OVERLAY.md";
     public const int MaxOverlayChars = 8_000;
     public const string ScriptsDirName = "scripts";
@@ -247,9 +241,9 @@ public sealed class SkillStore(string root, SkillHashes hashes)
 
     /// <summary>Three outcomes, not two: the skill; <c>NotFound</c> when nothing readable is there;
     /// or <c>Tampered</c> when SKILL.md does not match the hash the <c>skills</c> table recorded at
-    /// import, has no row there, or exceeds <see cref="MaxSkillFileBytes"/> (D-i). Tampered is NOT
-    /// treated as missing — a skill whose text changed under the hub is a different and worse event
-    /// than one that was never installed, and the room is told which.</summary>
+    /// import, has no row there, or exceeds <see cref="MaxSkillFileBytes"/>. Tampered is not treated
+    /// as missing: a skill whose text changed under the hub is a different and worse event than one
+    /// that was never installed, and the room is told which.</summary>
     public SkillRead Read(string name) =>
         PathMutex.Run(MutexPrefix, Root, MutexTimeout, () => ReadCore(name, out _));
 
@@ -268,9 +262,9 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         var file = new FileInfo(path);
         if (!file.Exists) return new SkillRead.NotFound();
 
-        // Length BEFORE content (D-f/M-7): this runs on the spawner's single event loop, and the
-        // store is writable by the thing D-i guards against. Oversized is Tampered, not NotFound -
-        // the owner imported something that fitted, so what is on disk now is not what they installed.
+        // Length before content: this runs on the spawner's single event loop, and a spawn can write
+        // the store. Oversized is Tampered, not NotFound: the hub owner imported something that fitted,
+        // so what is on disk now is not what they installed.
         if (file.Length > MaxSkillFileBytes) return new SkillRead.Tampered(name);
 
         var bytes = ReadAllBytes(path);
@@ -288,9 +282,9 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         var (body, title, desc, isRun, gates) = StripFrontmatter(text, name);
         description = desc;
 
-        // Task 1 (row 20): an installed overlay is composed in, pinned exactly like every other file
-        // in the tree manifest (SkillHashes.RecordTree/ExpectedTree) — an overlay edited after import
-        // reads as Tampered, same as an edited SKILL.md, never silently rendered stale.
+        // An installed overlay is composed in, pinned like every other file in the tree manifest
+        // (SkillHashes.RecordTree/ExpectedTree): an overlay edited after import reads as Tampered,
+        // same as an edited SKILL.md, never silently rendered stale.
         string? overlay = null;
         var overlayPath = Path.Combine(dir, OverlayFileName);
         if (File.Exists(overlayPath))
@@ -313,19 +307,18 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         return new SkillRead.Ok(new ResolvedSkill(name, title, cut, truncated, isRun, gates, overlay));
     }
 
-    /// <summary>SKILL.md's gates followed by OVERLAY.md's (task 1). Import refuses a duplicate name
-    /// across the two before either is ever installed (<c>SkillImport</c> refusal 9), so a duplicate
-    /// surviving to here means the installed tree was tampered with after import — read-time does not
-    /// re-refuse; it is <see cref="TreeVerification"/>/the hash check above that catches that.</summary>
+    /// <summary>SKILL.md's gates followed by OVERLAY.md's. Import refuses a duplicate name across the
+    /// two before either is installed (<c>SkillImport</c> refusal 9), so a duplicate surviving to here
+    /// means the installed tree was tampered with after import; read-time does not re-refuse, the
+    /// hash check above catches that.</summary>
     private static IReadOnlyList<GateDeclaration> Union(IReadOnlyList<GateDeclaration> a, IReadOnlyList<GateDeclaration> b) =>
         a.Count == 0 ? b : b.Count == 0 ? a : [.. a, .. b];
 
-    /// <summary>Row 19, task 12b (P5): re-hashes every entry <see cref="SkillHashes.RecordTree"/>
-    /// wrote at import against what is on disk right now, then checks for a file present on disk that
-    /// the manifest never recorded — closing the hash-then-run window <c>run_gate</c> (task 12d) exists
-    /// to close. A skill with no manifest at all (imported before row 19, or never imported) reads as
-    /// <see cref="TreeVerification.Missing"/> naming the skill itself: there is nothing to verify
-    /// against, and "nothing recorded" must never read as "verified clean".</summary>
+    /// <summary>Re-hashes every entry <see cref="SkillHashes.RecordTree"/> wrote at import against what
+    /// is on disk right now, then checks for a file present on disk that the manifest never recorded,
+    /// closing the hash-then-run window <c>run_gate</c> exists to close. A skill with no manifest at
+    /// all reads as <see cref="TreeVerification.Missing"/> naming the skill itself: there is nothing to
+    /// verify against, and "nothing recorded" must never read as "verified clean".</summary>
     public TreeVerification VerifyTree(string name) =>
         PathMutex.Run(MutexPrefix, Root, MutexTimeout, () => VerifyTreeCore(name));
 
@@ -345,10 +338,10 @@ public sealed class SkillStore(string root, SkillHashes hashes)
         return extra is null ? new TreeVerification.Ok() : new TreeVerification.Tampered(extra);
     }
 
-    /// <summary>Row 19, task 12b: is <paramref name="gate"/> one <paramref name="name"/> declares, and
-    /// does its script match the manifest? Checked independently of <see cref="VerifyTree"/> — a gate
-    /// can read <see cref="GateRead.Ok"/> while the tree overall is tampered by a NEIGHBOURING file,
-    /// which is exactly why <c>run_gate</c> requires both, never either alone.</summary>
+    /// <summary>Is <paramref name="gate"/> one <paramref name="name"/> declares, and does its script
+    /// match the manifest? Checked independently of <see cref="VerifyTree"/>: a gate can read
+    /// <see cref="GateRead.Ok"/> while the tree overall is tampered by a neighbouring file, which is
+    /// why <c>run_gate</c> requires both, never either alone.</summary>
     public GateRead ReadGate(string name, string gate) =>
         PathMutex.Run(MutexPrefix, Root, MutexTimeout, () => ReadGateCore(name, gate));
 
@@ -377,7 +370,7 @@ public sealed class SkillStore(string root, SkillHashes hashes)
             yield return Path.GetRelativePath(root, file).Replace('\\', '/');
     }
 
-    /// <summary>Row 19: a comma-separated list of gate names, each optionally followed by
+    /// <summary>A comma-separated list of gate names, each optionally followed by
     /// <c>(&lt;args&gt;)</c> — e.g. <c>gates: budget(--RoadmapPath ROADMAP.md), count-files</c>. A
     /// malformed entry is dropped, never thrown on (<see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>'s
     /// rule): one bad cell in a skill's frontmatter must not make the whole skill unreadable.</summary>
@@ -405,11 +398,10 @@ public sealed class SkillStore(string root, SkillHashes hashes)
     /// read out of it. Title is frontmatter `name`, else the first `# ` heading, else the directory
     /// name. Description is frontmatter `description` trimmed to 300 characters, else the first
     /// non-blank non-heading line, else empty. <c>run:</c> is true only for the literal (case
-    /// insensitive) value `true`; <c>gates:</c> is parsed by <see cref="ParseGates"/>. Internal (row
-    /// 19, task 12a): <c>SkillImport</c> calls this on the SOURCE text, before anything is written, to
-    /// refuse a skill that declares a gate whose script is not in the import — the same parser Read
-    /// uses at every later call, so import-time and read-time can never disagree on what a skill
-    /// declares.</summary>
+    /// insensitive) value `true`; <c>gates:</c> is parsed by <see cref="ParseGates"/>. Internal:
+    /// <c>SkillImport</c> calls this on the source text, before anything is written, to refuse a skill
+    /// that declares a gate whose script is not in the import. It is the same parser Read uses at every
+    /// later call, so import-time and read-time never disagree on what a skill declares.</summary>
     internal static (string Body, string Title, string Description, bool IsRun, IReadOnlyList<GateDeclaration> Gates) StripFrontmatter(string text, string dirName)
     {
         var lines = text.Split('\n');

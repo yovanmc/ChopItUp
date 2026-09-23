@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Row 46 dry run: proves the git identity rule, the host trailers and the merge union end to end
-    against the built hub, with stub Claude and Codex CLIs and no real model ever reachable.
+    Commit-attribution dry run: proves the git identity rule, the host trailers and the merge union
+    end to end against the built hub, with stub Claude and Codex CLIs and no real model ever reachable.
 
 .DESCRIPTION
     Mirrors Invoke-Row43MentionCheck.ps1's frame: a param block with -HubExe/-ScratchRoot (fresh, under
@@ -21,7 +21,7 @@
     file `stub\quiet` is created before the empty-turn leg and removed after, so the same two shims
     cover both "the turn changed a file" and "the turn changed nothing". The hub's own JSON parser sees
     no envelope on stdout from either shim, posts "replied without posting to the room", and still
-    commits the tree exactly as row 46 describes — that commit is what every check below reads.
+    commits the tree; that commit is what every check below reads.
 
     A scratch directory room ('Lab', id 'lab') is created under $ScratchRoot\rooms (the parent the hub
     itself requires to already exist; the hub `git init`s 'lab' itself), then configured
@@ -42,16 +42,14 @@
       L3 — the `stub\quiet` marker is planted, then `@sonnet do nothing` is posted: the shim exits
            without writing anything, so the turn commit is empty. Checks (i)-(k): the trail note reports
            zero files changed, the empty turn carries no trailer, and neither does the merge (a branch
-           whose only commit carries none merges with none — R7).
+           whose only commit carries none merges with none).
 
     Reads git directly against the room directory (`git -C <dir> log --date-order --format=... -n 1
     [--skip=N]`), newest-first: skip 0 is always the merge, skip 1 the turn commit, and (L1 only) skip 2
     the owner's pre-spawn edit.
 
-    Expected: 11 PASS / 0 FAIL (AC9). The orchestrator's own mutation run — `RoomCommits.CoAuthorTrailer`
-    made to return null for every host, rebuilt, re-run — is expected to fail exactly the four trailer
-    checks (c, e, f, g) and is not part of this script; it is a separate build-mutate-rebuild step this
-    script plays no part in.
+    Expected: 11 PASS / 0 FAIL. With `RoomCommits.CoAuthorTrailer` made to return null for every host
+    (a separate rebuild), exactly the four trailer checks (c, e, f, g) fail.
 
     Never touches C:\Self Apps or any real data directory: every path this script writes — the hub's
     data dir, the stub PATH dir, the rooms root and the room itself — lives under one fresh
@@ -70,7 +68,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 # A trailing separator would place a bare backslash before the closing quote in Start-Process's
-# quoted -ArgumentList entry (same trap Invoke-Row42/43ImportCheck.ps1 guard against).
+# quoted -ArgumentList entry.
 $ScratchRoot = $ScratchRoot.TrimEnd('\', '/')
 $DataDir = Join-Path $ScratchRoot 'data'
 $StubDir = Join-Path $ScratchRoot 'stub'
@@ -162,8 +160,8 @@ exit /b 0
     $stubShim | Set-Content -LiteralPath (Join-Path $StubDir 'claude.cmd') -Encoding ascii
     $stubShim | Set-Content -LiteralPath (Join-Path $StubDir 'codex.cmd') -Encoding ascii
 
-    # Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER the directories
-    # above and BEFORE the hub's first start.
+    # 'owner' is a host-file row -- seed its plaintext into tokens.json after the directories above
+    # and before the hub's first start.
     $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
     $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
@@ -279,7 +277,7 @@ exit /b 0
     $body3Turn = Get-GitLogField -Dir $roomDir -Format '%B' -Skip 1
     Add-Check -Name 'L3.j.empty-turn-no-trailer' -Passed ($null -ne $merged3 -and $body3Turn -notmatch 'Co-authored-by') -Detail ($body3Turn -replace "`n", ' / ')
 
-    # (k) a branch whose only commit carries none merges with none either (R7).
+    # (k) a branch whose only commit carries none merges with none either.
     $body3Merge = Get-GitLogField -Dir $roomDir -Format '%B' -Skip 0
     Add-Check -Name 'L3.k.merge-no-trailer' -Passed ($body3Merge -notmatch 'Co-authored-by') -Detail ($body3Merge -replace "`n", ' / ')
 

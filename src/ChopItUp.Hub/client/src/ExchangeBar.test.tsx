@@ -5,9 +5,9 @@ import ExchangeBar, { workingElapsed } from './ExchangeBar';
 import { setRoster } from './participants';
 import type { ExchangeSnapshot, ExchangeView } from './types';
 
-/** Row 22, AC4: one control per stop. While a run is `active` or `parked` the run strip owns the
- *  stop, so this bar must not offer a second one — and the moment that run is over, its button has to
- *  come back exactly as it was, because an exchange with a live spawn still needs stopping.
+/** One control per stop. While a run is `active` or `parked` the run strip owns the stop, so this bar
+ *  must not offer a second one, and the moment that run is over, its button has to come back exactly
+ *  as it was, because an exchange with a live spawn still needs stopping.
  *
  *  Rendered through `react-dom/server` like `RunBar.test.tsx`: presence and disabled state are all
  *  static markup, and this client has no jsdom to click in. */
@@ -92,9 +92,9 @@ const buttons = (
     }),
   );
 
-/** Row 34's two-exchange room: #41 was superseded with Sonnet still talking, #57 is open with Codex
- *  queued and nothing of its own in flight. The room-wide `inFlight` is Sonnet's, so a strip that read
- *  the top-level list instead of its own would show the wrong chips and the wrong Stop. */
+/** A two-exchange room: #41 was superseded with Sonnet still talking, #57 is open with Codex queued
+ *  and nothing of its own in flight. The room-wide `inFlight` is Sonnet's, so a strip that read the
+ *  top-level list instead of its own would show the wrong chips and the wrong Stop. */
 const OLDER: ExchangeView = {
   rootMessageId: 41,
   status: 'superseded',
@@ -177,9 +177,9 @@ describe('ExchangeBar', () => {
     expect(render(closed, true)).not.toContain('Stop exchange');
   });
 
-  /** AC4's second half, and the reason it is written down: the yield is for the life of the run, not
-   *  for the life of the room. Once the run has `ended`, App's `runStoppable` is false again and this
-   *  bar is exactly what it was before the row — including for a spawn that outlived its exchange. */
+  /** The yield is for the life of the run, not for the life of the room. Once the run has `ended`,
+   *  App's `runStoppable` is false again and this bar is exactly what it would be with no run,
+   *  including for a spawn that outlived its exchange. */
   test('an ended run gives the stop back, unchanged', () => {
     const afterRun: ExchangeSnapshot = { ...BASE, status: 'stopped', inFlight: ['sonnet'] };
 
@@ -194,9 +194,9 @@ describe('ExchangeBar', () => {
     expect(render(BASE, false, true)).toContain('disabled=""');
   });
 
-  /** Row 27, AC4. Every `RunPolicy` park is policy-driven and so is a ping-End, and all of them close
-   *  the conductor's exchange — so before the cause rode the wire, a cap the owner never touched still
-   *  told him he had stopped it. The marker has to attribute the stop to whoever actually made it. */
+  /** Every `RunPolicy` park is policy-driven and so is a ping-End, and all of them close the
+   *  conductor's exchange, so without the cause on the wire a cap the hub owner never touched would tell
+   *  him he had stopped it. The marker has to attribute the stop to whoever actually made it. */
   test('a run-stopped exchange says the run did it, not the owner', () => {
     const markup = render({ ...BASE, status: 'stopped', stoppedBy: 'run', inFlight: [] });
 
@@ -210,8 +210,8 @@ describe('ExchangeBar', () => {
     );
   });
 
-  /** A snapshot from a hub older than row 27 — and any stop the hub could not attribute — sends no
-   *  cause. Guessing "you" there is the very defect this row closes, so the null case is neutral. */
+  /** A snapshot from an older hub, and any stop the hub could not attribute, sends no cause. Guessing
+   *  "you" there would blame the hub owner wrongly, so the null case is neutral. */
   test('a stop with no cause on the wire claims nothing about who caused it', () => {
     const markup = render({ ...BASE, status: 'stopped', stoppedBy: null, inFlight: [] });
 
@@ -240,7 +240,7 @@ describe('ExchangeBar with one strip per exchange', () => {
       vi.useRealTimers();
     }
   });
-  /** AC1: one strip per entry, oldest first, each drawn from its own fields. */
+  /** One strip per entry, oldest first, each drawn from its own fields. */
   test('two exchanges render two strips, oldest first', () => {
     const markup = render(TWO);
 
@@ -272,7 +272,7 @@ describe('ExchangeBar with one strip per exchange', () => {
     expect(render(stopped)).toContain('Stopped by the run · 3 of 6 turns used');
   });
 
-  /** AC2: with more than one strip the owner has to be able to tell them apart. */
+  /** With more than one strip the hub owner has to be able to tell them apart. */
   test('more than one strip names each by its root', () => {
     const markup = render(TWO);
     const [olderStrip, newerStrip] = markup.split('class="exchange exchange-open"');
@@ -289,12 +289,12 @@ describe('ExchangeBar with one strip per exchange', () => {
     expect(markup).toContain('7 of 8 turns left');
   });
 
-  /** AC4, first half: a live run owns the stop, for every strip. */
+  /** A live run owns the stop, for every strip. */
   test('a live run hides every strip\'s stop', () => {
     expect(render(TWO, true)).not.toContain('<button');
   });
 
-  /** AC4, second half: the gate is per strip, on the strip's own `inFlight`. */
+  /** The gate is per strip, on the strip's own `inFlight`. */
   test('a closed strip with nothing of its own in flight offers no stop, and its neighbours keep theirs', () => {
     const closed: ExchangeSnapshot = {
       ...TWO,
@@ -313,7 +313,7 @@ describe('ExchangeBar with one strip per exchange', () => {
     expect(olderStrip).toContain('>Stop exchange</button>');
   });
 
-  /** AC3, the component half: one strip's pending stop disables that strip and no other. */
+  /** The component half: one strip's pending stop disables that strip and no other. */
   test('a stop in flight for one root disables only that strip', () => {
     const found = buttons(TWO, () => undefined, new Set([57]));
 
@@ -336,7 +336,7 @@ describe('ExchangeBar with one strip per exchange', () => {
     expect(roots).toEqual([57, 41]);
   });
 
-  /** AC5: a hub older than row 32 sends no `exchanges`, and its only stop is the room's. */
+  /** An older hub sends no `exchanges`, and its only stop is the room's. */
   test('with no exchanges on the wire the one strip presses the room stop', () => {
     const roots: (number | null)[] = [];
     const found = buttons(BASE, (root) => roots.push(root));
@@ -352,10 +352,10 @@ describe('ExchangeBar with one strip per exchange', () => {
   });
 });
 
-/** Row 44, AC5. `continuable` is the hub's decision (owner-rooted, closed, nothing of its own in
- *  flight, no active run), so these fixtures carry it the way a hub would: a concluded exchange with
- *  an empty `inFlight` has it, an open one does not, and a hub older than this row sends no field at
- *  all. The client adds one gate of its own — the live run, the same one the stop already yields to. */
+/** `continuable` is the hub's decision (owner-rooted, closed, nothing of its own in flight, no active
+ *  run), so these fixtures carry it the way a hub would: a concluded exchange with an empty
+ *  `inFlight` has it, an open one does not, and an older hub sends no field at all. The client adds
+ *  one gate of its own: the live run, the same one the stop already yields to. */
 const CONTINUABLE: ExchangeView = { ...OLDER, status: 'concluded', inFlight: [], continuable: true };
 const CONTINUABLE_NEWER: ExchangeView = { ...NEWER, status: 'concluded', pending: [], continuable: true };
 const ONE: ExchangeSnapshot = { ...TWO, inFlight: [], pending: [], exchanges: [CONTINUABLE] };

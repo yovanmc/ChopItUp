@@ -13,10 +13,10 @@ using ModelContextProtocol.Server;
 
 namespace ChopItUp.Hub.Mcp;
 
-/// <summary>One gate running per room at a time (row 19, task 12d). Registered as its own DI singleton
+/// <summary>One gate running per room at a time. Registered as its own DI singleton
 /// (<see cref="HubHost.Build"/>) rather than a field on <see cref="RunTools"/>, following
 /// <see cref="RoomTools"/>/<see cref="MemoryTools"/>'s rule that a tool class holds no state of its
-/// own — every mutable thing a tool touches lives in an explicit singleton, so the tool's own DI
+/// own: every mutable thing a tool touches lives in an explicit singleton, so the tool's own DI
 /// lifetime is never load-bearing.</summary>
 public sealed class GateLocks
 {
@@ -25,12 +25,12 @@ public sealed class GateLocks
     public void Exit(string roomId) => _running.TryRemove(roomId, out _);
 }
 
-/// <summary>The single tool a run's spawns get beyond the ordinary three (row 19, task 12; AC10):
-/// <c>run_gate</c> runs one of the checks the run's skill declares, in the room's directory, from a
-/// hub-verified copy, and returns its exit code and capped output. Every call — a run or a refusal —
-/// is recorded in <c>run_gate_runs</c> and announced with a fixed-form note, so a later verification
-/// reads what happened from hub state, never from a model's wording (AC9's gate-results list is the
-/// same records, rendered into the prompt).</summary>
+/// <summary>The single tool a run's spawns get beyond the ordinary three: <c>run_gate</c> runs one
+/// of the checks the run's skill declares, in the room's directory, from a hub-verified copy, and
+/// returns its exit code and capped output. Every call, a run or a refusal, is recorded in
+/// <c>run_gate_runs</c> and announced with a fixed-form note, so a later verification reads what
+/// happened from hub state, never from a model's wording (the prompt's gate-results list is the
+/// same records).</summary>
 [McpServerToolType]
 public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService spawner, MessageStore store,
     MessageSignal signal, IProcessRunner runner, CliLocator cliLocator, RunLimits limits, HubOptions options,
@@ -88,15 +88,15 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
         finally { locks.Exit(room_id); }
     }
 
-    /// <summary>P5: copies the skill's whole VERIFIED tree to a hub-private throwaway folder and runs
-    /// the gate from there, closing the hash-then-run window — a rewrite landing between
+    /// <summary>Copies the skill's whole VERIFIED tree to a hub-private throwaway folder and runs
+    /// the gate from there, closing the hash-then-run window: a rewrite landing between
     /// <see cref="SkillStore.VerifyTree"/> above and this copy is still caught, because the copy reads
     /// the same files that were just verified, and the next call re-verifies from scratch. The copy is
-    /// deleted in a `finally` (pass 2's F-15: nobody owned this in the previous draft).
-    /// <c>ROADMAP_GATE_BASELINE</c> points a script that reads/writes a sibling baseline file (the
-    /// roadmap gate this feature exists to run) at a hub-private DURABLE path instead of the throwaway
-    /// copy's own directory — the script's own documented env-var seam (verified this session) — or
-    /// moving the script's <c>$PSScriptRoot</c> would silently void its legitimate write.</summary>
+    /// deleted in a `finally`.
+    /// <c>ROADMAP_GATE_BASELINE</c> (the script's own documented env-var seam) points a script that
+    /// reads/writes a sibling baseline file at a hub-private DURABLE path instead of the throwaway
+    /// copy's own directory, or moving the script's <c>$PSScriptRoot</c> would silently void its
+    /// legitimate write.</summary>
     private async Task<string> Execute(long runId, string roomId, string gate, string caller, string roomDirectory,
         string skillName, GateDeclaration declaration, DateTimeOffset now, IProgress<ProgressNotificationValue>? progress,
         CancellationToken cancellationToken)
@@ -116,12 +116,11 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
                 new Dictionary<string, string> { ["ROADMAP_GATE_BASELINE"] = baselinePath },
                 roomDirectory, "", $"run_gate/{gate}/{caller}");
 
-            // Row 20, task 3: the gate's own process timeout is limits.EffectiveGateTimeout (25 min by
-            // default), not the spawn's own 30-minute wall clock - the 5-minute gap between the two is
-            // what lets the spawn still post a reply after a gate that ran all the way to its ceiling
-            // (RunLimits, ledger 24/25).
-            // Row 29, D7: RoomId/ParticipantId set at this one line so the owner-peer check's
-            // refusal note can name the spawn if this credential is later stolen and replayed.
+            // The gate's own process timeout is limits.EffectiveGateTimeout (25 min by default), not
+            // the spawn's 30-minute wall clock: the 5-minute gap is what lets the spawn still post a
+            // reply after a gate that ran all the way to its ceiling.
+            // RoomId/ParticipantId are set here so the hub's owner-peer check's refusal note can name the
+            // spawn if this credential is later stolen and replayed.
             var result = await ReportProgressWhileRunning(runner.RunAsync(spec with { RoomId = roomId, ParticipantId = caller }, limits.EffectiveGateTimeout, cancellationToken), gate, progress, cancellationToken);
             var outcome = result.TimedOut ? "timed out" : $"exit {Describe(result.ExitCode)}";
             runs.RecordGateRun(runId, roomId, gate, caller, result.ExitCode, outcome, now);
@@ -143,12 +142,12 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
         }
     }
 
-    /// <summary>Row 20, task 3b (addendum 2026-09-08): while <paramref name="runTask"/> is still pending,
-    /// reports a <see cref="ProgressNotificationValue"/> every <see cref="RunLimits.EffectiveGateProgressInterval"/>
-    /// so a client watching for traffic (the measured idle-timer gap the probe found) sees the gate is
-    /// still alive. The first report lands after one full interval, never immediately, and nothing is
-    /// reported once the run has actually completed - a bare <c>await runTask</c> when there is no
-    /// <paramref name="progress"/> sink, so the no-progress path never even allocates the delay loop.</summary>
+    /// <summary>While <paramref name="runTask"/> is still pending, reports a
+    /// <see cref="ProgressNotificationValue"/> every <see cref="RunLimits.EffectiveGateProgressInterval"/>
+    /// so a client with an idle timer sees the gate is still alive. The first report lands after one
+    /// full interval, never immediately, and nothing is reported once the run has completed. With no
+    /// <paramref name="progress"/> sink it is a bare <c>await runTask</c>, so that path never allocates
+    /// the delay loop.</summary>
     private async Task<ProcessResult> ReportProgressWhileRunning(Task<ProcessResult> runTask, string gate,
         IProgress<ProgressNotificationValue>? progress, CancellationToken cancellationToken)
     {
@@ -166,9 +165,9 @@ public sealed class RunTools(RunStore runs, SkillStore skills, SpawnerService sp
         }
     }
 
-    /// <summary>AC10's other half: "and record the refusal". Written and posted before the throw, so a
-    /// caller that never sees the exception's text still left a trail behind — the same fixed form a
-    /// run gets, minus the exit code, plus the reason slug in parentheses.</summary>
+    /// <summary>Records the refusal. Written and posted before the throw, so a caller that never sees
+    /// the exception's text still left a trail behind: the same fixed form a run gets, minus the exit
+    /// code, plus the reason slug in parentheses.</summary>
     private McpException Refuse(long? runId, string roomId, string gate, string caller, DateTimeOffset now, string reasonSlug, string message)
     {
         runs.RecordGateRun(runId, roomId, gate, caller, null, $"refused: {reasonSlug}", now);

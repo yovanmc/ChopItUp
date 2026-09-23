@@ -1,9 +1,9 @@
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T4 (B8): the boot page is the only thing the owner sees for the first seconds of a
-/// launch and the only thing they see when the hub never comes up, and it is the one page in the shell
-/// that is NOT served from the hub origin — so its markup is worth asserting. The window itself cannot
-/// be exercised here (no WebView2 on CI); the pure HTML is the gate.</summary>
+/// <summary>The boot page is the only thing the hub owner sees for the first seconds of a launch and the
+/// only thing they see when the hub never comes up, and it is the one page in the shell that is NOT
+/// served from the hub origin, so its markup is worth asserting. The window itself cannot be
+/// exercised here (no WebView2 on CI); the pure HTML is the gate.</summary>
 public class BootPageTests
 {
     private const string Nonce = "a1b2c3d4e5f60718";
@@ -30,7 +30,7 @@ public class BootPageTests
     [MemberData(nameof(BothPages))]
     public void Every_posted_message_carries_the_launch_nonce(string html)
     {
-        // B8: this page is not on the hub origin, so the bridge trusts it only by nonce (Task 5).
+        // This page is not on the hub origin, so the bridge trusts it only by nonce.
         Assert.Contains($"chrome.webview.postMessage({{cmd:'close',nonce:'{Nonce}'}})", html);
         Assert.Contains($"chrome.webview.postMessage({{cmd:'quit',nonce:'{Nonce}'}})", html);
         Assert.DoesNotContain("postMessage({cmd:'close'}", html);

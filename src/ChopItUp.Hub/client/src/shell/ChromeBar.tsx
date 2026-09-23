@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { host, isHosted, onState, type ShellState } from './hostBridge';
 
-/** Row 12, AC3: the title bar, drawn by the page. Inside `ChopItUp.Desktop` the window has
+/** The title bar, drawn by the page. Inside `ChopItUp.Desktop` the window has
  *  `WindowStyle=None` and no caption of its own, so this 36 px row is the only way to move, maximise
  *  or close it — WebView2 hit-tests the CSS `app-region` on this row (`.chrome` drag, `.chrome-btn`
  *  no-drag, both in `styles.css`) and reports the result to Windows as a non-client region.
@@ -20,7 +20,7 @@ const BEFORE_THE_SHELL_ANSWERS: ShellState = {
 };
 
 /** What the chip says. The port is worth showing because the shell may have attached to a hub on a
- *  port that is not the one it was asked for (B3), and because the owner pastes it into MCP configs. */
+ *  port that is not the one it was asked for, and because the hub owner pastes it into MCP configs. */
 export function hubLabel(hub: ShellState['hub']): string {
   switch (hub.state) {
     case 'ready':

@@ -11,15 +11,14 @@ using ModelContextProtocol.Client;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>M25 ticket 07 / plan Task 7: <c>/api/skills/proposals</c> — list, approve, reject. Fixture
-/// skills are synthetic (D-g). Proposals are minted through the real <c>propose_skill</c> tool (task 5)
-/// so their recorded <c>tree_sha256</c>/<c>files</c>/<c>bytes</c> are exactly what the hub itself would
-/// compute, not a hand-typed stand-in.
+/// <summary><c>/api/skills/proposals</c>: list, approve, reject. Fixture skills are synthetic.
+/// Proposals are minted through the real <c>propose_skill</c> tool so their recorded
+/// <c>tree_sha256</c>/<c>files</c>/<c>bytes</c> are exactly what the hub itself would compute, not a
+/// hand-typed stand-in.
 ///
-/// Task 6 (D1) gated the two decision POSTs behind an owner credential; this file is about the
-/// decision LOGIC once a caller is already let through, not the gate itself (<see
-/// cref="SkillsApiAuthTests"/> covers 401/403), so <see cref="_host"/>'s client carries the owner's
-/// token by default here.</summary>
+/// These tests cover the decision logic once a caller is already let through, not the hub's owner gate
+/// itself (<see cref="SkillsApiAuthTests"/> covers 401/403), so <see cref="_host"/>'s client carries
+/// the hub owner's token by default here.</summary>
 public sealed class SkillsApiProposalsTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skillpropapi_" + Guid.NewGuid().ToString("N"));
@@ -100,11 +99,11 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Equal("check-it", gate.GetProperty("name").GetString());
     }
 
-    /// <summary>Task 8: the card decides from the LISTING and nothing else — it never calls
-    /// <c>propose_skill</c>, so the only place it can learn the pinned digest is this payload. D5 makes
-    /// that digest the one value the card, the request body and the staged copy must all three agree
-    /// on, and <see cref="SkillsApi"/>'s approve refuses a first decision whose body does not carry it,
-    /// so a listing that omits it makes every approval from the card impossible. This drives the whole
+    /// <summary>The card decides from the listing and nothing else: it never calls
+    /// <c>propose_skill</c>, so the only place it can learn the pinned digest is this payload. That
+    /// digest is the one value the card, the request body and the staged copy must all agree on, and
+    /// <see cref="SkillsApi"/>'s approve refuses a first decision whose body does not carry it, so a
+    /// listing that omits it makes every approval from the card impossible. This drives the whole
     /// round trip the SPA performs: read the listing, send back the hash it carried, install.</summary>
     [Fact]
     public async Task GET_carries_the_pinned_tree_hash_so_an_approval_driven_only_by_the_listing_succeeds()
@@ -246,14 +245,12 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.True(Directory.Exists(Path.Combine(Skills.Root, "demo")));
     }
 
-    /// <summary>Branch review, AC8: the row this whole Retry arm exists to rescue was the one the
-    /// listing marked un-approvable. <see cref="SkillsApi"/>'s approve finishes an already-completed
-    /// install by hashing the INSTALLED tree, before it ever looks at the source — so a retry row whose
-    /// source has since vanished is one the hub would in fact finish. <c>IsApprovable</c> nevertheless
-    /// returned false for any <c>sourceMissing</c> row, the card disables Retry on <c>!approvable</c>,
-    /// and it hides Reject on a retry row (correctly — <c>Reject</c> only acts from <c>Pending</c>). The
-    /// row was therefore stuck forever and counted against
-    /// <see cref="SkillProposalStore.MaxUndecidedPerRoom"/> for good.
+    /// <summary>A retry row whose source has vanished must stay approvable. <see cref="SkillsApi"/>'s
+    /// approve finishes an already-completed install by hashing the installed tree, before it ever
+    /// looks at the source, so the hub would finish such a row. If <c>IsApprovable</c> returned false
+    /// for a <c>sourceMissing</c> row, the card would disable Retry on <c>!approvable</c> and hide
+    /// Reject (correctly: <c>Reject</c> only acts from <c>Pending</c>), leaving the row stuck forever
+    /// and counted against <see cref="SkillProposalStore.MaxUndecidedPerRoom"/>.
     ///
     /// The sequence is the ordinary one, not an exotic one: approve, the install completes, the hub dies
     /// before <c>MarkInstalled</c>, and the proposer then cleans up its room directory.</summary>
@@ -341,13 +338,11 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Equal("Skill proposal #1 rejected.", (await Messages()).Last().Body);
     }
 
-    /// <summary>Task 7 correction, item A: <c>Approve</c>'s <c>if (!isRetry)</c> block used to gate BOTH
-    /// the body-hash check and the <c>ReplacesInstalled</c> re-check, so a Retry call skipped them and
-    /// fell straight into <c>SkillImport.Run(..., p.Force, ...)</c>. With <c>force</c> the recorded
-    /// caller flag and nothing installed for this name at propose time (so <c>ReplacesInstalled</c>
-    /// recorded false), an unrelated tree placed at the target between the crash and the retry would
-    /// have been silently overwritten by <c>Run</c> (refusal 8 never fires under force). The
-    /// re-check now runs on the retry path too and must refuse before <c>Run</c> is ever called.</summary>
+    /// <summary>A Retry must not skip the body-hash and <c>ReplacesInstalled</c> re-checks. With
+    /// <c>force</c> the recorded caller flag and nothing installed for this name at propose time (so
+    /// <c>ReplacesInstalled</c> recorded false), an unrelated tree placed at the target between the
+    /// crash and the retry would be silently overwritten by <c>SkillImport.Run</c> (refusal 8 never
+    /// fires under force). The re-check must refuse before <c>Run</c> is ever called.</summary>
     [Fact]
     public async Task Retry_refuses_when_an_unrelated_tree_now_sits_at_the_target_even_with_force()
     {
@@ -373,12 +368,11 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Null(stillPending.InstalledAt);
     }
 
-    /// <summary>Task 7 correction, item B: the old cache key was the tree's single newest
-    /// <c>LastWriteTimeUtc</c>, so a writer that preserves timestamps (<c>Copy-Item</c>, <c>robocopy</c>
-    /// with default flags) could change a file's content without moving that maximum, and <c>GET</c>
-    /// would keep answering with the stale cached text. Explicitly restoring the file's own write time
-    /// after editing it (with a body of a different length, so a per-file fingerprint — not the old
-    /// tree-wide max — is what has to catch it) reproduces exactly that.</summary>
+    /// <summary>A writer that preserves timestamps (<c>Copy-Item</c>, <c>robocopy</c> with default
+    /// flags) can change a file's content without moving the tree's newest <c>LastWriteTimeUtc</c>,
+    /// so a cache keyed on that maximum would keep answering <c>GET</c> with stale text. Explicitly
+    /// restoring the file's own write time after editing it (with a body of a different length, so a
+    /// per-file fingerprint, not a tree-wide max, is what has to catch it) reproduces exactly that.</summary>
     [Fact]
     public async Task GET_detects_a_content_rewrite_even_when_the_tree_wide_newest_write_time_does_not_move()
     {
@@ -398,11 +392,10 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Empty(row.GetProperty("entries").EnumerateArray());
     }
 
-    /// <summary>Task 7 correction, item C: the listing's <c>approvable</c> flag must agree, in every
-    /// state, with whether <c>Approve</c> itself would actually succeed — a source-changed row, a
-    /// source-missing row, and an already-decided row are all reported not approvable, and
-    /// <c>Approve</c> refuses each; a plain pending row is reported approvable, and <c>Approve</c>
-    /// succeeds.</summary>
+    /// <summary>The listing's <c>approvable</c> flag must agree, in every state, with whether
+    /// <c>Approve</c> itself would actually succeed: a source-changed row, a source-missing row, and
+    /// an already-decided row are all reported not approvable, and <c>Approve</c> refuses each; a
+    /// plain pending row is reported approvable, and <c>Approve</c> succeeds.</summary>
     [Fact]
     public async Task Listing_approvable_flag_agrees_with_whether_Approve_would_actually_succeed()
     {
@@ -477,16 +470,15 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         }
         finally
         {
-            // Row 35: outside a run this room's spawn now commits through the exchange's worktree
-            // machinery, which turns roomDir into a real git repository (it never was one before this
-            // row) - its objects are read-only, so a plain Directory.Delete throws
-            // UnauthorizedAccessException exactly as TestDirs.DeleteTree's own doc comment says. Row 35
-            // adds a second, later writer of roomDir: the exchange's worktree close, handed off from
-            // OnFinished and running off the spawner loop entirely (AnySpawnInFlight never sees it).
-            // SpawnerService.StopAsync (Row 35) now waits up to 10s for that close to finish, so
-            // disposing the host HERE - rather than via `await using` at the end of the method, which
-            // would run after the delete below - is what actually waits for the close's own git.exe
-            // process to let go of roomDir before this test touches it.
+            // Outside a run this room's spawn commits through the exchange's worktree machinery, which
+            // turns roomDir into a real git repository; its objects are read-only, so a plain
+            // Directory.Delete throws UnauthorizedAccessException exactly as TestDirs.DeleteTree's own
+            // doc comment says. The exchange's worktree close is a second, later writer of roomDir,
+            // handed off from OnFinished and running off the spawner loop entirely (AnySpawnInFlight
+            // never sees it). SpawnerService.StopAsync waits up to 10s for that close to finish, so
+            // disposing the host here (rather than via `await using` at the end of the method, which
+            // would run after the delete below) is what waits for the close's own git.exe process to
+            // let go of roomDir before this test touches it.
             await host.DisposeAsync();
         }
         TestDirs.DeleteTree(roomDir);

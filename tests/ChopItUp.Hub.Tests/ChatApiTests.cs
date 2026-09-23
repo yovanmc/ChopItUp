@@ -7,9 +7,9 @@ using Microsoft.AspNetCore.SignalR.Client;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>The <c>/api</c> surface the web UI (a later task) talks to. No auth here per D2 — loopback
-/// is the boundary — and every write goes through <c>MessageStore.Post</c>, the same path the MCP
-/// tools use, so the cursor and broadcast rules cannot drift (brief Task 2).</summary>
+/// <summary>The <c>/api</c> surface the web UI talks to. Every write goes through
+/// <c>MessageStore.Post</c>, the same path the MCP tools use, so the cursor and broadcast rules
+/// cannot drift.</summary>
 public sealed class ChatApiTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_api_" + Guid.NewGuid().ToString("N"));
@@ -18,7 +18,7 @@ public sealed class ChatApiTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -78,8 +78,8 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal("owner", msg.GetProperty("authorId").GetString());
     }
 
-    /// <summary>Row 28 Task 4, AC1/AC2: an unauthenticated write is refused before it touches the
-    /// store (the message list stays empty), and GET stays open with no credential at all.</summary>
+    /// <summary>An unauthenticated write is refused before it touches the store (the message list
+    /// stays empty), and GET stays open with no credential at all.</summary>
     [Fact]
     public async Task Posting_with_no_credential_is_401_and_the_message_list_is_unchanged()
     {
@@ -93,8 +93,8 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Empty(page.GetProperty("messages").EnumerateArray());
     }
 
-    /// <summary>Row 28 Task 4, AC1: a credential that resolves to a non-owner participant is 403
-    /// (forbidden), not 401 (unauthenticated), and the write still does not happen.</summary>
+    /// <summary>A credential that resolves to a non-owner participant is 403 (forbidden), not 401
+    /// (unauthenticated), and the write still does not happen.</summary>
     [Fact]
     public async Task Posting_with_a_model_participants_token_is_403()
     {
@@ -110,8 +110,8 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Empty(page.GetProperty("messages").EnumerateArray());
     }
 
-    /// <summary>Row 28 Task 4: widening auth to every non-GET /api route must not touch /mcp's own
-    /// gate — a model participant still authenticates there with its own (ephemeral) bearer.</summary>
+    /// <summary>Guarding every non-GET /api route must not touch /mcp's own gate: a model
+    /// participant still authenticates there with its own (ephemeral) bearer.</summary>
     [Fact]
     public async Task Mcp_still_works_for_a_model_participant()
     {
@@ -120,8 +120,8 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.NotEqual(true, r.IsError);
     }
 
-    /// <summary>Row 28 Task 4, pass 2 finding 13: the write must be attributed to the credential that
-    /// resolved, not hard-coded to the owner id — otherwise an owner-remote write is stamped owner.</summary>
+    /// <summary>The write is attributed to the credential that resolved, not hard-coded to the hub owner
+    /// id, otherwise an owner-remote write is stamped owner.</summary>
     [Fact]
     public async Task Posting_with_the_owner_remote_token_is_authored_owner_remote()
     {
@@ -200,9 +200,9 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Contains("just some pasted text", msgs[0].GetProperty("body").GetString());
     }
 
-    /// <summary>D1's regression guard: however the paste is labelled — mixed case, extra spaces, the
-    /// literal participant ids — an imported message is never attributed to <c>claude</c> or
-    /// <c>codex</c>. The hub stamps the author; the label is just text inside the body.</summary>
+    /// <summary>However the paste is labelled (mixed case, extra spaces, the literal participant ids),
+    /// an imported message is never attributed to <c>claude</c> or <c>codex</c>. The hub stamps the
+    /// author; the label is just text inside the body.</summary>
     [Fact]
     public async Task Import_never_attributes_a_message_to_claude_or_codex_however_the_paste_is_labelled()
     {
@@ -324,8 +324,8 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal("gpt-5.6-sol", sol.GetProperty("model").GetString());
     }
 
-    /// <summary>Task 2, 2d: the API publishes a PARSED array, never the raw delimited string, and an
-    /// unclassed row answers [] rather than being absent or null.</summary>
+    /// <summary>The API publishes a PARSED array, never the raw delimited string, and an unclassed
+    /// row answers [] rather than being absent or null.</summary>
     [Fact]
     public async Task Api_participants_publishes_each_rows_parsed_classes()
     {
@@ -344,7 +344,7 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal(new[] { "judge" }, fable.GetProperty("classes").EnumerateArray().Select(e => e.GetString()));
     }
 
-    /// <summary>Row 42 AC3: every reader of the web API can tell an imported turn from a live post.</summary>
+    /// <summary>Every reader of the web API can tell an imported turn from a live post.</summary>
     [Fact]
     public async Task Row42_AC3_an_import_reports_imported_true_and_a_live_post_false_on_the_response_and_the_read()
     {

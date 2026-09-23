@@ -5,9 +5,9 @@ using Microsoft.Data.Sqlite;
 namespace ChopItUp.Hub.Tests;
 
 /// <summary>The composition <c>tools/Invoke-M2DryRun.ps1</c> proves at full scale (10,000 messages,
-/// 500 left in the write-ahead log) against the real, built hub — covered here at a size
+/// 500 left in the write-ahead log) against the real, built hub, covered here at a size
 /// <c>dotnet test</c> can afford, through the SAME <c>ChopItUp.Corpus</c> builder so the script and
-/// the ordinary test run cannot drift (pass 2, MAJOR-9 part 2).</summary>
+/// the ordinary test run cannot drift.</summary>
 public sealed class DryRunTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_dryruntest_" + Guid.NewGuid().ToString("N"));

@@ -13,7 +13,7 @@ interface Props {
 const DIRECTORY_HINT =
   'Leave blank and the hub creates a folder under its rooms root. Or type an absolute path such as C:\\Projects\\thing: it becomes a git repository, or is adopted if it already is one. Drive roots, your profile folder itself, C:\\Self Apps, the hub\'s own folders, credential folders and Windows folders are refused.';
 
-/** One dialog for "new room" and for "bind a directory to a room made before M9": the same directory
+/** One dialog for "new room" and for "bind a directory to an older room without one": the same directory
  *  field, hint and refusal line. The hub's refusal sentences are written for the owner and shown
  *  verbatim; nothing is validated here except emptiness. */
 export default function NewRoomDialog({ mode, room, onClose, onDone }: Props) {

@@ -10,7 +10,7 @@ public sealed class MentionsTests
 {
     private static readonly string[] Ids = ["owner", "claude", "codex", "opus", "sonnet", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "hub"];
 
-    /// <summary>Row 44: what a case's fixture `"turns"` field expects of `LeadingMentions.Turns`/
+    /// <summary>What a case's fixture `"turns"` field expects of `LeadingMentions.Turns`/
     /// `TurnsValue`; absent on a case that asserts nothing about turns.</summary>
     private sealed record TurnsCase(
         [property: JsonPropertyName("token")] string Token,
@@ -27,7 +27,7 @@ public sealed class MentionsTests
     private sealed record MentionCasesFile(string[] Roster, MentionCase[] Cases);
 
     /// <summary>The fixture lives in <c>tests/mention-cases.json</c> at the repo root, shared with the
-    /// TypeScript twin (Task 4). Found the way <c>SpawnPromptTests.GoldenPath</c> finds the repo root:
+    /// TypeScript twin. Found the way <c>SpawnPromptTests.GoldenPath</c> finds the repo root:
     /// walk up from the test assembly to <c>ChopItUp.slnx</c>.</summary>
     private static string FixturePath()
     {
@@ -55,9 +55,8 @@ public sealed class MentionsTests
     {
         Assert.False(string.IsNullOrWhiteSpace(name));
         var m = new Mentions(roster);
-        // Standards S1 (hub F10): the timing bound guards the catastrophic-backtracking canary only
-        // (B1) - applying it to every case made the whole theory flaky under load for no reason the
-        // other 47 cases need.
+        // The timing bound guards the catastrophic-backtracking canary only: applying it to every
+        // case made the whole theory flaky under load for no reason the other 47 cases need.
         var watch = Stopwatch.StartNew();
         var leading = m.Leading(body);
         watch.Stop();

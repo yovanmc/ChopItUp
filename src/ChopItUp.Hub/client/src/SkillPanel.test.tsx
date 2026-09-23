@@ -4,17 +4,17 @@ import SkillPanel from './SkillPanel';
 import { setRoster } from './participants';
 import type { SkillProposal } from './types';
 
-/** M25 task 8 (ticket 08). Approving a skill authorises code the hub will later execute — `RunTools`
- *  resolves `scripts/<gate>.ps1` inside an installed skill and runs it under `pwsh` — so the whole of
- *  the control this milestone ships is that the owner sees every byte before saying yes. These cases
- *  pin exactly that: the text of every file is on the card, expanded, escaped where it is not the
- *  skill's own document, and the decision buttons are off in every state the hub would refuse.
+/** Approving a skill authorises code the hub will later execute (`RunTools` resolves
+ *  `scripts/<gate>.ps1` inside an installed skill and runs it under `pwsh`), so the whole control is
+ *  that the hub owner sees every byte before saying yes. These cases pin exactly that: the text of every
+ *  file is on the card, expanded, escaped where it is not the skill's own document, and the decision
+ *  buttons are off in every state the hub would refuse.
  *
- *  Static markup through `react-dom/server`, the idiom `MemoryPanel.test.tsx` and `RunBar.test.tsx`
- *  already use here: this client has no jsdom and no testing-library, so what these cases prove is
- *  what is RENDERED. What they cannot see is named in the report and in the file's closing comment.
+ *  Static markup through `react-dom/server`, as `MemoryPanel.test.tsx` and `RunBar.test.tsx` do:
+ *  this client has no jsdom and no testing-library, so what these cases prove is what is RENDERED.
+ *  What they cannot see is named in the file's closing comment.
  *
- *  `renderBody` is stubbed for the same reason `MemoryPanel.test.tsx` stubs it — DOMPurify, a real
+ *  `renderBody` is stubbed for the same reason `MemoryPanel.test.tsx` stubs it: DOMPurify, a real
  *  `document` and a TreeWalker are the one part of this card that genuinely needs a browser. The stub
  *  marks its output so the SKILL.md-vs-everything-else split can be asserted without asserting
  *  anything about markdown itself. */
@@ -123,7 +123,7 @@ describe('SkillPanel: what the owner is shown before approving executable code (
     expect(html).toContain('Body text.');
     expect(html).toContain('Write-Host');
     expect(html).toContain('exit 0');
-    // Disclosure IS the control: a card that hides the code behind a twisty defeats the milestone.
+    // Disclosure IS the control: a card that hides the code behind a twisty defeats it.
     expect(html).not.toContain('<details');
     expect(html).not.toContain('<summary');
   });
@@ -138,13 +138,12 @@ describe('SkillPanel: what the owner is shown before approving executable code (
     expect(pre).toContain('Write-Host');
   });
 
-  /* Measured against the real `renderBody` in a browser, 2026-09-09: `---\nname: demo\ngates: x\n---\n
+  /* Measured against the real `renderBody` in a browser: `---\nname: demo\ngates: x\n---\n
      <!-- comment -->\n[docs](https://evil.example/payload)` renders to
-     `<hr><h2>name: demo<br>gates: x</h2><p><a href="https://evil.example/payload">docs</a></p>` — the
+     `<hr><h2>name: demo<br>gates: x</h2><p><a href="https://evil.example/payload">docs</a></p>`: the
      comment is GONE and the href is invisible. SKILL.md is the file whose text is rendered into every
      spawn of an exchange the skill roots, so markdown alone shows the owner strictly less than the
-     model receives, and "the owner is shown every byte" (D7) would be false. The plan requires the
-     sanitised render, so the card does both: the readable document, then its literal bytes. */
+     model receives. The card does both: the sanitised readable document, then its literal bytes. */
   test('SKILL.md shows its literal bytes as well, since markdown hides some of them', () => {
     const html = render({
       ...BASE,
@@ -222,12 +221,12 @@ describe('SkillPanel: the states the hub can refuse (M25 AC4, AC7, AC8)', () => 
     expect(buttonWith(html, 'Reject')).toBeUndefined();
   });
 
-  /* Branch review, AC8. The hub finishes an approved-but-uninstalled row by hashing the INSTALLED
-     tree, before it reads the source at all, so it marks such a row approvable even when the source
-     has since gone (`SkillsApi.IsApprovable`). The banners the card shows for the two source flags
-     both end "Reject it and propose it again" — and on a retry row the Reject button is hidden,
-     because `Reject` only acts from Pending. That sentence therefore sent the owner nowhere on the
-     one row that could still be finished with a click. */
+  /* The hub finishes an approved-but-uninstalled row by hashing the INSTALLED tree, before it reads
+     the source at all, so it marks such a row approvable even when the source has since gone
+     (`SkillsApi.IsApprovable`). The banners the card shows for the two source flags both end "Reject
+     it and propose it again", and on a retry row the Reject button is hidden, because `Reject` only
+     acts from Pending. That sentence would send the owner nowhere on the one row that could still be
+     finished with a click. */
   const ALREADY_INSTALLED: SkillProposal = {
     ...BASE,
     status: 'approved',
@@ -293,7 +292,7 @@ describe('SkillPanel: no owner token (D2)', () => {
   test('the card is readable, cannot decide, and says how to fix that', () => {
     const html = render(BASE, { hasToken: false });
 
-    // Still the whole disclosure: reading a proposal needs no credential (D1 keeps GET open).
+    // Still the whole disclosure: reading a proposal needs no credential (GET stays open).
     expect(html).toContain('Body text.');
     expect(html).toContain('Write-Host');
     expect(buttonWith(html, 'Approve')).toContain('disabled');
@@ -311,9 +310,9 @@ describe('SkillPanel: no owner token (D2)', () => {
   });
 });
 
-/* Not covered here, and deliberately so — this suite renders static markup in node, with no DOM:
-   - the hub-note refresh wiring in App.tsx (lesson M9: a JSDOM test cannot see it either);
-   - that a click actually calls the endpoint with `Authorization: Bearer …` (lesson M23's UI gate);
+/* Not covered here, deliberately: this suite renders static markup in node, with no DOM:
+   - the hub-note refresh wiring in App.tsx (a JSDOM test cannot see it either);
+   - that a click actually calls the endpoint with `Authorization: Bearer …` (needs the UI gate);
    - the localStorage round trip in ownerToken.ts (no `window` in this environment);
-   - anything in styles.css, which vitest stubs to an empty string — including whether a 32,000-char
+   - anything in styles.css, which vitest stubs to an empty string, including whether a 32,000-char
      SKILL.md scrolls inside the card rather than pushing the buttons off screen. */

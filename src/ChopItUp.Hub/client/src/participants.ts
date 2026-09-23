@@ -7,9 +7,9 @@ let mention: RegExp | null = null;
 let reference: RegExp | null = null;
 
 /** Client-side twins of `ChopDb.OwnerParticipantId` and `ChopDb.OwnerRemoteParticipantId`. Two rows of
- *  kind `human` since schema v7: the owner at the desk, and the owner's hand on another device (grill
- *  ledger D3). They are the same person — same accent, same `mine` styling in the thread — but the
- *  transcript is supposed to show which hand typed, so name and badge must differ. */
+ *  kind `human`: the hub owner at the desk, and the hub owner's hand on another device. They are the same
+ *  person (same accent, same `mine` styling in the thread), but the transcript is supposed to show
+ *  which hand typed, so name and badge must differ. */
 export const OWNER_ID = 'owner';
 export const OWNER_REMOTE_ID = 'owner-remote';
 
@@ -25,8 +25,8 @@ export function setRoster(list: Participant[]): void {
   const alternation = mentionable.map((p) => escape(p.id)).join('|');
   mention = mentionable.length === 0 ? null : new RegExp(`@(${alternation})(?!\\.?[\\w-])`, 'gi');
   // The reference reader adds the lookbehind `Mentions.Find` has and the highlighter deliberately
-  // lacks: `me@opus writes` decorates in the thread but names nobody, and the two readers of row 43
-  // have to answer that body the same way.
+  // lacks: `me@opus writes` decorates in the thread but names nobody, and the two readers have to
+  // answer that body the same way.
   reference = mentionable.length === 0 ? null : new RegExp(`(?<![\\w-])@(${alternation})(?!\\.?[\\w-])`, 'gi');
 }
 
@@ -37,7 +37,7 @@ function escape(id: string): string {
 
 /** `null` before the roster has loaded: nothing is decorated rather than something wrong. The
  *  lookahead `(?!\.?[\w-])` rejects `@gpt-5.5-x` and `@gpt-5.5.x` (an id continues) but accepts
- *  `@opus.` and `@claude,` (a sentence ends) — the old `\b` accepted the trailing period and so must
+ *  `@opus.` and `@claude,` (a sentence ends): a plain `\b` accepts the trailing period, and so must
  *  this. Callers reset `lastIndex`. */
 export function mentionPattern(): RegExp | null {
   return mention;
@@ -57,10 +57,10 @@ const PHASE = /^phase:[ \t]+(plan|build|critique|verify|ping)(?:\/[a-z0-9][a-z0-
 // Sticky (`y`) is `\G`'s twin; `u` is what makes `\p{L}`/`\p{N}` work. Classes are spelled out in ASCII
 // on purpose: `\w`/`\s` mean different things to V8 and to .NET, and the two readers must agree.
 const TOKEN = /[ \t\r\n\f\v,:;]*@([A-Za-z0-9][A-Za-z0-9_.-]*)(?![\p{L}\p{N}_.-])/uy;
-// Row 44: `turns:` inside the leading run, read in the same sticky walk as TOKEN. Twin of
-// Mentions.Turns: once `turns:` is found the token always matches, capturing the digits and any junk
-// glued to them, so a malformed value is refused rather than left unmatched — an unmatched token used
-// to break the walk where it stood, losing every mention after it (and, at position 0, all of them).
+// `turns:` inside the leading run, read in the same sticky walk as TOKEN. Twin of Mentions.Turns:
+// once `turns:` is found the token always matches, capturing the digits and any junk glued to them,
+// so a malformed value is refused rather than left unmatched. An unmatched token would break the
+// walk where it stood, losing every mention after it (and, at position 0, all of them).
 const TURNS = /[ \t\r\n\f\v,:;]*[Tt][Uu][Rr][Nn][Ss]:[ \t]*([0-9]*)([A-Za-z0-9_.-]*)/y;
 export const MAX_TURNS = 16;
 
@@ -74,7 +74,7 @@ export function isContinueDraft(draft: string): boolean {
   return slash !== null && slash[1] === CONTINUE_NAME;
 }
 
-/** Twin of `Mentions.Leading` (Core, row 43) — keep the two in step through tests/mention-cases.json.
+/** Twin of `Mentions.Leading` (Core): keep the two in step through tests/mention-cases.json.
  *  Only the run of @word tokens at the start of the draft, after an optional `/skill` or `phase:`
  *  token, addresses anyone; a roster id anywhere else is a reference. */
 export function recipientsOf(draft: string): Recipients {
@@ -136,8 +136,8 @@ export function hostOf(authorId: string): string {
 }
 
 /** "You" is the owner's own row and nothing else. The remote hand keeps the roster's own label
- *  ("Owner (remote)"), because a post made from the phone rendered as "You" is exactly the thing D3
- *  says the room must not do. */
+ *  ("Owner (remote)"), because a post made from the phone rendered as "You" is exactly what the room
+ *  must not show. */
 export function displayName(authorId: string): string {
   const p = roster.get(authorId.toLowerCase());
   if (!p) return authorId;

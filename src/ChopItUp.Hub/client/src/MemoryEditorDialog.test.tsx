@@ -16,11 +16,11 @@ import {
 import RoomHeader from './RoomHeader';
 import type { MemoryEditResult, MemoryFile, MemoryFileText, MemoryPreview, Room } from './types';
 
-/** Row 40, task 3. The dialog is the only door into the memory files from a phone, so what
- *  these cases bind is the part a naive build gets wrong: that Save is unreachable in exactly the
- *  states the hub would refuse (a spawn in flight, no owner token, over the cap), that the count on
- *  screen is the hub's composed size rather than the textarea's length, and that a refused save says
- *  the hub's own sentence instead of a dialect of it.
+/** The dialog is the only door into the memory files from a phone, so what these cases bind is
+ *  the part a naive build gets wrong: that Save is unreachable in exactly the states the hub would
+ *  refuse (a spawn in flight, no owner token, over the cap), that the count on screen is the hub's
+ *  composed size rather than the textarea's length, and that a refused save says the hub's own
+ *  sentence instead of a dialect of it.
  *
  *  `renderToStaticMarkup` and a recording `fetch`, like `RolesDialog.test.tsx`: this client has no
  *  jsdom, so rendering IS the proof it renders, effects do not run here, and the effectful halves
@@ -142,8 +142,8 @@ describe('what the picker offers', () => {
   });
 });
 
-/** LESSON M25: a server-side rule that gates a button is part of the state machine, so the states the
- *  hub refuses have to be visible here and the way out of each has to stay reachable. */
+/** A server-side rule that gates a button is part of the state machine, so the states the hub
+ *  refuses have to be visible here and the way out of each has to stay reachable. */
 describe('the states Save is unreachable in', () => {
   test('a clean file cannot be saved, and an edited one can', () => {
     const clean = render();
@@ -221,8 +221,8 @@ describe('what a stray dismiss does to unsaved text', () => {
   });
 });
 
-/** AC7: the cap is enforced on the composed file — the marker line and every carried approval record
- *  included — so a count taken from the textarea would promise room the hub does not have. */
+/** The cap is enforced on the composed file (the marker line and every carried approval record
+ *  included), so a count taken from the textarea would promise room the hub does not have. */
 describe('which number the count line shows', () => {
   const under: MemoryPreview = { slug: 'core', chars: 5120, cap: 6000, over: false };
   const over: MemoryPreview = { slug: 'core', chars: 6120, cap: 6000, over: true };
@@ -293,8 +293,8 @@ describe('what the status line says after a save', () => {
 
 /** The transport half. `saveEdit` is what the Save button runs, so driving it through the recording
  *  fetch is what proves the PUT carries the base hash it was read with and an owner bearer, and that
- *  every refusal arrives as the hub's own sentence (row 28's wording, prefixed with what did not
- *  happen — exactly as `RolesDialog.saveStanding` does it). */
+ *  every refusal arrives as the hub's own sentence, prefixed with what did not happen, exactly as
+ *  `RolesDialog.saveStanding` does it. */
 describe('what a save sends and what a refusal says', () => {
   function record(): { events: string[]; hooks: EditHooks } {
     const events: string[] = [];
@@ -356,7 +356,7 @@ describe('what a save sends and what a refusal says', () => {
   });
 });
 
-/** R9: the door is a header button beside `Roles`, not an eighth button called `Memory` next to
+/** The door is a header button beside `Roles`, not an eighth button called `Memory` next to
  *  `Import memory`. */
 describe('the way in', () => {
   test('the room header renders an Edit memory button', () => {

@@ -7,8 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Task 6a: <c>GET /api/skills</c>. Fixture skills are synthetic (D-g: no third-party skill
-/// text may enter the repo).</summary>
+/// <summary><c>GET /api/skills</c>. Fixture skills are synthetic (no third-party skill text may enter
+/// the repo).</summary>
 public sealed class SkillsApiTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skillsapi_" + Guid.NewGuid().ToString("N"));
@@ -65,7 +65,7 @@ public sealed class SkillsApiTests : IAsyncLifetime
         foreach (var row in rows)
         {
             var fields = row.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray();
-            Assert.Equal(new[] { "chars", "description", "isRun", "name", "title" }, fields);   // SkillSummary, no others (M-5, +isRun row 19)
+            Assert.Equal(new[] { "chars", "description", "isRun", "name", "title" }, fields);   // SkillSummary, no others
         }
 
         var alpha = rows.Single(r => r.GetProperty("name").GetString() == "alpha");

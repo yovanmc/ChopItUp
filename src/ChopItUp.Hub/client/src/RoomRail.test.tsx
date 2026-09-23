@@ -3,10 +3,10 @@ import { describe, expect, test } from 'vitest';
 import RoomRail from './RoomRail';
 import type { Room } from './types';
 
-/** Row 28, AC5's second half. `markRead` is a background write, so its refusal is silent by design —
- *  which leaves the owner looking at unread badges that never clear, with nothing on screen saying
- *  why. This is the line that says why, and the affordance that gets him to the paste field: without
- *  it the suite would go green while the product quietly told him the wrong number.
+/** `markRead` is a background write, so its refusal is silent by design, which leaves the hub owner
+ *  looking at unread badges that never clear, with nothing on screen saying why. This is the line
+ *  that says why, and the affordance that gets him to the paste field: without it the suite would go
+ *  green while the product quietly told him the wrong number.
  *
  *  Static markup through `react-dom/server`, like `ExchangeBar.test.tsx` and `RunBar.test.tsx`: this
  *  client has no jsdom, and presence plus wording is the whole of what is claimed here. */

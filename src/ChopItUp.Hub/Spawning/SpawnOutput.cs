@@ -4,8 +4,8 @@ namespace ChopItUp.Hub.Spawning;
 
 public sealed record ShellCommand(string Command, bool Denied);
 
-/// <summary>Reads the two CLIs' structured stdout for the one thing the trail needs (M9 decision 6):
-/// which shell commands the model ran. Shapes measured 2026-09-06 (plan claims 23, 24): Claude
+/// <summary>Reads the two CLIs' structured stdout for the one thing the trail needs: which shell
+/// commands the model ran. Shapes measured: Claude
 /// `--output-format stream-json` emits one JSON object per line, Bash calls as
 /// <c>{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_…","name":"Bash","input":{"command":"…"}}]}}</c>
 /// and a final <c>{"type":"result",…,"result":"…","permission_denials":[{"tool_use_id":"…",…}]}</c>;
@@ -72,8 +72,8 @@ public static class SpawnOutput
     }
 
     /// <summary>The model's final text from Claude stdout: the <c>result</c> string of a single JSON
-    /// object (`--output-format json`, M5) or of the last <c>type: result</c> line of a stream
-    /// (`stream-json`, M9). Null when neither is there.</summary>
+    /// object (`--output-format json`) or of the last <c>type: result</c> line of a stream
+    /// (`stream-json`). Null when neither is there.</summary>
     public static string? ClaudeFinalText(string stdout)
     {
         if (string.IsNullOrWhiteSpace(stdout)) return null;

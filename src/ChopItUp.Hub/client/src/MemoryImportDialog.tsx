@@ -15,7 +15,7 @@ const HINT: Record<MemorySource, string> = {
   codex: 'Codex keeps its memory under ~\\.codex\\memories\\. Each heading becomes a proposal; MEMORY.md is skipped.',
 };
 
-/** Seeds the shared memory from a vendor's own store (D15). Nothing is written to memory here: every
+/** Seeds the shared memory from a vendor's own store. Nothing is written to memory here: every
  *  file or section becomes a PENDING proposal, authored as the vendor's app row, for the owner to
  *  approve in the panel. The path is typed by the owner; the hub only reads top-level markdown. */
 export default function MemoryImportDialog({ roomId, roomName, onClose, onImported }: Props) {

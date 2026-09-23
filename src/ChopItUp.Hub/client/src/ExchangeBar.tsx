@@ -9,14 +9,14 @@ interface ExchangeBarProps {
   runStoppable: boolean;
   /** The room stop in flight: the only stop a hub without `exchanges` offers, shared with `RunBar`. */
   stopping: boolean;
-  /** Row 34: the roots whose own stop is in flight. Per root, so pressing one strip greys that strip
+  /** The roots whose own stop is in flight. Per root, so pressing one strip greys that strip
    *  and leaves its neighbours pressable. */
   stoppingRoots: ReadonlySet<number>;
-  /** Row 44: the roots whose `/continue` post is in flight, the twin of `stoppingRoots` above. */
+  /** The roots whose `/continue` post is in flight, the twin of `stoppingRoots` above. */
   continuingRoots: ReadonlySet<number>;
   /** A strip's root, or `null` for the room stop an older hub's single strip presses. */
   onStop: (root: number | null) => void;
-  /** Row 44: the root to continue. Always a root — a strip with none offers no Continue. */
+  /** The root to continue. Always a root: a strip with none offers no Continue. */
   onContinue: (root: number) => void;
 }
 
@@ -45,23 +45,23 @@ const OUTCOME: Record<ExchangeSnapshot['status'], string> = {
   idle: 'Exchange over',
   open: 'Exchange running',
   concluded: 'Exchange concluded',
-  /** Deliberately neutral: it is what a stop with no cause on the wire reads as, and the only stop
-   *  that has no cause is one this client cannot attribute (a pre-row-27 hub). Attribution lives in
-   *  `STOPPED_BY` below — blaming the owner by default is the defect row 27 closes. */
+  /** Deliberately neutral: the only stop with no cause on the wire is one this client cannot
+   *  attribute (an older hub). Attribution lives in `STOPPED_BY` below, so the hub owner is never
+   *  blamed by default. */
   stopped: 'Exchange stopped',
   superseded: 'Superseded',
 };
 
-/** Row 27, AC4: who stopped it. A run parks itself on a cap the owner never touched, and the note in
- *  the transcript says so, so the marker must not tell him he did it.
+/** Who stopped it. A run parks itself on a cap the hub owner never touched, and the note in the
+ *  transcript says so, so the marker must not tell him he did it.
  *
- *  Total over the cause union on purpose (the `OUTCOME` trick, one type down): a cause added to the
- *  hub's `ExchangeStopCause` and mirrored into `ExchangeSnapshot['stoppedBy']` without a label here
- *  fails `npm run typecheck` rather than rendering as `undefined` in the one state nobody tested.
+ *  Total over the cause union on purpose: a cause added to the hub's `ExchangeStopCause` and
+ *  mirrored into `ExchangeSnapshot['stoppedBy']` without a label here fails `npm run typecheck`
+ *  rather than rendering as `undefined`.
  *
  *  The run arm names the run and stops there. `RunBar` sits directly above this strip and already
  *  leads with "Run parked · <reason>" or "Run finished", so repeating the reason here would say the
- *  same thing twice in two lines the owner reads as one. */
+ *  same thing twice. */
 const STOPPED_BY: Record<NonNullable<ExchangeSnapshot['stoppedBy']>, string> = {
   owner: 'Stopped by you',
   run: 'Stopped by the run',
@@ -103,22 +103,20 @@ function WorkingChip({ id, startedAt, connected }: { id: string; startedAt?: str
   );
 }
 
-/** One compact strip above the composer, and nothing at all when the room is idle: a room that has
- *  never run an exchange should look exactly as it did before this row shipped.
+/** One compact strip above the composer, and nothing at all when the room is idle.
  *
- *  `inFlight` is the ROOM's live spawns, not the current exchange's — a superseded exchange can still
- *  have a process talking — so the working chips and the Stop button are driven by `inFlight` rather
+ *  `inFlight` is the ROOM's live spawns, not the current exchange's (a superseded exchange can still
+ *  have a process talking), so the working chips and the Stop button are driven by `inFlight` rather
  *  than by `status`. That is why Stop survives `superseded`: there is still something to stop.
  *
  *  Idle is the only state that hides the bar outright. It is the zero state (seq 0, nothing has ever
  *  run) and a room never returns to it, so nothing live can be hidden behind that branch.
  *
- *  Row 34: a hub that sends `exchanges` gets one strip per entry, in the hub's order (a reopened
- *  exchange last), each on its own fields and its own stop; the strips are siblings rather than a
- *  wrapped list, so each keeps the `.exchange`
- *  row it always had and the stack reads like `RunBar` above it. That hub sends an empty list exactly
- *  when its top level is idle, so the empty case falls through to the idle branch below. A hub
- *  without `exchanges` renders the one top-level strip with the room stop, as before. */
+ *  A hub that sends `exchanges` gets one strip per entry, in the hub's order (a reopened exchange
+ *  last), each on its own fields and its own stop. The strips are siblings rather than a wrapped
+ *  list, so each keeps its `.exchange` row and the stack reads like `RunBar` above it. That hub sends
+ *  an empty list exactly when its top level is idle, so the empty case falls through to the idle
+ *  branch below. A hub without `exchanges` renders the one top-level strip with the room stop. */
 function ExchangeBar({ exchange, connected = true, runStoppable, stopping, stoppingRoots, continuingRoots, onStop, onContinue }: ExchangeBarProps) {
   const views = exchange?.exchanges ?? [];
   if (views.length > 0) {
@@ -142,7 +140,7 @@ function ExchangeBar({ exchange, connected = true, runStoppable, stopping, stopp
   }
 
   if (exchange === null || exchange.status === 'idle') return null;
-  /** Row 44: the top-level strip continues its own root. A snapshot with no root has nothing for the
+  /** The top-level strip continues its own root. A snapshot with no root has nothing for the
    *  `/continue` post to reply to, so that strip offers no Continue however the hub marked it. */
   const root = exchange.rootMessageId;
   return strip(root === null ? { ...exchange, continuable: false } : exchange, {
@@ -173,12 +171,11 @@ function strip(
   /** The cause only speaks for a `stopped` exchange: a superseded one carries whatever cause its
    *  last stop left behind, and "Superseded" is still the truer word for it. */
   const marker = status === 'stopped' && stoppedBy !== null ? STOPPED_BY[stoppedBy] : OUTCOME[status];
-  /** Row 22: one control per stop. `onStop` here and the run strip's button hit the same endpoint,
-   *  and that endpoint ends the RUN whenever there is a live one — so while a run is `active` or
-   *  `parked` this button would be a second, worse-labelled copy of `RunBar`'s. It yields for exactly
-   *  as long as that run lives; once it has `ended` the gate is the old one again, because an
-   *  exchange with a spawn still talking is still worth stopping on its own. The per-exchange stop
-   *  (row 34) yields the same way: its endpoint refuses with 409 while a run owns the room. */
+  /** One control per stop. `onStop` here and the run strip's button hit the same endpoint, and that
+   *  endpoint ends the RUN whenever there is a live one, so while a run is `active` or `parked` this
+   *  button would duplicate `RunBar`'s. It yields for as long as that run lives. Once it has `ended`,
+   *  an exchange with a spawn still talking is worth stopping on its own. The per-exchange stop
+   *  yields the same way: its endpoint refuses with 409 while a run owns the room. */
   const stoppable = !runStoppable && (open || inFlight.length > 0);
 
   /** Rendered in the lead while the exchange is open and in the tail after it closed, so a spawn that
@@ -215,10 +212,10 @@ function strip(
         ) : (
           working
         )}
-        {/* Row 44 (D-e/AC5): whether this exchange can be continued is the hub's decision, sent as
-            `continuable`; the client honours only the run gate its Stop already honours, so the two
-            controls never disagree about who owns the room. Explicitly `=== true` because a hub older
-            than this row sends no field, and that hub would refuse the post. */}
+        {/* Whether this exchange can be continued is the hub's decision, sent as `continuable`; the
+            client honours only the run gate its Stop already honours, so the two controls never
+            disagree about who owns the room. Explicitly `=== true` because an older hub sends no
+            field, and that hub would refuse the post. */}
         {continuable === true && !runStoppable && (
           <button
             type="button"

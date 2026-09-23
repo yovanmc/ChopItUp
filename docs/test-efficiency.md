@@ -28,7 +28,7 @@ pwsh -NoProfile -File tools/Measure-TestTimings.ps1 -ResultsDirectory $results
 
 The JSON report records each suite's elapsed interval, slowest individual tests and fixture phase distributions. Concurrent durations overlap: their sum is not wall time. Compare matched commands and machine load; one faster run does not establish a percentage saving.
 
-## Coverage decisions, September 2026
+## Coverage decisions
 
 | Change | Coverage preserved |
 | --- | --- |
@@ -40,4 +40,4 @@ The JSON report records each suite's elapsed interval, slowest individual tests 
 
 Tests with distinct inputs, authentication boundaries, persisted state or process integration remain separate. Lower test counts are not the objective; retained failure detection is. Deployment path coverage adds forward-slash variants and rejects ambiguous/root paths before any writes. Normalize paths before both process guards and containment checks; keep the sibling-prefix guard, data-preservation assertions and restoration checks.
 
-These changes affect the test harness and repository deployment helper. No application binary or installed UI behavior changes; the helper is exercised against synthetic install directories, including a running scratch executable, without touching a live installation.
+The deployment helper is exercised against synthetic install directories, including a running scratch executable, without touching a live installation.

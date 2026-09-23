@@ -11,18 +11,18 @@ using Microsoft.Web.WebView2.Wpf;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12 T4: the chromeless shell window. WindowChrome contributes only the resize border
-/// and the maximize clamp; the WebView2 is the single child and the page inside it draws the only
-/// visible chrome (Task 7's <c>ChromeBar</c>, or <see cref="BootPage"/> before the client loads).
+/// <summary>The chromeless shell window. WindowChrome contributes only the resize border and the
+/// maximize clamp; the WebView2 is the single child and the page inside it draws the only visible
+/// chrome (the client's <c>ChromeBar</c>, or <see cref="BootPage"/> before the client loads).
 ///
 /// Three things happen here that nothing else can do:
-/// navigation is locked to the hub origin (B5) — everything else opens in the default browser;
+/// navigation is locked to the hub origin, and everything else opens in the default browser;
 /// the launch-scoped owner bearer is registered as a per-document script on that origin, and only
-/// when this shell started the hub (B2); and the window hides instead of closing (AC4).
+/// when this shell started the hub; and the window hides instead of closing.
 ///
-/// Untestable by construction — it needs an STA thread, a real WebView2 and a real hub — which is why
+/// Untestable by construction (it needs an STA thread, a real WebView2 and a real hub), which is why
 /// every piece that can be pure is pure: <see cref="BootPage"/>, <see cref="OwnerTokenScript"/> and
-/// Task 5's <c>HostBridge</c> are all tested without a window.</summary>
+/// <c>HostBridge</c> are all tested without a window.</summary>
 public partial class MainWindow : System.Windows.Window, IHostActions
 {
     private readonly ShellArgs _args;
@@ -56,7 +56,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
         // the data dir, NOT inside data\ beside chopitup.db and tokens.json.
         Web.CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = _args.WebViewProfileDir };
 
-        // Curio spike (i): the OS resize edges do not respond over the WebView2's HWND child. This
+        // Measured: the OS resize edges do not respond over the WebView2's HWND child. This
         // margin is the WPF-owned strip they hit-test against. Kept in step by OnStateChanged.
         Web.Margin = new Thickness(6);
 
@@ -79,7 +79,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
             await Web.EnsureCoreWebView2Async();
             var core = Web.CoreWebView2;
 
-            // Route A (Curio spike (i)): this is what turns the page's `app-region: drag` row into OS
+            // This is what turns the page's `app-region: drag` row into OS
             // caption behaviour. It takes effect on the NEXT navigation, so it must be set before the
             // boot page loads. Its own try/catch: losing drag is a degraded window, not a dead one —
             // the page's buttons still work and the owner can still resize and quit.
@@ -100,7 +100,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
             core.NavigationCompleted += (_, a) => _log.Append($"NAV {a.IsSuccess} {core.Source}");
             core.NewWindowRequested += (_, a) =>
             {
-                // B5: a link in a message that asks for a new window is a link, not a second shell.
+                // A link in a message that asks for a new window is a link, not a second shell.
                 a.Handled = true;
                 OpenExternal(a.Uri);
             };
@@ -128,7 +128,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     /// <summary>Called by App's <c>hub.StatusChanged</c> subscriber after it hops to the UI thread
     /// (StatusChanged fires on a pool thread), and once by <see cref="OnLoaded"/>. Same whole-body
     /// guard as OnLoaded: a COMException from a WebView2 whose browser process died would otherwise
-    /// take the shell down from inside an event handler (pass 2, finding 8).</summary>
+    /// take the shell down from inside an event handler.</summary>
     public async void OnHubStatus(HubStatus status)
     {
         try
@@ -163,8 +163,8 @@ public partial class MainWindow : System.Windows.Window, IHostActions
             case HubState.Attached:
                 if (_navigated) return;
                 _navigated = true;
-                // B2: the shell did not start this hub and holds no credential for it. Nothing is
-                // injected and the page shows its paste flow.
+                // The shell did not start this hub and holds no credential for it. Nothing is injected
+                // and the page shows its paste flow.
                 _log.Append($"NAVIGATE {_hub.ResolvedOrigin} attached token=no");
                 core.Navigate(_hub.ResolvedOrigin.ToString());
                 return;
@@ -197,7 +197,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
         System.Windows.Application.Current?.Shutdown(4);
     }
 
-    // ===== navigation lock (B5) ==============================================================
+    // ===== navigation lock ===================================================================
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
@@ -231,10 +231,10 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     private static string Describe(string uri) =>
         uri.Length <= 48 ? uri : string.Concat(uri.AsSpan(0, 48), "...");
 
-    // ===== page <-> host bridge (Task 5) =====================================================
+    // ===== page <-> host bridge ==============================================================
 
     /// <summary>Trust-checks with <see cref="HostBridge.IsTrusted"/> before touching the message at
-    /// all (B5/B8: only the hub origin, or the boot page carrying this launch's nonce), then dispatches
+    /// all (only the hub origin, or the boot page carrying this launch's nonce), then dispatches
     /// through the pure <see cref="HostBridge.Handle"/> and posts its reply back, followed by a fresh
     /// state event so a toggleMaximize's own glyph update does not have to wait for OnStateChanged.</summary>
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -269,8 +269,8 @@ public partial class MainWindow : System.Windows.Window, IHostActions
 
     // ===== window lifetime ===================================================================
 
-    /// <summary>AC4: Close hides. The hub, the tray icon and this window's bounds all survive; only
-    /// Quit (which sets <see cref="App.Quitting"/>) lets the window actually close.</summary>
+    /// <summary>Close hides. The hub, the tray icon and this window's bounds all survive; only Quit
+    /// (which sets <see cref="App.Quitting"/>) lets the window actually close.</summary>
     protected override void OnClosing(CancelEventArgs e)
     {
         base.OnClosing(e);
@@ -280,7 +280,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
         _log.Append("HIDE");
     }
 
-    /// <summary>Open, from the tray menu, a tray double-click, or a second launch (B6).</summary>
+    /// <summary>Open, from the tray menu, a tray double-click, or a second launch.</summary>
     public void ShowAndActivate()
     {
         Show();
@@ -319,7 +319,7 @@ public partial class MainWindow : System.Windows.Window, IHostActions
     });
 
     // ===== frameless-chrome plumbing =========================================================
-    // Copied from Curio.Shell/MainWindow.xaml.cs (rows 126/142), the proven shape on this machine.
+    // Same shape as Curio.Shell/MainWindow.xaml.cs, proven on this machine.
 
     /// <summary>Clamp the maximized frameless window to the monitor WORK area. A
     /// <c>WindowStyle=None</c> window maximizes to the full MONITOR rect and then overhangs by the
@@ -388,10 +388,10 @@ public partial class MainWindow : System.Windows.Window, IHostActions
         return IntPtr.Zero;
     }
 
-    /// <summary>AC7: 6 px of WPF-owned border while not maximized so the OS resize-border logic has
+    /// <summary>6 px of WPF-owned border while not maximized so the OS resize-border logic has
     /// something to hit-test, 0 while maximized (there is nothing to resize into, and a margin there
-    /// would show the desktop through the window's own edges). Task 5 also pushes a state event to the
-    /// page from here so the maximize button flips its glyph.</summary>
+    /// would show the desktop through the window's own edges). Also pushes a state event to the page
+    /// so the maximize button flips its glyph.</summary>
     protected override void OnStateChanged(EventArgs e)
     {
         base.OnStateChanged(e);

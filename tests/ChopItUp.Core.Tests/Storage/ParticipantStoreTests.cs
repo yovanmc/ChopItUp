@@ -128,8 +128,8 @@ public sealed class ParticipantStoreTests : IDisposable
     [Fact]
     public void SetRole_on_claude_returns_false_and_stores_nothing_because_it_is_kind_model_with_a_null_model()
     {
-        // Row 14's named trap: claude and codex are kind 'model' with model = NULL — app-backed
-        // windows the hub never spawns. `kind = 'model'` alone would wrongly accept this id.
+        // The named trap: claude and codex are kind 'model' with model = NULL, app-backed windows
+        // the hub never spawns. `kind = 'model'` alone would wrongly accept this id.
         var store = MakeStore(out _);
 
         Assert.False(store.SetRole("claude", "Should not stick"));
@@ -172,7 +172,7 @@ public sealed class ParticipantStoreTests : IDisposable
     [Fact]
     public void SetRoomRole_with_empty_string_stores_the_suppress_sentinel_not_the_global()
     {
-        // D-b's fourth state: a room can say "no role here" without deleting the override row.
+        // The fourth state: a room can say "no role here" without deleting the override row.
         // A SetRoomRole that turns "" into a DELETE is the defect this test binds.
         var store = MakeStore(out var db);
         MakeRooms(db);

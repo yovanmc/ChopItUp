@@ -17,13 +17,13 @@ import {
 } from './RolesDialog';
 import type { RoleRow, RoomRoles } from './types';
 
-/** Row 14, task 6. The dialog is the owner's only surface for three pieces of prompt text, so what
- *  these cases bind is the part a naive build gets wrong: that all FOUR states of a participant's
- *  role in a room are reachable (D-b), that clearing is reachable at all, and that the row says what
- *  is actually in force rather than leaving the owner to do the precedence by hand.
+/** The dialog is the hub owner's only surface for three pieces of prompt text, so what these cases bind
+ *  is the part a naive build gets wrong: that all four states of a participant's role in a room are
+ *  reachable, that clearing is reachable at all, and that the row says what is actually in force
+ *  rather than leaving the hub owner to do the precedence by hand.
  *
  *  `renderToStaticMarkup` and a recording `fetch`, for the same reason as `App.test.tsx` and
- *  `api.test.ts`: this client has no jsdom, so rendering IS the proof it renders, and the effectful
+ *  `api.test.ts`: this client has no jsdom, so rendering is the proof it renders, and the effectful
  *  half lives outside the component (`saveStanding`) where it can run without a DOM. The one thing
  *  that cannot be proved here is the press itself; the UIA gate covers that. What keeps the two
  *  halves honest is that the editor builds its override controls by mapping `OVERRIDE_OPS`, and the
@@ -49,9 +49,8 @@ function json(body: unknown, status = 200): Response {
 
 afterEach(() => vi.unstubAllGlobals());
 
-/** One row per state of D-b's four-state space, in the order the table in the plan lists them. */
-/** Milestone 51: each fixture also carries what the roster says about the row (model, classes and
- *  the effort its classes earn in a run), exactly as `RolesApi` now sends it. */
+/** One row per state of the four-state space. Each fixture also carries what the roster says about
+ *  the row (model, classes and the effort its classes earn in a run), exactly as `RolesApi` sends it. */
 const PLANNER: RoleRow = {
   id: 'opus',
   displayName: 'Opus',
@@ -138,7 +137,7 @@ describe('what the dialog shows', () => {
   });
 });
 
-/** Milestone 51. Classes decide who a run dispatches to (ExchangePolicy) and what effort a row is
+/** Classes decide who a run dispatches to (ExchangePolicy) and what effort a row is
  *  spawned at (EffortPolicy), and until now the only way to see them was the roster's own SQL. The
  *  dialog shows what the hub sent, read-only: the model name the host is launched with, the class
  *  set, and the effort the classes earn. What these cases bind is honesty at the edges: a row with no
@@ -187,10 +186,9 @@ describe('what the roster says about each row', () => {
   });
 });
 
-/** AC3 is entirely about which text is in force; a dialog showing two textareas makes the owner
- *  work that out by hand. The text shown is the SERVER's `effectiveRole`, never a precedence this
- *  file recomputes — which is why the fixture below carries an `effectiveRole` that matches neither
- *  of its own two fields. */
+/** A dialog showing two textareas makes the hub owner work out which text is in force by hand. The text
+ *  shown is the server's `effectiveRole`, never a precedence this file recomputes, which is why the
+ *  fixture below carries an `effectiveRole` that matches neither of its own two fields. */
 describe('which text is actually in force', () => {
   test('the row renders the server effective role, not a locally derived one', () => {
     const markup = render({
@@ -235,18 +233,17 @@ describe('which text is actually in force', () => {
   });
 });
 
-/** LESSON M25: a server-side rule that gates a button is part of the state machine. Clearing a role
- *  means saving an empty field, so a Save disabled on an empty textarea makes "clear this role"
- *  unreachable — the whole of state 1 of the table, and the only way back out of a typo. */
+/** A server-side rule that gates a button is part of the state machine. Clearing a role means saving
+ *  an empty field, so a Save disabled on an empty textarea makes "clear this role" unreachable: the
+ *  whole of state 1, and the only way back out of a typo. */
 describe('the states the controls have to be reachable in', () => {
   test('nothing is disabled while no save is in flight, empty textareas included', () => {
     expect(render(EMPTY)).not.toContain('disabled');
   });
 
-  // Row 14 review fix 3c: the old name claimed row-scoped disabling, but the assertions never
-  // distinguished that from dialog-wide disabling, and the implementation (RolesDialog.tsx:147,
-  // `const saving = busy !== null`) disables every control regardless of row. The added assertion
-  // below binds that: a control on a DIFFERENT row from the one being saved is disabled too.
+  // The implementation (`const saving = busy !== null`) disables every control regardless of row, so
+  // the added assertion below checks that a control on a different row from the one being saved is
+  // disabled too, not only the pressed row's.
   test('a save in flight disables every control and labels the pressed one Saving', () => {
     const markup = render(ROLES, null, `${PLANNER.id}|global`);
 
@@ -268,10 +265,9 @@ describe('the states the controls have to be reachable in', () => {
   });
 });
 
-/** Row 14 review fix 4b. The note used to say "Saving an empty box clears that text" about all three
- *  kinds of box. It is true of the persona and the global role, and false of the room box, whose Save
- *  posts the suppress sentinel (D-b) rather than deleting the override. The note is the only place the
- *  owner is told which of those two an empty save does, so it has to name both room controls. */
+/** An empty save clears the persona and the global role, but the room box's Save posts the suppress
+ *  sentinel rather than deleting the override. The note is the only place the hub owner is told which of
+ *  those two an empty save does, so it has to name both room controls. */
 describe('what the note promises about an empty save', () => {
   function noteText(markup: string): string {
     const open = markup.indexOf('<p class="dialog-note">');
@@ -291,11 +287,10 @@ describe('what the note promises about an empty save', () => {
   });
 });
 
-/** Row 14 review fix 4a. Every write answers with the room's whole state, and the dialog used to
- *  re-seed all 2N+1 boxes from it, so saving one box silently threw away unsaved text in every other
- *  one. The rule now is that a save re-seeds only the box it saved. `renderToStaticMarkup` runs no
- *  effects, so the seam that can be tested here is the decision itself, lifted out as a pure function
- *  exactly as `saveStanding` lifts out the effectful half of a write. */
+/** Every write answers with the room's whole state; re-seeding all 2N+1 boxes from it would throw away
+ *  unsaved text in every other box, so a save re-seeds only the box it saved. `renderToStaticMarkup`
+ *  runs no effects, so the seam that can be tested here is the decision itself, lifted out as a pure
+ *  function exactly as `saveStanding` lifts out the effectful half of a write. */
 describe('what a save re-seeds', () => {
   const TYPED: Record<string, string> = {
     [PERSONA_KEY]: 'a persona the owner has not saved yet',
@@ -359,7 +354,7 @@ describe('what a save re-seeds', () => {
 
 /** The transport half. The editor hands each op's `role` straight to `api.setRoomRole`, so driving
  *  the same array through the same call is what proves the two controls are not one control with
- *  two labels (D-b, AC's fourth state). */
+ *  two labels. */
 describe('what each control posts', () => {
   test('the persona goes to the room persona route with the typed text', async () => {
     const calls = stubFetch(() => json(ROLES));
@@ -398,15 +393,15 @@ describe('what each control posts', () => {
       bodies.push(String(calls[0]?.init?.body));
     }
 
-    // `role` omitted falls back to the global; `role: ""` stores the suppress sentinel (task 5).
+    // `role` omitted falls back to the global; `role: ""` stores the suppress sentinel.
     expect(bodies).toEqual(['{}', '{"role":""}']);
     expect(bodies[0]).not.toBe(bodies[1]);
   });
 });
 
-/** Row 28's wording, not a second dialect of it: 401/403 get the sentence the rest of the UI uses,
- *  and every other refusal is the hub's own sentence shown verbatim (the hub writes those for the
- *  owner). Both are prefixed with what did not happen, exactly as `App`'s token prompt is. */
+/** The shared refusal wording, not a second dialect of it: 401/403 get the sentence the rest of the UI
+ *  uses, and every other refusal is the hub's own sentence shown verbatim (the hub writes those for
+ *  the hub owner). Both are prefixed with what did not happen, exactly as `App`'s token prompt is. */
 describe('when the hub refuses a save', () => {
   function record(): { events: string[]; hooks: SaveHooks } {
     const events: string[] = [];

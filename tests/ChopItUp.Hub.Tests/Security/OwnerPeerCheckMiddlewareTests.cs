@@ -9,11 +9,10 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Security;
 
-/// <summary>Row 29 Task 3 / issues/03-middleware-check.md: the check inside
-/// <see cref="BearerTokenMiddleware"/> that refuses an owner-class bearer presented from inside a
-/// spawn. <see cref="FakeOwnerPeerCheck"/> answers whatever verdict the test sets, so these tests bind
-/// the middleware's own rule (what it does with a verdict) without needing a real child process — that
-/// is <c>OwnerPeerCheckEndToEndTests</c>'s job (a later task).</summary>
+/// <summary>The check inside <see cref="BearerTokenMiddleware"/> that refuses an owner-class bearer
+/// presented from inside a spawn. <see cref="FakeOwnerPeerCheck"/> answers whatever verdict the test
+/// sets, so these tests bind the middleware's own rule (what it does with a verdict) without needing a
+/// real child process: that is <c>OwnerPeerCheckEndToEndTests</c>'s job.</summary>
 public sealed class OwnerPeerCheckMiddlewareTests
 {
     private sealed class FakeOwnerPeerCheck : IOwnerPeerCheck
@@ -70,8 +69,7 @@ public sealed class OwnerPeerCheckMiddlewareTests
         Assert.Equal(before, after);
     }
 
-    /// <summary>Observed this session (not previously measured — the plan flags this shape as
-    /// unverified): <c>McpClient.CreateAsync</c> against a 403 response throws a
+    /// <summary>Measured: <c>McpClient.CreateAsync</c> against a 403 response throws a
     /// <see cref="System.Net.Http.HttpRequestException"/> whose <c>StatusCode</c> is
     /// <see cref="HttpStatusCode.Forbidden"/> and whose <c>Message</c> embeds the response body,
     /// including <see cref="BearerTokenMiddleware.InsideSpawnError"/> — the underlying

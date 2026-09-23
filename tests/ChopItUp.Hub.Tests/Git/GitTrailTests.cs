@@ -250,7 +250,7 @@ public sealed class GitTrailTests : IDisposable
         Assert.StartsWith("git init exited 128: boom", git.Reason);
     }
 
-    // --- Task 5c (row 19): artifact authorship, from the spawn's whole diff -----------------------
+    // --- Artifact authorship, from the spawn's whole diff ------------------------------------------
 
     [Fact]
     public async Task Run05_ChangedFilesAsync_lists_every_path_across_a_range_where_head_moved_mid_spawn()
@@ -260,8 +260,8 @@ public sealed class GitTrailTests : IDisposable
         var first = await git.CommitAllAsync("first", Owner, allowEmpty: false);
         var headBefore = first.Hash;
 
-        // Simulates a spawn that commits its own work (Codex) BEFORE the hub's own after-commit -
-        // the scenario P4 exists for: authorship must come from the WHOLE range, not the last commit.
+        // Simulates a spawn that commits its own work (Codex) BEFORE the hub's own after-commit:
+        // authorship must come from the WHOLE range, not the last commit.
         File.WriteAllText(Path.Combine(_dir, "b.txt"), "b");
         await git.CommitAllAsync("agent's own commit", Opus, allowEmpty: false);
         File.WriteAllText(Path.Combine(_dir, "c.txt"), "c");
@@ -303,7 +303,7 @@ public sealed class GitTrailTests : IDisposable
         Assert.NotSame(a, trails.For(@"C:\Rooms\other"));
     }
 
-    // --- Row 46: the identity rule, trailers, the merge union ---------------------------------------
+    // --- The identity rule, trailers, the merge union ----------------------------------------------
 
     [Fact]
     public async Task Row46_A1_a_configured_repository_identity_is_author_and_committer_and_the_hub_never_overrides_it()
@@ -401,8 +401,8 @@ public sealed class GitTrailTests : IDisposable
     }
 
     // A raw commit whose message travels on stdin (`-F -`), for a message that itself contains a
-    // literal Co-authored-by trailer this test injects (row 46, interrogation MAJOR 1: only known
-    // trailers survive a merge's union - a self-committing model cannot invent one).
+    // literal Co-authored-by trailer this test injects (only known trailers survive a merge's union:
+    // a self-committing model cannot invent one).
     private static async Task<int> RawCommitViaStdin(string dir, string message)
     {
         var r = await new ProcessRunner().RunAsync(
@@ -495,7 +495,7 @@ public sealed class GitTrailTests : IDisposable
             (await GitOut(_dir + "_owner", "log", "-1", "--format=%an <%ae>|%cn <%ce>")).Trim());
     }
 
-    // --- Row 35: worktree, merge and branch primitives ----------------------------------------------
+    // --- Worktree, merge and branch primitives -----------------------------------------------------
 
     [Fact]
     public async Task Worktree_trail_sees_dirt_and_commits_on_its_branch_without_reinitialising()

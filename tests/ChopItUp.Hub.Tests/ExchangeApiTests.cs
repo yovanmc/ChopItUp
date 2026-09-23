@@ -20,7 +20,7 @@ public sealed class ExchangeApiTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Fast);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -39,7 +39,7 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal(JsonValueKind.Null, idle.GetProperty("rootMessageId").ValueKind);
         Assert.Equal(0, idle.GetProperty("remaining").GetInt32());
         Assert.Equal(HttpStatusCode.Conflict, (await _host.Client.PostAsync("api/rooms/general/exchange/stop", null)).StatusCode);
-        Assert.Equal(JsonValueKind.Null, idle.GetProperty("stoppedBy").ValueKind);   // row 27, task 2: Idle sends null
+        Assert.Equal(JsonValueKind.Null, idle.GetProperty("stoppedBy").ValueKind);   // Idle sends null
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.GetAsync("api/rooms/nope/exchange")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsync("api/rooms/nope/exchange/stop", null)).StatusCode);
     }
@@ -103,10 +103,10 @@ public sealed class ExchangeApiTests : IAsyncLifetime
         Assert.Equal("stopped", (await Get("general")).GetProperty("status").GetString());
     }
 
-    /// <summary>Row 27, task 2: the cause on the wire, run arm. Same hard-cap-park setup as
-    /// SpawnerServiceTests.Runs.cs's Run19_M27_a_hard_cap_park_... test (task 1): a run whose spawn
-    /// cap is spent while its conductor's own exchange is still open, so the park's exchange-stop note
-    /// carries the run cause.</summary>
+    /// <summary>The cause on the wire, run arm. Same hard-cap-park setup as
+    /// SpawnerServiceTests.Runs.cs's Run19_M27_a_hard_cap_park_... test: a run whose spawn cap is spent
+    /// while its conductor's own exchange is still open, so the park's exchange-stop note carries the
+    /// run cause.</summary>
     [Fact]
     public async Task A7_row27_a_run_driven_stop_marks_stoppedBy_run_on_the_wire()
     {

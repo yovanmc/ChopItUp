@@ -5,7 +5,7 @@ namespace ChopItUp.Core.Skills;
 /// a note, and the caller applies the default.</summary>
 public enum TurnsToken { None, Valid, OutOfRange }
 
-/// <summary>Row 44: the reserved `/continue` command (parsed through <see cref="SlashCommands"/> like
+/// <summary>The reserved `/continue` command (parsed through <see cref="SlashCommands"/> like
 /// `/stop`, refused as a skill name by <c>SkillImport</c>) and the ceiling of the `turns: N` token that
 /// <c>Mentions.Leading</c> reads as part of the leading run.</summary>
 public static class ExchangeCommands

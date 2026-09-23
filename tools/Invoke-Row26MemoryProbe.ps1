@@ -1,18 +1,17 @@
 <#
 .SYNOPSIS
-    Row 26 owner probe: does a running Claude Code session actually read an exported
+    Manual probe: does a running Claude Code session actually read an exported
     `autoMemoryDirectory`, filter on `metadata.type`, and honour the vendor's 200-line/25,000-unit
     index cap. Drives the REAL built `ChopItUp.Hub.exe --export-memory` against a fabricated,
     scratch-only 198-entry store, then drives the REAL `claude -p` CLI against the export three (or
     four) times and records what each session says it can see.
 
 .DESCRIPTION
-    See .scratch/m26-memory-probe/brief.md (lite path, row 26). Modelled on
-    tools/Invoke-M24DryRun.ps1: every path is rooted under a fresh $env:TEMP scratch directory with a
-    GUID nonce, `Assert-ScratchOnly` runs before every path this script touches, and every path handed
-    to a child process is `[IO.Path]::TrimEndingDirectorySeparator`-ed first.
+    Same frame as tools/Invoke-M24DryRun.ps1: every path is rooted under a fresh $env:TEMP scratch
+    directory with a GUID nonce, `Assert-ScratchOnly` runs before every path this script touches, and
+    every path handed to a child process is `[IO.Path]::TrimEndingDirectorySeparator`-ed first.
 
-    Deviation from M24, measured this run (see report): `Start-Process -ArgumentList <string[]>` does
+    Unlike M24, measured: `Start-Process -ArgumentList <string[]>` does
     NOT give each array element its own argv slot on this host — it joins the array with spaces into a
     single `ProcessStartInfo.Arguments` string, which the child process's own argv parser then
     re-splits, silently dropping embedded double-quote characters and re-splitting a "one element, has
@@ -26,8 +25,8 @@
     what `-ArgumentList` does with them.
 
     This script does NOT build the hub exe. It only ever touches its own scratch directory, and it
-    never runs `dotnet build` (the brief: never rebuild while a Debug hub might be running) — if the
-    exe is missing it stops with a clear message instead of guessing.
+    never runs `dotnet build` (never rebuild while a Debug hub might be running): if the exe is
+    missing it stops with a clear message instead of guessing.
 
 .PARAMETER KeepEvidence
     Keep the scratch directory (fixture stores, exports, claude stdout/stderr logs, settings files)
@@ -56,7 +55,7 @@ New-Item -ItemType Directory -Path $scratch | Out-Null
 $scratchFull = [IO.Path]::GetFullPath($scratch)
 
 # --- Evidence log: PASS/FAIL lines for what this script controls, INFO lines for measured answers
-# (the brief's own idiom: a nonce being absent is data, not a defect in this script). -----------------
+# (a nonce being absent is data, not a defect in this script). -------------------------------------
 $checkLines = New-Object System.Collections.Generic.List[string]
 $failCount = 0
 
@@ -77,7 +76,7 @@ function Add-Info {
 }
 
 # --- Safety: refuse any path outside this run's own scratch root, and any path with a '.claude'
-# segment, no matter what a caller or a computed value passes in (M24's own guard, same reasoning). ---
+# segment, no matter what a caller or a computed value passes in (the same guard as M24's). -------
 function Assert-ScratchOnly {
     param([Parameter(Mandatory)][string]$Path)
     $full = [IO.Path]::GetFullPath($Path)
@@ -135,7 +134,7 @@ function ConvertTo-ExportSlug {
 function New-Nonce { ([guid]::NewGuid().ToString('N')).Substring(0, 8) }
 
 # --- Builds the source store: 198 live entries across 6 topics (feedback, filler, project,
-# reference, room-general, user -- the brief's exact list), each entry carrying a unique nonce in its
+# reference, room-general, user), each entry carrying a unique nonce in its
 # TITLE (so it lands on the rendered index line) and a DIFFERENT nonce on the second line of its BODY
 # (so it exists only in that entry's exported topic file, never in the index). Zero core entries, so
 # the export's live-entry count is exactly the topic total. Returns the landmark nonces/paths later
@@ -186,9 +185,8 @@ function New-Row26Fixture {
 }
 
 # --- Drives the real hub exe's --export-memory verb. Plain path/flag arguments only (never a value
-# containing a space or a quote), so this mirrors M24's own Start-Process usage directly -- the
-# ConvertTo-Argv escaping this script needed for the claude legs is not needed here, but is applied
-# anyway for uniformity and because it is a no-op on an argument with no space or quote. -------------
+# containing a space or a quote), so ConvertTo-Argv is not needed here, but is applied anyway for
+# uniformity: it is a no-op on an argument with no space or quote. --------------------------------
 function Invoke-HubExport {
     param([Parameter(Mandatory)][string]$DataDir, [Parameter(Mandatory)][string]$TargetDir, [Parameter(Mandatory)][string]$LogTag)
     Assert-ScratchOnly -Path $DataDir
@@ -223,7 +221,7 @@ function Get-ExportResult {
 # strings the prompt gave the session; 'error_seen' is free text or "". ------------------------------
 $schema = '{"type":"object","properties":{"present":{"type":"array","items":{"type":"string"}},"absent":{"type":"array","items":{"type":"string"}},"error_seen":{"type":"string"}},"required":["present","absent","error_seen"]}'
 
-# --- One `claude -p` call. Start-Process (per the brief), redirected stdout/stderr, a real 240 s
+# --- One `claude -p` call. Start-Process, redirected stdout/stderr, a real 240 s
 # timeout enforced with Process.WaitForExit(ms) (Start-Process itself has no timeout parameter) --
 # a hung call is killed rather than left to run past this script's own life. -------------------------
 function Invoke-ClaudeLeg {
@@ -290,8 +288,7 @@ $callCount = 0
 try {
     # =============================================================================================
     # Fixture + export: 198 live entries, exported once (target is Absent, so a plain export is
-    # the only state this needs -- no --force / --accept-new-source machinery from M24 is relevant
-    # to a single clean export).
+    # the only state this needs; no --force / --accept-new-source).
     # =============================================================================================
     $dataDir = Join-Path $scratch 'store\data'
     $fixture = New-Row26Fixture -MemoryDir (Join-Path $dataDir 'memory')
@@ -433,11 +430,11 @@ try {
     Add-Info -Name 'leg3.error-seen' -Detail "$(if ($null -ne $leg3Struct) { $leg3Struct.error_seen } else { '(no structured output)' })"
 
     # =============================================================================================
-    # Leg 4 (conditional, AC5): only if leg 1 reported nothing present at all -- re-runs leg 1's exact
+    # Leg 4 (conditional): only if leg 1 reported nothing present at all -- re-runs leg 1's exact
     # fixture WITHOUT --setting-sources "", to check whether that flag itself was suppressing
-    # auto-memory (one of the two "could not verify" items in the brief). This leg lets the real
-    # user-level settings scope load (cwd is the scratch dir, so project/local scope finds nothing
-    # real); it is still --tools "" and --permission-mode dontAsk, so it cannot act on anything.
+    # auto-memory. This leg lets the real user-level settings scope load (cwd is the scratch dir, so
+    # project/local scope finds nothing real); it is still --tools "" and --permission-mode dontAsk,
+    # so it cannot act on anything.
     # =============================================================================================
     $leg1ReportedNothing = ($leg1Present.Count -eq 0)
     if ($leg1ReportedNothing) {

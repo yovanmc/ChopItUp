@@ -1,29 +1,28 @@
 ﻿# Live verification checks
 
-Moved out of `CLAUDE.md` (row 19, task 15e) to keep that file under its 4 KB contract, which the
-roadmap gate ratchets. `CLAUDE.md` keeps one pointer line to here.
+`CLAUDE.md` keeps one pointer line to here, which keeps it under its 4 KB contract.
 
-These spend real model calls against the owner's Claude/Codex subscriptions. They are
-orchestrator-run, never CI, never automatic. Every script defaults to a fresh directory under
+These spend real model calls against the owner's Claude/Codex subscriptions. They are run by hand,
+never CI, never automatic. Every script defaults to a fresh directory under
 `$env:TEMP`, never touches `C:\Self Apps`, `%USERPROFILE%\ChopItUp` or any real data directory, and
 sweeps its own orphan processes in a `finally` block. Each prints PASS/FAIL per check and ends with
 `Results: n/m PASS`.
 
-Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both orchestrator-run, both spend.
+Spawn check (real CLIs, scratch hub): `pwsh tools\Invoke-M5SpawnCheck.ps1`; CLI contract re-measure: `tools\Probe-SpawnCli.ps1` — both run by hand, both spend.
 Memory check (real Sonnet, scratch hub, spends): `pwsh tools\Invoke-M10MemoryCheck.ps1`.
 Memory v1.1 check (no model calls, scratch hub, drives /mcp itself): `pwsh tools\Invoke-M18MemoryCheck.ps1`.
-Row 23 consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, drives
+Consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, drives
 `propose_rewrite` and the approve path itself): `pwsh tools\Invoke-M23DryRun.ps1`.
-Row 40 editor dry run (no model calls, scratch hub, fabricated corpus, drives the editor routes, the
+Memory editor dry run (no model calls, scratch hub, fabricated corpus, drives the editor routes, the
 trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.ps1`.
-Row 42 inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v13, CLI PATH
+Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v13, CLI PATH
 stripped so an accidental spawn fails loudly, drives the import route and a live control post):
 `pwsh tools\Invoke-Row42ImportCheck.ps1`.
-Continue, the turns token and the synthesis turn (row 44, stub Codex, no model calls): `pwsh tools\Invoke-Row44ContinueCheck.ps1`.
-Git attribution in room commits (row 46, stub Claude and Codex, no model calls): `pwsh tools\Invoke-Row46AttributionCheck.ps1`.
-Row 23 self-check (skill import + `/health` + `/api/skills`, run against the deployed build after
+Continue, the turns token and the synthesis turn (stub Codex, no model calls): `pwsh tools\Invoke-Row44ContinueCheck.ps1`.
+Git attribution in room commits (stub Claude and Codex, no model calls): `pwsh tools\Invoke-Row46AttributionCheck.ps1`.
+Consolidation skill self-check (skill import + `/health` + `/api/skills`, run against the deployed build after
 `--import-skill`, points at a scratch stand-in otherwise): `pwsh tools\Invoke-M23MemoryCheck.ps1`.
-Consolidation skill (row 23), imported with the hub stopped, into the data directory that hub will
+Consolidation skill, imported with the hub stopped, into the data directory that hub will
 use: `dotnet run --project src/ChopItUp.Hub -- --data .data --import-skill tools\skills\consolidate-memory`.
 The owner then posts `/consolidate-memory <topic>` in a room, mentioning a model participant the hub
 permits to file one (a `claude`-hosted model row, or the owner's own `human` row); the proposal it
@@ -37,7 +36,7 @@ backup over the topic file it names, and restart — the approval record on the 
 consolidation stays in `memory_proposals` for the trail, but the file content is exactly what it was
 before that approval.
 
-An editor save (row 40) is a rewrite proposal too, so the same recipe applies, and the save's status
+An editor save is a rewrite proposal too, so the same recipe applies, and the save's status
 line names the `.bak`. With git present prefer `git -C <data>\memory revert <hash>` (hub stopped;
 every save is listed by `log --oneline` as `Approve memory proposal #<id> (<topic>): Edit <topic>`);
 when copying the `.bak` instead, commit the restore before restarting (`git -C <data>\memory add -A`
@@ -54,12 +53,11 @@ Run check (real CLIs, scratch hub + scratch room dir, spends): a two-phase toy s
 Roadmap-in-room check (real CLIs, scratch hub + scratch .NET repo, spends approx 6 spawns incl. one Codex): `pwsh tools\Invoke-M20RoadmapCheck.ps1`.
 MCP timeout probe (4 Sonnet calls): `pwsh tools\Probe-McpTimeouts.ps1`.
 
-## Rotating a token (row 28)
+## Rotating a token
 
-`--rotate-token <id>` prints the newly minted value once, to stdout, and writes it to no file —
-row 28, D-28-d, reversing an earlier "never print" ruling now that `--print-config` never embeds a
-live value either (it writes a `{{TOKEN}}` placeholder). That reversal is bounded: **rotate is
-owner-typed only, never agent-run.** A printed token lands in a terminal buffer, a shell history and
+`--rotate-token <id>` prints the newly minted value once, to stdout, and writes it to no file, since
+`--print-config` never embeds a live value either (it writes a `{{TOKEN}}` placeholder). Printing is
+bounded: **rotate is owner-typed only, never agent-run.** A printed token lands in a terminal buffer, a shell history and
 often an agent transcript — acceptable for a human typing the command by hand and reading the value
 off their own screen, not for a script or an agent invoking it and having the value pass through
 whatever logs or forwards that run. Nothing enforces this mechanically; it is a rule for whoever is
@@ -71,7 +69,7 @@ writes a file nobody reads and the old token keeps working — refusing is the d
 rotation and revocation. On a deploy day the order is stop → deploy → rotate → start, and anything
 rotated after the start waits for the next one.
 
-## An owner credential from inside a spawn (row 29)
+## An owner credential from inside a spawn
 
 Live check: `pwsh tools\Invoke-Row29PeerCheck.ps1`. It starts a scratch hub on its own data directory
 under `$env:TEMP`, binds a room to a scratch directory, and plants that scratch hub's `owner-remote`
@@ -79,7 +77,7 @@ token in the room directory the way a spawn would find one. It never touches `C:
 and never reads or mints a real token.
 
 An early version of this check asked a real Sonnet spawn to compose the HTTP call that presents the
-planted credential. Measured 2026-09-10: the model refused, on both attempts, in its own words, to
+planted credential. Measured: the model refused, on both attempts, in its own words, to
 use a credential from a file to forge a request with a raw Authorization header. That refusal is a
 real finding about the model, worth recording, but it is defense in depth only. The hub does not
 require it, and nothing here asks a model to touch the credential anymore.
@@ -108,7 +106,7 @@ with a reason naming the owner when `-OwnerToken` is omitted rather than run wit
 
 What neither check can cover: a process that leaves its job through the shell over COM, the Task
 Scheduler or WMI is outside the job and can still use a stolen credential, as is anything created in
-the first instants of a `cmd.exe` shim's life (measured 2026-09-10: a shim's `conhost.exe` was
+the first instants of a `cmd.exe` shim's life (measured: a shim's `conhost.exe` was
 outside the job on 10 of 15 runs, while the worker process the command line names was inside on 15 of
 15), and the room transcript plus the git trail are the control for those.
 
@@ -128,7 +126,7 @@ own. Deploy only after a run ends, never inside one: the ping names deploy as th
 
 Owner-remote setup: `--print-config` writes `<data>\host-configs\claude-code-owner-remote.json`
 under the hub's DATA directory, not the repo. Merge its `chopitup` entry into the phone-driven
-Claude Code session's `.mcp.json` on the hub machine (A1: loopback only, so that session runs
+Claude Code session's `.mcp.json` on the hub machine (loopback only, so that session runs
 on the hub's own machine).
 
 ### Timeouts inside a run
@@ -152,10 +150,10 @@ The room clone's default branch is hub-owned: empty trail commits land on it, an
 by the next `finish-branch`, or closed by hand with `gh pr close`. To abandon a run's
 unfinished work outright, delete `room/m<row>` locally and on origin from a harness session.
 
-## Exchanges in worktrees, live (row 35)
+## Exchanges in worktrees, live
 
-Rows 34/35 shipped exchange worktrees (`ExchangeWorktrees.cs`) with only a stubbed-CLI unit suite
-behind them. `pwsh tools\Invoke-Row35LiveCheck.ps1` proves the real thing: a scratch hub, a scratch
+Exchange worktrees (`ExchangeWorktrees.cs`) have only a stubbed-CLI unit suite behind them.
+`pwsh tools\Invoke-Row35LiveCheck.ps1` proves the real thing: a scratch hub, a scratch
 directory room, one Claude spawn (`@sonnet`) and one Codex spawn (`@gpt-5.4-mini`), run sequentially
 in the same room (the hub closes one worktree per room at a time). Each leg asks for ONE small file
 with fixed content, then asserts with git run directly against the room directory: the `x<root>`
@@ -171,31 +169,29 @@ tools\Invoke-Row35LiveCheck.ps1 -SeedOnly`. The full run (`pwsh tools\Invoke-Row
 `claude auth status` reporting `loggedIn: true` first — a signed-out CLI fails every
 Claude leg with no hub-side symptom. `-SkipClaude` / `-SkipCodex` re-run one leg alone.
 
-**The Codex `.git`-file worktree question.** A linked worktree's `.git` is a file, not a folder (row
-35's first git lesson), and nothing before this check had run a real `codex exec` inside one — only
-that Codex's sandbox tolerates a real `git commit` there (row 35's measured claim 24), not whether it
-accepts operating inside the worktree at all. This script's Codex leg is the first live measurement;
-its `file.codex-present-on-default-branch` check FAILs by name alone (never a message body) if Codex's
-file never reaches the default branch, and that is a real, recorded outcome — row 35 shipped without
-answering this, not a defect in the script that found it. Record whichever way it goes here.
+**The Codex `.git`-file worktree question.** A linked worktree's `.git` is a file, not a folder.
+Codex's sandbox tolerates a real `git commit` there; this script's Codex leg measures whether a real
+`codex exec` accepts operating inside the worktree at all. Its `file.codex-present-on-default-branch`
+check FAILs by name alone (never a message body) if Codex's file never reaches the default branch,
+which is a real, recorded outcome, not a defect in the script. Record whichever way it goes here.
 
 A silent-MCP-call caveat also applies to a spawn under this script, the same as inside a run: see
 "Timeouts inside a run" above (a hub-spawned Claude CLI cuts a silent MCP call at 300 s regardless of
 any timeout knob). Neither leg here calls `run_gate`, so it is unlikely to bite a one-file ask, but a
 leg that runs unexpectedly long is the same symptom, not a new one.
 
-**Measured 2026-09-17** (hub at `10d7875`, codex-cli 0.153.3, claude 2.1.267). Full run, default
+**Measured** (hub at `10d7875`, codex-cli 0.153.3, claude 2.1.267). Full run, default
 participants: 21/22 PASS — the Claude leg (`@sonnet`) 8/8 clean; the Codex leg spawned with
 `gpt-5.4-mini` exited 1 in ~2 s with empty stderr and no reply, so the hub merged an empty turn and
 only `file.codex-present-on-default-branch` FAILed. Reproduced outside the hub with the same
 `codex exec --json` arguments inside the linked (`.git`-file) worktree: Codex answered `400
 invalid_request_error: The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT
-account.` as a `turn.failed` event on **stdout**, not stderr — the hub's failure note only appends
-stderr (`SpawnerService.cs:1136-1140`), which is why the room only ever saw "exited with code 1
-without replying" (a board row will cover surfacing that). Re-run with `-CodexParticipant
-gpt-5.6-terra` (the account's configured model): 14/14 PASS, both legs merged cleanly — answering the
-`.git`-file worktree question above **yes**; the earlier failure was model support, not worktree
-shape. The script's default `-CodexParticipant` is now `gpt-5.6-terra`.
+account.` as a `turn.failed` event on **stdout**, not stderr, so a note built from the stderr tail
+alone says only "exited with code 1 without replying"; the hub's failure note reads that stdout event
+(`SpawnOutput.CodexFailure`). Re-run with `-CodexParticipant gpt-5.6-terra` (the account's
+configured model): 14/14 PASS, both legs merged cleanly, answering the `.git`-file worktree question
+above **yes**; the first failure was model support, not worktree shape. The script's default
+`-CodexParticipant` is `gpt-5.6-terra`.
 
 ## Deploying a schema change, and rolling one back
 
@@ -203,15 +199,15 @@ For governing context, run `tools/Invoke-M48SelfCheck.ps1` after the Debug build
 databases and a fake process boundary, exercises both transcript limits independently and together,
 and records a TRX evidence set. It makes no model calls and reads no deployed room data.
 
-Written before the row 19 deploy, not after it. `ChopDb.EnsureDatabase` **throws** when the database's
-`user_version` is greater than the build's `LatestSchemaVersion`, so the moment the live
-`data\chop.db` is migrated to v8 the previously deployed v7 executable refuses to start. A v8
-database and a v7 executable cannot coexist. That makes the deploy order load-bearing and makes the
+`ChopDb.EnsureDatabase` **throws** when the database's `user_version` is greater than the build's
+`LatestSchemaVersion`, so the moment the live `data\chopitup.db` is migrated to a new version the
+previously deployed executable refuses to start. A newer database and an older executable cannot
+coexist. That makes the deploy order load-bearing and makes the
 database half of the rollback mandatory rather than optional.
 
 **Deploy order**
 
-1. Stop the live hub. It holds `HubLock`, and a migration running underneath a live v7 process is the
+1. Stop the live hub. It holds `HubLock`, and a migration running underneath a live older process is the
    case nobody wants to debug. Stop it by the PID whose image path is inside the install directory —
    `Deploy-ChopItUp.ps1` refuses to run while one exists and names it.
 2. `pwsh tools\Deploy-ChopItUp.ps1`. It publishes into staging, sanity-checks the staged output,
@@ -245,7 +241,7 @@ directory, so database restoration is an operator action. Prefer a forward repai
 
 ## Exporting memory to a Claude Code directory
 
-`--export-memory <dir>` (row 24) renders the hub's memory store into the shape `autoMemoryDirectory`
+`--export-memory <dir>` renders the hub's memory store into the shape `autoMemoryDirectory`
 reads, then stages the whole export in a sibling directory and swaps it into `<dir>` — the target is
 never written to in place. Like `--rotate-token`, it refuses (exit 5) while `HubLock` is held: stop the
 hub first, because an approval landing mid-export would read a state that never existed.
@@ -264,7 +260,7 @@ itself): `pwsh tools\Invoke-M24ExportCheck.ps1`.
 | 5 | A hub is running against this data directory. Stop it first. |
 | 6 | Refused by the guard: zero live entries without `--force`; the rendered index over the vendor's own 200-line/25,000-unit `MEMORY.md` cap (measured on the rendered index itself, never on an entry count); or the target is foreign, drifted, unreadable, or bound to a different store and the right override was not given. |
 
-**D1 — the export owns its directory.** Point `autoMemoryDirectory` at a directory nothing else writes
+**The export owns its directory.** Point `autoMemoryDirectory` at a directory nothing else writes
 to, never at one a Claude Code session also writes into. The guard cannot tell a session's own
 `MEMORY.md`/memory-file writes apart from any other drift — its only correct answer to drift is to
 refuse, not to guess which writer is trusted. Sharing the directory does not fail once and then keep
@@ -298,7 +294,7 @@ refuses identically on content, so only the store's root path tells the two apar
 The manifest holds the absolute path of the source memory directory (`<data>\memory`, not merely
 `<data>`) inside the export directory itself, and every later run's source check reads it from there.
 
-**Probe: does a session read the export? (row 26, post-merge, not a merge gate).** `pwsh tools\Invoke-Row26MemoryProbe.ps1 -KeepEvidence`
+**Probe: does a session read the export? (post-merge, not a merge gate).** `pwsh tools\Invoke-Row26MemoryProbe.ps1 -KeepEvidence`
 builds a scratch store of exactly 198 live entries, exports it with the real exe, and runs up to four
 `claude -p --model sonnet` calls (never `--bare`, which skips auto-memory) with `--settings` pointing
 `autoMemoryDirectory` at the export. Each entry carries an unguessable title nonce (lands on the index
@@ -310,10 +306,10 @@ line) and a separate body-only nonce, so an answer can only come from what was a
 - leg 3, `--tools Read`: whether the session reads the `room-general` topic file on demand;
 - leg 4 only if leg 1 reports nothing: leg 1 without `--setting-sources ""`.
 The run needs the standalone CLI signed in (`claude auth status` must say `loggedIn: true`); the
-desktop app's session auth does not carry over to a spawned `claude.exe`. Measured 2026-09-16: the
-mechanics pass (fixture, export, index at exactly 200 lines, envelope parsing, spend cap) and every
-leg returned `Failed to authenticate: OAuth session expired`. Measured 2026-09-17 after `claude auth
-login` (22 PASS / 0 FAIL, 3 calls, leg 4 not needed):
+desktop app's session auth does not carry over to a spawned `claude.exe`. Signed out, the mechanics
+pass (fixture, export, index at exactly 200 lines, envelope parsing, spend cap) and every leg returns
+`Failed to authenticate: OAuth session expired`. Measured after `claude auth login` (22 PASS /
+0 FAIL, 3 calls, leg 4 not needed):
 - leg 1: all three nonces present (`user`, `room-general` title, entry 198 on the last index line),
   no error. A session loads the whole index and does not filter on `metadata.type`.
 - leg 2: entry 198 present, the hand-appended 199th index line absent, no error reported. The

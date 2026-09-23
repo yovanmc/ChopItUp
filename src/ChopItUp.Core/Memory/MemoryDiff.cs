@@ -4,7 +4,7 @@ public enum DiffOp { Same, Add, Del, Skip }
 
 public sealed record DiffLine(DiffOp Op, string Text);
 
-/// <summary>Row 23 (item 3, ticket 05): a line-level comparison of a topic's current text against what a
+/// <summary>A line-level comparison of a topic's current text against what a
 /// <c>rewrite</c> proposal would write, computed by the hub so the owner reviews a diff rather than a
 /// wall of text. Ordinal, case-sensitive; <c>\r\n</c> is normalised to <c>\n</c> first so a line-ending
 /// change alone never reads as an edit. Pure and static: no store, no disk.</summary>

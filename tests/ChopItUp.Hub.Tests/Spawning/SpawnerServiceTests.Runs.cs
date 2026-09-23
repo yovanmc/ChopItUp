@@ -11,8 +11,8 @@ using static ChopItUp.Hub.Tests.RunHostFixture;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Row 19, task 4: starting a run, and every refusal at the start (ticket 04). End-to-end
-/// through the real HTTP + MCP surface, same fixture shape as the Skill_04 tests above.</summary>
+/// <summary>Starting a run, and every refusal at the start. End-to-end through the real HTTP + MCP
+/// surface, same fixture shape as the Skill_04 tests.</summary>
 public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 {
     [Fact]
@@ -133,7 +133,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.NotNull(Runs.Active("lab-run-remote"));
     }
 
-    // --- Task 5 (row 19): the loop, skill continuity, and artifact authorship (ticket 05) ----------
+    // The loop, skill continuity, and artifact authorship
 
     [Fact]
     public async Task Run05_the_conductor_is_re_spawned_when_its_exchange_concludes_carrying_the_skill_again()
@@ -153,10 +153,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(first));
         Assert.Contains("Build the thing.", first.StandardInput);
 
-        // No owner post involved (AC3): the conductor's own exchange concluding is what re-spawns it.
+        // No owner post involved: the conductor's own exchange concluding is what re-spawns it.
         var second = await _runner.NextSpecAsync(Wait);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(second));
-        Assert.Contains("Build the thing.", second.StandardInput);   // the skill fence, again (ticket 05)
+        Assert.Contains("Build the thing.", second.StandardInput);   // the skill fence, again
 
         var run = Runs.Active("lab-run-respawn");
         Assert.NotNull(run);
@@ -195,8 +195,8 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
     {
         WriteSkill("build-thing", RunSkillMd);
         var dir = await MakeRoom("lab-run-artifacts");
-        // A seed commit so headBefore is non-null - the range-diff path (P4's main case). The
-        // no-prior-commit fallback (ChangedFilesInAsync) is unit-tested directly on GitTrail.
+        // A seed commit so headBefore is non-null: the range-diff path. The no-prior-commit fallback
+        // (ChangedFilesInAsync) is unit-tested directly on GitTrail.
         File.WriteAllText(Path.Combine(dir, "seed.txt"), "seed\n");
         var holdFurtherTurns = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
@@ -204,7 +204,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         {
             if (Interlocked.Increment(ref calls) > 1) { await holdFurtherTurns.Task.WaitAsync(ct); return FakeProcessRunner.Ok("""{"result":"done"}"""); }
             // The model commits some of its own work mid-spawn (the common case for Codex, and what
-            // a rogue Bash call does for Claude) - P4's scenario: authorship must still land on it.
+            // a rogue Bash call does for Claude): authorship must still land on it.
             File.WriteAllText(Path.Combine(spec.WorkingDirectory, "rogue.txt"), "committed by the model itself\n");
             await new GitTrail(spec.WorkingDirectory).CommitAllAsync("rogue commit", new GitIdentity("Rogue", "rogue@example.test"), allowEmpty: false);
             File.WriteAllText(Path.Combine(spec.WorkingDirectory, "hub-written.txt"), "left for the hub's own after-commit\n");
@@ -222,7 +222,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         holdFurtherTurns.SetResult();
     }
 
-    // --- Task 6 (row 19): steer (ticket 06) ---------------------------------------------------------
+    // Steer
 
     private async Task<long> MessageIdIn(string room, string body)
     {
@@ -264,7 +264,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal(2, Runs.Active("lab-run-steer2")!.Exchanges);
     }
 
-    // --- Task 8 (row 19): the phase tag, the D8 class rules, and the refusal counter ----------------
+    // The phase tag, the conductor class rules, and the refusal counter
 
     [Fact]
     public async Task Run08_a_valid_conductor_post_opens_exactly_the_work_it_asks_for()
@@ -309,10 +309,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var worker = await _runner.NextSpecAsync(Wait);              // opus - the ONE piece of work
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(worker));
 
-        // Once opus's (silent, un-handled) turn ends, the run's own loop naturally re-spawns the
-        // conductor (task 5/AC3) - that is not a SECOND piece of work from this post, so it is not
-        // asserted against here. What pins "exactly one piece of work" is the phase-entry and
-        // exchange counts: the refused first post never counted or rooted anything.
+        // Once opus's (silent, un-handled) turn ends, the run's own loop re-spawns the conductor;
+        // that is not a second piece of work from this post, so it is not asserted against here.
+        // What pins "exactly one piece of work" is the phase-entry and exchange counts: the refused
+        // first post never counted or rooted anything.
         var run = Runs.Active("lab-run-selfcorrect");
         Assert.NotNull(run);   // not parked - the first bad post asked again, it was not a SECOND failure
         Assert.Equal(RunStatus.Active, run!.Status);
@@ -366,12 +366,11 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var opusSpec = await _runner.NextSpecAsync(Wait);              // opus: the rooted worker exchange, held in flight
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(opusSpec));
 
-        // sonnet's OWN exchange concludes once its process exits - the guard (pass 2's F-1) must not
-        // let that conclusion touch the newer, still-open worker exchange that superseded it in _rooms.
-        // sonnet's own exchange is the run's FIRST one (from the owner's run-start post, through the
-        // ordinary owner-exchange path with Budget = SpawnLimits.Budget) - only a RE-spawn uses
-        // OpenForConductor's Budget-of-1 shape (task 5a) - so its conclusion note reads "1 of 4", not
-        // "1 of 1".
+        // sonnet's own exchange concludes once its process exits; the guard must not let that
+        // conclusion touch the newer, still-open worker exchange that superseded it in _rooms.
+        // sonnet's own exchange is the run's first one (from the hub owner's run-start post, through the
+        // ordinary owner-exchange path with Budget = SpawnLimits.Budget); only a re-spawn uses
+        // OpenForConductor's Budget-of-1 shape, so its conclusion note reads "1 of 4", not "1 of 1".
         await WaitForMessageIn("lab-run-f1", m => m.Author == ChopDb.HubParticipantId && m.Body == "Exchange concluded: 1 of 4 turns used.");
         await Task.Delay(300);
         var snap = Spawner.Snapshot("lab-run-f1");
@@ -417,16 +416,13 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         var run = Runs.Latest("lab-run-refusal-park");
         Assert.Equal(RunStatus.Parked, run!.Status);
-        Assert.False(run.CapSpent);   // a refusal park is soft (D8's own second-refusal rule, not a hard cap)
+        Assert.False(run.CapSpent);   // a refusal park is soft (the second-refusal rule, not a hard cap)
     }
 
-    /// <summary>Superseded by task 9's AC12 (row19-runs, ticket 09): before AC12 existed, a restart
-    /// against the SAME data dir was the one legitimate way to see a run 'active' in the database
-    /// with nothing open or in flight in memory (empty <c>_rooms</c>/<c>_inFlight</c>), and a steer
-    /// then woke it through table row 18's Tick arm. Task 9e closes exactly that state: <see
-    /// cref="HubHost.Build"/> now parks every stored 'active' run before serving anything, so this
-    /// now proves AC12 (the restart-park itself) and AC15 (a later human message resumes it,
-    /// re-opening the conductor's exchange with that message as sole trigger) instead.</summary>
+    /// <summary>HubHost.Build parks every stored 'active' run before serving anything, so a restart
+    /// against the same data dir never leaves a run 'active' in the database with nothing open or in
+    /// flight in memory. This proves the restart-park itself, and that a later human message resumes
+    /// it, re-opening the conductor's exchange with that message as sole trigger.</summary>
     [Fact]
     public async Task Run09_AC12_AC15_a_stored_active_run_is_parked_by_restart_and_a_later_message_resumes_it()
     {
@@ -465,23 +461,23 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         var runnerB = new FakeProcessRunner();
         await using var hostB = await HubTestHost.StartAsync(dir, deleteOnDispose: true, processRunner: runnerB, limits: Fast, roomsRoot: roomsRoot);
-        // Row 28 AC3: hostB restarts against the same, now-hashed dir and cannot mint the owner's
-        // plaintext itself - the value captured from hostA before it stopped is presented directly.
+        // hostB restarts against the same, hashed dir and cannot mint the hub owner's plaintext itself:
+        // the value captured from hostA before it stopped is presented directly.
         hostB.Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ownerToken);
         var runsB = hostB.Services.GetRequiredService<RunStore>();
-        Assert.Null(runsB.Active("lab"));                         // AC12: parked before anything was served
+        Assert.Null(runsB.Active("lab"));                         // parked before anything was served
         var parked = runsB.Latest("lab");
         Assert.Equal(RunStatus.Parked, parked!.Status);
         Assert.Equal(rootMessageId, parked.RootMessageId);
         Assert.False(parked.CapSpent);
         Assert.Contains("restarted", parked.Reason);
-        Assert.DoesNotContain(await AllMessagesFrom(hostB, "lab"), m => m.Body.Contains("restarted"));   // AC12: no note
+        Assert.DoesNotContain(await AllMessagesFrom(hostB, "lab"), m => m.Body.Contains("restarted"));   // no note
 
         runnerB.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
         var resume = await hostB.Client.PostAsJsonAsync("api/rooms/lab/messages", new { body = "@opus reconsider this" });
         Assert.Equal(System.Net.HttpStatusCode.Created, resume.StatusCode);
 
-        var spawned = await runnerB.NextSpecAsync(Wait);   // AC15: resumed, conductor re-opened with this post as trigger
+        var spawned = await runnerB.NextSpecAsync(Wait);   // resumed, conductor re-opened with this post as trigger
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spawned));
         Assert.Equal(RunStatus.Active, runsB.Active("lab")!.Status);
     }
@@ -489,8 +485,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
     [Fact]
     public async Task Run06_outside_a_run_an_overlapping_owner_post_still_supersedes()
     {
-        // The regression F-23 asks to keep: task 4's step 3 already returns for a run; this room
-        // never has one, so the pre-row-19 supersede path is exactly what runs.
+        // This room never has a run, so the ordinary supersede path is exactly what runs.
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = async (spec, _, ct) =>
         {
@@ -538,10 +533,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromSeconds(1)));          // nor after it ends
     }
 
-    // --- Task 9 (row 19): caps, park semantics, the stall wake, restart and resume (ticket 09) ----
+    // Caps, park semantics, the stall wake, restart and resume
 
-    /// <summary>A standalone host (own RunLimits, optionally a fake clock) for the task 9 tests -
-    /// the shared `_host` fixture (Fast SpawnLimits, RunLimits.Default) cannot exercise a small
+    /// <summary>A standalone host (own RunLimits, optionally a fake clock) for the cap tests: the
+    /// shared `_host` fixture (Fast SpawnLimits, RunLimits.Default) cannot exercise a small
     /// spawn/wall-clock/phase-entry ceiling. Debounce/MinSpacing are zero so a frozen fake clock
     /// never blocks an ordinary launch.</summary>
     private static readonly SpawnLimits Instant = new(Budget: 4, Debounce: TimeSpan.Zero, MinSpacing: TimeSpan.Zero, Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
@@ -611,9 +606,9 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         WriteSkill("build-thing", RunSkillMd);
         await MakeRoom("lab-run-timeout");
         // TCS, not a plain field read after NextSpecAsync: FakeProcessRunner queues the spec on the
-        // channel BEFORE awaiting Handler (a known race - see Skill_04_4f's comment above), so a test
+        // channel before awaiting Handler (a known race; see Skill_04_4f's comment), so a test
         // thread unblocked by NextSpecAsync can run ahead of the producer thread's own call into
-        // Handler. Setting the TCS INSIDE Handler and awaiting it directly closes that race.
+        // Handler. Setting the TCS inside Handler and awaiting it directly closes that race.
         var inRunCaptured = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         var outOfRunCaptured = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = (spec, timeout, _) =>
@@ -657,14 +652,13 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         var run = host.Services.GetRequiredService<RunStore>().Latest(room);
         Assert.Equal(RunStatus.Parked, run!.Status);
-        Assert.True(run.CapSpent);                                            // AC8: the spawn cap is a HARD cap
+        Assert.True(run.CapSpent);                                            // the spawn cap is a hard cap
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));   // opus never spawned - neither post launched anything
     }
 
-    /// <summary>Row 27: the hard-cap preamble (RunPolicy.cs rows 1/2) parks the run WHILE the
-    /// conductor's own exchange is still open (its spawn is still in flight, mid-Handler), so
-    /// ParkRun's exchange-stop note fires. It must not read as an owner stop - the run parked
-    /// itself.</summary>
+    /// <summary>The hard-cap check parks the run while the conductor's own exchange is still open
+    /// (its spawn is still in flight, mid-Handler), so ParkRun's exchange-stop note fires. It must
+    /// not read as an owner stop: the run parked itself.</summary>
     [Fact]
     public async Task Run19_M27_a_hard_cap_park_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
     {
@@ -691,9 +685,9 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("Exchange stopped by the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
     }
 
-    /// <summary>Row 27: a valid "phase: ping" ends the run (RunPolicy row 5) while the conductor's own
-    /// exchange is still open, so EndRun's exchange-stop note fires. Same rule as the hard-cap park -
-    /// the run ended itself, so the note must not read as an owner stop.</summary>
+    /// <summary>A valid "phase: ping" ends the run while the conductor's own exchange is still open,
+    /// so EndRun's exchange-stop note fires. Same rule as the hard-cap park: the run ended itself, so
+    /// the note must not read as an owner stop.</summary>
     [Fact]
     public async Task Run19_M27_a_ping_end_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
     {
@@ -751,17 +745,16 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         var run = host.Services.GetRequiredService<RunStore>().Latest(room);
         Assert.Equal(RunStatus.Parked, run!.Status);
-        Assert.True(run.CapSpent);                       // AC8: the wall clock is a HARD cap
-        Assert.True(conductorCt.IsCancellationRequested);   // AC8/9a: "stop ... in-flight spawns", even mid-turn
+        Assert.True(run.CapSpent);                       // the wall clock is a hard cap
+        Assert.True(conductorCt.IsCancellationRequested);   // a park stops in-flight spawns, even mid-turn
         holdConductor.TrySetResult();
     }
 
-    /// <summary>Pass 2's F-4, the ruling 9f exists to satisfy: a SOFT park (a refusal park, never a
-    /// hard cap) that happens to sit parked past the wall clock must not immediately re-park itself
-    /// the instant a human message resumes it. Before RunStore.Resume folded the whole parked
-    /// interval into parked_seconds, Elapsed kept growing for as long as the run sat parked, and the
-    /// very first post-resume decision would cross the wall clock purely from having been parked -
-    /// converting a recoverable park into a permanently dead run.</summary>
+    /// <summary>A soft park (a refusal park, never a hard cap) that sits parked past the wall clock
+    /// must not re-park itself the instant a human message resumes it. RunStore.Resume folds the
+    /// whole parked interval into parked_seconds; without that, Elapsed would grow while parked and
+    /// the first post-resume decision would cross the wall clock purely from having been parked,
+    /// turning a recoverable park into a permanently dead run.</summary>
     [Fact]
     public async Task Run09_F4_a_soft_park_that_sits_past_the_wall_clock_does_not_re_park_itself_on_resume()
     {
@@ -787,7 +780,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var runs = host.Services.GetRequiredService<RunStore>();
         var parked = runs.Latest(room);
         Assert.Equal(RunStatus.Parked, parked!.Status);
-        Assert.False(parked.CapSpent);   // a refusal park is soft (AC6), never a hard cap
+        Assert.False(parked.CapSpent);   // a refusal park is soft, never a hard cap
 
         fakeClock.Advance(TimeSpan.FromMinutes(5));   // well past the 1-minute wall clock, while sitting parked
 
@@ -795,7 +788,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var resume = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "@opus reconsider" });
         Assert.Equal(System.Net.HttpStatusCode.Created, resume.StatusCode);
 
-        var spawned = await runner.NextSpecAsync(Wait);   // F-4: resumed, NOT re-parked as a spent wall-clock cap
+        var spawned = await runner.NextSpecAsync(Wait);   // resumed, not re-parked as a spent wall-clock cap
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spawned));
         Assert.Equal(RunStatus.Active, runs.Active(room)!.Status);
     }
@@ -811,9 +804,8 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
         await runner.NextSpecAsync(Wait);   // sonnet's one allowed spawn; it exits silently
 
-        // Concluding sonnet's own exchange is the very next event decided for this run - the spawn
-        // cap (already spent by 9d's count at launch) trips right there, before task 10 exists to
-        // treat the silence itself specially.
+        // Concluding sonnet's own exchange is the very next event decided for this run: the spawn
+        // cap (already spent by the count at launch) trips right there.
         await WaitForNoteContaining(host, room, "parked");
         var runs = host.Services.GetRequiredService<RunStore>();
         var parked = runs.Latest(room);
@@ -828,14 +820,13 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
     }
 
-    // --- Task 10 (row 19): conductor silence (ticket 10, A2) ---------------------------------------
+    // Conductor silence
 
-    /// <summary>The transition table's rows 10-12 (task 3): the first silence in a phase is free (ask
-    /// again, no cost); every silence after that ALSO counts a phase entry for that ask, which is
-    /// what lets row 11 eventually reach the phase's own entry cap and PARK instead of asking
-    /// forever - "at most twice per phase entry" (ticket 10), for whatever RunLimits.PhaseEntries
-    /// says, never a hardcoded two. With PhaseEntries: N, a conductor that never posts is launched
-    /// N+2 times (the initial launch, one free re-ask, then N counted re-asks) before the (N+2)th
+    /// <summary>The first silence in a phase is free (ask again, no cost); every silence after that
+    /// also counts a phase entry for that ask, which is what lets the phase's own entry cap
+    /// eventually park the run instead of asking forever, for whatever RunLimits.PhaseEntries says,
+    /// never a hardcoded two. With PhaseEntries: N, a conductor that never posts is launched N+2
+    /// times (the initial launch, one free re-ask, then N counted re-asks) before the (N+2)th
     /// silence finds the cap already spent and parks rather than asking again.</summary>
     [Fact]
     public async Task Run10_a_persistently_silent_conductor_is_asked_until_the_phase_cap_parks_the_run_never_leaving_it_active()
@@ -864,7 +855,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal(runLimits.PhaseEntries + 2, launches);        // the entry-count trace above: N+2 asks total
     }
 
-    // --- Task 12 (row 19): run_gate's launch-time wiring (tickets 12e, 12f) ------------------------
+    // run_gate's launch-time wiring
 
     /// <summary>12e: an in-run Claude conductor's directory spawn gets run_gate ADDED to the ordinary
     /// six-builtin-plus-three-MCP allowlist; the built-in --tools list (what actually turns Bash etc
@@ -886,11 +877,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
     }
 
-    /// <summary>12f, row 20 task 3: an in-run Codex conductor's directory spawn gets the MCP tool-call
-    /// timeout raised from the ordinary 60 s to this run's RunLimits.EffectiveGateTimeout (25 min by
-    /// default, not the full 30-minute SpawnTimeout - the 5-minute reserve is what lets a model post
-    /// after a gate that ran to its own ceiling) - a long run_gate call must survive long enough to
-    /// finish (pass 1's M7).</summary>
+    /// <summary>An in-run Codex conductor's directory spawn gets the MCP tool-call timeout raised from
+    /// the ordinary 60 s to this run's RunLimits.EffectiveGateTimeout (25 min by default, not the full
+    /// 30-minute SpawnTimeout: the 5-minute reserve is what lets a model post after a gate that ran to
+    /// its own ceiling), so a long run_gate call survives long enough to finish.</summary>
     [Fact]
     public async Task Run12f_an_in_run_codex_conductor_is_launched_with_the_tool_timeout_raised_to_the_run_gate_timeout()
     {
@@ -907,11 +897,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
-    /// <summary>Orchestrator addition to task 12f, row 20 task 3: task 12 raised the Codex side (above)
-    /// but left the installed Claude CLI's own MCP tool-call timeout alone, so a run_gate call from an
-    /// in-run Claude spawn could still be killed by the CLI itself well before the hub's own per-spawn
-    /// timeout. An in-run Claude conductor's directory spawn gets MCP_TOOL_TIMEOUT set to this run's
-    /// EffectiveGateTimeout in milliseconds.</summary>
+    /// <summary>The installed Claude CLI's own MCP tool-call timeout could kill a run_gate call from
+    /// an in-run Claude spawn well before the hub's own per-spawn timeout. An in-run Claude
+    /// conductor's directory spawn gets MCP_TOOL_TIMEOUT set to this run's EffectiveGateTimeout in
+    /// milliseconds.</summary>
     [Fact]
     public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_gate_timeout()
     {
@@ -927,8 +916,8 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
     }
 
-    /// <summary>Row 20, task 3 (A5): the per-server `timeout` field in the conductor's own mcp.json AND
-    /// both environment variables, all three at EffectiveGateTimeout - none of them is left behind.</summary>
+    /// <summary>The per-server `timeout` field in the conductor's own mcp.json and both environment
+    /// variables, all three at EffectiveGateTimeout: none of them is left behind.</summary>
     [Fact]
     public async Task Run12g_an_in_run_claude_spawn_gets_the_per_server_timeout_and_both_env_vars_at_GateTimeout()
     {
@@ -948,9 +937,9 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpIdleTimeoutEnvVar]);
     }
 
-    /// <summary>Row 20, task 3: the same discount applies to a Codex WORKER a Claude conductor mentions
-    /// inside a run, not only to a Codex conductor (the renamed Run12f test above) - the timeout is
-    /// computed once, at Launch, for whichever host the spawn actually is.</summary>
+    /// <summary>The same timeout applies to a Codex worker a Claude conductor mentions inside a run,
+    /// not only to a Codex conductor: the timeout is computed once, at Launch, for whichever host the
+    /// spawn actually is.</summary>
     [Fact]
     public async Task Run12h_an_in_run_codex_spawn_tool_timeout_is_GateTimeout_seconds()
     {
@@ -975,10 +964,9 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", codexSpec.Arguments);
     }
 
-    /// <summary>Row 20, task 3 (A5): a Codex-hosted JUDGE worker inside a run gets both the effort
-    /// override (AC7/D10, pre-existing) and the raised tool timeout; a Codex plumbing worker in the
-    /// same run gets neither the effort flag nor the raised timeout dropped - it just never had one.
-    /// Classes are set through ParticipantStore.SetClasses (task 2) before the hub starts, since the
+    /// <summary>A Codex-hosted judge worker inside a run gets both the effort override and the raised
+    /// tool timeout; a Codex plumbing worker in the same run gets the raised timeout but no effort
+    /// flag. Classes are set through ParticipantStore.SetClasses before the hub starts, since the
     /// roster is read once at startup.</summary>
     [Fact]
     public async Task Run11_AC7_a_codex_hosted_judge_worker_inside_a_run_gets_model_reasoning_effort_high()
@@ -1029,7 +1017,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain(SpawnCommands.ClaudeMcpToolTimeoutEnvVar, spec.Environment.Keys);
     }
 
-    // --- Task 13 (row 19): /stop and the stop control (ticket 13) ----------------------------------
+    // /stop and the stop control
 
     [Fact]
     public async Task Run13_stop_ends_an_active_run_stops_its_in_flight_spawn_and_posts_no_unknown_skill_note()
@@ -1074,7 +1062,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var runs = host.Services.GetRequiredService<RunStore>();
         var parked = runs.Latest(room);
         Assert.Equal(RunStatus.Parked, parked!.Status);
-        Assert.True(parked.CapSpent);   // AC11's sharp edge: a hard-capped park must still get End, never a resume attempt
+        Assert.True(parked.CapSpent);   // a hard-capped park must still get End, never a resume attempt
 
         var stop = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/stop" });
         Assert.Equal(System.Net.HttpStatusCode.Created, stop.StatusCode);
@@ -1121,9 +1109,9 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         release.SetResult();
     }
 
-    /// <summary>Ticket 13's other sharp edge: the control must work "even with nothing in flight" -
-    /// exactly the case that used to answer null (409 at the API) before this task, for a parked run
-    /// sitting with no open exchange and no in-flight spawn.</summary>
+    /// <summary>The stop control must work even with nothing in flight: a parked run sitting with no
+    /// open exchange and no in-flight spawn must not get the null (409 at the API) that "nothing to
+    /// stop" answers.</summary>
     [Fact]
     public async Task Run13_the_stop_control_ends_a_parked_run_even_with_nothing_in_flight()
     {
@@ -1145,14 +1133,13 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Contains("stopped by the owner", ended.Body);
     }
 
-    /// <summary>AC7's SELECTION rule, which task 11 left uncovered: its tests proved each spawn
-    /// builder appends the flag when handed one, never that Launch hands one to the right rows. The
-    /// whole rule is one expression in <c>SpawnerService.Launch</c> - conductor OR judge class, and
-    /// only inside a run - so dropping either clause is a silent behaviour change that spends the
-    /// owner's budget on every spawn. The conductor here is <c>sonnet</c>, whose only class is
-    /// plumbing, so "high" can have come from nothing but the conductor clause; the out-of-run row is
-    /// <c>fable</c>, which IS a judge, so the absence of a flag can have come from nothing but the
-    /// active-run guard.</summary>
+    /// <summary>The effort selection rule. The builder tests prove each spawn builder appends the flag
+    /// when handed one, never that Launch hands one to the right rows. The whole rule is one
+    /// expression in <c>SpawnerService.Launch</c> (conductor or judge class, and only inside a run),
+    /// so dropping either clause is a silent behaviour change that spends the hub owner's budget on every
+    /// spawn. The conductor here is <c>sonnet</c>, whose only class is plumbing, so "high" can have
+    /// come from nothing but the conductor clause; the out-of-run row is <c>fable</c>, which is a
+    /// judge, so the absence of a flag can have come from nothing but the active-run guard.</summary>
     [Fact]
     public async Task Run11_AC7_the_conductor_gets_effort_high_and_a_judge_outside_a_run_gets_no_flag()
     {
@@ -1171,7 +1158,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("--effort", outside.Arguments);
     }
 
-    /// <summary>The other half of AC7's selection rule: inside a run, a judge-class worker thinks
+    /// <summary>The other half of the effort selection rule: inside a run, a judge-class worker thinks
     /// harder and everyone else does not. Captured inside <c>Handler</c> rather than read off
     /// <c>NextSpecAsync</c> because two workers are launched from one rooted exchange and their order
     /// is not something this test should depend on.</summary>
@@ -1199,9 +1186,8 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("--effort", await sonnet.Task.WaitAsync(Wait));
     }
 
-    /// <summary>AC6: outside a run, row 35 makes a directory room run its exchanges side by side, but a
-    /// run still owns the WHOLE room - two workers rooted at the same conductor post still run one at a
-    /// time, exactly as before this row.</summary>
+    /// <summary>Outside a run a directory room runs its exchanges side by side, but a run still owns
+    /// the whole room: two workers rooted at the same conductor post still run one at a time.</summary>
     [Fact]
     public async Task R35_a_run_room_still_runs_one_spawn_at_a_time()
     {

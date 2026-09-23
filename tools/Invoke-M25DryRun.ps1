@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Row 25 (M25 task 9) migration dry run: fabricates a real-shape v9 ChopItUp database (every table
+    Migration dry run: fabricates a real-shape v9 ChopItUp database (every table
     and column the v1-v9 migration ladder in ChopDb.cs produces, seeded with realistic-looking
     fabricated data), runs the REAL built hub against it, and proves the v9 -> v10 step (schema 10,
-    task 3's `skill_proposals` table) came out right without losing or corrupting anything that was
+    the `skill_proposals` table) came out right without losing or corrupting anything that was
     already there. Fabricated data only -- never a copy of anything real.
 
 .DESCRIPTION
-    "In the style of Invoke-M2DryRun.ps1": build once, fabricate the PREVIOUS schema version's
+    In the style of Invoke-M2DryRun.ps1: build once, fabricate the PREVIOUS schema version's
     on-disk shape directly (never via ChopDb, which can no longer produce anything older than its own
     LatestSchemaVersion), launch the real ChopItUp.Hub.exe (never `dotnet run` -- same PID-identity
     reasoning M2's script documents), and assert before/after row counts plus the verified backup.

@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import ChromeBar from './ChromeBar';
 import type { HubState, ShellState } from './hostBridge';
 
-/** Row 12, AC3. Inside the shell the window has no title bar of its own, so this row IS the title
+/** Inside the shell the window has no title bar of its own, so this row IS the title
  *  bar: lose it and the window cannot be moved, minimised or closed. Static markup through
  *  `react-dom/server` like every other component test here (no jsdom), which means the effect that
  *  subscribes to the shell never runs — the state a test wants is handed in as a prop instead.

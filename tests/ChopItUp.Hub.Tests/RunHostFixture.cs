@@ -9,19 +9,19 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Shared run-host fixture for the row 19/20/27 run-loop tests in
-/// SpawnerServiceTests.Runs.cs and the wire-level assertions in ExchangeApiTests.cs: spins up a
-/// directory-bound "lab" room with the build-thing skill already imported and ready for a run to
-/// start against it, plus the hub-note polling helpers both files wait on.</summary>
+/// <summary>Shared run-host fixture for the run-loop tests in SpawnerServiceTests.Runs.cs and the
+/// wire-level assertions in ExchangeApiTests.cs: spins up a directory-bound "lab" room with the
+/// build-thing skill already imported and ready for a run to start against it, plus the hub-note
+/// polling helpers both files wait on.</summary>
 internal static class RunHostFixture
 {
     internal const string RunSkillMd = "---\nname: build-thing\nrun: true\n---\n\n# Build Thing\n\nBuild the thing.\n";
 
-    /// <summary><paramref name="seedClasses"/> (row 20, task 3) runs BEFORE the hub starts, against a
-    /// freshly-migrated database - the hub reads the roster once at startup (HubHost.Build) and never
-    /// again, so a class needed inside a run (a Codex judge, in particular) has to be set through
-    /// <see cref="ParticipantStore.SetClasses"/> here, the same host-command write path task 2 built,
-    /// not through the API once the hub is already running.</summary>
+    /// <summary><paramref name="seedClasses"/> runs BEFORE the hub starts, against a freshly-migrated
+    /// database: the hub reads the roster once at startup (HubHost.Build) and never again, so a class
+    /// needed inside a run (a Codex judge, in particular) has to be set through
+    /// <see cref="ParticipantStore.SetClasses"/> here, the host-command write path, not through the API
+    /// once the hub is already running.</summary>
     internal static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(
         SpawnLimits spawnLimits, RunLimits runLimits, TimeProvider? clock = null, Action<ParticipantStore>? seedClasses = null)
     {
@@ -35,7 +35,7 @@ internal static class RunHostFixture
             seedClasses(new ParticipantStore(seedDb));
         }
         var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: spawnLimits, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
-        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call this fixture's callers make now needs a credential
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call this fixture's callers make needs a credential
         const string room = "lab";
         var roomDir = Path.Combine(roomsRoot, room);
         Assert.True(await new GitTrail(roomDir).InitAsync());

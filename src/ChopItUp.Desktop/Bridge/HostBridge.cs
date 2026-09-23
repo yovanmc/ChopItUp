@@ -4,7 +4,7 @@ using ChopItUp.Desktop.Hub;
 
 namespace ChopItUp.Desktop.Bridge;
 
-/// <summary>Row 12 T5: the page &lt;-&gt; host wire protocol, as a pure function from JSON to JSON. Kept
+/// <summary>The page &lt;-&gt; host wire protocol, as a pure function from JSON to JSON. Kept
 /// free of WebView2 and the window (<c>MainWindow</c>'s message handler does nothing but trust-check
 /// with <see cref="IsTrusted"/>, call <see cref="Handle"/>, and post the reply / push
 /// <see cref="StateEvent"/>), so the whole grammar is tested without one.
@@ -83,13 +83,13 @@ public static class HostBridge
         return JsonSerializer.Serialize(payload, JsonOptions);
     }
 
-    /// <summary>B8: the source's authority alone decides trust for the hub origin, no nonce needed. Any
+    /// <summary>The source's authority alone decides trust for the hub origin, no nonce needed. Any
     /// other source is trusted only when it is one of the two shapes a <c>NavigateToString</c> boot page
     /// is known to report (<see cref="NavigationPolicy.IsBootPageUri"/>: the documented <c>about:blank</c>,
-    /// or the <c>data:text/html;charset=utf-8;base64,...</c> URI this WebView2 runtime (152.0.4191.66)
-    /// actually raises — without this, a boot-page Close/Quit is refused as untrusted on that runtime)
-    /// carrying the current launch's nonce — the boot page is the one widening past authority-only trust,
-    /// and the nonce bounds it (pass 1, finding 12; boot-page trust fix, review pass).</summary>
+    /// or the <c>data:text/html;charset=utf-8;base64,...</c> URI WebView2 runtime 152.0.4191.66
+    /// actually raises; without this, a boot-page Close/Quit is refused as untrusted on that runtime)
+    /// carrying the current launch's nonce. The boot page is the one widening past authority-only
+    /// trust, and the nonce bounds it.</summary>
     public static bool IsTrusted(string? source, Uri hubOrigin, string? messageNonce, string launchNonce)
     {
         if (source is null) return false;

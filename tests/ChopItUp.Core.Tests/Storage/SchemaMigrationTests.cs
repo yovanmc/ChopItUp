@@ -46,8 +46,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
     private void WriteRawV2()
     {
-        // v1 shape plus exactly what ApplyV2 adds. Raw SQL on purpose (LESSONS M2): this must keep
-        // describing v2 after ChopDb can no longer produce one.
+        // v1 shape plus exactly what ApplyV2 adds. Raw SQL on purpose: this must keep describing v2
+        // after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -82,8 +82,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
     private void WriteRawV3()
     {
-        // v2 shape plus exactly what ApplyV3 adds. Raw SQL on purpose (LESSONS M2): this must keep
-        // describing v3 after ChopDb can no longer produce one.
+        // v2 shape plus exactly what ApplyV3 adds. Raw SQL on purpose: this must keep describing v3
+        // after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -130,8 +130,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
     private void WriteRawV4()
     {
-        // v3 shape plus exactly what ApplyV4 adds: the hub row. Raw SQL on purpose (LESSONS M2):
-        // this must keep describing v4 after ChopDb can no longer produce one.
+        // v3 shape plus exactly what ApplyV4 adds: the hub row. Raw SQL on purpose: this must keep
+        // describing v4 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -180,7 +180,7 @@ public sealed class SchemaMigrationTests : IDisposable
     private void WriteRawV5()
     {
         // v4 shape plus exactly what ApplyV5 adds: the proposals table and its index. Raw SQL on
-        // purpose (LESSONS M2): this must keep describing v5 after ChopDb can no longer produce one.
+        // purpose: this must keep describing v5 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -245,8 +245,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
     private void WriteRawV6()
     {
-        // v5 shape plus exactly what ApplyV6 adds: the two nullable room columns. Raw SQL on purpose
-        // (LESSONS M2): this must keep describing v6 after ChopDb can no longer produce one.
+        // v5 shape plus exactly what ApplyV6 adds: the two nullable room columns. Raw SQL on purpose:
+        // this must keep describing v6 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -312,8 +312,8 @@ public sealed class SchemaMigrationTests : IDisposable
     private void WriteRawV7()
     {
         // v6 shape plus exactly what ApplyV7 adds: the classes column (populated the way BackfillClasses
-        // leaves it), the skills table, and the owner-remote row. Raw SQL on purpose (LESSONS M2): this
-        // must keep describing v7 after ChopDb can no longer produce one.
+        // leaves it), the skills table, and the hub's owner-remote row. Raw SQL on purpose: this must keep
+        // describing v7 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -385,8 +385,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
     private void WriteRawV8()
     {
-        // v7 shape plus exactly what ApplyV8 adds: the run tables. Raw SQL on purpose (LESSONS M2):
-        // this must keep describing v8 after ChopDb can no longer produce one.
+        // v7 shape plus exactly what ApplyV8 adds: the run tables. Raw SQL on purpose: this must keep
+        // describing v8 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -509,8 +509,7 @@ public sealed class SchemaMigrationTests : IDisposable
     {
         // v8 shape plus exactly what ApplyV9 adds: the three memory_proposals columns, already
         // populated the way a genuinely-v9 database (not a migrated v8 one) would have them. Raw SQL
-        // on purpose (LESSONS M2): this must keep describing v9 after ChopDb can no longer produce
-        // one — row 25 task 3 is the first migration to need this fixture.
+        // on purpose: this must keep describing v9 after ChopDb can no longer produce one.
         Directory.CreateDirectory(_dir);
         using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWriteCreate, Pooling = false }.ToString());
         conn.Open();
@@ -632,7 +631,7 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
-    /// <summary>A real-shape v10 file: v9 plus row 25's skill_proposals table, stamped 10.</summary>
+    /// <summary>A real-shape v10 file: v9 plus the skill_proposals table, stamped 10.</summary>
     private void WriteRawV10()
     {
         WriteRawV9();
@@ -664,8 +663,7 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     /// <summary>v10 shape plus exactly what ApplyV11 adds: reply_to_id on messages, stamped 11. Raw
-    /// SQL on purpose (LESSONS M2): this must keep describing v11 after ChopDb can no longer produce
-    /// one — row 14 task 1 is the first migration to need this fixture.</summary>
+    /// SQL on purpose: this must keep describing v11 after ChopDb can no longer produce one.</summary>
     private void WriteRawV11()
     {
         WriteRawV10();
@@ -681,7 +679,7 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     /// <summary>v11 shape plus exactly what ApplyV12 adds: role, persona, room_roles, stamped 12. Raw
-    /// SQL on purpose (LESSONS M2): this must keep describing v12 after ChopDb can no longer produce one.</summary>
+    /// SQL on purpose: this must keep describing v12 after ChopDb can no longer produce one.</summary>
     private void WriteRawV12()
     {
         WriteRawV11();
@@ -710,10 +708,10 @@ public sealed class SchemaMigrationTests : IDisposable
         return (long)probe.ExecuteScalar()!;
     }
 
-    /// <summary>Every column of every participant row, in seed/rowid order — the row 14 task 1
-    /// migration guard's capture-before/assert-after instrument. Explicit column list rather than
-    /// SELECT * so an ALTER that appends a column (role) does not shift tuple shape out from under a
-    /// capture taken before that column existed.</summary>
+    /// <summary>Every column of every participant row, in seed/rowid order: the migration guard's
+    /// capture-before/assert-after instrument. Explicit column list rather than SELECT * so an ALTER
+    /// that appends a column (role) does not shift tuple shape out from under a capture taken before
+    /// that column existed.</summary>
     private static List<(string Id, string DisplayName, string Kind, string? Host, string? Model, string? Note, string? Classes)> ReadParticipantsV11Shape(SqliteConnection conn)
     {
         using var cmd = conn.CreateCommand();
@@ -1246,9 +1244,9 @@ public sealed class SchemaMigrationTests : IDisposable
         WriteRawV8();
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
-        // Row 25 task 3: EnsureDatabase runs the WHOLE ladder in one call, so a v8 start lands on
-        // LatestSchemaVersion (now 10), not on 9 — this test's OWN subject (the three proposal
-        // columns) still landed exactly at v9's step; it just does not stop there any more.
+        // EnsureDatabase runs the whole ladder in one call, so a v8 start lands on
+        // LatestSchemaVersion, not on 9. This test's own subject (the three proposal columns) still
+        // landed at v9's step; it just does not stop there.
         Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.NotNull(db.LastBackupPath);
         Assert.Contains(".v8.", Path.GetFileName(db.LastBackupPath!));
@@ -1299,8 +1297,8 @@ public sealed class SchemaMigrationTests : IDisposable
 
         // Simulate a torn v7: an operator already ran the ALTER by hand, with a value already set on
         // an existing seed row (gpt-6-astra, which the seed leaves NULL) and on a row the seed list
-        // does not know about at all (guest). BackfillClasses must never touch either (D-h): only
-        // NULL is filled.
+        // does not know about at all (guest). BackfillClasses must never touch either: only NULL is
+        // filled.
         using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString()))
         {
             conn.Open();
@@ -1347,7 +1345,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var fable = roster.Single(p => p.Id == "fable");
         Assert.Equal(new[] { "judge" }, ParticipantClasses.Parse(fable.Classes));
 
-        // Hand-set classes survive the migration: BackfillClasses only fills NULL (D-h).
+        // Hand-set classes survive the migration: BackfillClasses only fills NULL.
         Assert.Equal("judge", roster.Single(p => p.Id == "gpt-6-astra").Classes);
         Assert.Equal("plumbing", roster.Single(p => p.Id == "guest").Classes);
 
@@ -1454,7 +1452,7 @@ public sealed class SchemaMigrationTests : IDisposable
         cmd.CommandText = "SELECT COUNT(*) FROM memory_proposals";
         Assert.Equal(0L, (long)cmd.ExecuteScalar()!);
         cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('memory_proposals')";
-        Assert.Equal(15L, (long)cmd.ExecuteScalar()!);   // 12 through v8, plus v9's kind, replaces, flags (row 18)
+        Assert.Equal(15L, (long)cmd.ExecuteScalar()!);   // 12 through v8, plus v9's kind, replaces, flags
 
         db.EnsureDatabase();
         Assert.Null(db.LastBackupPath);
@@ -1589,8 +1587,7 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(new[] { "owner", "claude" }, page.Messages.Select(m => m.AuthorId));
         Assert.Equal("first v1 message", page.Messages[0].Body);
         // Compare as instants, not as strings: Timestamps.Stamp emits round-trip "o" format with
-        // SEVEN fraction digits, so it never equals the fixture's three-digit literal (pass 2,
-        // MAJOR-7 — the earlier form could not have gone green).
+        // seven fraction digits, so it never equals the fixture's three-digit literal.
         Assert.Equal(
             new[] { DateTimeOffset.Parse("2026-09-01T10:01:00.000+00:00"), DateTimeOffset.Parse("2026-09-01T10:02:00.000+00:00") },
             page.Messages.Select(m => m.CreatedAt.ToUniversalTime()));
@@ -1727,7 +1724,7 @@ public sealed class SchemaMigrationTests : IDisposable
     public void A2_a_stamp_less_database_that_still_holds_messages_is_backed_up()
     {
         // Version 0 does not always mean "never finished being created": a .dump/.read rebuild or a
-        // hand repair loses the stamp and keeps every message (pass 2, MINOR-15).
+        // hand repair loses the stamp and keeps every message.
         WriteRawV1();
         using (var conn = new SqliteConnection($"Data Source={DbPath};Mode=ReadWrite;Pooling=False"))
         {

@@ -4,9 +4,9 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Storage;
 
-/// <summary>Proposals are rows, not files (plan decision 6): pending ones survive a restart and never
-/// churn the git-backed store. Shape is validated here with the same rules the store applies on
-/// approval, so an approved proposal can always be written.</summary>
+/// <summary>Proposals are rows, not files: pending ones survive a restart and never churn the
+/// git-backed store. Shape is validated here with the same rules the store applies on approval, so
+/// an approved proposal can always be written.</summary>
 public sealed class MemoryProposalStore(ChopDb db)
 {
     public const string Pending = "pending";
@@ -16,10 +16,10 @@ public sealed class MemoryProposalStore(ChopDb db)
     public const int MaxLimit = 500;
     public const string KindAppend = "append";
     public const string KindSupersede = "supersede";
-    /// <summary>Row 23 (item 3): a whole-topic replacement rather than one entry — see
+    /// <summary>A whole-topic replacement rather than one entry: see
     /// <see cref="MemoryStore.Rewrite"/>.</summary>
     public const string KindRewrite = "rewrite";
-    /// <summary>Row 40: the <see cref="MemoryProposal.Source"/> of a rewrite saved through the hub's
+    /// <summary>The <see cref="MemoryProposal.Source"/> of a rewrite saved through the hub's
     /// editor route rather than proposed in a room. Imports use <c>&lt;vendor&gt;:&lt;path&gt;</c>; room
     /// proposals have none.</summary>
     public const string SourceEditor = "editor";
@@ -79,8 +79,8 @@ public sealed class MemoryProposalStore(ChopDb db)
         return reader.Read() ? Map(reader) : null;
     }
 
-    /// <summary>The panel's default: everything that still needs the owner — pending, plus approved rows
-    /// whose write never landed (plan decision 17). Not a status value; a predicate.</summary>
+    /// <summary>The panel's default: everything that still needs the hub owner, pending plus approved rows
+    /// whose write never landed. Not a status value; a predicate.</summary>
     public const string Undecided = "undecided";
 
     /// <summary>Ascending by id. A null <paramref name="roomId"/> or <paramref name="status"/> means any;
@@ -102,7 +102,7 @@ public sealed class MemoryProposalStore(ChopDb db)
 
     /// <summary>The import idempotency key is author + topic + title over pending and approved rows; a
     /// rejected one does not count, so a wrong folder rejected row by row cannot poison the right
-    /// folder (critique pass 1, P1-7).</summary>
+    /// folder.</summary>
     public bool Exists(string authorId, string topic, string title)
     {
         using var conn = db.Open();
@@ -135,7 +135,7 @@ public sealed class MemoryProposalStore(ChopDb db)
 
     /// <summary>Records where an APPROVED proposal was written and the commit that holds it; null when
     /// the row is not approved. Separate from <see cref="Decide"/> so the row is marked before the file
-    /// is written and a crash in between leaves a replayable approved-but-unwritten row (plan decision 15).</summary>
+    /// is written and a crash in between leaves a replayable approved-but-unwritten row.</summary>
     public MemoryProposal? RecordWrite(long id, string writtenTo, string? commitHash)
     {
         using var conn = db.Open();
@@ -147,7 +147,7 @@ public sealed class MemoryProposalStore(ChopDb db)
         return cmd.ExecuteNonQuery() == 1 ? Get(id) : null;
     }
 
-    /// <summary>Discards every PENDING proposal of one import (plan decision 16). Returns the count.</summary>
+    /// <summary>Discards every PENDING proposal of one import. Returns the count.</summary>
     public int DeletePending(string source)
     {
         using var conn = db.Open();
@@ -157,9 +157,9 @@ public sealed class MemoryProposalStore(ChopDb db)
         return cmd.ExecuteNonQuery();
     }
 
-    /// <summary>Row 18, decision 5: the oldest PENDING proposal with this topic + title by ANY author,
-    /// or null — pending only, so a newer approved row can never mask it (critique P1-17).
-    /// <see cref="Exists"/> stays author-keyed for the import path.</summary>
+    /// <summary>The oldest PENDING proposal with this topic + title by ANY author, or null. Pending
+    /// only, so a newer approved row can never mask it. <see cref="Exists"/> stays author-keyed for
+    /// the import path.</summary>
     public MemoryProposal? FindPending(string topic, string title)
     {
         using var conn = db.Open();

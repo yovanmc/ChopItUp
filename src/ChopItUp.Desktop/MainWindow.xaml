@@ -11,12 +11,12 @@
         MinWidth="640" MinHeight="400"
         Background="#0E1013">
 
-    <!-- Row 12: the page draws the chrome. CaptionHeight=0 because WebView2's non-client-region
+    <!-- The page draws the chrome. CaptionHeight=0 because WebView2's non-client-region
          support owns dragging (app-region: drag on the page's chrome row, styles.css .chrome), so
          there is no native caption region left for WindowChrome to claim.
 
-         ResizeBorderThickness alone does not reach through the WebView2's own HWND child (Curio
-         spike (i), measured Δwidth=0) — MainWindow.xaml.cs gives the OS resize-border logic a
+         ResizeBorderThickness alone does not reach through the WebView2's own HWND child (measured
+         Δwidth=0), so MainWindow.xaml.cs gives the OS resize-border logic a
          WPF-owned strip to hit-test by setting Web.Margin to 6 px while not maximized and 0 while
          maximized. The maximize inset is clamped to the monitor WORK area by ChromeHook
          (WM_GETMINMAXINFO) in code-behind; without it a WindowStyle=None maximize overhangs the

@@ -1,29 +1,29 @@
 namespace ChopItUp.Hub.Spawning;
 
-/// <summary>D9: the run caps are hard code, not configuration — exactly the shape
-/// <see cref="SpawnLimits.Default"/> already sets for exchanges, and just as unreachable from inside a
+/// <summary>The run caps are hard code, not configuration: exactly the shape
+/// <see cref="SpawnLimits.Default"/> sets for exchanges, and just as unreachable from inside a
 /// room. <see cref="Spawns"/>, <see cref="WallClock"/> and <see cref="PhaseEntries"/> are the three
-/// HARD caps (AC8): a park naming one of them is always <c>capSpent: true</c>.
+/// HARD caps: a park naming one of them is always <c>capSpent: true</c>.
 /// <see cref="SpawnTimeout"/> is the per-spawn wall clock while a run is active, replacing
-/// <see cref="SpawnLimits.Timeout"/>'s 5 minutes for the duration of a run (AC8's last clause).
+/// <see cref="SpawnLimits.Timeout"/>'s 5 minutes for the duration of a run.
 ///
-/// <see cref="GateTimeout"/> (row 20, task 3; plan critique fold M4) is a trailing OPTIONAL parameter —
-/// the ten <c>RunLimits</c> construction sites in <c>SpawnerServiceTests.Runs.cs</c> use named
-/// arguments and never set it. <see cref="EffectiveGateTimeout"/> is what every consumer (the MCP
-/// tool-call timeouts, <c>run_gate</c>'s own process timeout) actually reads: an explicit
-/// <see cref="GateTimeout"/> when given, else <see cref="SpawnTimeout"/> minus a 5-minute reserve.
-/// That reserve is what lets a conductor or worker still post a reply after a gate that ran all the
-/// way to its own ceiling, rather than being killed by the spawn's own wall clock at the same instant
-/// the gate call returns (ledger 24, 25) — so the invariant <c>EffectiveGateTimeout &lt; SpawnTimeout</c>
-/// is enforced in the constructor, never left to a caller to get right.
+/// <see cref="GateTimeout"/> is a trailing OPTIONAL parameter: the <c>RunLimits</c> construction
+/// sites in <c>SpawnerServiceTests.Runs.cs</c> use named arguments and never set it.
+/// <see cref="EffectiveGateTimeout"/> is what every consumer (the MCP tool-call timeouts,
+/// <c>run_gate</c>'s own process timeout) actually reads: an explicit <see cref="GateTimeout"/> when
+/// given, else <see cref="SpawnTimeout"/> minus a 5-minute reserve. That reserve is what lets a
+/// conductor or worker still post a reply after a gate that ran all the way to its own ceiling,
+/// rather than being killed by the spawn's own wall clock at the same instant the gate call returns,
+/// so the invariant <c>EffectiveGateTimeout &lt; SpawnTimeout</c> is enforced in the constructor,
+/// never left to a caller to get right.
 ///
-/// <see cref="GateProgressInterval"/> (row 20, task 3b, addendum 2026-09-08) is another trailing
-/// OPTIONAL parameter, same reason: the same ten call sites never set it. <c>run_gate</c> reports a
-/// progress notification on this cadence while its gate script is still running, so a client whose own
-/// idle timer resets on any traffic (measured: the installed CLI's does not, at 300 s, in the probe run)
-/// at least has a chance to see activity before the CLI's hard ceiling. <see cref="EffectiveGateProgressInterval"/>
-/// defaults to 30 seconds — no invariant against it is needed (unlike <see cref="GateTimeout"/>, a too-large
-/// value only means fewer reports, never a broken cap).</summary>
+/// <see cref="GateProgressInterval"/> is another trailing OPTIONAL parameter, same reason.
+/// <c>run_gate</c> reports a progress notification on this cadence while its gate script is still
+/// running, so a client whose own idle timer resets on any traffic (measured: the installed CLI's
+/// does not, at 300 s) at least has a chance to see activity before the CLI's hard ceiling.
+/// <see cref="EffectiveGateProgressInterval"/> defaults to 30 seconds. No invariant against it is
+/// needed (unlike <see cref="GateTimeout"/>, a too-large value only means fewer reports, never a
+/// broken cap).</summary>
 public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTimeout, int PhaseEntries, TimeSpan? GateTimeout = null, TimeSpan? GateProgressInterval = null)
 {
     public static readonly RunLimits Default = new(
@@ -32,7 +32,7 @@ public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTim
 
     // Redeclared (not left as the plain synthesized property) so the invariant below runs as part of
     // construction: a positional record's primary constructor cannot carry a validating body of its
-    // own (measured this session - the "public RunLimits { ... }" idiom does not parse on this
+    // own (measured: the "public RunLimits { ... }" idiom does not parse on this
     // compiler), but an initializer on a redeclared property DOES run at construction time, reading
     // the primary constructor's OWN parameters (SpawnTimeout, GateTimeout), not the properties -
     // ordinary `with` expressions bypass it (a documented record limitation; nothing in this codebase

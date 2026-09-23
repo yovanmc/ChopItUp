@@ -21,7 +21,7 @@ public sealed class FakeProcessRunner(TimeProvider? clock = null) : IProcessRunn
 
     /// <summary>The text of the spec's Claude <c>mcp.json</c> as it was when the launch happened, or null
     /// for a Codex spec. Tests read this, never the file: by the time a test looks, the spawn may have
-    /// finished and the service may have deleted its work directory (critique pass 2, M3).</summary>
+    /// finished and the service may have deleted its work directory.</summary>
     public string? McpJsonOf(ProcessSpec spec) { lock (_runs) return _mcpJson.TryGetValue(spec, out var t) ? t : null; }
 
     public async Task<ProcessResult> RunAsync(ProcessSpec spec, TimeSpan timeout, CancellationToken cancellation)

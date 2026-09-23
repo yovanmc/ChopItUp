@@ -1,6 +1,6 @@
 # Hub.Tests shared resources
 
-Inventory of every resource in `tests/ChopItUp.Hub.Tests` that outlives a single test or is visible outside it, first measured at 084e9f4 and revised when the assembly moved to parallel collections. Hub.Tests now runs test collections in parallel, at most four at once (`[assembly: CollectionBehavior(MaxParallelThreads = 4)]` in `AssemblyInfo.cs`). Classes that touch process or machine state sit in `ProcessStateCollection`, declared with `DisableParallelization = true`, which xUnit runs alone after every parallel collection has finished. `ParallelismPolicyTests` fails when a test class calls a process-state or machine-table API outside that collection. `ChopItUp.Core.Tests` and `ChopItUp.Desktop.Tests` still disable parallelization. There is no `xunit.runner.json`.
+Inventory of every resource in `tests/ChopItUp.Hub.Tests` that outlives a single test or is visible outside it. Hub.Tests runs test collections in parallel, at most two at once (`[assembly: CollectionBehavior(MaxParallelThreads = 2)]` in `AssemblyInfo.cs`). Classes that touch process or machine state sit in `ProcessStateCollection`, declared with `DisableParallelization = true`, which xUnit runs alone after every parallel collection has finished. `ParallelismPolicyTests` fails when a test class calls a process-state or machine-table API outside that collection. `ChopItUp.Core.Tests` and `ChopItUp.Desktop.Tests` still disable parallelization. There is no `xunit.runner.json`.
 
 The compiled-in cap is a default: `-- xUnit.MaxParallelThreads=<n>` or `-- xUnit.ParallelizeTestCollections=false` on the `dotnet test` line overrides it for one run, and so does a runsettings file. CI passes neither. The xUnit start banner shows the runner's setting, not the attribute, so it is not evidence of the cap: the per-test start and end times in the TRX are.
 
@@ -30,13 +30,13 @@ Everything else a test writes goes under its own unique temp directory, deleted 
 
 ## Units
 
-- **Execution unit.** `parallel`: the class is its own collection and may run beside up to three others. `process-state`: the class touches process state (R2, R3) or reads machine-wide tables (R5, R6), so it sits in `ProcessStateCollection` and runs only when nothing else in the process is running. A second test process on the same machine can still disturb the R5 and R6 classes; the runner never starts one.
+- **Execution unit.** `parallel`: the class is its own collection and may run beside one other. `process-state`: the class touches process state (R2, R3) or reads machine-wide tables (R5, R6), so it sits in `ProcessStateCollection` and runs only when nothing else in the process is running. A second test process on the same machine can still disturb the R5 and R6 classes; the runner never starts one.
 - **Retry unit.** For every class it is the single test method, filtered by `FullyQualifiedName` in a fresh `dotnet test` of this project. Class-level `IAsyncLifetime` in xUnit runs once per test instance, and the two class fixtures (`DeployScriptFixture`, `GateScriptFixture`) are rebuilt by a filtered run, so no method depends on a sibling having run first. Repo policy allows one hypothesis-driven rerun, not repetition until green.
 - **Receipt unit.** The reusable receipt is the whole `ChopItUp.Hub.Tests` run on one tree, which is the unit the affected-test selector already schedules (`docs/affected-tests.md`). No smaller unit can be reused, because R2, R3, R10 and R11 are shared by the whole process: a pass by a subset does not show how those tests behave next to the rest of the assembly.
 
 ## Classes
 
-The SpawnerService tests were one partial class of 126 cases and 205 s, which xUnit cannot split across threads. They are now one sealed class per area over `SpawnerServiceTestBase`, which holds the hub, the fake runner and the helpers more than one area uses.
+xUnit cannot split one class across threads, so the SpawnerService tests are one sealed class per area over `SpawnerServiceTestBase`, which holds the hub, the fake runner and the helpers more than one area uses.
 
 | Class | File | Resources | Execution unit |
 |-------|------|-----------|----------------|
@@ -129,13 +129,13 @@ CI runner (`windows-latest`, `Environment.ProcessorCount` 4), one clean runner p
 
 2 and 4 are the same within the spread, and both are about 2.3 times faster than serial. The compiled default is 2: the extra speed at 4 is inside the noise, while the one crash this suite suffers (a host start failing with WSAENOBUFS) grows with the number of hubs alive at once.
 
-At the setting that shipped, with nothing overriding it, the merge gate ran green three times in a row (PR 145, run 35791881099). The two attempts whose artifacts were retained show the Hub suite at 447 s and 527 s against the 599 s baseline (run 35730002193), each with a measured peak of 2 concurrent tests and the process-state collection starting only after the last parallel test ended.
+At the shipped setting, with nothing overriding it, the merge gate ran green three times in a row. The two attempts whose artifacts were retained show the Hub suite at 447 s and 527 s against the 599 s baseline, each with a measured peak of 2 concurrent tests and the process-state collection starting only after the last parallel test ended.
 
 One failure in nine arm runs, at 2: `DeployScriptTests` read a starting process's module path as `ntdll.dll` (`docs/BUGS.md` 71). It is a race in the test, not interference between classes, so the class stays parallel; if it repeats, it moves into `ProcessStateCollection` and this line says so.
 
 Controls, each an attempt count rather than a proven rate. Seeded shuffle: 2 runs, 1 failure (a room archive returning 409, not reproducible with the same seed when the class runs alone). A looping build on the other cores: 1 run, 5 failures, all fixed-wait timeouts or temp-directory cleanup (`docs/BUGS.md` 68). Cancellation mid-run and a forced test-host kill: 1 run each, no test host or vstest process alive 30 s later, 8 and 6 GUID temp directories left behind, which is what a killed run is expected to leave.
 
-The desk (16 cores, arms pinned to 4) could not produce a quiet venue: an unrelated test suite and ordinary desktop applications moved serial runs between 568 s and 2538 s and aborted two runs outright. Those numbers are kept in the pilot's scratch record but the CI numbers above are the ones that decide.
+The desk (16 cores, arms pinned to 4) could not produce a quiet venue: an unrelated test suite and ordinary desktop applications moved serial runs between 568 s and 2538 s and aborted two runs outright. The CI numbers above are the ones that decide.
 
 ## Known hazards under concurrency
 
@@ -143,10 +143,10 @@ The desk (16 cores, arms pinned to 4) could not produce a quiet venue: an unrela
 - Fixed 15 s waits in the SpawnerService classes fail first whenever the machine is loaded, whether that load is a second test suite, a build on the other cores, or another application. Queued as `docs/BUGS.md` 68.
 - R5: between `listener.Stop()` and the host bind another process can take the port.
 - R6: `SpawnJobsTests.cs:27-30` documents a conhost job-membership race seen on isolated runs. Tests that count processes by parent pid can see processes another test started.
-- R1 is no longer a hazard: with `Pooling=false` there is no pool to clear.
+- R1 is not a hazard: with `Pooling=false` there is no pool to clear.
 
 ## Could not verify
 
-- Actual interference under parallel execution. Nothing here was run with parallelization enabled. The execution units are derived from reading, and a capped parallel pilot is the measurement.
+- Interference beyond the measured runs above. The execution units are derived from reading.
 - Resources reached only through production code the tests call (for example process-wide statics inside `src/`). The audit read the test project and the helpers it owns.
-- Whether any test depends on execution order within its class. xUnit order is not guaranteed, and no failure pointing to it was found, but no shuffled run was made.
+- Whether any test depends on execution order within its class. xUnit order is not guaranteed, and two seeded-shuffle runs are too few to settle it.

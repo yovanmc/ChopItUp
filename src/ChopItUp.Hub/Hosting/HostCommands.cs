@@ -24,18 +24,17 @@ public static class HostCommands
     };
 
     /// <summary>The roster as the last hub start left it, read through a plain connection that runs
-    /// NO pragmas. Never migrates and leaves the file byte-identical: a non-serving verb must have no
-    /// write side effect (pass 2, MINOR-12 for tokens; the same rule for the schema).
-    /// <see cref="ChopDb.Open"/> is not used on purpose — its <c>PRAGMA journal_mode=WAL</c> rewrites
-    /// the header of a database that is not already WAL (a restored .bak is exactly that). Nor is
-    /// <c>Mode=ReadOnly</c>: measured on Microsoft.Data.Sqlite 10.0.11, a read-only open of a WAL
-    /// database whose -wal/-shm are absent creates both and does not remove them on close, so the
-    /// verb would litter the data dir. <c>ReadWrite</c> (no Create) with no pragmas creates the
-    /// sidecars on open and deletes them on close, leaves a cleanly-closed rollback-journal database
-    /// untouched (a hot journal would be rolled back on open, which is SQLite recovery, not this
-    /// verb's doing), and reads correctly beside a running hub. A database below the current version, above it, or
-    /// absent is an exit-4 "start the hub once" / "run a newer build", mirroring the
-    /// missing-tokens.json case.</summary>
+    /// no pragmas. Never migrates and leaves the file byte-identical: a non-serving verb must have no
+    /// write side effect. <see cref="ChopDb.Open"/> is not used on purpose: its
+    /// <c>PRAGMA journal_mode=WAL</c> rewrites the header of a database that is not already WAL (a
+    /// restored .bak is exactly that). Nor is <c>Mode=ReadOnly</c>: measured on
+    /// Microsoft.Data.Sqlite 10.0.11, a read-only open of a WAL database whose -wal/-shm are absent
+    /// creates both and does not remove them on close, so the verb would litter the data dir.
+    /// <c>ReadWrite</c> (no Create) with no pragmas creates the sidecars on open and deletes them on
+    /// close, leaves a cleanly-closed rollback-journal database untouched (a hot journal would be
+    /// rolled back on open, which is SQLite recovery, not this verb's doing), and reads correctly
+    /// beside a running hub. A database below the current version, above it, or absent is an exit-4
+    /// "start the hub once" / "run a newer build", mirroring the missing-tokens.json case.</summary>
     private static IReadOnlyList<string>? TryReadRoster(HubOptions options, TextWriter error, out IReadOnlyList<Participant> roster)
     {
         roster = [];
@@ -71,7 +70,7 @@ public static class HostCommands
     {
         // Rotating under a live hub writes a file nobody reads: the hub resolves tokens against the
         // snapshot it loaded at startup, so the leaked token keeps working. Refusing is the whole
-        // difference between rotation and revocation (pass 2, MAJOR-6).
+        // difference between rotation and revocation.
         if (HubLock.IsHeld(options.DataDir))
         {
             error.WriteLine($"A hub is running on '{options.DataDir}'. Stop it first — rotating while it runs writes a new token that the running hub ignores, and the old token keeps working.");
@@ -86,17 +85,15 @@ public static class HostCommands
         try
         {
             if (TryReadRoster(options, error, out var roster) is null) return 4;
-            // Row 28: TokenStore.Rotate is gone - MintFor is the one mint entry point, taken through
-            // a freshly-loaded instance (the same shape --print-config's read-only ReadExisting uses
-            // below has to avoid: Load backfills any participant new to this database, which is
-            // exactly the existing "start the hub once first" contract for those rows).
+            // MintFor is the one mint entry point, taken through a freshly-loaded instance: Load
+            // backfills any participant new to this database (the "start the hub once first" contract
+            // for those rows), which --print-config's read-only ReadExisting below has to avoid.
             var minted = TokenStore.Load(options.DataDir, roster).MintFor(options.RotateParticipant!);
-            // Row 28, D-28-d: this REVERSES critique pass 1's "never print" ruling (F7). --print-config
-            // no longer embeds a live value anywhere (it writes a {{TOKEN}} placeholder), so a rotated
-            // token has no other way to reach the operator. The exposure F7 named - a terminal buffer,
-            // shell history, an agent transcript - is unchanged; what changed is that it is now
-            // accepted for a command the bounding clause in docs/verification.md restricts to a human
-            // typing it by hand, never something an agent runs on its own.
+            // --print-config embeds no live value anywhere (it writes a {{TOKEN}} placeholder), so
+            // printing here is the only way a rotated token reaches the operator. The exposure (a
+            // terminal buffer, shell history, an agent transcript) is accepted because
+            // docs/verification.md restricts this command to a human typing it by hand, never
+            // something an agent runs on its own.
             output.WriteLine($"New token for '{options.RotateParticipant}':");
             output.WriteLine(minted);
             output.WriteLine("This will not be shown again and is written to no file. Paste it over the");
@@ -135,26 +132,25 @@ public static class HostCommands
         {
             if (TryReadRoster(options, error, out var roster) is null) return 4;
 
-            // Read WITHOUT back-filling: TokenStore.Load mints any missing participant and rewrites
+            // Read without back-filling: TokenStore.Load mints any missing participant and rewrites
             // the file, so a hand-edited tokens.json would have a credential silently rotated by a
-            // command that is supposed to only read (pass 2, MINOR-12). Row 28: the values below are
-            // host-file rows' hashes - kept only to validate that every host-file row already has an
-            // entry (ReadExisting still throws by name for one that doesn't); a hash is never a usable
-            // credential, so it is never what gets written into a generated file.
+            // command that is supposed to only read. The values below are host-file rows' hashes,
+            // kept only to validate that every host-file row already has an entry (ReadExisting
+            // throws by name for one that doesn't); a hash is never a usable credential, so it is
+            // never what gets written into a generated file.
             var tokens = TokenStore.ReadExisting(options.DataDir, roster);
 
             // Prefer the port the hub actually bound over the one this invocation happened to
             // resolve: a hub started with --port 9000 and a --print-config run without it would
-            // otherwise emit configs pointing at 8790, exit 0, and be undetectable (pass 2,
-            // MINOR-13).
+            // otherwise emit configs pointing at 8790, exit 0, and be undetectable.
             int? recorded = HubPortFile.Read(options.DataDir);
             int port = recorded ?? options.Port;
             if (recorded is { } r && r != options.Port)
                 output.WriteLine($"Note: using port {r} from the last hub start, not the {options.Port} this command resolved.");
 
-            // Row 28 ticket 3: generation never emits a real value. Every host-file row that
-            // ReadExisting validated gets HostConfigs.TokenPlaceholder in its place; --rotate-token
-            // <id> is the one command that ever prints a usable credential.
+            // Generation never emits a real value. Every host-file row that ReadExisting validated
+            // gets HostConfigs.TokenPlaceholder in its place; --rotate-token <id> is the one command
+            // that ever prints a usable credential.
             var placeholders = tokens.Keys.ToDictionary(id => id, _ => HostConfigs.TokenPlaceholder, StringComparer.Ordinal);
             var folder = HostConfigs.Write(options.DataDir, port, placeholders, roster);
             output.WriteLine("Wrote host configurations to:");
@@ -164,9 +160,9 @@ public static class HostCommands
             return 0;
         }
         // Broad on purpose: a torn tokens.json (JsonException), a contended mutex (TimeoutException)
-        // or a tokens.json missing a participant (InvalidOperationException, from ReadExisting —
-        // the one case this command must diagnose rather than repair) must each produce one line,
-        // not a stack trace (critique pass 1, F14).
+        // or a tokens.json missing a participant (InvalidOperationException, from ReadExisting, the
+        // one case this command must diagnose rather than repair) must each produce one line, not a
+        // stack trace.
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or TimeoutException or InvalidOperationException or SqliteException)
         {
             error.WriteLine($"Could not write host configurations: {e.Message}");
@@ -174,13 +170,13 @@ public static class HostCommands
         }
     }
 
-    /// <summary>Row 11 task 5: <c>--import-skill &lt;dir&gt;</c>. Unlike <see cref="RotateToken"/> and
-    /// <see cref="PrintConfig"/> this does NOT gate on <see cref="HubLock.IsHeld"/> and does not read
-    /// or rotate <c>tokens.json</c> — the store is read on demand (D-d), so nothing here needs the hub
-    /// stopped. It DOES ensure the database's <c>skills</c> table exists, the same idempotent way a
-    /// hub start does (<see cref="ChopDb.EnsureDatabase"/>), because the M11 check runs this verb
-    /// BEFORE any hub has ever started against a fresh data directory (grill ledger m6) — there is no
-    /// "start the hub once first" precondition to lean on here.</summary>
+    /// <summary><c>--import-skill &lt;dir&gt;</c>. Unlike <see cref="RotateToken"/> and
+    /// <see cref="PrintConfig"/> this does not gate on <see cref="HubLock.IsHeld"/> and does not read
+    /// or rotate <c>tokens.json</c>: the store is read on demand, so nothing here needs the hub
+    /// stopped. It does ensure the database's <c>skills</c> table exists, the same idempotent way a
+    /// hub start does (<see cref="ChopDb.EnsureDatabase"/>), because a check script may run this verb
+    /// before any hub has started against a fresh data directory; there is no "start the hub once
+    /// first" precondition to lean on here.</summary>
     private static int ImportSkill(HubOptions options, TextWriter output, TextWriter error)
     {
         var db = new ChopDb(Path.Combine(options.DataDir, "chopitup.db"));
@@ -200,14 +196,13 @@ public static class HostCommands
         };
     }
 
-    /// <summary>Row 20 task 2: <c>--set-classes &lt;id&gt;=&lt;a,b&gt;</c>. Like <see cref="RotateToken"/>
-    /// this needs the hub stopped (exit 5): the running hub holds its roster snapshot in memory and
-    /// would not see a class change until its next start, so writing one under a live hub would be
-    /// silently ignored. Unlike RotateToken/PrintConfig this does NOT gate on <c>tokens.json</c> —
-    /// <see cref="TryReadRoster"/>'s own "no chopitup.db" fence is the only existence check (plan
-    /// critique pass-2 M1): the M20 check script runs this verb before the first hub start, right
-    /// after <c>--import-skill</c> has created the database via <see cref="ChopDb.EnsureDatabase"/>
-    /// but before any hub start has ever minted a tokens.json.</summary>
+    /// <summary><c>--set-classes &lt;id&gt;=&lt;a,b&gt;</c>. Like <see cref="RotateToken"/> this needs
+    /// the hub stopped (exit 5): the running hub holds its roster snapshot in memory and would not see
+    /// a class change until its next start, so writing one under a live hub would be silently
+    /// ignored. Unlike RotateToken/PrintConfig this does not gate on <c>tokens.json</c>:
+    /// <see cref="TryReadRoster"/>'s own "no chopitup.db" fence is the only existence check, because
+    /// a check script runs this verb right after <c>--import-skill</c> has created the database via
+    /// <see cref="ChopDb.EnsureDatabase"/> but before any hub start has minted a tokens.json.</summary>
     private static int SetClasses(HubOptions options, TextWriter output, TextWriter error)
     {
         if (HubLock.IsHeld(options.DataDir))
@@ -242,25 +237,25 @@ public static class HostCommands
         return 0;
     }
 
-    /// <summary>Row 24 task 4: <c>--export-memory &lt;dir&gt;</c>. Renders the memory store into the
-    /// vendor shape <see cref="ChopItUp.Hub.Memory.MemoryExport"/> defines and stages-and-swaps it into
-    /// <see cref="HubOptions.ExportMemoryPath"/> via <see cref="ChopItUp.Hub.Memory.MemoryExportWriter"/>
-    /// (T1-T3). Like <see cref="RotateToken"/> and <see cref="SetClasses"/> (D11) this needs the hub
-    /// stopped — an approval landing mid-export would read a state that never existed — but unlike them
-    /// it does not read or rotate <c>tokens.json</c>. Exit codes: 0 ok, 3 IO failure (a swap that fails
+    /// <summary><c>--export-memory &lt;dir&gt;</c>. Renders the memory store into the vendor shape
+    /// <see cref="ChopItUp.Hub.Memory.MemoryExport"/> defines and stages-and-swaps it into
+    /// <see cref="HubOptions.ExportMemoryPath"/> via <see cref="ChopItUp.Hub.Memory.MemoryExportWriter"/>.
+    /// Like <see cref="RotateToken"/> and <see cref="SetClasses"/> this needs the hub stopped (an
+    /// approval landing mid-export would read a state that never existed), but unlike them it does not
+    /// read or rotate <c>tokens.json</c>. Exit codes: 0 ok, 3 IO failure (a swap that fails
     /// mid-move), 4 no memory store at <c>--data</c>, 5 a hub is running, 6 refused by the guard
     /// (zero live entries without <c>--force</c>, the over-cap render refusal, or a drifted/foreign/
     /// different-source target).</summary>
     private static int ExportMemory(HubOptions options, TextWriter output, TextWriter error)
     {
-        // D11: an approval landing mid-export would read a state that never existed.
+        // An approval landing mid-export would read a state that never existed.
         if (HubLock.IsHeld(options.DataDir))
         {
             error.WriteLine($"A hub is running on '{options.DataDir}'. Stop it first — exporting while it runs could read memory mid-write.");
             return 5;
         }
 
-        // Fence BEFORE constructing the store (pass 2 M11): MemoryStore.EnsureLayout() WRITES, and
+        // Fence before constructing the store: MemoryStore.EnsureLayout() writes, and
         // ListTopics/Entries call it internally, so any read through the store touches the source
         // layout. This plain existence check is the only way to refuse without creating anything.
         var memoryDir = Path.Combine(options.DataDir, "memory");
@@ -271,8 +266,8 @@ public static class HostCommands
         }
 
         var store = new MemoryStore(memoryDir);
-        var topics = MemoryExport.LiveTopics(store);   // D10: core first, then ListTopics' order
-        var liveCount = topics.Sum(t => store.Titles(t).Count);   // Titles() already excludes superseded entries (D7)
+        var topics = MemoryExport.LiveTopics(store);   // core first, then ListTopics' order
+        var liveCount = topics.Sum(t => store.Titles(t).Count);   // Titles() already excludes superseded entries
         if (liveCount == 0 && !options.Force)
         {
             error.WriteLine($"'{memoryDir}' holds no live memories to export. Use --force to export an empty index anyway.");
@@ -282,7 +277,7 @@ public static class HostCommands
         // MemoryExportWriter.Run handles every other refusal itself (over-cap render, drift, a
         // different source, a failed swap) and returns the exit code directly: an
         // ExportRefusedException never reaches this frame, so it can never be caught and remapped to
-        // the shared exit-3 mapping (claim 21, pass 2 M5).
+        // the shared exit-3 mapping.
         var result = MemoryExportWriter.Run(store, options.ExportMemoryPath!, options.Force, options.AcceptNewSource, output, error);
         return result.ExitCode;
     }

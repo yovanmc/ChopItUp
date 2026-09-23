@@ -1,19 +1,15 @@
 <#
 .SYNOPSIS
-    M2 self-check: fabricates a realistic v1 ChopItUp corpus, runs the real built hub against it,
-    and proves the backup, the migration, the conversation and the emitted host configs all came
-    out right. Fabricated data only — never a copy of anything real.
+    Synthetic-corpus dry run: fabricates a realistic v1 ChopItUp corpus, runs the real built hub
+    against it, and proves the backup, the migration, the conversation and the emitted host configs
+    all came out right. Fabricated data only, never a copy of anything real.
 
 .DESCRIPTION
-    See docs/superpowers/plans/m2-host-wiring.md, "Task 6 — Synthetic-corpus dry run (HIGH gate)".
-    This is the milestone's self-check harness as well as its acceptance proof: M2 has no deploy
-    step of its own.
-
     Never `dotnet run`s the hub: that executes it as a CHILD of the SDK driver, so the PID this
     script would hold is not the hub, and killing it does not reliably kill the hub. Instead this
     builds the solution once and Start-Process'es the built ChopItUp.Hub.exe directly, keeping the
-    returned Process object so it can later be stopped by id — after confirming its image path is
-    really the exe this script launched — and never by name.
+    returned Process object so it can later be stopped by id (after confirming its image path is
+    really the exe this script launched) and never by name.
 
 .PARAMETER KeepEvidence
     Keep the scratch directory (corpus database, backup, host-configs, logs) instead of deleting it
@@ -198,12 +194,11 @@ try {
     $tokensPath = Join-Path $dataDir 'tokens.json'
     $tokensBeforeRotate = Get-Content $tokensPath -Raw
 
-    # Row 28: tokens.json now holds only each host-file row's SHA-256 (TokenStore.Load hashes the
-    # plaintext $preTokens seeded above IN PLACE on this very first start -- never re-minting, never
-    # writing the plaintext back). The plaintext this script already generated in $preTokens is what
-    # keeps authenticating; re-reading it off disk after the migration would hand back a hash, not a
-    # usable bearer. $knownTokens already holds $preTokens' values (added when they were generated,
-    # above) -- nothing new to capture here.
+    # tokens.json holds only each host-file row's SHA-256 (TokenStore.Load hashes the plaintext
+    # $preTokens seeded above IN PLACE on this very first start, never re-minting, never writing the
+    # plaintext back). The plaintext in $preTokens is what keeps authenticating; re-reading it off
+    # disk after the migration would hand back a hash, not a usable bearer. $knownTokens already
+    # holds $preTokens' values, so there is nothing new to capture here.
     $mcpOutPath = Join-Path $scratch 'mcp-check.json'
     $mcpOutLog = Join-Path $scratch 'mcp-check.out.log'
     $mcpErrLog = Join-Path $scratch 'mcp-check.err.log'
@@ -248,13 +243,11 @@ try {
     Add-Check -Name 'readme.roster' -Passed (($readme -match '\| `gpt-6-astra` \|') -and ($readme -match '\| `fable` \|')) -Detail 'README lists the spawn rows'
     $postTokens = Get-Content -LiteralPath (Join-Path $dataDir 'tokens.json') -Raw | ConvertFrom-Json
     $tokenKeys = @($postTokens.PSObject.Properties).Count
-    # Row 28: only HOST-FILE rows persist at all now (owner, owner-remote, claude, codex) -- a
-    # spawnable row (opus, sonnet, fable, every gpt-* row) is minted straight into memory and never
-    # written, so it was never one of the 14 keys this file used to carry pre-row-28.
+    # Only HOST-FILE rows persist (owner, owner-remote, claude, codex): a spawnable row (opus,
+    # sonnet, fable, every gpt-* row) is minted straight into memory and never written.
     Add-Check -Name 'tokens.roster' -Passed ($tokenKeys -eq 4) -Detail "tokens.json keys=$tokenKeys"
-    # Row 28: each entry is now {"sha256": "<hex>"}, not the plaintext itself -- "preserved" means the
-    # migration hashed the SAME plaintext this script seeded, not that the stored value still equals
-    # it byte-for-byte (it never will again). Compare against TokenStore's own digest instead.
+    # Each entry is {"sha256": "<hex>"}, not the plaintext itself: "preserved" means the migration
+    # hashed the SAME plaintext this script seeded. Compare against TokenStore's own digest.
     $preserved = $true
     $preservedDetail = New-Object System.Collections.Generic.List[string]
     foreach ($id in $preTokens.Keys) {
@@ -278,8 +271,7 @@ try {
     }
     Add-Check -Name 'print-config.url-carries-actual-port' -Passed $urlMatches -Detail "expected substring: $expectedUrl"
 
-    # No token value in the three emitted files' bytes leaking into what THIS script reads back for
-    # the URL check above is fine (that is the files' own job, covered by Task 5's tests); this
+    # The emitted files carrying token values is their own job, covered by their unit tests; this
     # script's own obligation is that no token appears in ITS OWN output, checked below.
 
     # --rotate-token against the STILL-RUNNING hub exits 5 and leaves tokens.json unchanged.

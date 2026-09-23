@@ -27,13 +27,13 @@ public sealed class SpawnJobsTests
     /// process) until it appears or <paramref name="timeout"/> elapses. Deliberately does not
     /// settle for "whichever child WMI enumerates first": cmd.exe also spawns a conhost.exe child
     /// very early, whose creation can race SpawnJobs.Track's AssignProcessToJobObject call closely
-    /// enough that its membership flips Inside/Outside from run to run (measured 2026-09-10: 10 of
-    /// 15 isolated runs saw conhost Outside while PING.EXE was Inside on all 15) - the same window
-    /// the plan's threat model names as left open ("a child the shim creates BEFORE assignment
-    /// inherits nothing"). PING.EXE is only created after cmd.exe finishes parsing its command
-    /// line, well after Assign() has returned, so it is the deterministic descendant to assert
-    /// against. A poll (rather than one fixed sleep before one query) also tolerates a slower or
-    /// loaded machine taking longer to spawn or observe the child.</summary>
+    /// enough that its membership flips Inside/Outside from run to run (measured: 10 of 15 isolated
+    /// runs saw conhost Outside while PING.EXE was Inside on all 15), the same window the threat model
+    /// names as left open ("a child the shim creates BEFORE assignment inherits nothing"). PING.EXE is
+    /// only created after cmd.exe finishes parsing its command line, well after Assign() has returned,
+    /// so it is the deterministic descendant to assert against. A poll (rather than one fixed sleep
+    /// before one query) also tolerates a slower or loaded machine taking longer to spawn or observe
+    /// the child.</summary>
     private static async Task<System.Diagnostics.Process?> FindPingChildOf(int pid, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;

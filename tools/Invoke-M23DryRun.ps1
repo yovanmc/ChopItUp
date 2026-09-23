@@ -1,22 +1,21 @@
 <#
 .SYNOPSIS
-    Row 23 (T9) dry run: proves the memory-consolidation composition — propose_rewrite, the diff/
-    provenance-loss accounting on the approval list, the approve path's file+backup write, the
-    duplicate-pending refusal, the non-core cap refusal, and re-approval idempotency — against a
-    fabricated, at-scale memory store. No model is ever spawned.
+    Memory-consolidation dry run: proves propose_rewrite, the diff/provenance-loss accounting on the
+    approval list, the approve path's file+backup write, the duplicate-pending refusal, the non-core
+    cap refusal, and re-approval idempotency against a fabricated, at-scale memory store. No model is
+    ever spawned.
 
 .DESCRIPTION
-    Mirrors Invoke-M18MemoryCheck.ps1's frame (param block, Add-Check, a fresh -DataDir under
+    Same frame as Invoke-M18MemoryCheck.ps1 (param block, Add-Check, a fresh -DataDir under
     $env:TEMP, the hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0
-    only when every check passes) and reuses its Invoke-McpTool helper verbatim. Drives /mcp itself
-    as the 'claude' participant (kind=model, host=claude — one of propose_rewrite's permitted
-    callers) with a bearer token per LESSONS M11: it never asks any spawned model to do anything.
+    only when every check passes) and its Invoke-McpTool helper. Drives /mcp itself as the 'claude'
+    participant (kind=model, host=claude, one of propose_rewrite's permitted callers) with a bearer
+    token: it never asks any spawned model to do anything.
 
     ALL corpus data is fabricated by this script directly on disk before the hub starts (12 topics
     of ~20 entries each, one near the 24,000-character topic cap, a core near the 6,000-character
-    core cap, ~15% of entries superseded) — the same shape Invoke-M18MemoryCheck.ps1 seeds by hand,
-    just at row 23's scale. Never touches C:\Self Apps or any real data directory: -DataDir defaults
-    to a fresh folder under $env:TEMP and is left behind with the log.
+    core cap, ~15% of entries superseded). Never touches C:\Self Apps or any real data directory:
+    -DataDir defaults to a fresh folder under $env:TEMP and is left behind with the log.
 #>
 [CmdletBinding()]
 param(
@@ -39,10 +38,10 @@ function Add-Check {
     Add-Content -Path $log -Value $line
 }
 
-# Copied from Invoke-M18MemoryCheck.ps1 verbatim (row 18): drives /mcp itself as the participant
-# named. A JSON-RPC error envelope has no result (LESSONS M10 pass 2 P2-8a): surfaced as the
-# failure text, never as a silent empty success. A tool-level McpException comes back as
-# result.isError = true with the message in result.content, not as a JSON-RPC-level error.
+# Same as Invoke-M18MemoryCheck.ps1's helper: drives /mcp itself as the participant named. A JSON-RPC
+# error envelope has no result, so it is surfaced as the failure text, never as a silent empty
+# success. A tool-level McpException comes back as result.isError = true with the message in
+# result.content, not as a JSON-RPC-level error.
 function Invoke-McpTool([string]$Participant, [string]$Tool, [hashtable]$Arguments) {
     $token = $script:PlaintextTokens.$Participant
     $headers = @{ Authorization = "Bearer $token"; Accept = 'application/json, text/event-stream' }
@@ -106,9 +105,8 @@ Add-Content -Path $log -Value ("M23 dry run {0} exe={1} data={2} port={3}" -f (G
 Write-Host "Binary: $HubExe"
 Write-Host "Data dir: $DataDir"
 
-# Row 28: 'claude' (Invoke-McpTool) and 'owner' (the approve calls) are host-file rows -- seed
-# plaintexts for them into tokens.json BEFORE the hub's first start (ChopTokenHelpers.ps1). Never a
-# real installation's credential.
+# 'claude' (Invoke-McpTool) and 'owner' (the approve calls) are host-file rows: seed plaintexts for
+# them into tokens.json BEFORE the hub's first start. Never a real installation's credential.
 $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('claude', 'owner')
 
 $utf8 = New-Object System.Text.UTF8Encoding($false)
@@ -171,10 +169,9 @@ try {
     $git = Get-Command git -ErrorAction SilentlyContinue
     Add-Check -Name 'cli.git-on-path' -Passed ([bool]$git) -Detail ($git.Source ?? 'not found')
 
-    # Every path element quoted (2026-09-07 lesson, reproduced for real while writing the sibling
-    # self-check script: Start-Process -ArgumentList space-joins its array rather than using
+    # Every path element quoted: Start-Process -ArgumentList space-joins its array rather than using
     # ProcessStartInfo.ArgumentList, so an unquoted path containing a space gets word-split by the
-    # child process's own argv parser).
+    # child process's argv parser.
     $hub = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--port', "$Port") -WindowStyle Hidden -PassThru `
         -RedirectStandardError (Join-Path $DataDir 'hub.stderr.log') -RedirectStandardOutput (Join-Path $DataDir 'hub.stdout.log')
     $health = $null
@@ -184,8 +181,8 @@ try {
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
     Add-Check -Name 'health.schema-is-15' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
-    # Row 28: 'claude' and 'owner' were seeded into tokens.json BEFORE this Start-Process call
-    # (right after $DataDir was created, below); the file itself now holds only their SHA-256.
+    # 'claude' and 'owner' were seeded into tokens.json before this Start-Process call; the file
+    # itself holds only their SHA-256.
     $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
     # Leg: the seeded corpus is what the hub sees — 12 topics, topic-01's 17 live titles (3 named +
@@ -206,12 +203,12 @@ try {
     $idA = $rewriteA.Json.id
 
     # Leg: a second rewrite of the same topic while the first is pending is refused, naming #idA,
-    # not silently handed back as a "duplicate" of a different body (pass 2 finding C).
+    # not silently handed back as a "duplicate" of a different body.
     $rewriteB = Invoke-McpTool -Participant 'claude' -Tool 'propose_rewrite' -Arguments @{ room_id = 'general'; topic = 'topic-01'; body = "# topic-01`n## Something Else`nDifferent body entirely.`n" }
     Add-Check -Name 'propose.second-rewrite-refused' -Passed ($rewriteB.IsError -and $rewriteB.Text -match "already pending \(#$idA\)") -Detail $rewriteB.Text
 
     # Leg: a body that composes past the cap at an ORDINARY (non-core) topic is refused, not only
-    # at core (claim 5 / pass 2 finding A).
+    # at core.
     $overCap = Invoke-McpTool -Participant 'claude' -Tool 'propose_rewrite' -Arguments @{ room_id = 'general'; topic = 'topic-02'; body = $overCapBody }
     Add-Check -Name 'propose.over-cap-refused-non-core' -Passed ($overCap.IsError -and $overCap.Text -match '24000') -Detail $overCap.Text
 

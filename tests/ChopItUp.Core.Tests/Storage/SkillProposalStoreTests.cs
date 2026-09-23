@@ -3,11 +3,10 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Tests.Storage;
 
-/// <summary>Ticket 04 / plan Task 4: <c>skill_proposals</c> row lifecycle - add, fetch, list by
-/// status, the undecided dedup lookup, and the three decision stamps. Mirrors
-/// <see cref="MemoryProposalStoreTests"/>'s shape, including memory's definition of
-/// <see cref="MemoryProposalStore.Undecided"/> as pending union approved-with-nothing-written, which
-/// here is pending union approved-with-<c>installed_at</c>-NULL.</summary>
+/// <summary><c>skill_proposals</c> row lifecycle: add, fetch, list by status, the undecided dedup
+/// lookup, and the three decision stamps. Mirrors <see cref="MemoryProposalStoreTests"/>'s shape,
+/// including memory's definition of <see cref="MemoryProposalStore.Undecided"/> as pending union
+/// approved-with-nothing-written, which here is pending union approved-with-<c>installed_at</c>-NULL.</summary>
 public sealed class SkillProposalStoreTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_skillproposals_" + Guid.NewGuid().ToString("N"));
@@ -96,7 +95,7 @@ public sealed class SkillProposalStoreTests : IDisposable
         Assert.NotNull(approved.DecidedAt);
         Assert.Null(approved.InstalledAt);
 
-        // Safe to re-apply (ticket 04): a second call is a no-op, not a corrupting overwrite.
+        // Safe to re-apply: a second call is a no-op, not a corrupting overwrite.
         Assert.Null(_store.MarkApproved(a.Id));
         Assert.Equal(approved.DecidedAt, _store.Get(a.Id)!.DecidedAt);
     }
@@ -128,8 +127,8 @@ public sealed class SkillProposalStoreTests : IDisposable
         Assert.NotNull(installed);
         Assert.NotNull(installed!.InstalledAt);
 
-        // Safe to re-apply (ticket 04, and what task 7's Retry arm depends on): a repeat call is a
-        // no-op rather than stamping a new time.
+        // Safe to re-apply (Retry depends on it): a repeat call is a no-op rather than stamping a new
+        // time.
         Assert.Null(_store.MarkInstalled(a.Id));
         Assert.Equal(installed.InstalledAt, _store.Get(a.Id)!.InstalledAt);
     }

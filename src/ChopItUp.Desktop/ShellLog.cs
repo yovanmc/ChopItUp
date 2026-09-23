@@ -3,17 +3,17 @@ using System.IO;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12: an append-only text log for the shell process itself (`desktop.log`, beside the
-/// hub's own log under the same data dir). Never throws: a logging failure must not take the shell
-/// down. The hub's own log tail is a separate concern (Task 3, LogTail).</summary>
+/// <summary>An append-only text log for the shell process itself (`desktop.log`, beside the hub's own
+/// log under the same data dir). Never throws: a logging failure must not take the shell down. The
+/// hub's own log tail is a separate concern (LogTail).</summary>
 public sealed class ShellLog
 {
     private static readonly object Gate = new();
 
-    /// <summary>Row 12 review fix (B): the plan (Task 3) says desktop.log follows the same 5 MB rule as
-    /// hub.log (<see cref="Hub.ProcessHubFactory"/>) — rename to the ".1" file, replacing any previous
-    /// one, before appending. Kept internal-with-a-real-default rather than a magic literal in Append so
-    /// a test can inject a byte-scale threshold instead of writing 5 MB of log lines.</summary>
+    /// <summary>desktop.log follows the same 5 MB rule as hub.log (<see cref="Hub.ProcessHubFactory"/>):
+    /// rename to the ".1" file, replacing any previous one, before appending. Kept
+    /// internal-with-a-real-default rather than a magic literal in Append so a test can inject a
+    /// byte-scale threshold instead of writing 5 MB of log lines.</summary>
     private const long DefaultRotateBytes = 5 * 1024 * 1024;
 
     private readonly long _rotateBytes;

@@ -1,40 +1,39 @@
 <#
 .SYNOPSIS
-    M20 live check: proves that the ported roadmap skill, run as a hub run, drives a scratch .NET
-    repo's topmost READY row from `/roadmap @<conductor>` to a merged ping, with a Codex row as the
-    only plumbing worker.
+    Roadmap-skill live check: proves that the ported roadmap skill, run as a hub run, drives a scratch
+    .NET repo's topmost READY row from `/roadmap @<conductor>` to a merged ping, with a Codex row as
+    the only plumbing worker.
 
 .DESCRIPTION
-    Row 20 (roadmap-in-room), plan Task 6. Spends real model calls on the owner's subscription: the
-    conductor (-Conductor, default opus, effort high per AC7 - opus is judge-classed) is re-spawned
-    several times, and the worker (-Worker, default gpt-5.4-mini, a Codex row) once for the build
-    phase. Never touches C:\Self Apps, %USERPROFILE%\ChopItUp or any real data directory: -DataDir
-    and -RoomsRoot default to fresh folders under $env:TEMP and are left behind with the log (the
-    scratch repo and data dir are themselves deleted at the end unless -KeepArtifacts is passed).
+    Spends real model calls on the owner's subscription: the conductor (-Conductor, default opus,
+    effort high - opus is judge-classed) is re-spawned several times, and the worker (-Worker,
+    default gpt-5.4-mini, a Codex row) once for the build phase. Never touches C:\Self Apps,
+    %USERPROFILE%\ChopItUp or any real data directory: -DataDir and -RoomsRoot default to fresh
+    folders under $env:TEMP and are left behind with the log (the scratch repo and data dir are
+    themselves deleted at the end unless -KeepArtifacts is passed).
 
     Step 1 (the scratch-repo seed: git init, a classlib + xunit project, a whitelist-v3 ROADMAP.md, a
     seed commit, one warm `dotnet test`) lives in Initialize-ScratchRepo so it can be dry-run on its
     own via -SeedOnly, which does nothing else - no hub, no import, no spend - and exits 0 once the
     seed commit and the baseline test are green.
 
-    Plan section "Task 6": the checks below split into HARD-GATING (the hub alone decides these: an
-    import exit code, a class assignment, a health payload, a REST list, a room's directory, a run's
-    status field, a fixed-form hub note) and MODEL-TRIGGERED (a record that only exists if the
-    conductor or worker chose to act on it - M19's task 15d ambiguity: a FAIL is not distinguishable
-    from a hub defect without the transcript). Every model-triggered check is wrapped in
-    Add-ModelTriggeredCheck, which appends a diagnostic - whether the worker posted at all, and the
-    run's live status - on FAIL only; it never affects PASS. The M10 lesson (2026-09-06) applies here
-    too: one re-run before a model-triggered FAIL is called a defect is the ORCHESTRATOR's call, not
-    this script's - this script always reports what it saw on this one run.
+    The checks split into HARD-GATING (the hub alone decides these: an import exit code, a class
+    assignment, a health payload, a REST list, a room's directory, a run's status field, a
+    fixed-form hub note) and MODEL-TRIGGERED (a record that only exists if the conductor or worker
+    chose to act on it, so a FAIL is not distinguishable from a hub defect without the transcript).
+    Every model-triggered check is wrapped in Add-ModelTriggeredCheck, which appends a diagnostic -
+    whether the worker posted at all, and the run's live status - on FAIL only; it never affects
+    PASS. Whether to re-run once before a model-triggered FAIL is called a defect is the caller's
+    decision; this script always reports what it saw on this one run.
 
     Every check prints PASS/FAIL; the last line is "Results: n/m PASS", counting every check, hard and
-    model-triggered together (plan Task 6, step 9): exit 0 only when every one of them passed. The hub
-    is stopped by PID, always, and every orphan whose command line names this run's -DataDir is swept
-    in the same `finally`.
+    model-triggered together: exit 0 only when every one of them passed. The hub is stopped by PID,
+    always, and every orphan whose command line names this run's -DataDir is swept in the same
+    `finally`.
 
     Cost: conductor opus x3-4 at effort high, Codex gpt-5.4-mini x1, plus one re-entry at most;
-    ~10-20 minutes. Orchestrator-run only - never invoke `claude` or `codex` directly, and never run
-    this against the real ChopItUp repo or a live hub's data directory.
+    ~10-20 minutes. Agent-run only - never invoke `claude` or `codex` directly, and never run this
+    against the real ChopItUp repo or a live hub's data directory.
 #>
 [CmdletBinding()]
 param(
@@ -55,8 +54,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
-# Gate-script convention (docs/LESSONS.md, task 4 overlay scripts): read native exit codes from
-# $LASTEXITCODE explicitly rather than letting a nonzero dotnet/git exit throw.
+# Gate-script convention: read native exit codes from $LASTEXITCODE explicitly rather than letting a
+# nonzero dotnet/git exit throw.
 $PSNativeCommandUseErrorActionPreference = $false
 
 # --- Step 1: scratch repo (factored so -SeedOnly can dry-run it alone) -----------------------------
@@ -78,7 +77,7 @@ function Initialize-ScratchRepo {
         dotnet add tests/Scratch.Lib.Tests/Scratch.Lib.Tests.csproj reference src/Scratch.Lib/Scratch.Lib.csproj | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "dotnet add reference failed (exit $LASTEXITCODE)" }
 
-        # Task 6 step 1: try --format slnx first; fall back to plain .sln if the SDK rejects it.
+        # Try --format slnx first; fall back to plain .sln if the SDK rejects it.
         $usedSlnx = $true
         dotnet new sln -n Scratch --format slnx | Out-Null
         if ($LASTEXITCODE -ne 0) {
@@ -197,9 +196,9 @@ function Add-Check {
     Add-Content -Path $log -Value $line
 }
 
-# Plan Task 6 step 9 / M19 task 15d: a model-triggered check reads a hub-written record that only
-# exists if the conductor or worker chose to act on it. On FAIL, append what the hub can say about
-# whether anything ran at all, so triage does not require reading the transcript.
+# A model-triggered check reads a hub-written record that only exists if the conductor or worker
+# chose to act on it. On FAIL, append what the hub can say about whether anything ran at all, so
+# triage does not require reading the transcript.
 function Add-ModelTriggeredCheck {
     param([string]$Name, [bool]$Passed, [string]$Detail, [string]$RoomId)
     if (-not $Passed) {
@@ -235,8 +234,8 @@ New-Item -ItemType Directory -Path $DataDir | Out-Null
 Add-Content -Path $log -Value ("M20 roadmap-in-room check {0} exe={1} data={2} rooms={3} port={4} conductor={5} worker={6}" `
     -f (Get-Date -Format o), $HubExe, $DataDir, $RoomsRoot, $Port, $Conductor, $Worker)
 
-# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
-# hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
+# Every non-GET /api route needs an owner-class bearer -- seed one into this scratch hub's own
+# tokens.json before it ever starts (ChopTokenHelpers.ps1). Never a real installation's.
 $ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
 
 # --- Step 1: seed the scratch repo, record its HEAD as the pre-run baseline ------------------------
@@ -256,8 +255,8 @@ function Get-Messages([string]$RoomId, [long]$AfterId = 0, [int]$Limit = 500) {
     try { @((Invoke-RestMethod -Uri "$base/api/rooms/$RoomId/messages?afterId=$AfterId&limit=$Limit" -TimeoutSec 10).messages) }
     catch { Add-Content -Path $log -Value "read room failed: $($_.Exception.Message)"; @() }
 }
-# Same M10-lesson polling shape as Invoke-M19RunCheck.ps1: the run's own phaseHistory record (read
-# once, after Wait-Run returns) is the proof; SeenPhases is log context only, not a check input.
+# Same polling shape as Invoke-M19RunCheck.ps1: the run's own phaseHistory record (read once, after
+# Wait-Run returns) is the proof; SeenPhases is log context only, not a check input.
 $script:SeenPhases = New-Object System.Collections.Generic.HashSet[string]
 function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
     $deadline = (Get-Date).AddSeconds($Seconds)
@@ -274,9 +273,9 @@ function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
     return $state
 }
 
-# 2026-09-07 lesson: any path passed through -ArgumentList is quoted INSIDE the argument string,
-# always - Start-Process joins -ArgumentList with spaces and quotes nothing itself, and this repo's
-# own default paths (and -SkillSource) live under 'C:\Agent Projects', which has a space in it.
+# Any path passed through -ArgumentList is quoted inside the argument string, always:
+# Start-Process joins -ArgumentList with spaces and quotes nothing itself, and this repo's own
+# default paths (and -SkillSource) live under 'C:\Agent Projects', which has a space in it.
 function Invoke-HubHostCommand {
     param([string[]]$Arguments, [string]$Label)
     $outLog = Join-Path $DataDir "$Label.out.log"
@@ -287,15 +286,15 @@ function Invoke-HubHostCommand {
 }
 
 try {
-    # --- Step 2: import the canonical skill + overlay, BEFORE the hub starts (same ordering M11/M19
-    # use: no second process touches chopitup.db while the hub holds it) -----------------------------
+    # --- Step 2: import the canonical skill + overlay, before the hub starts (no second process
+    # touches chopitup.db while the hub holds it) ------------------------------------------------------
     $importExit = Invoke-HubHostCommand -Label 'import' -Arguments @(
         '--data', "`"$DataDir`"", '--import-skill', "`"$SkillSource`"", '--overlay', "`"$OverlaySource`""
     )
     Add-Check -Name 'import.roadmap-with-overlay' -Passed ($importExit -eq 0) -Detail "exit=$importExit"
 
     # --- Step 3: classes, hub stopped. opus keeps judge (conducts and is the verify judge); sonnet
-    # loses plumbing/visible for this scratch hub only, so build can only go to Codex (plan R7). -----
+    # loses plumbing/visible for this scratch hub only, so build can only go to Codex. ----------------
     $classExitWorker = Invoke-HubHostCommand -Label 'setclasses-worker' -Arguments @('--data', "`"$DataDir`"", '--set-classes', "`"$Worker=plumbing`"")
     $classExitSonnet = Invoke-HubHostCommand -Label 'setclasses-sonnet' -Arguments @('--data', "`"$DataDir`"", '--set-classes', '"sonnet="')
     $classExitOpus = Invoke-HubHostCommand -Label 'setclasses-opus' -Arguments @('--data', "`"$DataDir`"", '--set-classes', '"opus=judge"')
@@ -315,7 +314,7 @@ try {
     }
     Add-Check -Name 'health.schema-is-15' -Passed ($health.schema -eq 15) -Detail "schema=$($health.schema)"
 
-    $skills = @(Invoke-RestMethod -Uri "$base/api/skills" -TimeoutSec 10 | ForEach-Object { $_ })   # M10: unwrap the array
+    $skills = @(Invoke-RestMethod -Uri "$base/api/skills" -TimeoutSec 10 | ForEach-Object { $_ })   # unwrap the array
     $roadmapSkill = $skills | Where-Object { $_.name -eq 'roadmap' } | Select-Object -First 1
     Add-Check -Name 'skills.api-lists-roadmap-as-run' -Passed ($null -ne $roadmapSkill -and $roadmapSkill.isRun -eq $true) `
         -Detail "found=$($null -ne $roadmapSkill) isRun=$($roadmapSkill.isRun)"
@@ -347,7 +346,7 @@ try {
     Add-Content -Path $log -Value ("final run: " + ($finalRun | ConvertTo-Json -Compress -Depth 6))
     Add-Content -Path $log -Value ("phases polled (log context only): " + ($script:SeenPhases -join ','))
     if (-not $finalRun -or $finalRun.status -notin @('ended', 'parked')) {
-        # Distinct from parked, per plan Task 6 params note: the run is still going at the deadline.
+        # Distinct from parked: the run is still going at the deadline.
         Write-Host "run still active at timeout (distinct from parked): status=$($finalRun.status)"
         Add-Content -Path $log -Value "run still active at timeout (distinct from parked): status=$($finalRun.status)"
     }
@@ -367,7 +366,7 @@ try {
     Add-Check -Name 'run.no-failure-notes' -Passed (-not ($hubNotes | Where-Object { $_.body -match 'could not be started|parked: skill' })) `
         -Detail (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')
 
-    # --- Step 8: model-triggered checks (M19-style, diagnostic on FAIL) -------------------------------
+    # --- Step 8: model-triggered checks (diagnostic on FAIL) ------------------------------------------
     Add-ModelTriggeredCheck -Name 'run.ended-not-parked' -Passed ($finalRun.status -eq 'ended') `
         -Detail "status=$($finalRun.status) reason=$($finalRun.reason)" -RoomId $roomId
 

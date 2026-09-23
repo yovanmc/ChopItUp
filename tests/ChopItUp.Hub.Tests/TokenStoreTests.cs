@@ -14,12 +14,11 @@ public sealed class TokenStoreTests : IDisposable
     private static string Sha256Hex(string plaintext) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plaintext))).ToLowerInvariant();
 
-    /// <summary>The required schema-evolution guard (row 28 Task 1, HIGH): a pre-row-28 plaintext
-    /// tokens.json, INCLUDING a mixed file (one entry already migrated to the hashed shape, the rest
-    /// still raw strings), migrates in place. Every original plaintext still resolves to its
-    /// participant (AC3: no re-mint, no re-paste), no plaintext survives on disk (AC6), the
-    /// already-hashed entry is carried over unchanged, and a second start touches the file not at
-    /// all.</summary>
+    /// <summary>The schema-evolution guard: an older plaintext tokens.json, INCLUDING a mixed file
+    /// (one entry already migrated to the hashed shape, the rest still raw strings), migrates in
+    /// place. Every original plaintext still resolves to its participant (no re-mint, no re-paste),
+    /// no plaintext survives on disk, the already-hashed entry is carried over unchanged, and a
+    /// second start touches the file not at all.</summary>
     [Fact]
     public void Schema_evolution_a_plaintext_and_mixed_tokens_json_migrates_with_no_plaintext_left()
     {
@@ -81,8 +80,8 @@ public sealed class TokenStoreTests : IDisposable
         foreach (var id in before.Keys.Where(id => id != "claude"))
             Assert.Equal(before[id], after[id]);   // every other host-file entry is untouched
 
-        // Row 28's classification, enforced: a spawnable row is ephemeral (nothing in the file to
-        // mint over) and a system row never authenticates at all - neither is a rotation target.
+        // The classification, enforced: a spawnable row is ephemeral (nothing in the file to mint
+        // over) and a system row never authenticates at all; neither is a rotation target.
         var spawnEx = Assert.Throws<ArgumentException>(() => store.MintFor("opus"));
         Assert.Contains("opus", spawnEx.Message);
         var systemEx = Assert.Throws<ArgumentException>(() => store.MintFor(ChopDb.HubParticipantId));
@@ -97,8 +96,8 @@ public sealed class TokenStoreTests : IDisposable
     public void ReadExisting_names_only_missing_host_file_ids_never_spawnable_or_system_ones()
     {
         // Loaded for owner and claude only: codex and owner-remote (also host-file) stay missing,
-        // alongside every spawnable/system row - none of which ReadExisting should ever complain
-        // about (row 28: they are legitimately absent).
+        // alongside every spawnable/system row, none of which ReadExisting should ever complain
+        // about (they are legitimately absent).
         var partial = ChopDb.SeedRoster.Where(p => p.Id is "owner" or "claude").ToArray();
         TokenStore.Load(_dir, partial);
 
@@ -117,9 +116,9 @@ public sealed class TokenStoreTests : IDisposable
         Assert.DoesNotContain(ChopDb.HubParticipantId, missing);  // system: never has a token
     }
 
-    /// <summary>Row 12 B2: the desktop shell's launch-scoped owner bearer resolves to the owner
-    /// participant, is never written to tokens.json, and is not counted as a credential (it is not a
-    /// participant's own token).</summary>
+    /// <summary>The desktop shell's launch-scoped owner bearer resolves to the hub's owner participant, is
+    /// never written to tokens.json, and is not counted as a credential (it is not a participant's own
+    /// token).</summary>
     [Fact]
     public void Load_with_shell_owner_token_resolves_it_to_owner_and_writes_nothing()
     {

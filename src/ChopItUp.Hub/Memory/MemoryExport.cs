@@ -13,34 +13,34 @@ public sealed record ExportPlan(IReadOnlyList<ExportFile> Files, string Index, i
 
 /// <summary>Thrown when the render would exceed a consumer limit; a dedicated type rather than
 /// <see cref="InvalidOperationException"/> because <c>HostCommands</c>'s shared catch already maps
-/// that to exit 3, and AC3 requires exit 6 (claim 21, plan pass 2 M5). <c>MemoryExportWriter</c>
-/// catches this by name.</summary>
+/// that to exit 3, and this refusal must exit 6. <c>MemoryExportWriter</c> catches this by
+/// name.</summary>
 public sealed class ExportRefusedException(string message) : Exception(message);
 
-/// <summary>Turns the hub's memory store (a few files, many entries each) into the vendor shape one
-/// small file per fact reads (D10, plan T1) — pure: reads the store, returns an <see cref="ExportPlan"/>,
-/// touches no directory of its own. The inverse of <see cref="MemoryImport"/>, whose shape this must
-/// stay readable by: frontmatter carries <c>name</c>/<c>description</c>/<c>metadata.type</c>, and
+/// <summary>Turns the hub's memory store (a few files, many entries each) into the vendor shape of
+/// one small file per fact. Pure: reads the store, returns an <see cref="ExportPlan"/>, touches no
+/// directory of its own. The inverse of <see cref="MemoryImport"/>, whose shape this must stay
+/// readable by: frontmatter carries <c>name</c>/<c>description</c>/<c>metadata.type</c>, and
 /// <c>description</c> is where the importer looks for the title first.</summary>
 public static class MemoryExport
 {
-    /// <summary>The consumer's own line cap on the rendered <c>MEMORY.md</c> index (claim 23, D6).</summary>
+    /// <summary>The consumer's own line cap on the rendered <c>MEMORY.md</c> index.</summary>
     public const int MaxIndexLines = 200;
-    /// <summary>The consumer's own cap on the rendered index, in UTF-16 code units — the same unit
-    /// JavaScript's <c>string.length</c> counts, and C#'s <c>string.Length</c> counts identically
-    /// (claim 23, D6). Never UTF-8 bytes.</summary>
+    /// <summary>The consumer's own cap on the rendered index, in UTF-16 code units: the same unit
+    /// JavaScript's <c>string.length</c> counts, and C#'s <c>string.Length</c> counts identically.
+    /// Never UTF-8 bytes.</summary>
     public const int MaxIndexUnits = 25_000;
     /// <summary>A cheap early refusal only, checked before a single file is rendered: <see cref="MaxIndexLines"/>
     /// minus the two lines the header ("# Memories" and the blank line under it) always costs. The
-    /// authoritative checks are on the rendered index itself, below — a future header change moves this
-    /// floor, never the cap (D6, pass 2 B2).</summary>
+    /// authoritative checks are on the rendered index itself, below: a future header change moves this
+    /// floor, never the cap.</summary>
     public const int MaxMemories = MaxIndexLines - 2;
 
-    /// <summary>D10: what the export IS — core first, then every topic in <see cref="MemoryStore.ListTopics"/>'s
-    /// own order (claim 9). The single source of this rule: <see cref="Render"/>,
+    /// <summary>What the export IS: core first, then every topic in <see cref="MemoryStore.ListTopics"/>'s
+    /// own order. The single source of this rule: <see cref="Render"/>,
     /// <see cref="ExportManifest.Fingerprint"/>, and <c>HostCommands.ExportMemory</c>'s zero-entry
-    /// refusal all call this rather than each repeating it, so a change here can never desynchronise
-    /// the render, the fingerprint, and the refusal from each other (Standards, Duplicated Code).</summary>
+    /// refusal all call this, so the render, the fingerprint and the refusal can never
+    /// desynchronise.</summary>
     public static IReadOnlyList<string> LiveTopics(MemoryStore store)
     {
         var topics = new List<string> { MemoryStore.CoreTopic };
@@ -55,7 +55,7 @@ public static class MemoryExport
         var live = new List<(string Topic, MemoryEntry Entry)>();
         foreach (var topic in topics)
             foreach (var entry in store.Entries(topic))
-                if (!entry.Superseded)   // D7: a superseded entry is a tombstone, not a memory
+                if (!entry.Superseded)   // a superseded entry is a tombstone, not a memory
                     live.Add((topic, entry));
 
         if (live.Count > MaxMemories)
@@ -96,10 +96,10 @@ public static class MemoryExport
         }
         var index = indexBuilder.ToString();
 
-        // The authoritative caps (D6, pass 2 B2): measured the way the consumer measures them — on the
-        // WHOLE TRIMMED rendered index, not on the entry count. lineCount is newlines + 1 over the
-        // trimmed text (so the two-line header costs two); units is the trimmed text's own C#
-        // string.Length, the same unit the consumer's `t.length` counts. Never UTF-8 bytes.
+        // The authoritative caps, measured the way the consumer measures them: on the WHOLE TRIMMED
+        // rendered index, not on the entry count. lineCount is newlines + 1 over the trimmed text (so
+        // the two-line header costs two); units is the trimmed text's own C# string.Length, the same
+        // unit the consumer's `t.length` counts. Never UTF-8 bytes.
         var trimmed = index.Trim();
         var lineCount = trimmed.Count(c => c == '\n') + 1;
         if (lineCount > MaxIndexLines)

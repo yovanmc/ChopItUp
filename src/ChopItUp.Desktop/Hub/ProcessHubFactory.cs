@@ -7,19 +7,13 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ChopItUp.Desktop.Hub;
 
-// Row 12 T3: the plan's Files list for this task does not name this file explicitly, but its shape
-// is fully specified in the task body (right after HubProbe) and Task 5's App wiring needs a real
-// IHubProcessFactory to exist — so it is built here, alongside the seams it implements. Not covered
-// by this task's RED tests (HubChildTests exercises the state machine through a fake factory); it is
-// exercised by Task 5's manual smoke test and Task 9's harness.
-/// <summary>Row 12 T3 (B10): the real IHubProcessFactory. No ProjectReference to the Hub exists, so
-/// "CHOPITUP_SHELL_TOKEN" is repeated here as a literal — it must match
-/// ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar exactly (a cross-file invariant the orchestrator's
-/// fixed lenses check).</summary>
+/// <summary>The real IHubProcessFactory. No ProjectReference to the Hub exists, so
+/// "CHOPITUP_SHELL_TOKEN" is repeated here as a literal: it must match
+/// ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar exactly.</summary>
 public sealed class ProcessHubFactory : IHubProcessFactory
 {
-    // Row 12 review fix (F): internal (not private) so ProcessHubFactoryEnvVarTests can pin this literal
-    // against ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar directly, rather than only by convention.
+    // Internal so ProcessHubFactoryEnvVarTests can pin this literal against
+    // ChopItUp.Hub.Hosting.HubOptions.ShellTokenEnvVar.
     internal const string ShellTokenEnvVar = "CHOPITUP_SHELL_TOKEN";
     private const long LogRotateBytes = 5 * 1024 * 1024;
 
@@ -61,8 +55,7 @@ public sealed class ProcessHubFactory : IHubProcessFactory
         catch (Win32Exception) when (process.HasExited)
         {
             // Not an error: a child that exited between Start() and here has nothing left to confine.
-            // HubChild's Exited handler reports the real failure reason (mirrors
-            // src/ChopItUp.Hub/Spawning/SpawnJobs.cs:57-61; pass 2, finding 1).
+            // HubChild's Exited handler reports the real failure reason.
         }
 
         return new RealHubProcess(process, job, logWriter);
@@ -87,9 +80,9 @@ public sealed class ProcessHubFactory : IHubProcessFactory
 }
 
 /// <summary>Wraps a real child process: drains stdout/stderr into <see cref="IHubProcess.OutputLine"/>
-/// and the hub.log file, kills through the row 29 kill-on-close job as well as Process.Kill. The
+/// and the hub.log file, kills through the kill-on-close job as well as Process.Kill. The
 /// output pumps (BeginOutputReadLine/BeginErrorReadLine) are what keep the child from blocking on a
-/// full pipe — never started until HubChild has subscribed (see <see cref="BeginReading"/>).</summary>
+/// full pipe, never started until HubChild has subscribed (see <see cref="BeginReading"/>).</summary>
 internal sealed class RealHubProcess : IHubProcess
 {
     private readonly Process _process;
@@ -105,14 +98,11 @@ internal sealed class RealHubProcess : IHubProcess
         _log = log;
         _process.OutputDataReceived += (_, e) => { if (e.Data is not null) RaiseLine(e.Data); };
         _process.ErrorDataReceived += (_, e) => { if (e.Data is not null) RaiseLine(e.Data); };
-        // LESSONS M4: Process.Exited can fire before the async output readers have delivered the
-        // child's last lines (typically the diagnosis, e.g. "address already in use"), so the failure
-        // page's log tail snapshot could miss exactly the line the owner needs. The parameterless
-        // WaitForExit() (unlike the overload with a timeout) also waits for the redirected streams to
-        // finish delivering, so running it here drains them before Exited is raised. Bounded to 2s: a
-        // grandchild process that inherited the redirected pipe handle would otherwise block this
-        // forever (M4 declined an unbounded wait for exactly that reason); BeginReading is only ever
-        // called after HubChild subscribes, so guard the case it was never called at all.
+        // Process.Exited can fire before the async output readers have delivered the child's last
+        // lines (typically the diagnosis, e.g. "address already in use"). The parameterless
+        // WaitForExit() also waits for the redirected streams, so running it here drains them before
+        // Exited is raised. Bounded to 2s because a grandchild that inherited the pipe handle would
+        // otherwise block it forever. BeginReading may never have been called, so guard that case.
         _process.Exited += (_, _) =>
         {
             if (_beganReading)
@@ -137,7 +127,7 @@ internal sealed class RealHubProcess : IHubProcess
     }
 
     /// <summary>The kill-on-close job (disposed in Dispose) confines the whole tree; this is the
-    /// immediate signal to the root, matching B4.</summary>
+    /// immediate signal to the root.</summary>
     public void Kill()
     {
         try { _process.Kill(entireProcessTree: true); }

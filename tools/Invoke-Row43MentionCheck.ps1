@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Row 43 dry run: proves the leading-mention rule (D5) end to end against the built hub, with a
+    Leading-mention dry run: proves the leading-mention rule end to end against the built hub, with a
     stub Codex CLI that holds every spawn open and no real model ever reachable.
 
 .DESCRIPTION
@@ -8,8 +8,8 @@
     $env:TEMP)/-Port/-TimeoutSeconds, Add-Check, ChopTokenHelpers.ps1 seeding 'owner' before the hub's
     first start, the hub started by PID and stopped in a finally block, "Results: n/m PASS", exit 0
     only when every check passes and the total is exactly 7. Every array read off Invoke-RestMethod/
-    Invoke-Api is piped through ForEach-Object { $_ } before Where-Object (LESSONS M10: a bare
-    top-level JSON array comes back as one nested Object[]).
+    Invoke-Api is piped through ForEach-Object { $_ } before Where-Object (a bare top-level JSON array
+    comes back as one nested Object[]).
 
     Every scratch path this script writes -- the hub's data dir, the stub PATH dir, the imported
     skill's source -- lives under one root, -ScratchRoot ($env:TEMP\chopitup_row43dryrun_<guid> by
@@ -19,26 +19,25 @@
     the hub's own process (if it ever started) has vanished, so a throw before the hub even starts --
     a failed skill import, a taken port -- leaves nothing behind either.
 
-    PATH for the child hub is a scratch 'stub\' directory holding codex.cmd (the Row 34 shape:
-    @echo off / ping -n 600 127.0.0.1 >nul / exit /b 0) plus $env:SystemRoot\System32 and
-    $env:SystemRoot only, so neither a real claude.exe nor a real codex.exe/codex.cmd is reachable
-    (CliResolver takes name.exe anywhere on PATH before a shim, then wraps a .cmd as
-    "cmd.exe /d /c <shim>"). Every participant this script mentions (gpt-6-astra, gpt-5.6-sol,
-    gpt-5.6-terra, gpt-5.6-luna) is a Codex-hosted row in ChopDb.SeedRoster, so the stub answers every
-    spawn attempt the legs below can trigger and holds each open for ten minutes -- ample for a script
-    that finishes in well under a minute and explicitly stops everything in leg 7. The script's own
-    PATH is saved before Start-Process and restored in a finally, so git/dotnet stay available
-    afterward regardless of how the run ends.
+    PATH for the child hub is a scratch 'stub\' directory holding codex.cmd (@echo off / ping -n 600
+    127.0.0.1 >nul / exit /b 0) plus $env:SystemRoot\System32 and $env:SystemRoot only, so neither a
+    real claude.exe nor a real codex.exe/codex.cmd is reachable (CliResolver takes name.exe anywhere
+    on PATH before a shim, then wraps a .cmd as "cmd.exe /d /c <shim>"). Every participant this script
+    mentions (gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna) is a Codex-hosted row in
+    ChopDb.SeedRoster, so the stub answers every spawn attempt the legs below can trigger and holds
+    each open for ten minutes -- ample for a script that finishes in well under a minute and
+    explicitly stops everything in leg 7. The script's own PATH is saved before Start-Process and
+    restored in a finally, so git/dotnet stay available afterward regardless of how the run ends.
 
     THE SEVEN LEGS, in order, each a barrier on a hub note or on the exchange snapshot's own state,
-    never a bare timer (Row 42 lesson): health.ok (a plain /health poll); leading.opens-exchange (an
-    owner post whose body starts with @gpt-5.6-terra roots an exchange with gpt-5.6-terra in flight);
-    inline.no-exchange-reference-note (a post with no leading recipient and an inline
-    @gpt-5.6-sol draws the "Nobody was addressed" note and roots no exchange); unknown.note (a leading
-    word nobody answers to draws "No participant named @nobody." naming the addressable roster and
-    roots no exchange); bracket.no-exchange (a bracketed prefix is prose, same shape as the inline
-    leg, for @gpt-5.6-luna); slash.dispatches (importing a one-line skill first, then invoking it with
-    a leading @gpt-6-astra roots an exchange and draws the skill's in-force note); stop.cleanup (the
+    never a bare timer: health.ok (a plain /health poll); leading.opens-exchange (an owner post whose
+    body starts with @gpt-5.6-terra roots an exchange with gpt-5.6-terra in flight);
+    inline.no-exchange-reference-note (a post with no leading recipient and an inline @gpt-5.6-sol
+    draws the "Nobody was addressed" note and roots no exchange); unknown.note (a leading word nobody
+    answers to draws "No participant named @nobody." naming the addressable roster and roots no
+    exchange); bracket.no-exchange (a bracketed prefix is prose, same shape as the inline leg, for
+    @gpt-5.6-luna); slash.dispatches (importing a one-line skill first, then invoking it with a
+    leading @gpt-6-astra roots an exchange and draws the skill's in-force note); stop.cleanup (the
     room's own stop endpoint, then this script's own hub process tree ended by PID, never by name, and
     waited for; the scratch root itself is removed afterward, in the outer finally, once that PID has
     vanished).
@@ -48,23 +47,15 @@
     own id, never the top-level fields (which the newest open exchange, not necessarily this message,
     still owns).
 
-    NEGATIVE LEG (AC7, M24 lesson: a guard only binds something once its mechanism has been reverted
-    and seen to fail). With Mentions.Leading temporarily rewritten, right after its empty-body guard,
-    to `return new LeadingMentions(Find(body), []);` -- i.e. every roster id anywhere in the body
-    counts as a recipient and no leading word is ever unknown -- rebuilt, and this script re-run
-    against the same stub PATH:
-
-        measured 2026-09-18, reverted build, 4/7 PASS. FAILED: inline.no-exchange-reference-note
-        (an exchange rooted at the "please ask @gpt-5.6-sol something" post: reverted Leading treats
-        the inline @gpt-5.6-sol as a recipient, so it spawns instead of drawing a reference note),
-        bracket.no-exchange (an exchange rooted at the "[trial] @gpt-5.6-luna hi" post for the same
-        reason), unknown.note (the "No participant named @nobody." note never appears: reverted
-        Leading returns an empty Unknown list unconditionally, since Find only ever reports roster
-        ids it recognises). health.ok, leading.opens-exchange, slash.dispatches and stop.cleanup kept
-        passing: every mention those three legs use is already a leading one, so Find(body) agrees
-        with the real Leading() there regardless of which implementation is running.
-
-    Restored, rebuilt, re-run: 7/7 PASS (measured 2026-09-18).
+    NEGATIVE LEG (a guard only binds something once its mechanism has been reverted and seen to
+    fail). With Mentions.Leading temporarily rewritten, right after its empty-body guard, to
+    `return new LeadingMentions(Find(body), []);` -- every roster id anywhere in the body counts as a
+    recipient and no leading word is ever unknown -- rebuilt, and this script re-run against the same
+    stub PATH: 4/7 PASS. inline.no-exchange-reference-note FAILs (the inline @gpt-5.6-sol becomes a
+    recipient, so it spawns instead of drawing a reference note), bracket.no-exchange FAILs for the
+    same reason, and unknown.note FAILs (Find only reports roster ids it recognises, so Unknown is
+    always empty). health.ok, leading.opens-exchange, slash.dispatches and stop.cleanup keep passing:
+    every mention those legs use is already a leading one. Restored: 7/7 PASS.
 
     Never touches C:\Self Apps or any real data directory: -ScratchRoot defaults to a fresh folder
     under $env:TEMP and the outer finally removes it once the hub's own PID (if any was ever started)
@@ -178,10 +169,10 @@ try {
     New-Item -ItemType Directory -Path $StubDir | Out-Null
     New-Item -ItemType Directory -Path $SkillSourceDir | Out-Null
 
-    # The Row 34 stub: a Codex row's CLI is a .cmd shim, and CliResolver wraps that as
-    # "cmd.exe /d /c <shim>". Holding the process open for ten minutes means every spawn this script
-    # triggers stays in flight (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill
-    # the tree on its own) for well longer than this script needs.
+    # A Codex row's CLI is a .cmd shim, and CliResolver wraps that as "cmd.exe /d /c <shim>". Holding
+    # the process open for ten minutes means every spawn this script triggers stays in flight
+    # (SpawnLimits.Default.Timeout is 5 minutes before the runner would kill the tree on its own) for
+    # well longer than this script needs.
     @'
 @echo off
 ping -n 600 127.0.0.1 >nul
@@ -205,14 +196,14 @@ Say a short acknowledgement, then stop.
         -RedirectStandardOutput $importOut -RedirectStandardError $importErr
     if ($importProc.ExitCode -ne 0) { throw "skill import failed (exit=$($importProc.ExitCode)); see $importErr" }
 
-    # Row 28: 'owner' is a host-file row -- seed its plaintext into tokens.json AFTER the skill import
-    # (which never touches tokens.json) and BEFORE the hub's first start.
+    # 'owner' is a host-file row -- seed its plaintext into tokens.json after the skill import (which
+    # never touches tokens.json) and before the hub's first start.
     $script:PlaintextTokens = Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')
     $ownerAuth = New-ChopBearerHeaders -Token $script:PlaintextTokens.owner
 
-    # Fail fast (Row 40 lesson): a stale process already listening on $Port would either make the hub
-    # fail to bind (burning this whole run's timeout waiting on a server that never starts) or, worse,
-    # answer /health itself and let every leg run against the wrong process.
+    # Fail fast: a stale process already listening on $Port would either make the hub fail to bind
+    # (burning this whole run's timeout waiting on a server that never starts) or, worse, answer
+    # /health itself and let every leg run against the wrong process.
     $portProbe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
     try { $portProbe.Start() } catch { throw "port $Port is already listening; pick a free -Port or stop whatever is using it." }
     finally { $portProbe.Stop() }

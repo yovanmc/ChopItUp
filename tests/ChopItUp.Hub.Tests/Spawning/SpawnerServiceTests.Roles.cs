@@ -3,9 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Row 14, task 4: the spawner reads role and persona text fresh from the stores at launch
-/// time rather than off the startup-static <c>_roster</c> — this is what makes an owner's edit through
-/// the (future, task 5) API take effect on the next spawn with no hub restart (D-c, AC7).</summary>
+/// <summary>The spawner reads role and persona text fresh from the stores at launch time rather
+/// than off the startup-static <c>_roster</c>, so an owner's edit through the API takes effect on
+/// the next spawn with no hub restart.</summary>
 public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
 {
     [Fact]
@@ -18,9 +18,9 @@ public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
         Assert.Contains("You in this room: Row14 role: the team's skeptic.", spec.StandardInput);
     }
 
-    /// <summary>AC7 / D-c: the test that binds the whole design decision behind this row. A
-    /// startup-snapshot implementation (reading role text off <c>_roster</c> instead of live from
-    /// <see cref="ParticipantStore"/>) passes every other test in this file and fails only this one.</summary>
+    /// <summary>The test that binds the live-read design. A startup-snapshot implementation (reading
+    /// role text off <c>_roster</c> instead of live from <see cref="ParticipantStore"/>) passes every
+    /// other test in this file and fails only this one.</summary>
     [Fact]
     public async Task Row14_T4_AC7_a_role_written_after_the_host_started_is_carried_by_the_very_next_spawn_with_no_restart()
     {
@@ -54,7 +54,7 @@ public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
         Assert.DoesNotContain("Row14 global role text.", spec.StandardInput);
     }
 
-    /// <summary>AC4: a room persona renders for every participant spawned there, including one with no
+    /// <summary>A room persona renders for every participant spawned there, including one with no
     /// role of its own. Without this test, wiring only <c>new StandingText(null, role)</c> would pass
     /// every other test in this file.</summary>
     [Fact]

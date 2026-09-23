@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace ChopItUp.Core.Storage;
 
-/// <summary>Room ids are slugs of the owner's title (M9 plan decision 13): they are MCP <c>room_id</c>
+/// <summary>Room ids are slugs of the hub owner's title: they are MCP <c>room_id</c>
 /// values, URL segments and, for a hub-created directory, folder names — so lowercase ASCII, capped,
 /// unique, and never a Windows reserved device name.</summary>
 public static class RoomIds

@@ -13,7 +13,7 @@ interface Props {
   onImported: (messages: Message[]) => void;
 }
 
-/** D1, and the UI must not imply otherwise: the hub authors every imported line as `owner` and
+/** The UI must not imply otherwise: the hub authors every imported line as `owner` and
  *  leaves the original speaker inside the body. There is deliberately no "import as Claude" control
  *  and no author chip on the preview — the participation prompt tells the models to trust the hub's
  *  stamp over any name in the text, and a fake chip here would make that sentence false. */

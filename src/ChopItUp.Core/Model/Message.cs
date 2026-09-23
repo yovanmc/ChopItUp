@@ -1,7 +1,7 @@
 namespace ChopItUp.Core.Model;
 
-/// <summary>A stored message. <see cref="ReplyToId"/> (row 36) is the id of the message this one replies
-/// to, always in the same room, or null. <see cref="Imported"/> (row 42) is true only for a row written
+/// <summary>A stored message. <see cref="ReplyToId"/> is the id of the message this one replies
+/// to, always in the same room, or null. <see cref="Imported"/> is true only for a row written
 /// through <see cref="ChopItUp.Core.Storage.MessageStore.Import"/>: transcript text brought in from
 /// elsewhere, never addressed to anyone here.</summary>
 public sealed record Message(long Id, string RoomId, string AuthorId, string Body, DateTimeOffset CreatedAt, long? ReplyToId = null, bool Imported = false);
@@ -11,12 +11,12 @@ public sealed record Message(long Id, string RoomId, string AuthorId, string Bod
 /// original.</summary>
 public sealed record PostResult(Message Message, bool Deduplicated);
 
-/// <summary>A room (M9: a conversation with a directory). <see cref="Directory"/> is the normalised
-/// path of its git working tree, or null for a room made before M9 that the owner has not bound;
+/// <summary>A room: a conversation with a directory. <see cref="Directory"/> is the normalised
+/// path of its git working tree, or null for an older room the hub owner has not bound;
 /// <see cref="ArchivedAt"/> hides the room without touching disk; <see cref="LastActivityAt"/> is the
-/// newest message's time, or the room's creation when it has none — the chat-list order;
+/// newest message's time, or the room's creation when it has none (the chat-list order);
 /// <see cref="Unread"/> counts messages past the cursor of whoever asked (0 when nobody did);
-/// <see cref="Persona"/> (row 14) is owner-authored prose rendered into every participant's spawn
+/// <see cref="Persona"/> is owner-authored prose rendered into every participant's spawn
 /// prompt in this room, or null.</summary>
 public sealed record Room(string Id, string Name, DateTimeOffset CreatedAt, long LastMessageId, int MessageCount,
     string? Directory = null, DateTimeOffset? ArchivedAt = null, DateTimeOffset? LastActivityAt = null, long Unread = 0,
@@ -36,11 +36,11 @@ public sealed record MessagePage(IReadOnlyList<Message> Messages, long NextAfter
 /// <summary>One roster row. <see cref="Host"/> is which program speaks for this row: <c>human</c>,
 /// <c>claude</c> (Claude Desktop / Claude Code) or <c>codex</c>. <see cref="Model"/> is null for the
 /// human and for the app-backed rows (whatever model the app has selected), and the model name the
-/// host takes on its command line for a spawn row (M5). <see cref="Note"/> is owner-facing text
+/// host takes on its command line for a spawn row. <see cref="Note"/> is owner-facing text
 /// shown beside the row in the generated README, e.g. the usage-credit warning on <c>fable</c>.
-/// <see cref="Classes"/> is the raw stored form of the row's roles (grill ledger D5, owner ruling
-/// 2026-09-07: a SET, not one value) — parse it with <see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>,
-/// never by hand. <see cref="Role"/> (row 14) is the participant's global role text, rendered into its
-/// spawn prompt unless a room override replaces it — null for no role, and for any row that is not
-/// spawnable (<c>ExchangePolicy.IsSpawnable</c>), since a role can never be stored there.</summary>
+/// <see cref="Classes"/> is the raw stored form of the row's roles (a SET, not one value): parse it
+/// with <see cref="ChopItUp.Core.Model.ParticipantClasses.Parse"/>, never by hand.
+/// <see cref="Role"/> is the participant's global role text, rendered into its spawn prompt unless a
+/// room override replaces it: null for no role, and for any row that is not spawnable
+/// (<c>ExchangePolicy.IsSpawnable</c>), since a role can never be stored there.</summary>
 public sealed record Participant(string Id, string DisplayName, string Kind, string Host, string? Model, string? Note, string? Classes = null, string? Role = null);

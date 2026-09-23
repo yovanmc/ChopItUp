@@ -109,10 +109,10 @@ public sealed class ProcessRunnerTests
     [Fact]
     public async Task Stdin_is_written_as_utf8_whatever_the_console_code_page()
     {
-        // 2026-09-22, room delivery-research-20260922 msg 132: Codex exited 1 with "input is not valid
-        // UTF-8". The hub runs without a console under the Desktop shell, so an unset
-        // StandardInputEncoding fell back to the ANSI code page and U+2013 left as the single byte 0x96.
-        // The child echoes its stdin as raw bytes; the prompt must arrive as exact UTF-8.
+        // Codex exited 1 with "input is not valid UTF-8" when the hub ran without a console under the
+        // Desktop shell: an unset StandardInputEncoding fell back to the ANSI code page and U+2013 left
+        // as the single byte 0x96. The child echoes its stdin as raw bytes; the prompt must arrive as
+        // exact UTF-8.
         const string prompt = "P0–P3 ≈ café\n";
         var spec = new ProcessSpec("pwsh",
             ["-NoProfile", "-Command", "$s=[Console]::OpenStandardInput(); $m=[IO.MemoryStream]::new(); $s.CopyTo($m); [BitConverter]::ToString($m.ToArray())"],

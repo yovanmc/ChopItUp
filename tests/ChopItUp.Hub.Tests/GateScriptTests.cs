@@ -3,21 +3,19 @@ using System.Text;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Regression tests for the roadmap-hub overlay's git-only gate scripts (plan
-/// <c>docs/superpowers/plans/row20-roadmap-port.md</c>, "Task 4 — Overlay directory:
-/// <c>tools/skills/roadmap-hub/</c>"). Every script is driven as an external <c>pwsh -NoProfile -File</c>
+/// <summary>Regression tests for the roadmap-hub overlay's git-only gate scripts
+/// (<c>tools/skills/roadmap-hub/</c>). Every script is driven as an external <c>pwsh -NoProfile -File</c>
 /// process, the way <see cref="DeployScriptTests"/> drives <c>Deploy-ChopItUp.ps1</c>, against a real
 /// temporary git repository under <see cref="Path.GetTempPath"/> with its own local git identity.
 ///
-/// <c>board-gate</c> and <c>plan-claims</c> against a REAL plan are exercised only by the scratch run
-/// named in the plan (they need the harness's <c>preflight/Check-RoadmapBudget.ps1</c> /
-/// <c>Check-PlanClaims.ps1</c>, which travel with the base `roadmap` skill and are composed in next to
-/// the overlay's scripts only by <c>--import-skill --overlay</c> (Task 1) — CI does not have them at
-/// <c>tools/skills/roadmap-hub/preflight/</c>, and this repo does not either, by design). The
-/// <c>plan_claims_exits_0_with_no_plan_rows</c> test below is the one plan-claims case this file can
-/// still characterize directly: with zero 📝/🔨 rows the preflight script is never invoked, so a stub
-/// file that merely exists is enough. See that test for why even reaching that branch needs a composed
-/// copy of the real, unmodified script.</summary>
+/// <c>board-gate</c> and <c>plan-claims</c> against a REAL plan are not exercised here: they need the
+/// harness's <c>preflight/Check-RoadmapBudget.ps1</c> / <c>Check-PlanClaims.ps1</c>, which travel with
+/// the base `roadmap` skill and are composed in next to the overlay's scripts only by
+/// <c>--import-skill --overlay</c>. CI does not have them at <c>tools/skills/roadmap-hub/preflight/</c>,
+/// and this repo does not either, by design. The <c>plan_claims_exits_0_with_no_plan_rows</c> test
+/// below is the one plan-claims case this file can still characterize directly: with zero 📝/🔨 rows
+/// the preflight script is never invoked, so a stub file that merely exists is enough. See that test
+/// for why even reaching that branch needs a composed copy of the real, unmodified script.</summary>
 public sealed class GateScriptFixture
 {
     public string RepoRoot { get; }
@@ -148,18 +146,17 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
         // never finds a plan to check, so $checked stays 0 and $worst stays 0.
         WriteRoadmap(repo, "| 2 | Scratch task | [ ] | READY | — | LOW |");
 
-        // But plan-claims.ps1:9-10 checks for a sibling preflight/Check-PlanClaims.ps1 relative to
-        // $PSScriptRoot UNCONDITIONALLY, before it ever looks at a row — not only when a row needs it.
+        // But plan-claims.ps1 checks for a sibling preflight/Check-PlanClaims.ps1 relative to
+        // $PSScriptRoot UNCONDITIONALLY, before it ever looks at a row, not only when a row needs it.
         // That sibling is only present after `--import-skill --overlay` composes the base `roadmap`
-        // skill's own preflight/ next to this overlay's scripts/ (Task 1); neither this repo nor CI
-        // carries tools/skills/roadmap-hub/preflight/. Driving the committed script uncomposed (cwd
-        // pointed at this repo, but -File pointed at the real tools/skills/roadmap-hub/scripts/plan-claims.ps1)
-        // exits 2 ("preflight script missing") even with zero rows — confirmed as this test's RED before
-        // the fixture below was added (see the builder report for the exact run).
+        // skill's own preflight/ next to this overlay's scripts/; neither this repo nor CI carries
+        // tools/skills/roadmap-hub/preflight/. Driving the committed script uncomposed (cwd pointed at
+        // this repo, but -File pointed at the real tools/skills/roadmap-hub/scripts/plan-claims.ps1)
+        // exits 2 ("preflight script missing") even with zero rows.
         //
         // So this fixture reproduces composition's shape instead: an UNMODIFIED copy of the real script
-        // next to a stub preflight file that only needs to exist. Its content is never read — with
-        // $checked staying 0, the `& pwsh -File $gate` call inside the loop (line 22) is never reached.
+        // next to a stub preflight file that only needs to exist. Its content is never read: with
+        // $checked staying 0, the `& pwsh -File $gate` call inside the loop is never reached.
         string composedScripts = Path.Combine(repo, "_composed", "scripts");
         Directory.CreateDirectory(composedScripts);
         Directory.CreateDirectory(Path.Combine(repo, "_composed", "preflight"));

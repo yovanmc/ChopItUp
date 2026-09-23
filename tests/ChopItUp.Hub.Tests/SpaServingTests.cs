@@ -2,7 +2,7 @@ using System.Net;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>The hub serves the built web client (brief D3: one process, no separate front-end
+/// <summary>The hub serves the built web client (one process, no separate front-end
 /// deploy). A fabricated wwwroot stands in for the Vite output so these tests do not depend on npm
 /// having run. The fallback is the risky half: it must answer client routes with the shell without
 /// swallowing <c>/api</c>, <c>/hub</c>, <c>/health</c> or <c>/mcp</c>.</summary>

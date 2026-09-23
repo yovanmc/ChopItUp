@@ -3,10 +3,9 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Storage;
 
-/// <summary>The <c>runs</c> table and its three satellites (schema v8, row 19): the only hub state
-/// that outlives an exchange. Raw ADO, connection-per-call, same shape as
-/// <see cref="MemoryProposalStore"/>. Every mutating member takes the caller's <c>now</c>, including
-/// <see cref="Start"/>, so a run's whole timeline can be driven by a fake clock in tests.</summary>
+/// <summary>The <c>runs</c> table and its three satellites: the only hub state that outlives an
+/// exchange. Every mutating member takes the caller's <c>now</c>, including <see cref="Start"/>, so a
+/// run's whole timeline can be driven by a fake clock in tests.</summary>
 public sealed class RunStore(ChopDb db)
 {
     private const string Select = """
@@ -87,10 +86,9 @@ public sealed class RunStore(ChopDb db)
     }
 
     /// <summary>Stops the run for a recoverable reason and stamps <c>parked_at</c>, so
-    /// <see cref="Resume"/> can later add the parked interval to <c>parked_seconds</c> (AC15).
-    /// <paramref name="capSpent"/> is a property of which cap tripped, never of which caller reached
-    /// it: true only for a hard cap (spawns, wall clock, phase re-entry), false for a refusal or
-    /// silence park.</summary>
+    /// <see cref="Resume"/> can later add the parked interval to <c>parked_seconds</c>.
+    /// <paramref name="capSpent"/> is true only for a hard cap (spawns, wall clock, phase re-entry),
+    /// false for a refusal or silence park, whoever reached it.</summary>
     public Run Park(long id, string reason, bool capSpent, DateTimeOffset now)
     {
         using var conn = db.Open();
@@ -105,9 +103,8 @@ public sealed class RunStore(ChopDb db)
     }
 
     /// <summary>Parked -&gt; active: clears the reason, adds the whole parked interval to
-    /// <c>parked_seconds</c> (so <see cref="ActiveElapsed"/> keeps excluding it), and clears
-    /// <c>parked_at</c>. Throws when the run is not parked, or is parked with a spent hard cap — that
-    /// park is not resumable (AC15).</summary>
+    /// <c>parked_seconds</c> and clears <c>parked_at</c>. Throws when the run is not parked, or is
+    /// parked with a spent hard cap, which is not resumable.</summary>
     public Run Resume(long id, DateTimeOffset now)
     {
         var current = ById(id) ?? throw new InvalidOperationException($"Run #{id} does not exist.");
@@ -190,8 +187,8 @@ public sealed class RunStore(ChopDb db)
         return Convert.ToInt32(select.ExecuteScalar());
     }
 
-    /// <summary>Every phase tag the run has entered, for the WHOLE run — the policy needs the count
-    /// for the tag being entered, which is not necessarily the tag being left (pass 2's F-3).</summary>
+    /// <summary>Every phase tag the run has entered, for the whole run: the policy needs the count
+    /// for the tag being entered, which is not necessarily the tag being left.</summary>
     public IReadOnlyDictionary<string, int> PhaseEntries(long id)
     {
         using var conn = db.Open();
@@ -204,7 +201,7 @@ public sealed class RunStore(ChopDb db)
         return map;
     }
 
-    /// <summary>Records who last touched a path (P4): a second call for the same run and path keeps
+    /// <summary>Records who last touched a path: a second call for the same run and path keeps
     /// the LATEST author, never the first.</summary>
     public void RecordArtifact(long runId, string path, string authorId, DateTimeOffset now)
     {
@@ -246,8 +243,8 @@ public sealed class RunStore(ChopDb db)
         return cmd.ExecuteScalar() as string;
     }
 
-    /// <summary><paramref name="runId"/> is nullable because AC10's refusals include "there is no run
-    /// here" — a refusal the hub must still be able to record.</summary>
+    /// <summary><paramref name="runId"/> is nullable because "there is no run here" is itself a
+    /// refusal the hub must record.</summary>
     public void RecordGateRun(long? runId, string roomId, string gate, string callerId, int? exitCode, string outcome, DateTimeOffset now)
     {
         using var conn = db.Open();
@@ -279,27 +276,20 @@ public sealed class RunStore(ChopDb db)
         return rows;
     }
 
-    /// <summary>The one place D9's wall clock is computed: total time since start, minus every second
-    /// the run spent parked. Excluding parked time is what keeps an overnight restart-park from
-    /// re-parking itself the instant it is resumed (pass 2's F-4). **Frozen while parked** (orchestrator
-    /// diff-review finding against task 9f): a parked run's own <c>parked_seconds</c> has not yet
-    /// absorbed the interval it is CURRENTLY sitting in, so reading against <paramref name="now"/>
-    /// while parked would let elapsed keep growing for as long as the run sits parked - the very bug
-    /// <c>parked_seconds</c> exists to close, just measured one call earlier than <see cref="Resume"/>.
-    /// While <see cref="Run.Status"/> is <see cref="RunStatus.Parked"/> with <see cref="Run.ParkedAt"/>
-    /// set, elapsed is pinned at what it was the instant the run parked: <c>(ParkedAt - StartedAt) -
-    /// ParkedSeconds</c>. This is the honest reading of "time it spent active" (AC8) for every caller,
-    /// not only the resume decision.</summary>
+    /// <summary>The one place the wall clock is computed: total time since start, minus every second
+    /// the run spent parked, so an overnight restart-park does not re-park the instant it is resumed.
+    /// Frozen while parked: <c>parked_seconds</c> has not yet absorbed the interval the run is
+    /// currently sitting in, so while <see cref="Run.Status"/> is <see cref="RunStatus.Parked"/> with
+    /// <see cref="Run.ParkedAt"/> set, elapsed is pinned at <c>(ParkedAt - StartedAt) -
+    /// ParkedSeconds</c>.</summary>
     public static TimeSpan ActiveElapsed(Run r, DateTimeOffset now) =>
         r.Status == RunStatus.Parked && r.ParkedAt is { } parkedAt
             ? (parkedAt - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds)
             : (now - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds);
 
     /// <summary>Strips one layer of surrounding backticks/quotes, backslashes to forward slashes,
-    /// drops a leading <c>./</c>, trims, and lowercases (the ordinal-ignore-case compare) — used on
-    /// both write and read so the two can never disagree. Public (row 19, task 8): D8's "recorded or
-    /// in the room tree" critique rule checks a THIRD spelling of the same path against the room's
-    /// directory, and it must normalize identically or the two checks could disagree on one path.</summary>
+    /// drops a leading <c>./</c>, trims, and lowercases. Used on write, on read, and by the critique
+    /// rule that checks a path against the room's directory, so all three agree on one path.</summary>
     public static string Normalize(string path)
     {
         var p = path.Trim();

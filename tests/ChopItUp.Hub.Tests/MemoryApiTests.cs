@@ -16,7 +16,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -117,7 +117,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Proposals.Create("general", "opus", "user", "B", "b", null);
         await Post("api/memory/proposals/2/reject");
         Proposals.Create("general", "opus", "user", "C", "c", null);
-        Proposals.Decide(3, MemoryProposalStore.Approved, null, null);               // the crash state (decision 15): approved, never written
+        Proposals.Decide(3, MemoryProposalStore.Approved, null, null);               // the crash state: approved, never written
         Assert.Equal(new[] { 1L, 3L }, (await Get("api/memory/proposals?room=general")).Select(p => p.GetProperty("id").GetInt64()));   // default = undecided
         Assert.Equal(new[] { 1L, 3L }, (await Get("api/memory/proposals")).Select(p => p.GetProperty("id").GetInt64()));
         Assert.Equal(new[] { 1L }, (await Get("api/memory/proposals?status=pending")).Select(p => p.GetProperty("id").GetInt64()));
@@ -206,7 +206,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
         var body = JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement;
         var chars = body.GetProperty("chars").GetInt64();
-        Assert.InRange(chars, 6_050, 6_200);   // 5,961 on disk + the composed entry; the provenance stamp's width is the store's business (task 2 tests the exact composition)
+        Assert.InRange(chars, 6_050, 6_200);   // 5,961 on disk + the composed entry; the provenance stamp's width is the store's business
         Assert.Equal(6_000L, body.GetProperty("cap").GetInt64());
         Assert.Equal($"Memory proposal #1 refused: the core would be {chars} characters, over the 6000 cap. Fold it into a topic, or propose it with replaces to update an entry the core already holds.", body.GetProperty("error").GetString());
         Assert.Equal("pending", Proposals.Get(1)!.Status);

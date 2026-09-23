@@ -2,7 +2,7 @@ using ChopItUp.Core.Model;
 
 namespace ChopItUp.Core.Tests.Model;
 
-/// <summary>Row 19 task 2c. Ticket 02's acceptance line, one case per fact/theory row.</summary>
+/// <summary>One case per fact of the phase grammar.</summary>
 public sealed class PhaseTagTests
 {
     [Fact]

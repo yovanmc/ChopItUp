@@ -1,8 +1,8 @@
 using System.Text.RegularExpressions;
 namespace ChopItUp.Core.Memory;
 
-/// <summary>Row 18 (L5, L6): review hints computed once when a proposal is created and stored
-/// comma-joined. They flag, never block — the owner decides (decision 6).</summary>
+/// <summary>Review hints computed once when a proposal is created and stored comma-joined. They
+/// flag, never block: the hub owner decides.</summary>
 public static class ProposalFlags
 {
     public const string InstructionLike = "instruction-like";

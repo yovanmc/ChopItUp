@@ -70,8 +70,8 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Contains("Turn 2 of 4; 2 turn(s) remain after yours.", astra.StandardInput);
         Assert.Contains("message(s) #2 mentioned you", astra.StandardInput);
 
-        // Row 44 (D-c): astra posted last, not the addressee (opus), so the hub queues opus's own
-        // synthesis turn before the exchange can conclude.
+        // astra posted last, not the addressee (opus), so the hub queues opus's own synthesis turn
+        // before the exchange can conclude.
         await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("queuing @opus's synthesis turn"));
         var synthesis = await _runner.NextSpecAsync(Wait);
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(synthesis));
@@ -102,8 +102,8 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Contains("Turn 4 of 4; 0 turn(s) remain after yours.", prompts[3]);
         Assert.Contains("This is the last hand-off turn of the exchange", prompts[3]);
         Assert.Contains("@opus wraps up for the owner afterwards", prompts[3]);
-        // The non-addressee sentence (D-f) itself says "do not ask ... whether to continue" - it
-        // necessarily contains that wording as part of telling the model not to; the addressee/no-addressee
+        // The non-addressee sentence itself says "do not ask ... whether to continue": it necessarily
+        // contains that wording as part of telling the model not to; the addressee/no-addressee
         // sentence's own distinct closing clause is what actually distinguishes the two.
         Assert.DoesNotContain("summarise the exchange in a few lines, and ask the owner whether to continue.", prompts[3]);
         Assert.DoesNotContain("This is the last", prompts[2]);
@@ -124,7 +124,7 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Equal(5, _runner.Count);
     }
 
-    // --- Row 44: the addressee's synthesis turn, /continue, the continuable snapshot ---------------
+    // The addressee's synthesis turn, /continue, the continuable snapshot
 
     [Fact]
     public async Task R44_the_addressee_gets_a_synthesis_turn_and_its_hand_off_is_ignored()
@@ -231,7 +231,7 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
         Assert.Equal("idle", Spawner.Snapshot("general").Status);
 
-        await PostAs("codex", "@opus please weigh in");   // a window's mention with no open exchange (D2)
+        await PostAs("codex", "@opus please weigh in");   // a window's mention with no open exchange
         var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("nothing was spawned"));
         Assert.Equal("@codex mentioned @opus, but no exchange is open for it to join and only a human post opens one; nothing was spawned.", note.Body);
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
@@ -334,15 +334,15 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(opus2));                 // exchange 2's own opus turn
         await Task.Delay(300);
         var after = Spawner.Snapshot("general");
-        Assert.Equal(2, after.TurnsCommitted);                                        // the old opus's @sonnet @fable bought nothing (B2)
+        Assert.Equal(2, after.TurnsCommitted);                                        // the old opus's @sonnet @fable bought nothing
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
 
         releaseGpt.SetResult();
         var final = await WaitForStatus("concluded");
         Assert.Equal(2, final.RootMessageId);
-        // Row 44 (D-c): gpt-5.5 posted last of exchange 2, not its addressee (opus, the first recipient
-        // of message #2), so the hub queued and ran one more turn (opus's own synthesis) before the
-        // exchange could conclude.
+        // gpt-5.5 posted last of exchange 2, not its addressee (opus, the first recipient of message
+        // #2), so the hub queued and ran one more turn (opus's own synthesis) before the exchange
+        // could conclude.
         Assert.Equal(3, final.TurnsUsed);
         Assert.Single(await Messages(), m => m.Body.StartsWith("Exchange concluded"));
     }
@@ -369,7 +369,7 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Contains("Turn 3 of 4", third.StandardInput);
     }
 
-    // --- Task 4: the exchange carries the skill; the prompt renders it ----------------------------
+    // The exchange carries the skill; the prompt renders it
 
     [Fact]
     public async Task Skill_04_an_owner_invocation_renders_the_skill_into_every_spawn_of_the_exchange_it_roots()
@@ -428,9 +428,9 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.True(await _runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
     }
 
-    /// <summary>M-8: nothing tested the row's own control before this. Mutating the fixture after its
-    /// hash was recorded reproduces exactly what a directory-room spawn with shell access could do
-    /// to the store (D-i's threat model) — the read must refuse rather than render the new bytes.</summary>
+    /// <summary>Mutating the fixture after its hash was recorded reproduces exactly what a
+    /// directory-room spawn with shell access could do to the store: the read must refuse rather than
+    /// render the new bytes.</summary>
     [Fact]
     public async Task Skill_04_M8_a_skill_edited_after_import_is_tampered_and_launches_nothing()
     {
@@ -460,13 +460,11 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
         Assert.Equal(0, _runner.Count);
     }
 
-    /// <summary>4f / D-i measure (a), tested here rather than in SpawnCommandsTests: that file is
-    /// outside this dispatch's Files list, and <see cref="SpawnCommands.ClaudeSettingsJson"/> keeps a
-    /// backward-compatible no-arg overload precisely so that file needed no edit. The directory-room
-    /// spawn path (SpawnerService.Launch) is what actually threads the data directory through, so
-    /// this is where the resulting deny rules are observable end to end. Whether the rule BINDS on
-    /// 2.1.220 is unverified (claim 23 only ever measured the `~/` shape) - the M11 live check probes
-    /// that; this only pins that the rule is written.</summary>
+    /// <summary>The data-directory deny rules, tested here rather than in SpawnCommandsTests: the
+    /// directory-room spawn path (SpawnerService.Launch) is what threads the data directory through,
+    /// so this is where the resulting deny rules are observable end to end. Whether the rule binds on
+    /// 2.1.220 is unverified (only the `~/` shape was ever measured); Invoke-M11SkillCheck.ps1 probes
+    /// that live. This only pins that the rule is written.</summary>
     [Fact]
     public async Task Skill_04_4f_a_directory_room_spawns_settings_deny_read_write_and_edit_of_the_data_directory()
     {
@@ -500,7 +498,7 @@ public sealed partial class SpawnerServiceTests
     {
         // Owner: "@opus …" (opus runs long) then "/nope @opus" (an unknown skill naming opus): the
         // exchange is superseded, nothing new opens, opus is still a live process. GET must show it;
-        // stop must kill it (M1).
+        // stop must kill it.
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken seen = default;
         _runner.Handler = async (spec, _, ct) =>
@@ -610,10 +608,10 @@ public sealed partial class SpawnerServiceTests
         }
         Assert.All(Spawner.Snapshot("general").Exchanges!, e => Assert.Equal("concluded", e.Status));
         Assert.Equal(2, (await Messages()).Count(m => m.Body.StartsWith("Exchange concluded")));
-        // Row 44 (D-c): sonnet's "ok" (no hand-off) left A's addressee (opus) owing a synthesis turn, so
-        // A ran one more spawn before it could conclude; that spec is still sitting unconsumed in the
-        // fake's queue and must be drained here, or the next NextSpecAsync (fable's) would be handed
-        // this stale one instead of fable's own.
+        // sonnet's "ok" (no hand-off) left A's addressee (opus) owing a synthesis turn, so A ran one
+        // more spawn before it could conclude; that spec is still sitting unconsumed in the fake's
+        // queue and must be drained here, or the next NextSpecAsync (fable's) would be handed this
+        // stale one instead of fable's own.
         Assert.Equal("opus", FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait)));
 
         await PostAsOwner("@fable task C");                                             // opening a third prunes the two closed, spawn-less ones
@@ -815,7 +813,7 @@ public sealed partial class SpawnerServiceTests
 
 /// <summary>The two timing rules that need room to be deterministic: a 2-second debounce (two HTTP
 /// posts land well inside it on any machine) and a 1-second per-participant spacing across two
-/// rooms (the second room is inserted raw; room creation is M9).</summary>
+/// rooms (the second room is inserted raw).</summary>
 public sealed class SpawnerTimingTests : IAsyncLifetime
 {
     private static readonly SpawnLimits Timed = new(Budget: 4, Debounce: TimeSpan.FromSeconds(2), MinSpacing: TimeSpan.FromSeconds(1), Timeout: TimeSpan.FromSeconds(30), TranscriptMessages: 60, TranscriptChars: 24_000);
@@ -839,7 +837,7 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
         }
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, limits: Timed, clock: _clock);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here now needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
     public async Task DisposeAsync() => await _host.DisposeAsync();
 

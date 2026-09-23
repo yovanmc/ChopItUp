@@ -13,22 +13,21 @@ using ModelContextProtocol.Server;
 
 namespace ChopItUp.Hub.Mcp;
 
-/// <summary>M25 task 5: the propose half of the skill-import contract — <c>propose_memory</c>'s shape
-/// (D1, D4, D6) repeated over <c>SkillImport</c>'s write path instead of <c>MemoryStore</c>'s. This
-/// tool records a proposal and announces it; it never calls <see cref="SkillImport.Run"/> and writes
-/// nothing under the skill store — the owner approves in the room (task 7, not this tool).
+/// <summary>The propose half of the skill-import contract: <c>propose_memory</c>'s shape repeated
+/// over <c>SkillImport</c>'s write path instead of <c>MemoryStore</c>'s. This tool records a proposal
+/// and announces it; it never calls <see cref="SkillImport.Run"/> and writes nothing under the skill
+/// store. The hub owner approves in the room.
 ///
-/// D4's confinement: <c>source_dir</c> must resolve inside the calling room's own bound directory
+/// Confinement: <c>source_dir</c> must resolve inside the calling room's own bound directory
 /// (<see cref="ChopItUp.Core.Model.Room.Directory"/>), checked with <see cref="RoomPaths"/>'s own
-/// normalisation and containment test before anything on disk is even looked at — so an
-/// out-of-room path is refused without the refusal ever disclosing whether that path exists (grill
-/// D10: no reads outside the room). The root/ancestor link check inside a confined path is
-/// <see cref="SkillImport.Validate"/>'s own refusal 1b, not duplicated here.
+/// normalisation and containment test before anything on disk is even looked at, so an out-of-room
+/// path is refused without the refusal ever disclosing whether that path exists. The root/ancestor
+/// link check inside a confined path is <see cref="SkillImport.Validate"/>'s own refusal 1b, not
+/// duplicated here.
 ///
-/// D6: this tool never passes an overlay to <see cref="SkillImport.Validate"/>, so both halves of D6
-/// fall out of <c>Validate</c>'s existing refusals for free — a source carrying its own
-/// <c>OVERLAY.md</c> (refusal 7b) and a forced re-import that would silently drop an installed
-/// overlay (refusal 8b) are both refused there, with no new refusal logic needed here.</summary>
+/// Overlays: this tool never passes an overlay to <see cref="SkillImport.Validate"/>, so a source
+/// carrying its own <c>OVERLAY.md</c> (refusal 7b) and a forced re-import that would silently drop an
+/// installed overlay (refusal 8b) are both refused there, with no new refusal logic needed here.</summary>
 [McpServerToolType]
 public sealed class SkillTools(SkillProposalStore proposals, SkillStore skills, MessageStore store, MessageSignal signal, IHttpContextAccessor http)
 {
@@ -60,8 +59,8 @@ public sealed class SkillTools(SkillProposalStore proposals, SkillStore skills, 
         var name = validation.Name!;
         var treeSha = SkillImport.ManifestDigest(SkillImport.HashSourceTree(sourceFull));
 
-        // AC3's dedup: a repeat offer of the same tree returns the existing card rather than minting a
-        // second one — no new row, no new note (the MemoryTools stance).
+        // A repeat offer of the same tree returns the existing card rather than minting a second
+        // one: no new row, no new note (as MemoryTools does).
         if (proposals.FindPending(name, treeSha) is { } pending)
             return JsonSerializer.Serialize(new
             {
@@ -90,12 +89,11 @@ public sealed class SkillTools(SkillProposalStore proposals, SkillStore skills, 
         $"Skill proposal #{p.Id} by {p.AuthorId}: '{p.Name}' ({p.Files} file{(p.Files == 1 ? "" : "s")}"
         + $"{(p.ReplacesInstalled ? ", replaces installed" : "")}). Approve or reject it in the skills panel.";
 
-    /// <summary>D4: <paramref name="typed"/> must resolve inside <paramref name="roomDirectory"/> — the
-    /// room's own bound directory — checked with <see cref="RoomPaths"/>'s own shape guards and
+    /// <summary><paramref name="typed"/> must resolve inside <paramref name="roomDirectory"/>, the
+    /// room's own bound directory, checked with <see cref="RoomPaths"/>'s own shape guards and
     /// normalisation (the same early checks <see cref="RoomPaths.Refusal"/> runs), so an out-of-room
     /// path is refused on its TEXT alone, before <c>Validate</c> or anything else ever asks the
-    /// filesystem whether it exists (ticket 05: "the refusal does not reveal whether that path
-    /// exists").</summary>
+    /// filesystem whether it exists.</summary>
     private static string ConfineToRoom(string? typed, string roomId, string? roomDirectory)
     {
         if (roomDirectory is null)

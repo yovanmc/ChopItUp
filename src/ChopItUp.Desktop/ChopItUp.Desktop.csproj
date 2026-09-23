@@ -4,21 +4,20 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>ChopItUp.Desktop</RootNamespace>
     <UseWPF>true</UseWPF>
-    <!-- Row 12 B1: WinForms only for NotifyIcon (the tray). Both UI stacks in one exe is supported by
-         the SDK and was probed clean; the price is that `Application`, `MessageBox` and friends are
-         ambiguous, so this project always writes System.Windows.* in full. -->
+    <!-- WinForms only for NotifyIcon (the tray). Both UI stacks in one exe is supported by the SDK;
+         the price is that `Application`, `MessageBox` and friends are ambiguous, so this project
+         always writes System.Windows.* in full. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- Row 12 T6: the exe's Win32 icon (Explorer, the taskbar, Alt-Tab). Generated, not hand-drawn:
+    <!-- The exe's Win32 icon (Explorer, the taskbar, Alt-Tab). Generated, not hand-drawn:
          tools\New-DesktopIcon.ps1 renders it and its output is byte-stable, so a palette change is a
          re-run plus a commit, never a redraw. -->
     <ApplicationIcon>chopitup.ico</ApplicationIcon>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <!-- Row 12 T3: Hub/JobObjectInterop.cs's LibraryImportAttribute-generated SafeFileHandle marshalling
-         needs unsafe code (SYSLIB1062), same as ChopItUp.Hub.csproj, which this file was copied from. -->
+    <!-- Hub/JobObjectInterop.cs's LibraryImportAttribute-generated SafeFileHandle marshalling needs
+         unsafe code (SYSLIB1062), same as ChopItUp.Hub.csproj. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Row 12 T2 gate (plan named WFAC010; what actually fired -warnaserror on this SDK was
-         WFO0003): the WinForms analyzer wants DPI awareness set via Application.SetHighDpiMode or
+    <!-- WFO0003: the WinForms analyzer wants DPI awareness set via Application.SetHighDpiMode or
          ApplicationHighDpiMode instead of the manifest. The manifest is the right mechanism for a
          WPF host (dpiAware/dpiAwareness in app.manifest, not a WinForms-only API), so this is
          suppressed rather than the manifest removed. -->
@@ -44,7 +43,7 @@
     <InternalsVisibleTo Include="ChopItUp.Desktop.Tests" />
   </ItemGroup>
 
-  <!-- Release shape mirrors ChopItUp.Hub.csproj (M4): self-contained single-file, native libraries
+  <!-- Release shape mirrors ChopItUp.Hub.csproj: self-contained single-file, native libraries
        (WebView2Loader.dll) self-extracted, NO IncludeAllContentForSelfExtract (it would move
        BaseDirectory, and the hub exe is found beside this one). DebugType=embedded comes from the
        repo-wide Directory.Build.props. -->
@@ -57,8 +56,8 @@
   </PropertyGroup>
 
   <!-- The WebView2 package ships XML doc files as lib content; publish would drop three of them
-       beside the exe and tools\Invoke-M4SelfCheck.ps1's exact loose-file set would fail. Measured on
-       a probe this milestone. Unconditional on purpose (LESSONS M3). -->
+       beside the exe and tools\Invoke-M4SelfCheck.ps1's exact loose-file set would fail.
+       Unconditional on purpose. -->
   <Target Name="DropPackageXmlDocs" AfterTargets="ComputeFilesToPublish">
     <ItemGroup>
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.xml'" />

@@ -4,23 +4,21 @@ using System.Text.Json;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Regression tests for <c>tools/Deploy-ChopItUp.ps1</c>'s safety properties (plan
-/// <c>docs/superpowers/plans/m4-release.md</c>, "Task 4 — Deploy-script tests"). The staging fixture
-/// this class shares is SYNTHETIC, not a real <c>dotnet publish</c> (Task 4 dispatch amendment,
-/// 2026-09-04): CI is <c>windows-latest</c> running <c>dotnet test --no-build</c>, and every property
-/// under test here is about where bytes go, not about the exes being real .NET binaries. The fixture
-/// builds one staging directory — a <c>ChopItUp.Hub.exe</c> and a <c>ChopItUp.Desktop.exe</c> (row 12
-/// T8) of known bytes, each over <see cref="TestExeFloors"/>'s 4&nbsp;KB (not the real 30&nbsp;MB /
-/// 100&nbsp;MB floors — pass 1, finding 8: kept small since ~11 script runs each make up to three
-/// copies of it), <c>wwwroot\index.html</c>, and a file under <c>wwwroot\assets\</c> — once for the
-/// whole class; every test drives the script against it (or a modified copy of it) via
+/// <summary>Regression tests for <c>tools/Deploy-ChopItUp.ps1</c>'s safety properties. The staging
+/// fixture this class shares is SYNTHETIC, not a real <c>dotnet publish</c>: CI is
+/// <c>windows-latest</c> running <c>dotnet test --no-build</c>, and every property under test here is
+/// about where bytes go, not about the exes being real .NET binaries. The fixture builds one staging
+/// directory (a <c>ChopItUp.Hub.exe</c> and a <c>ChopItUp.Desktop.exe</c> of known bytes, each over
+/// <see cref="TestExeFloors"/>'s 4&nbsp;KB, <c>wwwroot\index.html</c>, and a file under
+/// <c>wwwroot\assets\</c>) once for the whole class; every test drives the script against it (or
+/// a modified copy of it) via
 /// <c>-StagingDir &lt;synthetic&gt; -SkipPublish -ExeFloors &lt;TestExeFloors&gt;</c>, and none of them
 /// publishes.
 ///
 /// The script is driven as an external <c>pwsh -NoProfile -Command "&amp; '&lt;script&gt;' ..."</c>
 /// process throughout (not <c>-File</c>: see <see cref="DeployScriptTests.RunScript"/> for why),
 /// always with an explicit <c>-TargetDir</c> pointed at a scratch directory under
-/// <see cref="Path.GetTempPath"/> — never the script's default, which is the owner's real
+/// <see cref="Path.GetTempPath"/>, never the script's default, which is the hub owner's real
 /// install.</summary>
 public sealed class DeployScriptFixture : IDisposable
 {
@@ -30,11 +28,10 @@ public sealed class DeployScriptFixture : IDisposable
     public byte[] StagingExeBytes { get; }
     public byte[] StagingDesktopExeBytes { get; }
 
-    /// <summary>Row 12 T8 (pass 1, finding 8): tests drive the script with -ExeFloors set to these
-    /// KB-scale values instead of the real 30 MB / 100 MB defaults, so the shared fixture -- built
-    /// once and driven by ~11 script runs, three copies each -- stays kilobytes, not gigabytes.
-    /// <see cref="DeployScriptTests"/> keeps exactly one case at the real defaults to prove they
-    /// bind.</summary>
+    /// <summary>Tests drive the script with -ExeFloors set to these KB-scale values instead of the
+    /// real 30 MB / 100 MB defaults, so the shared fixture (built once and driven by ~11 script runs,
+    /// three copies each) stays kilobytes, not gigabytes. <see cref="DeployScriptTests"/> keeps
+    /// exactly one case at the real defaults to prove they bind.</summary>
     public static readonly Dictionary<string, long> TestExeFloors = new()
     {
         ["ChopItUp.Hub.exe"] = 4096,
@@ -441,8 +438,8 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     [Fact]
     public void Deploy_with_default_floors_refuses_a_staging_output_whose_desktop_exe_is_undersized()
     {
-        // The one case (pass 1, finding 8) that proves the script's real default floors -- 30 MB hub,
-        // 100 MB desktop -- actually bind, rather than only ever being exercised via -ExeFloors.
+        // The one case that proves the script's real default floors -- 30 MB hub, 100 MB desktop --
+        // actually bind, rather than only ever being exercised via -ExeFloors.
         string staging = NewScratchPath("staging_defaultfloors");
         Directory.CreateDirectory(Path.Combine(staging, "wwwroot", "assets"));
         File.WriteAllBytes(Path.Combine(staging, "ChopItUp.Hub.exe"), DeployScriptFixture.KnownBytes((30 * 1024 * 1024) + 4096, seed: 42));
@@ -477,8 +474,8 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             Assert.Equal(0, deployV1.ExitCode);
             Assert.True(File.Exists(Path.Combine(target, "ChopItUp.Desktop.exe")));
 
-            // Every backup made before row 12 is hub-only (the plan's Task 8 note); simulate one by
-            // copying staging and dropping the desktop exe.
+            // An older backup may be hub-only; simulate one by copying staging and dropping the
+            // desktop exe.
             CopyDirectoryRecursive(_fixture.StagingDir, hubOnlyBackup);
             File.Delete(Path.Combine(hubOnlyBackup, "ChopItUp.Desktop.exe"));
 
@@ -627,13 +624,12 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     [Fact]
     public void Stopping_a_guard_kills_it_and_clears_the_target_without_needing_an_image_match()
     {
-        // The invariant the old code broke. It gated the kill on Process.MainModule matching the
-        // copied exe, and MainModule returns null for a process whose module list Windows has not
-        // finished populating - reproduced at 5/250 under CPU contention, 0/250 idle. When it
-        // returned null the kill was SKIPPED, ping stayed alive holding its own image, the cleanup
-        // Directory.Delete threw UnauthorizedAccessException from the finally, and that exception
-        // replaced the real assertion failure. Two CI runs failed with a cleanup error and no
-        // diagnosis. Stopping the guard must therefore not depend on identifying it: holding the
+        // Gating the kill on Process.MainModule matching the copied exe is unsafe: MainModule returns
+        // null for a process whose module list Windows has not finished populating (reproduced at
+        // 5/250 under CPU contention, 0/250 idle). The kill is then skipped, ping stays alive holding
+        // its own image, the cleanup Directory.Delete throws UnauthorizedAccessException from the
+        // finally, and that exception replaces the real assertion failure. Stopping the guard must
+        // therefore not depend on identifying it: holding the
         // handle from Process.Start already guarantees the target, because Windows will not recycle
         // a PID while a handle to it is open.
         string target = NewScratchPath("guardstop");
@@ -757,10 +753,10 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             ? Directory.GetFileSystemEntries(dir, "*", SearchOption.AllDirectories).OrderBy(x => x, StringComparer.Ordinal).ToArray()
             : Array.Empty<string>();
 
-    /// <summary>Top-level entry NAMES only — never recurses into a subdirectory, so this never reads
-    /// anything under a real install's `data\`. This is the assertion Task 4 requires: a hardcoded
-    /// backup path would write into the owner's real `C:\Self Apps` on every test run, and this is
-    /// what catches it without touching the owner's actual data.</summary>
+    /// <summary>Top-level entry NAMES only: never recurses into a subdirectory, so this never reads
+    /// anything under a real install's `data\`. A hardcoded backup path would write into the hub owner's
+    /// real `C:\Self Apps` on every test run, and this is what catches it without touching the
+    /// owner's actual data.</summary>
     private static string[] SnapshotTopLevel(string dir)
         => Directory.Exists(dir)
             ? Directory.GetFileSystemEntries(dir).OrderBy(x => x, StringComparer.Ordinal).ToArray()

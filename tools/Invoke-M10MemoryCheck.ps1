@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    M10 live check: starts a hub on a scratch data directory whose MEMORY.md carries a codeword,
+    Memory live check: starts a hub on a scratch data directory whose MEMORY.md carries a codeword,
     mentions @sonnet, and proves the codeword reached the model, that a proposal came back, and
     that approving it writes the topic file and one git commit.
 
@@ -46,8 +46,8 @@ if (Test-Path -LiteralPath $DataDir) {
 New-Item -ItemType Directory -Path (Join-Path $DataDir 'memory') | Out-Null
 Add-Content -Path $log -Value ("M10 memory check {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
 
-# Row 28: /api/rooms/{id}/messages and /api/memory/proposals/{id}/approve are non-GET /api routes
-# now guarded by BearerTokenMiddleware -- seed the owner's bearer into this scratch hub's own
+# /api/rooms/{id}/messages and /api/memory/proposals/{id}/approve are non-GET /api routes
+# guarded by BearerTokenMiddleware: seed the hub owner's bearer into this scratch hub's own
 # tokens.json BEFORE it ever starts (see ChopTokenHelpers.ps1: the plaintext keeps authenticating
 # after the hub's first-start migration hashes the file). Never a real installation's credential.
 $ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
@@ -112,7 +112,7 @@ try {
     # Memory notes quote model-written text; only the hub's own failure notes are judged here.
     Add-Check -Name 'exchange.no-failure-notes' -Passed (-not ($hubNotes | Where-Object { -not $_.body.StartsWith('Memory ') -and $_.body -match 'did not reply|without posting|could not be started|exited with code' })) -Detail (($hubNotes | ForEach-Object { $_.body.Split("`n")[0] }) -join ' | ')
 
-    # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before filtering (measured 2026-09-06).
+    # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before filtering.
     $pending = @(Invoke-RestMethod -Uri "$base/api/memory/proposals?room=general&status=pending" -TimeoutSec 10 | ForEach-Object { $_ })
     $mine = @($pending | Where-Object { $_.authorId -eq 'sonnet' })
     Add-Check -Name 'proposal.pending-from-sonnet' -Passed ($mine.Count -ge 1) -Detail ("ids=" + (($mine | ForEach-Object id) -join ','))

@@ -8,20 +8,19 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>JSON endpoints under <c>/api</c> for the web UI. Brief decision D2's "no auth, loopback is
-/// the boundary" is superseded by row 28: <c>BearerTokenMiddleware</c> now guards every non-GET
-/// request here too, and a write is authored from whichever participant the bearer resolved to
-/// (<see cref="BearerTokenMiddleware.ParticipantKey"/> in <see cref="HttpContext.Items"/>), falling
-/// back to the owner id only when it is unset (a defensive default; the middleware never lets a
-/// guarded write through without setting it). Every write still goes through
+/// <summary>JSON endpoints under <c>/api</c> for the web UI. <c>BearerTokenMiddleware</c> guards
+/// every non-GET request here, and a write is authored from whichever participant the bearer
+/// resolved to (<see cref="BearerTokenMiddleware.ParticipantKey"/> in <see cref="HttpContext.Items"/>),
+/// falling back to the hub's owner id only when it is unset (a defensive default; the middleware never
+/// lets a guarded write through without setting it). Every write goes through
 /// <see cref="MessageStore.Post(string,string,string)"/>, the same path the MCP tools use, so the
 /// cursor and broadcast rules cannot drift.</summary>
 public static class ChatApi
 {
     /// <summary>A line that opens a new speaker's turn during transcript import: a short label
-    /// followed by a colon, e.g. "Claude:", "CODEX:   ", "random Name:". Deliberately permissive —
+    /// followed by a colon, e.g. "Claude:", "CODEX:   ", "random Name:". Deliberately permissive:
     /// this only decides where to SPLIT the paste into messages; it never decides who a message is
-    /// authored by (that is always the roster's human row, per D1).</summary>
+    /// authored by (that is always the roster's human row).</summary>
     private static readonly Regex SpeakerHeader = new(@"^[A-Za-z][\w .'-]{0,39}:", RegexOptions.Compiled);
 
     public static void MapChatApi(this WebApplication app)
@@ -55,13 +54,13 @@ public static class ChatApi
         });
     }
 
-    /// <summary>B3, row 28 pass 2 finding 13: authored as whichever participant's bearer resolved the
-    /// request (the owner or owner-remote — <see cref="BearerTokenMiddleware"/> refuses anything
-    /// else), falling back to the owner id only when the key is unset, and stored through the same
-    /// <c>MessageStore.Post</c> the MCP tools use, so the cursor and broadcast rules cannot drift. No
-    /// client_key on this surface — a browser POST has no story for "was this delivered", unlike an
-    /// MCP tool call. Row 36: <c>replyToId</c> must name a message of the same room (400 otherwise);
-    /// the spawner reads it to decide which exchange the post joins.</summary>
+    /// <summary>Authored as whichever participant's bearer resolved the request (the hub owner or
+    /// owner-remote; <see cref="BearerTokenMiddleware"/> refuses anything else), falling back to the
+    /// owner id only when the key is unset, and stored through the same <c>MessageStore.Post</c> the
+    /// MCP tools use, so the cursor and broadcast rules cannot drift. No client_key on this surface:
+    /// a browser POST has no story for "was this delivered", unlike an MCP tool call.
+    /// <c>replyToId</c> must name a message of the same room (400 otherwise); the spawner reads it to
+    /// decide which exchange the post joins.</summary>
     private static async Task<IResult> PostMessage(string roomId, PostBody body, HttpContext httpContext, MessageStore store, MessageSignal signal, ParticipantStore participants, SpawnerService spawner)
     {
         if (!store.RoomExists(roomId)) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
@@ -82,10 +81,10 @@ public static class ChatApi
             ? participantId
             : participants.OwnerId();
 
-    /// <summary>D1, binding: every imported message is authored as the roster's one human row; the
-    /// original speaker label (if any) stays as plain text inside the body. A line matching
+    /// <summary>Every imported message is authored as the roster's one human row; the original speaker
+    /// label (if any) stays as plain text inside the body. A line matching
     /// <see cref="SpeakerHeader"/> starts a new message; everything before the first such line, or the
-    /// whole paste when no line matches, becomes one message. Row 42: each turn is stored through
+    /// whole paste when no line matches, becomes one message. Each turn is stored through
     /// <see cref="MessageStore.Import"/>, so it carries <c>imported = 1</c> and the spawner never
     /// dispatches it; the signal still fires so browsers and waiting hosts see the rows, and the MCP
     /// instructions say what the flag means.</summary>
@@ -100,7 +99,7 @@ public static class ChatApi
         var posted = new List<Message>(turns.Count);
         foreach (var turn in turns)
         {
-            var message = store.Import(roomId, humanId, turn);   // D1: always the human row; row 42: flagged, never dispatched
+            var message = store.Import(roomId, humanId, turn);   // always the human row; flagged, never dispatched
             signal.Publish(roomId, message);
             posted.Add(message);
         }

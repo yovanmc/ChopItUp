@@ -14,21 +14,21 @@ export const SOURCE_LABEL: Record<RoleSource, string> = {
   none: 'no role anywhere yet',
 };
 
-/** Which of the four states a row is in. This decides the SENTENCE only — the text shown as in force
+/** Which of the four states a row is in. This decides the SENTENCE only: the text shown as in force
  *  is always the server's `effectiveRole`, never re-derived here, because the hub's COALESCE is the
- *  thing AC3 is about and a second copy of it in the client is a second thing to get wrong. */
+ *  source of truth and a second copy of it in the client is a second thing to get wrong. */
 export function sourceOf(row: RoleRow): RoleSource {
   if (row.roomRole !== null) return row.roomRole.length === 0 ? 'suppressed' : 'room';
   return row.role !== null && row.role.length > 0 ? 'global' : 'none';
 }
 
-/** Milestone 51: the roster's class set as one line, or the word for having none. Order is the
+/** The roster's class set as one line, or the word for having none. Order is the
  *  server's (`ParticipantClasses.All`), never re-sorted here. */
 export function describeClasses(row: RoleRow): string {
   return row.classes.length === 0 ? 'none' : row.classes.join(', ');
 }
 
-/** Milestone 51: what effort this row is spawned at, in words the owner can act on. Both values are
+/** What effort this row is spawned at, in words the hub owner can act on. Both values are
  *  the server's (`EffortPolicy`): `row.effort` is what the row's classes earn inside a run, null when
  *  they earn no flag and the CLI's own default applies; `conductorEffort` is what conducting a run
  *  gives any row. Nothing here guesses what a particular spawn resolved to. */
@@ -37,7 +37,7 @@ export function describeEffort(row: RoleRow, conductorEffort: string): string {
   return `the CLI default (no flag), ${conductorEffort} when it conducts a run`;
 }
 
-/** The two operations that are NOT "save what I typed", and are not each other either (D-b).
+/** The two operations that are NOT "save what I typed", and are not each other either.
  *
  *  Clearing an override deletes the row, so the participant goes back to carrying its global role
  *  here. Suppressing stores the empty string, so it keeps its global role in every other room and has
@@ -132,8 +132,8 @@ export function seedDrafts(roles: RoomRoles): Record<string, string> {
 
 /** What the dialog shows after a write answers with the room's whole state.
  *
- *  Every write answers with all 2N+1 values, and re-seeding from all of them is how the owner's
- *  unsaved text in some other box used to disappear. So only the box that was just saved is replaced
+ *  Every write answers with all 2N+1 values, and re-seeding from all of them would wipe the hub owner's
+ *  unsaved text in every other box. So only the box that was just saved is replaced
  *  by what the hub stored (which is still the place the hub's own trimming becomes visible); every
  *  other box keeps what is typed in it. `saved` is null for the first load, where there is nothing
  *  typed yet and everything is seeded. */
@@ -147,11 +147,11 @@ export function reseedDrafts(
   return { ...fresh, ...drafts, [saved]: fresh[saved] ?? '' };
 }
 
-/** The editor itself, taking the loaded state as a prop so it renders without a fetch — which is what
+/** The editor itself, taking the loaded state as a prop so it renders without a fetch, which is what
  *  lets it be tested at all in a client with no jsdom, and mirrors `MemoryPanel`/`SkillPanel`.
  *
  *  Every Save is enabled on an empty box on purpose: clearing a role IS saving an empty box, so a
- *  `disabled={text.length === 0}` here would make three of the four states one-way (LESSON M25). */
+ *  `disabled={text.length === 0}` here would make three of the four states one-way. */
 export function RolesEditor({
   roomName,
   roles,
@@ -243,7 +243,7 @@ export function RolesEditor({
                 <code className="roles-id">{row.id}</code>
               </div>
 
-              {/* Milestone 51: what the roster says about this row. Read-only, and every value is the
+              {/* What the roster says about this row. Read-only, and every value is the
                   server's: the dialog neither re-derives the class rule nor guesses a spawn's effort. */}
               <p className="roles-meta">
                 <span>
@@ -356,13 +356,13 @@ interface Props {
   onClose: () => void;
 }
 
-/** Row 14 (AC10): the owner's surface for the three pieces of standing prompt text — this room's
- *  persona, each spawnable participant's global role, and this room's override of it.
+/** The hub owner's surface for the three pieces of standing prompt text: this room's persona, each
+ *  spawnable participant's global role, and this room's override of it.
  *
  *  Shown to everyone, exactly like every other panel here: there is no client-side "am I the owner"
  *  gate, because the hub is the thing that knows, and a write without the owner's credential comes
  *  back as the refusal the rest of the UI shows for one. Participants the hub can never spawn are not
- *  listed — the hub leaves them out, since a role stored on one could never render. */
+ *  listed: the hub leaves them out, since a role stored on one could never render. */
 export default function RolesDialog({ room, onClose }: Props) {
   const [roles, setRoles] = useState<RoomRoles | null>(null);
   const [busy, setBusy] = useState<string | null>(null);

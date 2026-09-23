@@ -2,20 +2,20 @@ using System.Text.Json;
 
 namespace ChopItUp.Desktop.Bridge;
 
-/// <summary>Row 12 B2: how the launch-scoped owner bearer reaches the page.
+/// <summary>How the launch-scoped owner bearer reaches the page.
 ///
-/// The owner's real token is hashed at rest (row 28 <c>TokenStore</c>), so the shell cannot read it and
+/// The hub owner's real token is hashed at rest (<c>TokenStore</c>), so the shell cannot read it and
 /// must not try. Instead <see cref="Hub.HubChild"/> mints 32 random bytes per launch, hands them to the
 /// child hub in <c>CHOPITUP_SHELL_TOKEN</c> (which the hub deletes from its own environment before any
 /// spawn can inherit it), and this script hands the same value to the page.
 ///
 /// It is registered with <c>AddScriptToExecuteOnDocumentCreatedAsync</c>, so WebView2 runs it on every
-/// document — including reloads and in-app navigations — before any page script. The value lands on a
+/// document (including reloads and in-app navigations) before any page script. The value lands on a
 /// non-enumerable, non-writable <c>window</c> property and nowhere else: not <c>localStorage</c>, not a
-/// cookie, not the WebView2 profile on disk. That is the whole point (pass 2, finding 7): a LevelDB
-/// copy under the profile is readable by any process running as this user, a spawn's scheduled-task
-/// escape included, whereas this copy dies with the window. The client's <c>readOwnerToken()</c> reads
-/// the global first and falls back to the paste flow, which is what attach mode and a browser tab get.
+/// cookie, not the WebView2 profile on disk. That is the whole point: a LevelDB copy under the profile
+/// is readable by any process running as this user, a spawn's scheduled-task escape included, whereas
+/// this copy dies with the window. The client's <c>readOwnerToken()</c> reads the global first and
+/// falls back to the paste flow, which is what attach mode and a browser tab get.
 ///
 /// Attach mode registers nothing at all: the shell did not start that hub and holds no credential for it.</summary>
 public static class OwnerTokenScript

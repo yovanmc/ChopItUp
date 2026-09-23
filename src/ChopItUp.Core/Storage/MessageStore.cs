@@ -8,8 +8,8 @@ public sealed class MessageStore(ChopDb db)
     public const int DefaultLimit = 50;
     public const int MaxLimit = 200;
 
-    // One shape for every room read: the aggregate columns, then the two M9 columns, then activity and
-    // unread. {0} is the WHERE; $p (the asker, or NULL) is bound by every caller.
+    // One shape for every room read: the aggregate columns, directory and archive, activity, unread,
+    // then persona and mode. {0} is the WHERE; $p (the asker, or NULL) is bound by every caller.
     private const string RoomSelect = """
         SELECT r.id, r.name, r.created_at, COALESCE(MAX(m.id), 0), COUNT(m.id), r.directory, r.archived_at,
                COALESCE(MAX(m.created_at), r.created_at),
@@ -25,8 +25,8 @@ public sealed class MessageStore(ChopDb db)
         """;
 
     /// <summary>Rooms newest activity first (the newest message's time, or the room's creation when it
-    /// has none — every stamp is UTC round-trip text, so the text order is the time order), archived
-    /// rooms excluded unless asked for (M9 decision 14). <paramref name="unreadFor"/> fills
+    /// has none; every stamp is UTC round-trip text, so the text order is the time order), archived
+    /// rooms excluded unless asked for. <paramref name="unreadFor"/> fills
     /// <see cref="Room.Unread"/> from that participant's cursor; null leaves it 0.</summary>
     public IReadOnlyList<Room> ListRooms(bool includeArchived = false, string? unreadFor = null)
     {
@@ -120,8 +120,8 @@ public sealed class MessageStore(ChopDb db)
         return cmd.ExecuteNonQuery() == 1;
     }
 
-    /// <summary>Binds a directory to a room that has none (M9 decision 1). False when the room is
-    /// unknown or already bound — the WHERE is the arbiter, so two racing binds cannot both win.</summary>
+    /// <summary>Binds a directory to a room that has none. False when the room is unknown or already
+    /// bound: the WHERE is the arbiter, so two racing binds cannot both win.</summary>
     public bool BindDirectory(string roomId, string directory)
     {
         if (string.IsNullOrWhiteSpace(directory)) throw new ArgumentException("Directory is empty.", nameof(directory));
@@ -133,15 +133,14 @@ public sealed class MessageStore(ChopDb db)
         return cmd.ExecuteNonQuery() == 1;
     }
 
-    /// <summary>Row 14 (D-h): the cap on a room persona, enforced here so a future writer that is not
-    /// the HTTP API cannot exceed it. The persona is the higher-leverage field — one write reaches
-    /// every participant spawned in the room — so it is capped here, not only at the API. Equals
+    /// <summary>The cap on a room persona, enforced here so a writer that is not the HTTP API cannot
+    /// exceed it: one persona write reaches every participant spawned in the room. Equals
     /// <see cref="ChopItUp.Core.Memory.MemoryStore.RoomChars"/> so the two per-room text budgets match.</summary>
     public const int MaxPersonaChars = 2000;
 
-    /// <summary>Sets or clears a room's persona (row 14), rendered into every participant's spawn
-    /// prompt in this room. An empty or whitespace <paramref name="persona"/> clears it to NULL. False
-    /// for an unknown room.</summary>
+    /// <summary>Sets or clears a room's persona, rendered into every participant's spawn prompt in
+    /// this room. An empty or whitespace <paramref name="persona"/> clears it to NULL. False for an
+    /// unknown room.</summary>
     public bool SetPersona(string roomId, string? persona)
     {
         var trimmed = string.IsNullOrWhiteSpace(persona) ? null : persona.Trim();
@@ -181,13 +180,13 @@ public sealed class MessageStore(ChopDb db)
     public Message Post(string roomId, string authorId, string body) => Post(roomId, authorId, body, null).Message;
 
     /// <summary>Appends a message and advances the author's own cursor past it (you have read what
-    /// you wrote), in one transaction. Every posting path — MCP tools now, the M3 web UI later —
-    /// goes through here so the rule cannot drift. With a <paramref name="clientKey"/> the write is
-    /// idempotent: a repeat of the same key by the same author in the same room returns the stored
-    /// message untouched. The unique index is the arbiter, not the pre-check, so two racing retries
-    /// still collapse to one row. <paramref name="replyToId"/> must name a message of the same room, or
-    /// the post is refused with an <see cref="ArgumentException"/> whose ParamName is <c>replyToId</c>.
-    /// <paramref name="imported"/> (row 42) is set only by <see cref="Import"/>.</summary>
+    /// you wrote), in one transaction. Every posting path goes through here so the rule cannot drift.
+    /// With a <paramref name="clientKey"/> the write is idempotent: a repeat of the same key by the
+    /// same author in the same room returns the stored message untouched. The unique index is the
+    /// arbiter, not the pre-check, so two racing retries still collapse to one row.
+    /// <paramref name="replyToId"/> must name a message of the same room, or the post is refused with
+    /// an <see cref="ArgumentException"/> whose ParamName is <c>replyToId</c>.
+    /// <paramref name="imported"/> is set only by <see cref="Import"/>.</summary>
     public PostResult Post(string roomId, string authorId, string body, string? clientKey, long? replyToId = null, bool imported = false)
     {
         if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("Message body is empty.", nameof(body));
@@ -239,7 +238,7 @@ public sealed class MessageStore(ChopDb db)
         }
         // 2067 is SQLITE_CONSTRAINT_UNIQUE. The bare code 19 is NOT usable here: a foreign-key
         // violation (unknown room or author) is also 19, and swallowing that would turn a real
-        // integrity error into "the message could not be read back" (critique pass 1, F2).
+        // integrity error into "the message could not be read back".
         catch (SqliteException e) when (clientKey is not null && e.SqliteExtendedErrorCode == 2067)
         {
             tx.Rollback();
@@ -273,9 +272,9 @@ public sealed class MessageStore(ChopDb db)
         return new PostResult(new Message(id, roomId, authorId, body, createdAt, replyToId, imported), false);
     }
 
-    /// <summary>A transcript turn brought in by import (row 42). Stored like any post (same cursor
-    /// rule, same table) but flagged, so every reader can tell history from a live message and the
-    /// spawner never dispatches anything inside it.</summary>
+    /// <summary>A transcript turn brought in by import. Stored like any post (same cursor rule, same
+    /// table) but flagged, so every reader can tell history from a live message and the spawner never
+    /// dispatches anything inside it.</summary>
     public Message Import(string roomId, string authorId, string body) => Post(roomId, authorId, body, null, null, imported: true).Message;
 
     private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, string clientKey)
@@ -321,8 +320,8 @@ public sealed class MessageStore(ChopDb db)
         return rows;
     }
 
-    /// <summary>The newest <paramref name="count"/> messages of a room, ascending — the transcript
-    /// tail a spawn prompt renders (M5). Ids are not assumed contiguous.</summary>
+    /// <summary>The newest <paramref name="count"/> messages of a room, ascending: the transcript
+    /// tail a spawn prompt renders. Ids are not assumed contiguous.</summary>
     public IReadOnlyList<Message> ReadLast(string roomId, int count)
     {
         count = Math.Clamp(count, 1, MaxLimit);

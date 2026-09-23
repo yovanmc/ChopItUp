@@ -4,14 +4,14 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>Row 14: read and edit a room's persona, a participant's global role and a room's override
-/// of it. Same guard as <see cref="ChatApi"/> and <see cref="RoomsApi"/> since row 28 — every non-GET
-/// route here needs an owner-class bearer (<c>BearerTokenMiddleware</c> guards by method, not by
-/// route, so nothing is added here for that). Two traps this file exists to not fall into:
+/// <summary>Read and edit a room's persona, a participant's global role and a room's override of it.
+/// Same guard as <see cref="ChatApi"/> and <see cref="RoomsApi"/>: every non-GET route here needs an
+/// owner-class bearer (<c>BearerTokenMiddleware</c> guards by method, not by route, so nothing
+/// is added here for that). Two traps this file exists to not fall into:
 /// (1) every handler reads the roster via <see cref="ParticipantStore.List"/>, the live per-call
 /// read, never the startup-static <c>IReadOnlyList&lt;Participant&gt;</c> singleton
-/// <c>HubHost</c> registers for identity/peers — binding that singleton here would serve
-/// startup-time role text and break "a POST is reflected in the next GET" (AC7, AC10);
+/// <c>HubHost</c> registers for identity/peers: binding that singleton here would serve
+/// startup-time role text and break "a POST is reflected in the next GET";
 /// (2) the store's writers return <c>bool</c>, which cannot tell "unknown participant" (404) apart
 /// from "not spawnable" (400), so every handler classifies from the roster BEFORE calling the store:
 /// absent → 404, <see cref="ExchangePolicy.IsSpawnable"/> false → 400, otherwise call the store (whose
@@ -52,11 +52,11 @@ public static class RolesApi
         return Results.Json(new { updated.Id, updated.DisplayName, role = updated.Role });
     }
 
-    /// <summary>The room override. D-b's two operations, told apart by the request body itself:
+    /// <summary>The room override. Two operations, told apart by the request body itself:
     /// <paramref name="body"/>'s <c>Role</c> absent or JSON <c>null</c> deserialize identically to a
     /// C# <c>null</c> and mean "clear the override" (<see cref="ParticipantStore.ClearRoomRole"/>,
     /// falling back to the global role); any other value, including the empty string, means "store
-    /// this" (<see cref="ParticipantStore.SetRoomRole"/>) — <c>""</c> is D-b's stored sentinel for "no
+    /// this" (<see cref="ParticipantStore.SetRoomRole"/>): <c>""</c> is the stored sentinel for "no
     /// role in this room", never a delete. A DTO that defaulted a missing <c>role</c> to <c>""</c>
     /// would collapse both into one operation; <see cref="RoleBody"/> is a nullable reference for
     /// exactly this reason.</summary>
@@ -77,10 +77,10 @@ public static class RolesApi
     }
 
     /// <summary>The shape every read and every write here returns, built from the live roster
-    /// (<see cref="ParticipantStore.List"/>) — never the startup-static singleton — restricted to
+    /// (<see cref="ParticipantStore.List"/>), never the startup-static singleton, restricted to
     /// <see cref="ExchangePolicy.IsSpawnable"/> rows: <c>claude</c> and <c>codex</c> are kind 'model'
     /// with a NULL model and are never spawned, so listing them here would show role text that can
-    /// never render (D-g). Milestone 51 adds what the roster says about each row, read-only: the
+    /// never render. Each row also carries what the roster says about it, read-only: the
     /// <c>model</c> its host is launched with (never null on a spawnable row), its normalised
     /// <c>classes</c> (<see cref="ParticipantClasses.Parse"/>, so a mistyped token the dispatcher
     /// would drop is not shown as though it applied) and the <c>effort</c> those classes earn inside a

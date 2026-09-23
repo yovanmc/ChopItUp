@@ -4,11 +4,10 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>Room lifecycle for the web UI (M9): create, archive, bind a directory, mark read, and the
-/// commit trail. Same guard as <see cref="ChatApi"/> since row 28: every non-<c>GET</c> route here
-/// needs an owner-class bearer (<c>BearerTokenMiddleware</c>), superseding the old no-auth loopback
-/// boundary. Directory work is the hub's alone (D11) — a browser never sends a git command. Room
-/// create/bind/archive are refused while a spawn is in flight (plan decision 11).</summary>
+/// <summary>Room lifecycle for the web UI: create, archive, bind a directory, mark read, and the
+/// commit trail. Same guard as <see cref="ChatApi"/>: every non-<c>GET</c> route here needs an
+/// owner-class bearer (<c>BearerTokenMiddleware</c>). Directory work is the hub's alone: a browser
+/// never sends a git command. Room create/bind/archive are refused while a spawn is in flight.</summary>
 public static class RoomsApi
 {
     public const string SpawnRunning = "A spawn is in flight; change rooms when the exchange has finished.";
@@ -58,7 +57,7 @@ public static class RoomsApi
         return Results.Json(ChatApi.MapRoom(store.GetRoom(roomId, participants.OwnerId())!));
     });
 
-    /// <summary>Binds a directory to a legacy (M1–M10) room once. A room created after M9 always has one.</summary>
+    /// <summary>Binds a directory to an older room that has none, once. A newly created room always has one.</summary>
     private static async Task<IResult> BindDirectory(string roomId, DirectoryBody body, MessageStore store, ParticipantStore participants, RoomDirectories directories, SpawnerService spawner, CancellationToken cancellation)
     {
         if (store.GetRoom(roomId) is not { } room) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });
@@ -76,7 +75,7 @@ public static class RoomsApi
     }
 
     /// <summary>The owner's read cursor moves to the room's last message: the same row an MCP
-    /// participant's read_messages advances (plan decision 10).</summary>
+    /// participant's read_messages advances.</summary>
     private static IResult MarkRead(string roomId, MessageStore store, ParticipantStore participants)
     {
         if (store.GetRoom(roomId) is not { } room) return Results.NotFound(new { error = $"Unknown room '{roomId}'." });

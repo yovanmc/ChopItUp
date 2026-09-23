@@ -6,45 +6,45 @@ public enum HubCommand { Serve, RotateToken, PrintConfig, ImportSkill, SetClasse
 /// Default data dir is <c>data\</c> beside the executable (release layout); dev and tests pass
 /// an explicit directory. Port 0 = ephemeral (tests). A non-Serve command runs against the data
 /// dir and exits: it binds no port and takes no hub lock, so it works while a hub is running.
-/// <paramref name="WebRoot"/> is the built web client (M3 D3): null means <c>wwwroot\</c> beside the
-/// executable, which is where the csproj's npm step lands it. It is not a CLI flag — the only reason
-/// it is settable is so tests can point at a fabricated client without writing into the test output.
-/// <paramref name="RoomsRoot"/> is where hub-created room directories go (M9).
-/// <paramref name="ImportSkillPath"/> is the source directory for <c>--import-skill</c> (row 11 task
-/// 5), already rooted with <see cref="Path.GetFullPath(string)"/> at parse time — the same M5 lesson
-/// <c>--data</c> follows — so a relative path resolves against THIS process's working directory and
-/// not against anything a later hub start does. <paramref name="Force"/> is <c>--force</c>: replace an
-/// already-imported skill of the same name instead of refusing. <paramref name="OverlayPath"/> is
-/// <c>--overlay &lt;odir&gt;</c> (row 20 task 1), only valid alongside <c>--import-skill</c>, rooted the
-/// same way at parse time. <paramref name="SetClassesSpec"/> is the raw <c>&lt;id&gt;=&lt;classes&gt;</c>
-/// text of <c>--set-classes</c> (row 20 task 2); the split on <c>=</c> and the class normalization
-/// happen in <see cref="ChopItUp.Hub.Hosting.HostCommands"/>, not here — only the "has an <c>=</c>"
-/// shape is a parse-time refusal. <paramref name="ExportMemoryPath"/> is the target directory for
-/// <c>--export-memory &lt;dir&gt;</c> (row 24 task 4), rooted the same way <c>--import-skill</c> is
-/// AND <see cref="Path.TrimEndingDirectorySeparator(string)"/>-ed, because <see cref="Path.GetFullPath(string)"/>
+/// <paramref name="WebRoot"/> is the built web client: null means <c>wwwroot\</c> beside the
+/// executable, which is where the csproj's npm step lands it. It is not a CLI flag; it is settable
+/// only so tests can point at a fabricated client without writing into the test output.
+/// <paramref name="RoomsRoot"/> is where hub-created room directories go.
+/// <paramref name="ImportSkillPath"/> is the source directory for <c>--import-skill</c>, already
+/// rooted with <see cref="Path.GetFullPath(string)"/> at parse time, as <c>--data</c> is, so a
+/// relative path resolves against this process's working directory and not against anything a
+/// later hub start does. <paramref name="Force"/> is <c>--force</c>: replace an already-imported
+/// skill of the same name instead of refusing. <paramref name="OverlayPath"/> is
+/// <c>--overlay &lt;odir&gt;</c>, only valid alongside <c>--import-skill</c>, rooted the same way at
+/// parse time. <paramref name="SetClassesSpec"/> is the raw <c>&lt;id&gt;=&lt;classes&gt;</c> text of
+/// <c>--set-classes</c>; the split on <c>=</c> and the class normalization happen in
+/// <see cref="ChopItUp.Hub.Hosting.HostCommands"/>, not here; only the "has an <c>=</c>" shape is a
+/// parse-time refusal. <paramref name="ExportMemoryPath"/> is the target directory for
+/// <c>--export-memory &lt;dir&gt;</c>, rooted the same way <c>--import-skill</c> is and
+/// <see cref="Path.TrimEndingDirectorySeparator(string)"/>-ed, because <see cref="Path.GetFullPath(string)"/>
 /// alone preserves a trailing separator, which would put the writer's staging directory inside the
 /// target. A drive root is refused outright. <paramref name="AcceptNewSource"/> is
-/// <c>--accept-new-source</c>, only valid alongside <c>--export-memory</c> (D9): it proceeds past a
+/// <c>--accept-new-source</c>, only valid alongside <c>--export-memory</c>: it proceeds past a
 /// target whose manifest names a different store root, which <c>--force</c> must never do.
-/// <paramref name="OwnerPeerCheck"/> (row 29, D3) is <c>--owner-peer-check off</c> (or
+/// <paramref name="OwnerPeerCheck"/> is <c>--owner-peer-check off</c> (or
 /// <c>CHOPITUP_OWNER_PEER_CHECK=off</c>), default true: false disables the check that refuses an
 /// owner-class bearer presented from inside a spawn, the recovery for a lookup failure that would
 /// otherwise lock the owner out of every write. A missing value throws, same as <c>--rotate-token</c>'s.
-/// <paramref name="ShellToken"/> (row 12) is the desktop shell's launch-scoped owner bearer, read from
+/// <paramref name="ShellToken"/> is the desktop shell's launch-scoped owner bearer, read from
 /// <see cref="ShellTokenEnvVar"/> only.</summary>
 public sealed record HubOptions(string DataDir, int Port, HubCommand Command = HubCommand.Serve, string? RotateParticipant = null, string? WebRoot = null, string? RoomsRoot = null, string? ImportSkillPath = null, bool Force = false, string? OverlayPath = null, string? SetClassesSpec = null, string? ExportMemoryPath = null, bool AcceptNewSource = false, bool OwnerPeerCheck = true, string? ShellToken = null)
 {
     public const int DefaultPort = 8790;
 
-    /// <summary>Row 12: a launch-scoped owner bearer the desktop shell hands its child hub. Read from
-    /// the environment only (never an argument, so it is not in any process listing), held in memory
-    /// by <see cref="Security.TokenStore"/>, never written, and deleted from this process's
-    /// environment by <c>HubHost.Build</c> before anything can inherit it.</summary>
+    /// <summary>A launch-scoped owner bearer the desktop shell hands its child hub. Read from the
+    /// environment only (never an argument, so it is not in any process listing), held in memory by
+    /// <see cref="Security.TokenStore"/>, never written, and deleted from this process's environment
+    /// by <c>HubHost.Build</c> before anything can inherit it.</summary>
     public const string ShellTokenEnvVar = "CHOPITUP_SHELL_TOKEN";
 
-    /// <summary>Where hub-created room directories go (M9 decision 2): `--rooms-root`, then
-    /// `CHOPITUP_ROOMS`, then `%USERPROFILE%\ChopItUp\rooms` — a folder inside the profile, which D12
-    /// allows, because the install dir is under C:\Self Apps and the data dir holds the tokens.</summary>
+    /// <summary>Where hub-created room directories go: `--rooms-root`, then `CHOPITUP_ROOMS`, then
+    /// `%USERPROFILE%\ChopItUp\rooms`, a folder inside the profile, because the install dir is under
+    /// C:\Self Apps and the data dir holds the tokens.</summary>
     public string RoomsRootPath => Path.GetFullPath(string.IsNullOrWhiteSpace(RoomsRoot) ? DefaultRoomsRoot() : RoomsRoot);
 
     public static string DefaultRoomsRoot() =>
@@ -96,8 +96,7 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
                 if (i + 1 >= args.Length) throw new ArgumentException("--import-skill requires a value.");
                 command = HubCommand.ImportSkill;
                 // Rooted here, not where SkillImport.Run happens to read it: a relative path must
-                // resolve against THIS command's working directory (row 11 task 5, m5/m6), the same
-                // rule --data already follows.
+                // resolve against this command's working directory, the same rule --data follows.
                 importSkillPath = Path.GetFullPath(args[++i]);
             }
             else if (args[i] == "--force")
@@ -107,8 +106,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             else if (args[i] == "--overlay")
             {
                 if (i + 1 >= args.Length) throw new ArgumentException("--overlay requires a value.");
-                // Rooted here for the same reason --import-skill is (M5): a relative path must resolve
-                // against THIS command's working directory, not against anything a later hub start does.
+                // Rooted here for the same reason --import-skill is: a relative path must resolve
+                // against this command's working directory, not against anything a later hub start does.
                 overlayPath = Path.GetFullPath(args[++i]);
             }
             else if (args[i] == "--set-classes")
@@ -123,10 +122,9 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
             else if (args[i] == "--export-memory")
             {
                 if (i + 1 >= args.Length) throw new ArgumentException("--export-memory requires a value.");
-                // Rooted here for the same reason --import-skill is (M5): a relative path must resolve
-                // against THIS command's working directory. TrimEndingDirectorySeparator runs AFTER
-                // GetFullPath (claim 20) — GetFullPath alone preserves a trailing separator, which
-                // would put the writer's staging directory inside the target.
+                // Rooted here for the same reason --import-skill is. TrimEndingDirectorySeparator runs
+                // after GetFullPath: GetFullPath alone preserves a trailing separator, which would put
+                // the writer's staging directory inside the target.
                 var rooted = Path.TrimEndingDirectorySeparator(Path.GetFullPath(args[++i]));
                 if (string.Equals(rooted, Path.GetPathRoot(rooted), StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException($"--export-memory cannot target a drive root ('{rooted}').");
@@ -150,8 +148,8 @@ public sealed record HubOptions(string DataDir, int Port, HubCommand Command = H
         data ??= getEnv("CHOPITUP_DATA");
         port ??= getEnv("CHOPITUP_PORT");
         rooms ??= getEnv("CHOPITUP_ROOMS");
-        // Row 29, D3: the flag wins over the environment; anything but "off" (case-insensitive) is
-        // on, so a missing or garbled env value never accidentally disables the check.
+        // The flag wins over the environment; anything but "off" (case-insensitive) is on, so a
+        // missing or garbled env value never accidentally disables the check.
         ownerPeerCheck ??= getEnv("CHOPITUP_OWNER_PEER_CHECK");
         var shellToken = getEnv(ShellTokenEnvVar);
         return new HubOptions(

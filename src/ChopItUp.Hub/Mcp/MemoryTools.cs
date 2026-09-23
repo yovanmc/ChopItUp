@@ -12,14 +12,13 @@ using ModelContextProtocol.Server;
 
 namespace ChopItUp.Hub.Mcp;
 
-/// <summary>The memory half of the contract (M10, D15). <c>recall</c> is how a spawn gets what its
-/// prompt did not carry and how an interactive host gets memory at all; <c>propose_memory</c> writes a
-/// proposal, never the store — the owner approves in the room. The proposer is the authenticated
-/// participant, stamped like a message author. Row 23 (item 3): <paramref name="participants"/> is the
-/// roster <c>propose_rewrite</c>'s caller boundary reads — a singleton already registered in
-/// <c>HubHost</c>, but a dependency this tool did not have before. <see cref="ParticipantStore.List"/>
-/// opens a connection and reads the table on every call, so a class or host change to a participant row
-/// takes effect immediately at the boundary — no hub restart needed.</summary>
+/// <summary>The memory half of the contract. <c>recall</c> is how a spawn gets what its prompt did
+/// not carry and how an interactive host gets memory at all; <c>propose_memory</c> writes a proposal,
+/// never the store: the hub owner approves in the room. The proposer is the authenticated participant,
+/// stamped like a message author. <paramref name="participants"/> is the roster
+/// <c>propose_rewrite</c>'s caller boundary reads. <see cref="ParticipantStore.List"/> opens a
+/// connection and reads the table on every call, so a class or host change to a participant row
+/// takes effect immediately at the boundary, with no hub restart.</summary>
 [McpServerToolType]
 public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, IHttpContextAccessor http, ParticipantStore participants)
 {
@@ -93,8 +92,8 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         var titles = memory.Titles(slug);
         if (target is not null && !titles.Contains(target, StringComparer.Ordinal))
             throw new McpException($"No entry titled '{target}' in topic '{slug}'. Titles: {(titles.Count == 0 ? "(none)" : string.Join(", ", titles.Take(20)))}.");
-        // Order (critique P1-17a): the "memory already holds it" refusal first, so a repeat of a pending
-        // proposal for a title the file already has is told about replaces rather than handed a duplicate.
+        // Order: the "memory already holds it" refusal first, so a repeat of a pending proposal for a
+        // title the file already has is told about replaces rather than handed a duplicate.
         if (target is null && titles.Contains(entryTitle.Trim(), StringComparer.Ordinal))
             throw new McpException($"Memory already holds '{entryTitle.Trim()}' in topic '{slug}'. To change it, propose again with replaces set to that title.");
         if (proposals.FindPending(slug, entryTitle) is { } pending)
@@ -104,7 +103,7 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         try { proposal = proposals.Create(room_id, me, slug, entryTitle, entryBody, null, target, flags); }
         catch (ArgumentException e) { throw new McpException(e.Message); }
         // The row is the proposal; the note is its announcement. A note that fails must not turn into a
-        // tool error that invites a retry and a duplicate row (critique pass 2, P2-8).
+        // tool error that invites a retry and a duplicate row.
         try { HubNotes.Post(store, signal, room_id, HubNotes.Proposed(proposal)); }
         catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"memory: proposal #{proposal.Id} note not posted ({e.GetType().Name}: {e.Message})"); }
         return JsonSerializer.Serialize(new { proposal.Id, proposal.RoomId, proposal.AuthorId, proposal.Topic, proposal.Title, proposal.Status, proposal.Kind, proposal.Replaces, Flags = flags is null ? null : ProposalFlags.Parse(flags) }, JsonOptions);
@@ -147,11 +146,11 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         if (current.Truncated)
             throw new McpException($"Topic '{slug}' is {current.FullChars} characters, past the {MemoryStore.TopicChars} a proposer can read. Split it by hand before consolidating.");
 
-        // 6. ValidateRewrite is a cheap floor only; ProjectedRewriteChars is the authoritative cap check
-        // (pass 2 finding A) — it is the only one that can see the carried-forward provenance. The
-        // provenance string here mirrors the shape MemoryApi.Approve composes at approval time; the
-        // real proposal id is not known until Create returns, but approval re-checks the real string
-        // regardless (T4), so this is a preliminary refusal, not the final word.
+        // 6. ValidateRewrite is a cheap floor only; ProjectedRewriteChars is the authoritative cap
+        // check, the only one that can see the carried-forward provenance. The provenance string here
+        // mirrors the shape MemoryApi.Approve composes at approval time; the real proposal id is not
+        // known until Create returns, but approval re-checks the real string regardless, so this is a
+        // preliminary refusal, not the final word.
         try { MemoryStore.ValidateRewrite(slug, entryBody); }
         catch (ArgumentException e) { throw new McpException(e.Message); }
         var provisionalProvenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal 0 by {me} in room {room_id}";
@@ -160,9 +159,9 @@ public sealed class MemoryTools(MemoryStore memory, MemoryProposalStore proposal
         if (projected > cap)
             throw new McpException($"body would produce a {projected}-character file for topic '{slug}', over the {cap}-character cap.");
 
-        // 7. Refuse a second pending rewrite rather than deduplicating it (pass 2 finding C): the
-        // generated title is invariant for this kind, so title-dedup would hand back proposal #1's body
-        // as a "duplicate" of a second, better one, and the owner would approve the wrong text.
+        // 7. Refuse a second pending rewrite rather than deduplicating it: the generated title is
+        // invariant for this kind, so title-dedup would hand back proposal #1's body as a "duplicate"
+        // of a second, better one, and the hub owner would approve the wrong text.
         var title = $"Consolidate {slug}";
         if (proposals.FindPending(slug, title) is { } pending)
             throw new McpException($"A rewrite of '{slug}' is already pending (#{pending.Id}); reject it before proposing another.");

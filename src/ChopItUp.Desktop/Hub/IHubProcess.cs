@@ -10,7 +10,7 @@ public interface IHubProcess : IDisposable
     event Action Exited;
     /// <summary>Starts the output pumps. Called by HubChild AFTER it has subscribed OutputLine and
     /// Exited, so a hub that dies in its first milliseconds (port in use is the common one) still
-    /// lands its lines in the tail (pass 2, finding 1).</summary>
+    /// lands its lines in the tail.</summary>
     void BeginReading();
     void Kill();
 }

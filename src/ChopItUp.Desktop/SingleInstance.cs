@@ -3,7 +3,7 @@ using System.Text;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12 B6: one shell per data dir. <see cref="TryBecomePrimary"/> claims a named mutex for
+/// <summary>One shell per data dir. <see cref="TryBecomePrimary"/> claims a named mutex for
 /// the data dir's key and, only on success, creates the two named events a later launch signals
 /// (<see cref="Signal"/>) — so a bare second launch or a scripted <c>--show</c>/<c>--quit</c> always
 /// finds an event to open when, and only when, a primary actually exists. <see cref="Listen"/> starts
@@ -36,8 +36,8 @@ public sealed class SingleInstance : IDisposable
     }
 
     /// <summary>Claims the mutex for <paramref name="key"/>. Null when another process already holds
-    /// it — the caller (App) then signals that primary to show itself instead of starting a second
-    /// shell (B6).</summary>
+    /// it: the caller (App) then signals that primary to show itself instead of starting a second
+    /// shell.</summary>
     public static SingleInstance? TryBecomePrimary(string key)
     {
         var mutex = new Mutex(initiallyOwned: true, name: "Local\\" + key, out var createdNew);

@@ -11,22 +11,21 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Web;
 
-/// <summary>The owner's side of memory (D15: agents propose, the owner approves). Every non-GET
-/// route here needs an owner-class bearer since row 28 (<c>BearerTokenMiddleware</c>), superseding
-/// the old no-auth loopback boundary — and because a Codex spawn lives inside that boundary with a
-/// shell (F3), decisions are refused while any spawn is in flight (plan decision 13). Approve =
-/// mark + append + record + note, in that order (plan decision 15): the row is the arbiter, the file
-/// write is idempotent on the proposal's key, the note is best-effort.</summary>
+/// <summary>The hub owner's side of memory (agents propose, the hub owner approves). Every non-GET route here
+/// needs an owner-class bearer (<c>BearerTokenMiddleware</c>), and because a Codex spawn lives on
+/// loopback with a shell, decisions are refused while any spawn is in flight. Approve = mark +
+/// append + record + note, in that order: the row is the arbiter, the file write is idempotent on
+/// the proposal's key, the note is best-effort.</summary>
 public static class MemoryApi
 {
     // One decision at a time: two clicks on the same card must not race the mark-then-write sequence.
     private static readonly SemaphoreSlim Decisions = new(1, 1);
     public const string SpawnRunning = "A spawn is running; decide memory proposals when the exchange has finished.";
-    // Row 40, pass 3 P3-1: the panel's SpawnRunning names "decide memory proposals", which is not what an
-    // editor save does; the dialog's own LOCKED_HINT is this sentence verbatim.
+    // The panel's SpawnRunning names "decide memory proposals", which is not what an editor save
+    // does; the dialog's own LOCKED_HINT is this sentence verbatim.
     public const string SpawnRunningEdit = "A spawn is running; save when the exchange has finished.";
-    // Row 18, decision 3: the refusal note is posted once per proposal per hub process, never per click
-    // (keyed per store too, since the test process hosts many hubs whose ids all start at 1 - pass 2 P2-6).
+    // The refusal note is posted once per proposal per hub process, never per click (keyed per store
+    // too, since the test process hosts many hubs whose ids all start at 1).
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Root, long Id), byte> RefusalNoted = new();
 
     public static void MapMemoryApi(this WebApplication app)
@@ -50,8 +49,8 @@ public static class MemoryApi
     private static int CapOf(string slug) => slug == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
     /// <summary>CRLF and lone CR both become LF: the store writes LF and a browser textarea holds LF.</summary>
     private static string Lf(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
-    /// <summary>Row 40: the stale-edit token, over LF-normalised text so a CRLF file on disk, the hub's
-    /// reply and the browser's textarea all hash alike. Never over what a browser echoed back.</summary>
+    /// <summary>The stale-edit token, over LF-normalised text so a CRLF file on disk, the hub's reply
+    /// and the browser's textarea all hash alike. Never over what a browser echoed back.</summary>
     internal static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Lf(text)))).ToLowerInvariant();
     /// <summary>The provenance <see cref="ApproveCore"/> will compose, with the one unknown — the row id —
     /// as twelve nines: never fewer digits than a real id, so a size that passes on this string passes
@@ -68,8 +67,8 @@ public static class MemoryApi
         return new { slug, path = PathOf(slug), text = lf, chars = lf.Length, cap = CapOf(slug), hash = Hash(lf) };
     }
 
-    /// <summary>Row 40: the editor's file list — the core first, then every topic in slug order, each
-    /// with its live character count and the cap a save must stay under.</summary>
+    /// <summary>The editor's file list: the core first, then every topic in slug order, each with its
+    /// live character count and the cap a save must stay under.</summary>
     private static IResult ListTopics(MemoryStore memory)
     {
         var rows = new List<object> { FileRow(memory, MemoryStore.CoreTopic) };
@@ -77,9 +76,9 @@ public static class MemoryApi
         return Results.Json(rows);
     }
 
-    /// <summary>Row 40: the whole file, uncut — the editor is the one reader that must see past a cap,
-    /// because shrinking an over-cap topic is the only thing propose_rewrite cannot do (it refuses a
-    /// truncated read).</summary>
+    /// <summary>The whole file, uncut: the editor is the one reader that must see past a cap, because
+    /// shrinking an over-cap topic is the only thing propose_rewrite cannot do (it refuses a truncated
+    /// read).</summary>
     private static IResult GetTopic(string slug, MemoryStore memory)
     {
         if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
@@ -87,9 +86,9 @@ public static class MemoryApi
         return current is null ? Results.NotFound(new { error = $"No topic '{slug}'." }) : Results.Json(FileBody(slug, current.Text));
     }
 
-    /// <summary>Row 40: the size the cap is enforced on — the composed file, marker line and carried
-    /// provenance included — so the dialog's count is the hub's count, not the textarea's. Reads
-    /// nothing but the topic file; writes nothing.</summary>
+    /// <summary>The size the cap is enforced on (the composed file, marker line and carried provenance
+    /// included), so the dialog's count is the hub's count, not the textarea's. Reads nothing but the
+    /// topic file; writes nothing.</summary>
     private static IResult PreviewTopic(string slug, PreviewBody body, HttpContext http, MemoryStore memory)
     {
         if (!MemoryStore.TopicSlug.IsMatch(slug)) return Results.BadRequest(new { error = BadSlug });
@@ -99,13 +98,13 @@ public static class MemoryApi
         return Results.Json(new { slug, chars, cap, over = chars > cap });
     }
 
-    /// <summary>Row 40: a hand edit, saved as an approved <c>rewrite</c> authored by the bearer's own
+    /// <summary>A hand edit, saved as an approved <c>rewrite</c> authored by the bearer's own
     /// participant (the middleware set it) with <see cref="MemoryProposalStore.SourceEditor"/>. Every
-    /// PRE-CHECK refusal runs BEFORE the row is created — spawn in flight, stale hash, empty body, cap,
-    /// body rules — so a save refused by a pre-check leaves no row; the cap is decided on the composed
+    /// pre-check refusal (spawn in flight, stale hash, empty body, cap, body rules) runs before the row
+    /// is created, so a save refused by a pre-check leaves no row; the cap is decided on the composed
     /// size before ValidateRewrite runs, so an over-cap text is always a 409 and never the floor's 400.
-    /// <see cref="ApproveCore"/>'s own re-check is a defense in depth for a row that somehow reaches it
-    /// unrecognised by the pre-checks above; a refusal there leaves the row pending, same as any other
+    /// <see cref="ApproveCore"/>'s own re-check is defence in depth for a row that reaches it
+    /// unrecognised by the pre-checks; a refusal there leaves the row pending, same as any other
     /// proposal. One action, one commit, under the same semaphore.</summary>
     private static async Task<IResult> PutTopic(string slug, EditBody body, HttpContext http, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
@@ -164,15 +163,15 @@ public static class MemoryApi
         return Results.Json(proposals.List(string.IsNullOrWhiteSpace(room) ? null : room, status).Select(p => MapForList(p, memory, git)));
     }
 
-    /// <summary>Row 23 (item 5, ticket 05): a <c>rewrite</c> proposal that is pending or approved-but-
-    /// unwritten (the panel's default <c>undecided</c> filter shows both — the second is the Retry state,
-    /// pass 2 finding H) carries a computed line diff against what approval would write, the entry titles
-    /// it removes and adds, how many live entries would lose their provenance (renamed or removed alike —
-    /// <see cref="MemoryStore.ProvenanceLost"/> matches by exact heading), and whether a commit
-    /// can be made at all — all before the owner can approve it. Every other row gets the base shape with
-    /// these fields present but empty/null (ticket 05: "always present", never missing), so the client
-    /// never has to guess whether a field applies to a given kind. Cost is accepted, not optimised: one
-    /// bounded <see cref="MemoryDiff"/> LCS per undecided rewrite per list call, for one local client.</summary>
+    /// <summary>A <c>rewrite</c> proposal that is pending or approved-but-unwritten (the panel's
+    /// default <c>undecided</c> filter shows both; the second is the Retry state) carries a computed
+    /// line diff against what approval would write, the entry titles it removes and adds, how many
+    /// live entries would lose their provenance (renamed or removed alike;
+    /// <see cref="MemoryStore.ProvenanceLost"/> matches by exact heading), and whether a commit can be
+    /// made at all, all before the hub owner can approve it. Every other row gets the base shape with
+    /// these fields present but empty/null, so the client never has to guess whether a field applies
+    /// to a given kind. Cost is accepted, not optimised: one bounded <see cref="MemoryDiff"/> LCS per
+    /// undecided rewrite per list call, for one local client.</summary>
     private static object MapForList(MemoryProposal p, MemoryStore memory, MemoryGit git)
     {
         var isRewrite = p.Kind == MemoryProposalStore.KindRewrite;
@@ -231,24 +230,23 @@ public static class MemoryApi
         finally { Decisions.Release(); }
     }
 
-    /// <summary>Everything an approval does for a row that is pending or approved-but-unwritten —
-    /// pre-write checks, mark, write, commit, record, note — shared by the panel's Approve and the
-    /// editor's save (row 40, which hands it the row it just created) so the two doors cannot drift.
-    /// Runs under <see cref="Decisions"/>, which the caller holds. Returns the refusal, or null and the
+    /// <summary>Everything an approval does for a row that is pending or approved-but-unwritten
+    /// (pre-write checks, mark, write, commit, record, note), shared by the panel's Approve and the
+    /// editor's save (which hands it the row it just created) so the two doors cannot drift. Runs
+    /// under <see cref="Decisions"/>, which the caller holds. Returns the refusal, or null and the
     /// decided row.</summary>
     private static async Task<(IResult? Refusal, MemoryProposal? Decided)> ApproveCore(MemoryProposal p, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal)
     {
-        // Row 18, decision 3: refuse BEFORE marking, so a refused row stays pending rather than becoming
-        // the replayable approved-but-unwritten state. A row that is ALREADY approved (a Retry after a crash
-        // between mark and write) skips the check: it was committed to when it passed, and Retry must be able
-        // to finish it (critique P1-5).
+        // Refuse before marking, so a refused row stays pending rather than becoming the replayable
+        // approved-but-unwritten state. A row that is already approved (a Retry after a crash between
+        // mark and write) skips the check: it was committed to when it passed, and Retry must be able
+        // to finish it.
         var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
 
-        // Row 23, pass 2 finding H: a rewrite's pre-write checks run on BOTH the pending path AND the
-        // Retry path (approved, written_to still null) - unlike the append/supersede checks below, which
-        // stay pending-only per P1-5. Rewrite() itself throws KeyNotFoundException when the
-        // topic vanished in the crash window, and unlike append/supersede that must never reach the
-        // write uncaught: checking here turns it into a 409, not a 500.
+        // A rewrite's pre-write checks run on both the pending path and the Retry path (approved,
+        // written_to still null), unlike the append/supersede checks below, which stay pending-only.
+        // Rewrite() itself throws KeyNotFoundException when the topic vanished in the crash window,
+        // and that must never reach the write uncaught: checking here turns it into a 409, not a 500.
         if (p.Kind == MemoryProposalStore.KindRewrite)
         {
             try { MemoryStore.ValidateRewrite(p.Topic, p.Body); }
@@ -269,8 +267,8 @@ public static class MemoryApi
         }
         else if (p.Status == MemoryProposalStore.Pending)
         {
-            // Pass 2 P2-3: a row that predates row 18's body rule (a "## " line) must be refused HERE, before
-            // the mark - after it, Append/Supersede would throw on every Retry and the row could never be
+            // A row that predates the body rule (a "## " line) must be refused here, before the mark:
+            // after it, Append/Supersede would throw on every Retry and the row could never be
             // rejected. The same check covers any future Validate rule.
             try { MemoryStore.Validate(p.Title, p.Body); }
             catch (ArgumentException e) { return (Results.Conflict(new { error = $"Memory proposal #{p.Id} cannot be written: {e.Message} Reject it and propose it again." }), null); }
@@ -291,8 +289,8 @@ public static class MemoryApi
                 return (Results.Conflict(new { error = $"No entry titled '{p.Replaces}' to replace." }), null);
         }
 
-        // Row 23 (item 4): captured before the mark/write so the approval note can name what a
-        // rewrite removed - the set difference of live titles before and after the replacement.
+        // Captured before the mark/write so the approval note can name what a rewrite removed: the
+        // set difference of live titles before and after the replacement.
         var beforeTitles = p.Kind == MemoryProposalStore.KindRewrite ? memory.Titles(p.Topic) : null;
 
         // Mark first. An approved row with no written_to is the replayable state a crash below leaves.
@@ -335,11 +333,11 @@ public static class MemoryApi
     /// <summary>Drafts become proposals authored as the vendor's app-backed roster row, source
     /// <c>&lt;vendor&gt;:&lt;path&gt;</c>; a draft already proposed by that author (pending or approved) is
     /// skipped, so re-importing is safe; a draft that fails validation is skipped, never fatal. A folder
-    /// over <see cref="MemoryImport.MaxDrafts"/> is refused whole. One summary note, never one per draft
-    /// (plan decisions 7, 16).</summary>
+    /// over <see cref="MemoryImport.MaxDrafts"/> is refused whole. One summary note, never one per
+    /// draft.</summary>
     private static IResult Import(ImportBody body, MemoryProposalStore proposals, ParticipantStore participants, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
-        if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });   // a spawn could import its own file under a vendor's name (plan decision 17)
+        if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });   // a spawn could import its own file under a vendor's name
         if (string.IsNullOrWhiteSpace(body.RoomId) || !store.RoomExists(body.RoomId)) return Results.NotFound(new { error = $"Unknown room '{body.RoomId}'." });
         var source = (body.Source ?? "").Trim().ToLowerInvariant();
         IReadOnlyList<MemoryDraft> drafts;

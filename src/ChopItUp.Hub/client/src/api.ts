@@ -32,10 +32,9 @@ interface MessagePage {
   hasMore: boolean;
 }
 
-/** A refusal the hub answered with a status. Row 28: every non-GET `/api` request now needs an owner
- *  credential, and 401 is a failure the owner can FIX — so the client has to be able to tell it from
- *  a 500 it can only report. `unwrap` used to collapse every failure into `new Error(text)` and throw
- *  the status away, which made that distinction unavailable to every caller. */
+/** A refusal the hub answered with a status. Every non-GET `/api` request needs an owner credential,
+ *  and 401 is a failure the hub owner can fix, so the client has to be able to tell it from a 500 it can
+ *  only report. */
 export class ApiError extends Error {
   constructor(
     readonly status: number,
@@ -72,8 +71,8 @@ async function unwrap<T>(response: Response): Promise<T> {
 }
 
 /** The one door every non-GET request goes through, so "every write carries the owner's credential"
- *  is a property of this module rather than of a dozen call sites remembering to do it — the same
- *  reason `BearerTokenMiddleware` guards by method instead of by route list (row 28 D-28-a). */
+ *  is a property of this module rather than of a dozen call sites remembering to do it: the same
+ *  reason `BearerTokenMiddleware` guards by method instead of by route list. */
 function write(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, withOwnerToken(init));
 }
@@ -106,11 +105,11 @@ export async function listRooms(includeArchived = false, signal?: AbortSignal): 
   return unwrap<Room[]>(await fetch(includeArchived ? '/api/rooms?archived=true' : '/api/rooms', { signal }));
 }
 
-/** M9 room lifecycle. Every refusal (a refused path, a spawn in flight, a room already bound) comes
- *  back through `unwrap` as a thrown `ApiError` carrying the hub's own sentence — the dialogs show
- *  `describeError` of it rather than inventing their own wording, which since row 28 means the hub's
- *  sentence for everything except 401/403, where `{"error":"unauthorized"}` is not something a
- *  dialog can usefully show anybody. */
+/** Room lifecycle. Every refusal (a refused path, a spawn in flight, a room already bound) comes back
+ *  through `unwrap` as a thrown `ApiError` carrying the hub's own sentence; the dialogs show
+ *  `describeError` of it rather than inventing their own wording. That means the hub's sentence for
+ *  everything except 401/403, where `{"error":"unauthorized"}` is not something a dialog can usefully
+ *  show anybody. */
 export async function createRoom(name: string, directory: string, signal?: AbortSignal): Promise<Room> {
   return unwrap<Room>(
     await write('/api/rooms', {
@@ -141,10 +140,10 @@ export async function bindDirectory(roomId: string, directory: string, signal?: 
   );
 }
 
-/** Row 14. The room's persona and every spawnable participant's global role, this room's override of
- *  it and the effective role the hub would render — read fresh, because a role edited anywhere takes
- *  effect on the next spawn without a restart. A GET, so it needs no credential; the three writes
- *  below go through `write()` like every other write here (ledger 15). */
+/** The room's persona and every spawnable participant's global role, this room's override of it and
+ *  the effective role the hub would render, read fresh because a role edited anywhere takes effect
+ *  on the next spawn without a restart. A GET, so it needs no credential; the three writes below go
+ *  through `write()` like every other write here. */
 export async function getRoomRoles(roomId: string, signal?: AbortSignal): Promise<RoomRoles> {
   return unwrap<RoomRoles>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/roles`, { signal }));
 }
@@ -177,12 +176,12 @@ export async function setGlobalRole(participantId: string, role: string, signal?
   );
 }
 
-/** This room's override of one participant's global role — and D-b's two DIFFERENT operations, told
- *  apart by the body this sends and nothing else:
+/** This room's override of one participant's global role, and two different operations, told apart
+ *  by the body this sends and nothing else:
  *
  *  - `role === null` omits the key entirely, which the hub reads as *clear the override*: the row is
  *    deleted and the participant falls back to its global role.
- *  - any string, `''` INCLUDED, sends `{"role": …}`, which the hub *stores* — and `''` is the "no
+ *  - any string, `''` included, sends `{"role": …}`, which the hub *stores*, and `''` is the "no
  *    role in this room" sentinel, a stored row that suppresses the global role here.
  *
  *  Collapsing the two (defaulting the missing key to `''`, or turning an empty string into a delete)
@@ -207,10 +206,10 @@ export async function setRoomRole(
 /** Moves the owner's read cursor to the room's last message. Fire and forget: a failure here costs an
  *  unread badge, never a message.
  *
- *  Row 28: it is a write, so it needs the credential like any other, and it fires on every room open
- *  — which is exactly why its refusal must stay quiet at the call site (a prompt here would reopen
- *  itself every time the owner opened a room). It still THROWS an `ApiError`, so App can recognise a
- *  credential refusal and put the reason in the rail instead of nowhere. */
+ *  It is a write, so it needs the credential like any other, and it fires on every room open, which
+ *  is why its refusal must stay quiet at the call site (a prompt here would reopen itself every time
+ *  the hub owner opened a room). It still throws an `ApiError`, so App can recognise a credential refusal
+ *  and put the reason in the rail instead of nowhere. */
 export async function markRead(roomId: string, signal?: AbortSignal): Promise<void> {
   await unwrap<unknown>(await write(`/api/rooms/${encodeURIComponent(roomId)}/read`, { method: 'POST', signal }));
 }
@@ -278,8 +277,8 @@ export async function setRoomMode(roomId: string, settings: RoomModeSettings): P
   }));
 }
 
-/** D1: the hub authors every imported line as `owner` and leaves the original speaker inside the
- *  body. Nothing here may present them as anyone else. */
+/** The hub authors every imported line as `owner` and leaves the original speaker inside the body.
+ *  Nothing here may present them as anyone else. */
 export async function importTranscript(roomId: string, text: string, signal?: AbortSignal): Promise<Message[]> {
   const result = await unwrap<{ messages: Message[] }>(
     await write(`/api/rooms/${encodeURIComponent(roomId)}/import`, {
@@ -308,10 +307,10 @@ export async function stopExchange(roomId: string, signal?: AbortSignal): Promis
   );
 }
 
-/** Row 34: stops the one exchange rooted at `rootMessageId` and leaves the rest of the room running,
+/** Stops the one exchange rooted at `rootMessageId` and leaves the rest of the room running,
  *  answering with the whole room's snapshot. 404 (no such root) and both 409s (a run owns the room;
  *  that exchange is closed with nothing running) come back through `unwrap` as a thrown `ApiError`
- *  carrying the hub's sentence. The room stop above stays for hubs older than row 32. */
+ *  carrying the hub's sentence. The room stop above stays for older hubs. */
 export async function stopOneExchange(
   roomId: string,
   rootMessageId: number,
@@ -350,26 +349,25 @@ export async function decideProposal(
   return unwrap<MemoryProposal>(await write(`/api/memory/proposals/${id}/${decision}`, { method: 'POST', signal }));
 }
 
-/** M25 (D1): reading skill proposals needs no credential — every `GET` on `/api` stays open (row 28
- *  AC2), because a proposal discloses only what the proposer already put there. Deciding one does
- *  need the owner's token; that is `decideSkillProposal` below. */
+/** Reading skill proposals needs no credential (every `GET` on `/api` stays open), because a
+ *  proposal discloses only what the proposer already put there. Deciding one does need the hub owner's
+ *  token; that is `decideSkillProposal` below. */
 export async function listSkillProposals(roomId: string, signal?: AbortSignal): Promise<SkillProposal[]> {
   return unwrap<SkillProposal[]>(
     await fetch(`/api/skills/proposals?room=${encodeURIComponent(roomId)}&status=undecided`, { signal }),
   );
 }
 
-/** D2, as row 28 leaves it: these two calls are the only ones that take the token as an ARGUMENT —
- *  the value the owner typed onto the card, rather than whatever `localStorage` happens to hold — and
- *  `withOwnerToken` is written to leave a caller's own header alone precisely so this stays true.
- *  Every other write now carries the stored token as well. 401 (no or unresolvable credential), 403
- *  (a credential that is not the owner's) and every 409 refusal come back through `unwrap` as a
- *  thrown `ApiError`; the card shows `describeError`'s sentence for it.
+/** These two calls are the only ones that take the token as an argument (the value the hub owner typed
+ *  onto the card, rather than whatever `localStorage` happens to hold), and `withOwnerToken` leaves a
+ *  caller's own header alone so this stays true. Every other write carries the stored token. 401 (no
+ *  or unresolvable credential), 403 (a credential that is not the hub owner's) and every 409 refusal come
+ *  back through `unwrap` as a thrown `ApiError`; the card shows `describeError`'s sentence for it.
  *
- *  Approve sends back the tree hash the card displayed (D5): the hub compares it to the digest pinned
- *  at propose time and, when they agree, passes that manifest down to `SkillImport.Run`, which checks
- *  the STAGED copy against it before the swap. So the bytes the owner read are the bytes that install.
- *  A Retry sends it too — the hub enforces the check whenever the body carries a hash. */
+ *  Approve sends back the tree hash the card displayed: the hub compares it to the digest pinned at
+ *  propose time and, when they agree, passes that manifest down to `SkillImport.Run`, which checks
+ *  the staged copy against it before the swap. So the bytes the hub owner read are the bytes that install.
+ *  A Retry sends it too; the hub enforces the check whenever the body carries a hash. */
 export async function decideSkillProposal(
   proposal: SkillProposal,
   decision: 'approve' | 'reject',
@@ -412,8 +410,8 @@ export async function importMemory(
   );
 }
 
-/** Row 40: the editor's file list and reads need no credential — every `GET` on `/api` stays open
- *  (row 28 AC2) and `recall` already hands any bearer the same text. */
+/** The editor's file list and reads need no credential: every `GET` on `/api` stays open, and
+ *  `recall` already hands any bearer the same text. */
 export async function listMemoryFiles(signal?: AbortSignal): Promise<MemoryFile[]> {
   return unwrap<MemoryFile[]>(await fetch('/api/memory/topics', { signal }));
 }
@@ -422,8 +420,8 @@ export async function readMemoryFile(slug: string, signal?: AbortSignal): Promis
   return unwrap<MemoryFileText>(await fetch(`/api/memory/topics/${encodeURIComponent(slug)}`, { signal }));
 }
 
-/** Row 40: the hub's count for the text as typed. A POST, so it goes through `write()` and carries
- *  the stored bearer token like every write; it writes nothing. */
+/** The hub's count for the text as typed. A POST, so it goes through `write()` and carries the
+ *  stored bearer token like every write; it writes nothing. */
 export async function previewMemoryFile(slug: string, roomId: string, text: string, signal?: AbortSignal): Promise<MemoryPreview> {
   return unwrap<MemoryPreview>(
     await write(`/api/memory/topics/${encodeURIComponent(slug)}/preview`, {
@@ -435,11 +433,11 @@ export async function previewMemoryFile(slug: string, roomId: string, text: stri
   );
 }
 
-/** Row 40: one save = one approved rewrite. `baseHash` is the hash the read returned; the hub answers
- *  409 with its own sentence when the file moved on since, when a spawn is in flight, or when the
- *  result would pass the cap — all through `unwrap` as an `ApiError`, like every other refusal.
- *  No `AbortSignal`, unlike the reads above: a save leaves a proposal row, a backup and a commit
- *  behind, and an abandoned request would leave the caller unable to tell a refusal from a write that
+/** One save = one approved rewrite. `baseHash` is the hash the read returned; the hub answers 409
+ *  with its own sentence when the file moved on since, when a spawn is in flight, or when the result
+ *  would pass the cap, all through `unwrap` as an `ApiError`, like every other refusal. No
+ *  `AbortSignal`, unlike the reads above: a save leaves a proposal row, a backup and a commit behind,
+ *  and an abandoned request would leave the caller unable to tell a refusal from a write that
  *  landed. */
 export async function saveMemoryFile(slug: string, roomId: string, text: string, baseHash: string): Promise<MemoryEditResult> {
   return unwrap<MemoryEditResult>(

@@ -6,7 +6,7 @@
 # after a park: an open PR for the branch is reused, never re-created.
 [CmdletBinding()] param()
 $ErrorActionPreference = 'Stop'
-$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured 2026-09-07)
+$PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured)
 function Fail([string]$Message, [int]$Code) { Write-Host "finish-branch: $Message"; exit $Code }
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { Fail 'not a git repository' 2 }

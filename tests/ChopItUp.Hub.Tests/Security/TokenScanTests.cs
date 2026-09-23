@@ -4,8 +4,8 @@ using ChopItUp.Hub.Security;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Row 28 Task 2: <see cref="TokenScan.Candidates"/> is the one routine Task 3's start-time
-/// sweep and Task 6's escalation proof both call. Exercised here against the REAL shapes
+/// <summary><see cref="TokenScan.Candidates"/> is the one routine the start-time sweep and the
+/// escalation proof both call. Exercised here against the REAL shapes
 /// <see cref="HostConfigs.Write"/> produces (not hand-typed approximations of them), plus formats it
 /// must tolerate without parsing: malformed JSON, Markdown prose, and a file with nothing to find.</summary>
 public sealed class TokenScanTests : IDisposable

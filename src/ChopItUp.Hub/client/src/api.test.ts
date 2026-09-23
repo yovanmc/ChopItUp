@@ -2,10 +2,10 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import * as api from './api';
 import type { SkillProposal } from './types';
 
-/** Row 28 Task 5. Every non-GET `/api` request now needs an owner credential, so the questions this
- *  file answers are transport questions: does the token go out, does it go out on the RIGHT calls,
- *  does a caller's own credential survive, and does the client still know 401 from 500 after
- *  `unwrap` is done with the response.
+/** Every non-GET `/api` request needs an owner credential, so the questions this file answers are
+ *  transport questions: does the token go out, does it go out on the RIGHT calls, does a caller's own
+ *  credential survive, and does the client still know 401 from 500 after `unwrap` is done with the
+ *  response.
  *
  *  There is no jsdom here (see `RunBar.test.tsx` for the same choice), so `fetch` is a recording stub
  *  and the token arrives by stubbing `window`: `readOwnerToken` reads `window.localStorage` inside a
@@ -89,7 +89,7 @@ describe('the owner token on writes', () => {
     expect(authOf(calls[0])).toBe('Bearer owner-secret');
   });
 
-  /** AC2 keeps GETs open, and a read that carried the owner's credential would hand it to a surface
+  /** GETs stay open, and a read that carried the hub owner's credential would hand it to a surface
    *  that has no use for it. */
   test('a read stays a read: no credential on a GET', async () => {
     storeToken('owner-secret');
@@ -178,8 +178,8 @@ describe('posting a reply', () => {
   });
 });
 
-/** Row 34: one exchange's own stop. The room stop ends every exchange in the room (and the run, when
- *  there is one), so a strip's Stop has to reach the per-root endpoint and name only its own root. */
+/** One exchange's own stop. The room stop ends every exchange in the room (and the run, when there
+ *  is one), so a strip's Stop has to reach the per-root endpoint and name only its own root. */
 describe('stopping one exchange', () => {
   test('it POSTs to that root\'s stop, escaped like every other room path, with the owner token', async () => {
     storeToken('owner-secret');
@@ -260,9 +260,9 @@ describe('a failure keeps its status', () => {
     expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(false);
   });
 
-  /** Row 34: the one-exchange stop refuses a stop it cannot make (a run owns the room, or that
-   *  exchange is closed with nothing running) with 409, and the hub's own sentence is what the banner
-   *  shows. It must not read as a credential refusal. */
+  /** The one-exchange stop refuses a stop it cannot make (a run owns the room, or that exchange is
+   *  closed with nothing running) with 409, and the hub's own sentence is what the banner shows. It
+   *  must not read as a credential refusal. */
   test('a refused one-exchange stop keeps its 409 and the hub its sentence', async () => {
     stubFetch(() => json({ error: 'A run owns this room; stop the run instead.' }, 409));
 
@@ -280,8 +280,8 @@ describe('a failure keeps its status', () => {
   });
 });
 
-/** Row 40: the editor's three routes. The list and read are GETs (row 28 AC2 keeps every GET open);
- *  the save is a write like any other and goes through the same token-attaching door. */
+/** The editor's three routes. The list and read are GETs (every GET stays open); the save is a
+ *  write like any other and goes through the same token-attaching door. */
 describe('the memory editor client', () => {
   test('listing files is a bare GET with no credential', async () => {
     storeToken('owner-secret');

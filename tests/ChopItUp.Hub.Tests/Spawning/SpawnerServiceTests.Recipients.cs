@@ -2,7 +2,7 @@ using ChopItUp.Core.Storage;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Row 43 (D-b, D-c), end to end through the real MCP client and the fake runner: only a
+/// <summary>End to end through the real MCP client and the fake runner: only a
 /// leading mention hands a turn on or opens an exchange; an inline id is a reference the hub notes
 /// and spawns nothing for; an unknown leading word gets its own note beside whatever else the post
 /// addressed.</summary>

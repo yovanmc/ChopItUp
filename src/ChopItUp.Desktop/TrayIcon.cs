@@ -2,15 +2,15 @@ using ChopItUp.Desktop.Hub;
 
 namespace ChopItUp.Desktop;
 
-/// <summary>Row 12 T5 (B9): the tray icon and its three-item menu — Open, a disabled status line, Quit
-/// — plus double-click = Open. Untested beyond construction: a real <c>NotifyIcon</c> needs the
-/// notification area, which the automated tests don't have; the harness (Task 9) drives Open/Quit
-/// through <see cref="SingleInstance"/>'s events instead and reads visibility from the shell log.
+/// <summary>The tray icon and its three-item menu (Open, a disabled status line, Quit) plus
+/// double-click = Open. Untested beyond construction: a real <c>NotifyIcon</c> needs the notification
+/// area, which the automated tests don't have; the UIA harness drives Open/Quit through
+/// <see cref="SingleInstance"/>'s events instead and reads visibility from the shell log.
 ///
 /// <see cref="Update"/> is called ONLY from App's <c>hub.StatusChanged</c> subscriber, already hopped
-/// to the UI thread with <c>Dispatcher.BeginInvoke</c> — <c>NotifyIcon</c> and <c>ToolStripMenuItem</c>
-/// are not thread-safe (pass 1, finding 19). App calls
-/// <c>System.Windows.Forms.Application.EnableVisualStyles()</c> once, before this is constructed.</summary>
+/// to the UI thread with <c>Dispatcher.BeginInvoke</c>: <c>NotifyIcon</c> and <c>ToolStripMenuItem</c>
+/// are not thread-safe. App calls <c>System.Windows.Forms.Application.EnableVisualStyles()</c> once,
+/// before this is constructed.</summary>
 public sealed class TrayIcon : IDisposable
 {
     private readonly System.Windows.Forms.NotifyIcon _icon;
@@ -34,8 +34,8 @@ public sealed class TrayIcon : IDisposable
         quit.Click += (_, _) => onQuit();
         menu.Items.Add(quit);
 
-        // Row 12 T6: the shipped icon, read from this assembly's WPF resources — the same chopitup.ico
-        // the exe carries as its Win32 icon and MainWindow shows. The size argument picks the .ico's
+        // The shipped icon, read from this assembly's WPF resources: the same chopitup.ico the exe
+        // carries as its Win32 icon and MainWindow shows. The size argument picks the .ico's
         // 16 px entry, so the notification area gets a layer drawn for that size instead of a
         // downscaled 256 one. GetResourceStream returns null only if the Resource item is missing from
         // the csproj, which is a build mistake, not a runtime condition.

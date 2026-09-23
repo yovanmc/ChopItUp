@@ -2,7 +2,7 @@ using Xunit;
 
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T5 (B6): the named mutex + two named events a second launch signals. Every test uses
+/// <summary>The named mutex + two named events a second launch signals. Every test uses
 /// its own key (a fresh Guid) so tests never collide with each other or with a real shell running on
 /// this machine; the assembly disables parallelization (AssemblyInfo.cs) so within-process races are
 /// the only ones that matter.</summary>

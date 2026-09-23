@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    M9 live check: starts a hub on a scratch data directory with a scratch rooms root, creates a room,
+    Room live check: starts a hub on a scratch data directory with a scratch rooms root, creates a room,
     proves a refused path is refused, mentions @sonnet in the room, and proves the model wrote a file
     inside the room's tree, that the hub committed the owner's edit and then the model's turn under
     the model's name with a shell log, and that unread, mark-read, archive and the trail endpoint work.
@@ -85,7 +85,7 @@ try {
     $roomDir = Join-Path $RoomsRoot 'live-check'
     Add-Check -Name 'room.created' -Passed ($room.id -eq 'live-check' -and $room.directory -eq $roomDir) -Detail "id=$($room.id) dir=$($room.directory)"
     Add-Check -Name 'room.git-initialised' -Passed (Test-Path -LiteralPath (Join-Path $roomDir '.git') -PathType Container) -Detail $roomDir
-    # Row 46: an owner's real repository carries its own configured identity; a scratch room needs the
+    # An owner's real repository carries its own configured identity; a scratch room needs the
     # same shape before any spawn commits into it, or every commit below would fall back to the hub's.
     $identityName = 'Live Check'
     $identityEmail = 'live-check@example.test'
@@ -97,7 +97,7 @@ try {
     Add-Check -Name 'room.refuses-drive-root' -Passed ((Get-StatusOf { Invoke-Api POST '/api/rooms' @{ name = 'Nope'; directory = 'C:\' } }) -eq 400) -Detail 'C:\ is 400'
     Add-Check -Name 'room.refuses-data-dir' -Passed ((Get-StatusOf { Invoke-Api POST '/api/rooms' @{ name = 'Nope'; directory = (Join-Path $DataDir 'x') } }) -eq 400) -Detail 'inside the data dir is 400'
     Add-Check -Name 'room.refuses-self-apps' -Passed ((Get-StatusOf { Invoke-Api POST '/api/rooms' @{ name = 'Nope'; directory = 'C:\Self Apps\ChopItUp\rooms' } }) -eq 400) -Detail 'C:\Self Apps is 400'
-    # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before filtering (measured 2026-09-06).
+    # PowerShell 7.6 hands a top-level JSON array back as ONE nested Object[]; enumerate before filtering.
     $rooms = @(Invoke-Api GET '/api/rooms' | ForEach-Object { $_ })
     Add-Check -Name 'room.listed-first' -Passed ($rooms.Count -eq 2 -and $rooms[0].id -eq 'live-check') -Detail (($rooms | ForEach-Object id) -join ',')
 

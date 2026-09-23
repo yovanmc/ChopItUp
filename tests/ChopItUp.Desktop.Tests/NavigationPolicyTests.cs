@@ -1,12 +1,12 @@
 namespace ChopItUp.Desktop.Tests;
 
-/// <summary>Row 12 T4 fix (B5): the navigation lock, pulled out of the window so it can be tested.
+/// <summary>The navigation lock, pulled out of the window so it can be tested.
 ///
-/// The defect this covers: <c>NavigateToString</c> is documented as reporting <c>about:blank</c>, but on
-/// this machine's WebView2 runtime (152.0.4191.66) it raises <c>NavigationStarting</c> with a
-/// <c>data:text/html;charset=utf-8;base64,...</c> URI. The guard cancelled it, so the shell's own boot
-/// page — the Starting page AND the Failed page carrying the reason and the log tail — never rendered
-/// and a slow or failed hub left a blank window.
+/// What this covers: <c>NavigateToString</c> is documented as reporting <c>about:blank</c>, but on
+/// WebView2 runtime 152.0.4191.66 it raises <c>NavigationStarting</c> with a
+/// <c>data:text/html;charset=utf-8;base64,...</c> URI. A guard that cancelled it would stop the
+/// shell's own boot page (the Starting page AND the Failed page carrying the reason and the log tail)
+/// from rendering, and a slow or failed hub would leave a blank window.
 ///
 /// The widening is bounded: a <c>data:</c> URI is allowed only while the window has just asked for a
 /// boot page, and the window clears that flag on the first one through, so a <c>data:</c> link arriving
@@ -57,7 +57,7 @@ public class NavigationPolicyTests
         Assert.Equal(NavDecision.Block, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: true));
 
     [Theory]
-    // B5: a link in a message is a link. The default browser gets it; this window does not.
+    // A link in a message is a link. The default browser gets it; this window does not.
     [InlineData("https://example.com/thing")]
     [InlineData("http://127.0.0.1:8796/")]          // another hub on this machine is still not ours
     [InlineData("http://localhost:8795/")]          // same port, different host string: not the authority

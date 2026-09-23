@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    M5 live check: starts a hub on a scratch data directory, posts one owner message that mentions
+    Spawn live check: starts a hub on a scratch data directory, posts one owner message that mentions
     @sonnet and asks it to hand the turn to gpt-5.6-terra, and waits for the exchange to conclude.
 
 .DESCRIPTION
@@ -45,7 +45,7 @@ if (Test-Path -LiteralPath $DataDir) {
 New-Item -ItemType Directory -Path $DataDir | Out-Null
 Add-Content -Path $log -Value ("M5 spawn check {0} exe={1} data={2} port={3}" -f (Get-Date -Format o), $HubExe, $DataDir, $Port)
 
-# Row 28: every non-GET /api route now needs an owner-class bearer -- seed one into this scratch
+# Every non-GET /api route needs an owner-class bearer: seed one into this scratch
 # hub's own tokens.json before it ever starts (ChopTokenHelpers.ps1). Added to $knownTokens below so
 # the privacy leak-check at the end also guards the credential THIS script introduces.
 $ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @('owner')).owner
@@ -138,13 +138,11 @@ try {
     $messages = Read-Room
     Add-Check -Name 'stop.note-posted' -Passed ([bool]($messages | Where-Object { $_.authorId -eq 'hub' -and $_.body -like 'Exchange stopped by the owner:*' })) -Detail ''
 
-    # Row 28: tokens.json now holds only host-file rows' SHA-256 hashes, never a plaintext -- it can no
-    # longer be scanned for a live secret the way it could pre-row-28. $knownTokens (seeded with the
-    # owner bearer this script minted, above) is what stands in for it now. This does NOT cover a
-    # spawned participant's own ephemeral bearer (sonnet's, gpt-5.6-terra's): those live only in memory
-    # and in data\spawns\<id>\mcp.json for the life of the spawn, are never written to tokens.json even
-    # pre-row-28's successor, and this script does not currently capture them -- see the Task 7 report
-    # for why that gap is not closed here.
+    # tokens.json holds only host-file rows' SHA-256 hashes, never a plaintext, so it cannot be
+    # scanned for a live secret. $knownTokens (seeded with the hub's owner bearer this script minted, above)
+    # stands in for it. This does NOT cover a spawned participant's own ephemeral bearer (sonnet's,
+    # gpt-5.6-terra's): those live only in memory and in data\spawns\<id>\mcp.json for the life of the
+    # spawn, are never written to tokens.json, and this script does not capture them.
     $leak = $messages | Where-Object { $b = $_.body; $knownTokens | Where-Object { $b.Contains($_) } }
     Add-Check -Name 'privacy.no-token-in-any-message' -Passed (-not $leak) -Detail "messages=$($messages.Count)"
     $spawnDirs = @(Get-ChildItem -LiteralPath (Join-Path $DataDir 'spawns') -Directory -ErrorAction SilentlyContinue)

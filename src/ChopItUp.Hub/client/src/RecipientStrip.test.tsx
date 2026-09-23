@@ -3,7 +3,7 @@ import { describe, expect, test } from 'vitest';
 import RecipientStrip from './RecipientStrip';
 import { setRoster } from './participants';
 
-/** Row 43 AC6. Static markup like the rest of this client's component tests: there is no DOM library
+/** Static markup like the rest of this client's component tests: there is no DOM library
  *  here, so the strip is a pure component over the draft and every state is a string of markup. The
  *  chip texts and the status role asserted below are also what the UIA gate queries by name, so a
  *  rewording here is a rewording of the gate. */
@@ -81,8 +81,8 @@ describe('RecipientStrip', () => {
     expect(render('hello')).toBe('');
   });
 
-  /** Row 44, AC5's second half: the token is part of the leading run the reader already walks, so the
-   *  strip says what it will do to the exchange in the same breath as who it reaches. */
+  /** The token is part of the leading run the reader already walks, so the strip says what it will
+   *  do to the exchange in the same breath as who it reaches. */
   test('a turns token adds a turns chip', () => {
     const markup = render('turns: 3 @opus go');
 

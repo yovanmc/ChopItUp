@@ -4,11 +4,11 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Tests.Storage;
 
-/// <summary>The <c>runs</c> table and its three satellites (schema v8, row 19, task 1). "general" and
-/// "opus" come from the seed roster/room every fresh database already carries (<see cref="ChopDb"/>'s
-/// V1 seed room and V3+ roster) — this file relies on that rather than inserting its own, which is
-/// exactly what makes the foreign-key ticket item ("seed a room and participant first") meaningful: a
-/// bad room or participant id must fail as an FK violation, never be mislabelled "already active".</summary>
+/// <summary>The <c>runs</c> table and its three satellites. "general" and "opus" come from the seed
+/// roster/room every fresh database already carries (<see cref="ChopDb"/>'s V1 seed room and V3+
+/// roster). This file relies on that rather than inserting its own, which is what makes the
+/// foreign-key checks meaningful: a bad room or participant id must fail as an FK violation, never
+/// be mislabelled "already active".</summary>
 public sealed class RunStoreTests : IDisposable
 {
     private const string Room = "general";
@@ -223,7 +223,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void RecordGateRun_with_a_null_run_id_succeeds_and_reads_back_with_a_run_scoped_run_id()
     {
-        // AC10 requires the hub to be able to record a refusal even when there is no run at all.
+        // The hub must be able to record a refusal even when there is no run at all.
         _store.RecordGateRun(runId: null, roomId: Room, gate: "budget", callerId: "opus", exitCode: null, outcome: "refused: no active run", T0);
 
         var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);

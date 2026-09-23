@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace ChopItUp.Hub.Tests.Security;
 
-/// <summary>Row 29 finding on <see cref="OwnerPeerCheck"/>: the peer lookup runs before
+/// <summary>On <see cref="OwnerPeerCheck"/>: the peer lookup runs before
 /// <see cref="SpawnJobs"/> is even consulted, so a lookup that cannot resolve produces
 /// <see cref="OwnerPeerVerdict.Unresolvable"/> — a 403 against the owner — even when nothing is
 /// spawned for the check to be guarding against. With zero live jobs <see cref="SpawnJobs.Membership"/>

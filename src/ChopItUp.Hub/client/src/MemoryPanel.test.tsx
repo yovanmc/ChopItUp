@@ -4,17 +4,16 @@ import MemoryPanel from './MemoryPanel';
 import { setRoster } from './participants';
 import type { MemoryProposal } from './types';
 
-/** Row 18, task 7 (AC5, critique P1-7). The card is what the owner reads when deciding whether a
- *  model's proposal enters shared memory, so the three things the hub now computes — what it
- *  replaces, why it might not be a fact, and what is already in the topic — have to be on the card,
- *  and a plain proposal has to look exactly as it did before. Static markup through
- *  `react-dom/server` like `RunBar.test.tsx`: the card's behaviour (the two buttons) is covered by
- *  the UIA gate, and what these cases prove is what is rendered.
+/** The card is what the hub owner reads when deciding whether a model's proposal enters shared memory,
+ *  so the three things the hub computes (what it replaces, why it might not be a fact, and what is
+ *  already in the topic) have to be on the card, and a plain proposal has to show none of them.
+ *  Static markup through `react-dom/server` like `RunBar.test.tsx`: the card's behaviour (the two
+ *  buttons) is covered by the UIA gate, and what these cases prove is what is rendered.
  *
- *  `renderBody` is stubbed because it is the one part of the card that genuinely needs a browser —
- *  DOMPurify, `document.createElement` and a TreeWalker — and RunBar's note holds here too: a jsdom
- *  would only add a dependency to prove markdown this file is not about. The body still reaches the
- *  card; only its markdown pass is replaced. Nothing asserted below comes from it. */
+ *  `renderBody` is stubbed because it is the one part of the card that genuinely needs a browser
+ *  (DOMPurify, `document.createElement` and a TreeWalker), and a jsdom would only add a dependency
+ *  to prove markdown this file is not about. The body still reaches the card; only its markdown pass
+ *  is replaced. Nothing asserted below comes from it. */
 vi.mock('./markdown', () => ({
   renderBody: (body: string) => `<p>${body.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`,
 }));
@@ -68,7 +67,7 @@ describe('MemoryPanel (row 18, AC5)', () => {
     expect(html).toContain('Replaces <q>Shell</q> in user');
     // The hints are the hub's own checks, not tags the proposing model attached, and a sighted owner
     // has to be told that in words — an aria-label alone leaves two unlabelled pills in the same
-    // idiom as the topic chip above them (screenshot judge, finding 3).
+    // idiom as the topic chip above them.
     expect(html).toContain('Hub checks');
     expect(html).toContain('reads like an instruction, not a fact');
     expect(html).toContain('contains a memory fence line');
@@ -80,12 +79,12 @@ describe('MemoryPanel (row 18, AC5)', () => {
   });
 });
 
-/** Row 23, task 6 (AC7, ticket 06). A consolidation's body is the WHOLE topic file, so the card that
- *  showed a body showed the owner nothing about what is changing. These cases pin the four things the
- *  ticket says decide the answer — the comparison itself, the entries it removes, the entries losing
- *  their approval record, and (while the proposal is still rejectable) the absence of a commit trail —
- *  plus the two ways this card can go wrong: markup smuggled in through a spawn-authored diff line, and
- *  a rewrite that arrives without a diff rendering as an empty box. */
+/** A consolidation's body is the WHOLE topic file, so a card that showed only the body would show
+ *  the hub owner nothing about what is changing. These cases pin the four things that decide the answer
+ *  (the comparison itself, the entries it removes, the entries losing their approval record, and,
+ *  while the proposal is still rejectable, the absence of a commit trail) plus the two ways this card
+ *  can go wrong: markup smuggled in through a spawn-authored diff line, and a rewrite that arrives
+ *  without a diff rendering as an empty box. */
 const REWRITE: MemoryProposal = {
   ...BASE,
   id: 9,
@@ -149,11 +148,11 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(html).toContain('topics/user.md.rewrite-9.bak');
   });
 
-  /* The Retry card is the one this warning matters most on: it is still approvable — Retry is what
-     performs the write — and nothing has been written yet (`writtenTo` is null), so the file on disk
+  /* The Retry card is the one this warning matters most on: it is still approvable (Retry is what
+     performs the write) and nothing has been written yet (`writtenTo` is null), so the file on disk
      is still the pre-consolidation copy and the backup is still the only thing that would survive.
-     AC7 scopes all four card requirements to a rewrite "that is pending or approved-but-unwritten",
-     and the hub computes `gitAvailable` for exactly that pair (`MemoryApi.MapForList`'s `inScope`). */
+     The hub computes `gitAvailable` for exactly the pending and approved-but-unwritten pair
+     (`MemoryApi.MapForList`'s `inScope`). */
   test('an approved-but-unwritten rewrite with no git trail warns too, and names the same backup', () => {
     const html = render({ ...REWRITE, status: 'approved', writtenTo: null, gitAvailable: false });
 
@@ -175,11 +174,11 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(html).toContain('VS Code.');
   });
 
-  /* Row 40. `source` used to mean one thing — the vendor an import read the text out of — and the card
-     says so in words. An editor save carries `source: 'editor'`, which is not an import and has no
-     vendor path, so "imported from editor" would name the wrong door. Which button performs the write
-     depends on the card's state, and naming the wrong one sends the owner looking for a button that
-     is not on the card. */
+  /* An import's `source` is the vendor it read the text out of, and the card says so in words. An
+     editor save carries `source: 'editor'`, which is not an import and has no vendor path, so
+     "imported from editor" would name the wrong door. Which button performs the write depends on the
+     card's state, and naming the wrong one sends the owner looking for a button that is not on the
+     card. */
   test('an editor row is edited by hand, and names the button its own card state offers', () => {
     const unwritten = render({ ...REWRITE, status: 'approved', writtenTo: null, source: 'editor' });
     const pending = render({ ...REWRITE, source: 'editor' });
@@ -190,9 +189,8 @@ describe('MemoryPanel, consolidation card (row 23, AC7)', () => {
     expect(render({ ...REWRITE, source: 'claude:MEMORY.md' })).toContain('imported from claude:MEMORY.md');
   });
 
-  /* The ticket's height clause — a 24 KB diff must scroll inside the card rather than push Reject and
-     Approve off screen — is `max-height` + `overflow-y` on `.memory-diff` in styles.css. It is not
-     asserted here: vitest stubs every CSS import to an empty string, and reading the file instead
-     would need @types/node, which this row is not allowed to add. Its gate is T9's interactive check
-     against the live UI. */
+  /* A 24 KB diff must scroll inside the card rather than push Reject and Approve off screen: that is
+     `max-height` + `overflow-y` on `.memory-diff` in styles.css. It is not asserted here: vitest
+     stubs every CSS import to an empty string, and reading the file instead would need @types/node.
+     The interactive check against the live UI covers it. */
 });

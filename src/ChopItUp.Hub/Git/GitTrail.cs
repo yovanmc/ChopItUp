@@ -25,19 +25,18 @@ public enum MergeResult { Merged, Conflict, Failed }
 /// <see cref="Conflicts"/> lists the conflicting paths, set only for <see cref="MergeResult.Conflict"/>.
 /// <see cref="Reason"/> is set for <see cref="MergeResult.Failed"/> (and for a failed abort of an
 /// otherwise-conflicting merge). <see cref="Before"/> is HEAD as read from inside the same gated call,
-/// before anything else could move it - a caller comparing "did the merge actually add anything" reads
+/// before anything else could move it: a caller comparing "did the merge actually add anything" reads
 /// this instead of a separately fetched HEAD, which could already be stale by the time the merge itself
-/// starts (row 35).</summary>
+/// starts.</summary>
 public sealed record MergeOutcome(MergeResult Result, string? Hash, IReadOnlyList<string> Conflicts, string? Reason, string? Before = null);
 
-/// <summary>One git working tree the hub commits into - the memory store (D15) and every room
-/// directory (D11). Generalised from M10's MemoryGit: the author and committer are the identity git
-/// itself resolves at the root, the hub's only when git resolves none; a caller may still name an
-/// explicit author (the memory store does) — row 46. git is resolved directly (a real git.exe on
-/// PATH), not through the spawner's CliLocator seam, so hub tests exercise the real trail (M10
-/// decision 4). Nothing here throws: a failure is a null/false/empty result with <see cref="Reason"/>
-/// set and one line in the hub log. Serialised per repository - every trail made by <see cref="WithRoot"/>
-/// shares the gate.</summary>
+/// <summary>One git working tree the hub commits into: the memory store and every room directory.
+/// The author and committer are the identity git itself resolves at the root, the hub's only when
+/// git resolves none; a caller may still name an explicit author (the memory store does). git is
+/// resolved directly (a real git.exe on PATH), not through the spawner's CliLocator seam, so hub
+/// tests exercise the real trail. Nothing here throws: a failure is a null/false/empty result with
+/// <see cref="Reason"/> set and one line in the hub log. Serialised per repository: every trail made
+/// by <see cref="WithRoot"/> shares the gate.</summary>
 public class GitTrail
 {
     public static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
@@ -45,21 +44,21 @@ public class GitTrail
     public const string CoAuthorKey = "Co-authored-by";
     /// <summary>The only co-author values a hub commit or merge may carry: the two hosts the spawner
     /// starts. A merge re-emits a branch trailer only when its value is one of these, so a trailer a
-    /// self-committing model wrote never reaches the room's first-parent history (interrogation, MAJOR 1).</summary>
+    /// self-committing model wrote never reaches the room's first-parent history.</summary>
     public const string CodexCoAuthor = "Codex <noreply@openai.com>";
     public const string ClaudeCoAuthor = "Claude <noreply@anthropic.com>";
     private static readonly string[] KnownCoAuthors = [CodexCoAuthor, ClaudeCoAuthor];
     private const char FieldSep = (char)0x1F;
-    // LC_ALL=C: the no-op detection reads git's English "nothing to commit" (M10 critique, P2-7).
+    // LC_ALL=C: the no-op detection reads git's English "nothing to commit".
     private static readonly IReadOnlyDictionary<string, string> Env = new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "0", ["LC_ALL"] = "C" };
     // No signing and no CRLF rewriting on the commit and merge calls: an owner with commit.gpgsign
-    // configured has no agent prompt to answer here. (The add and diff --cached calls run without
-    // these options, as before this row.)
+    // configured has no agent prompt to answer here. The add and diff --cached calls run without
+    // these options.
     private static readonly string[] BaseOptions = ["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"];
     // The hub's own identity, injected through the environment (which beats every config and any
-    // stray single GIT_* variable) only when git resolves no set identity of its own (row 46, R4):
-    // an unconfigured machine or a CI runner must still commit, a configured owner identity is
-    // git's to apply and the hub never overrides it.
+    // stray single GIT_* variable) only when git resolves no set identity of its own: an
+    // unconfigured machine or a CI runner must still commit, a configured owner identity is git's to
+    // apply and the hub never overrides it.
     private static readonly IReadOnlyDictionary<string, string> HubIdentityEnv = new Dictionary<string, string>
     {
         ["GIT_AUTHOR_NAME"] = Hub.Name, ["GIT_AUTHOR_EMAIL"] = Hub.Email,
@@ -99,7 +98,7 @@ public class GitTrail
 
     /// <summary>Why the last commit or merge fell back to the hub's identity: git's failing probe, exit
     /// code and first stderr line; null when git resolved a set identity or this trail commits as the
-    /// hub (interrogation, MAJOR 2a).</summary>
+    /// hub.</summary>
     public string? IdentityFallbackReason { get; private set; }
     private bool _fallbackLogged;
 
@@ -108,7 +107,7 @@ public class GitTrail
 
     /// <summary>True for a trail whose every commit is the hub's own (the memory store): author and
     /// committer stay <see cref="Hub"/> whatever the machine's git config says. A room trail is false:
-    /// its commits belong to that room's own repository and carry that repository's identity (row 46).</summary>
+    /// its commits belong to that room's own repository and carry that repository's identity.</summary>
     protected virtual bool CommitsAsHub => false;
 
     /// <summary>The identity git itself would commit with at <see cref="Root"/> - `git var
@@ -124,14 +123,14 @@ public class GitTrail
     }
 
     /// <summary><see cref="Failure"/> is set exactly when <see cref="Identity"/> is null: which of the
-    /// two `git var` probes failed, its exit code and the first line of its stderr (interrogation,
-    /// MAJOR 2a - the earlier version fell back to the hub on any failure with no log line at all).</summary>
+    /// two `git var` probes failed, its exit code and the first line of its stderr, so a fallback to
+    /// the hub is never silent.</summary>
     private sealed record IdentityProbe(GitIdentity? Identity, string? Failure);
 
     private async Task<IdentityProbe> ConfiguredIdentityUnlocked(ResolvedCli git, CancellationToken cancellation)
     {
         // Both roles: a GIT_COMMITTER_* pair alone lets the committer resolve while `git commit`
-        // still dies on the author, and the reverse (row 46, critique pass 2).
+        // still dies on the author, and the reverse.
         var author = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_AUTHOR_IDENT"], "", cancellation);
         if (author.ExitCode != 0) return new(null, ProbeFailure("GIT_AUTHOR_IDENT", author));
         var r = await Run(git, ["-c", "user.useConfigOnly=true", "var", "GIT_COMMITTER_IDENT"], "", cancellation);
@@ -153,7 +152,7 @@ public class GitTrail
     /// <see cref="HubIdentityEnv"/> when this trail commits as the hub or git resolves no set identity
     /// at <see cref="Root"/>; otherwise nothing beyond <see cref="Env"/>, and git's own resolution
     /// applies. Also records <see cref="IdentityFallbackReason"/> and, the first time this trail falls
-    /// back, logs it once (interrogation, MAJOR 2a).</summary>
+    /// back, logs it once.</summary>
     private async Task<IReadOnlyDictionary<string, string>?> IdentityEnvUnlocked(ResolvedCli git, CancellationToken cancellation)
     {
         if (CommitsAsHub) { IdentityFallbackReason = null; return HubIdentityEnv; }
@@ -231,11 +230,11 @@ public class GitTrail
     /// configured identity for both author and committer (the hub's when it has none, see
     /// <see cref="ConfiguredIdentityAsync"/>); an explicit author is kept while the committer still
     /// follows the repository. <paramref name="trailers"/> (e.g. <c>Co-authored-by: …</c> lines) become
-    /// the message's last paragraph only when something is staged: an empty commit credits nobody
-    /// (row 46). The message travels on stdin (`-F -`): a room commit carries a shell log, and a
-    /// Windows command line is capped at 32,767 characters. Initialises the repository if it is missing.
-    /// With <paramref name="allowEmpty"/> false, "nothing to commit" is not a failure: the outcome is
-    /// HEAD with <see cref="CommitOutcome.Created"/> false.</summary>
+    /// the message's last paragraph only when something is staged: an empty commit credits nobody.
+    /// The message travels on stdin (`-F -`): a room commit carries a shell log, and a Windows command
+    /// line is capped at 32,767 characters. Initialises the repository if it is missing. With
+    /// <paramref name="allowEmpty"/> false, "nothing to commit" is not a failure: the outcome is HEAD
+    /// with <see cref="CommitOutcome.Created"/> false.</summary>
     public async Task<CommitOutcome> CommitAllAsync(string message, GitIdentity? author, bool allowEmpty, IReadOnlyList<string>? trailers = null, CancellationToken cancellation = default)
     {
         await _gate.WaitAsync(cancellation);
@@ -313,10 +312,10 @@ public class GitTrail
     }
 
     /// <summary>Every path that differs between the two ends of <paramref name="range"/> (e.g.
-    /// <c>"abc123..def456"</c>), via <c>git diff --name-only</c>. Row 19, task 5c (P4): artifact
-    /// authorship is read from the SPAWN'S WHOLE DIFF, not one commit, so a host that commits its own
-    /// work mid-spawn (Codex) is still attributed correctly. Empty on failure or when git/the
-    /// repository is unavailable, with <see cref="Reason"/> set.</summary>
+    /// <c>"abc123..def456"</c>), via <c>git diff --name-only</c>. Artifact authorship is read from the
+    /// spawn's whole diff, not one commit, so a host that commits its own work mid-spawn (Codex) is
+    /// still attributed correctly. Empty on failure or when git/the repository is unavailable, with
+    /// <see cref="Reason"/> set.</summary>
     public async Task<IReadOnlyList<string>> ChangedFilesAsync(string range, CancellationToken cancellation = default)
     {
         var git = Resolve();
@@ -328,8 +327,8 @@ public class GitTrail
     }
 
     /// <summary>The paths touched by exactly one commit, via <c>git show --name-only --pretty=format:</c>.
-    /// Row 19, task 5c's fallback when there is no known "before" hash to diff a range against (the
-    /// spawn's first ever commit in this room).</summary>
+    /// The fallback when there is no known "before" hash to diff a range against (the spawn's first
+    /// ever commit in this room).</summary>
     public async Task<IReadOnlyList<string>> ChangedFilesInAsync(string commitHash, CancellationToken cancellation = default)
     {
         var git = Resolve();
@@ -342,7 +341,7 @@ public class GitTrail
 
     /// <summary>The distinct <c>Co-authored-by</c> trailer lines on the commits in <paramref name="range"/>
     /// (e.g. <c>"HEAD..chopitup/x7"</c>), newest first, re-emitted as full <c>Co-authored-by: …</c>
-    /// lines - what an exchange merge carries (row 46). Empty on failure, with <see cref="Reason"/> set.</summary>
+    /// lines: what an exchange merge carries. Empty on failure, with <see cref="Reason"/> set.</summary>
     public async Task<IReadOnlyList<string>> CoAuthorTrailersAsync(string range, CancellationToken cancellation = default)
     {
         var git = Resolve();
@@ -352,10 +351,9 @@ public class GitTrail
 
     /// <summary>A non-zero exit is logged through <see cref="Fail"/> unless git's stderr says
     /// <c>"unknown revision"</c> (a missing branch): the merge that called this fails a moment later
-    /// with its own reason, and one failure should be logged once rather than twice (critique pass 2,
-    /// F5; interrogation MAJOR 2b widened this from "every merge-time failure" to "every failure").
-    /// Only <see cref="KnownCoAuthors"/> values survive: a value a self-committing model wrote into its
-    /// own commit message never reaches a merge's re-emitted trailers (interrogation MAJOR 1).</summary>
+    /// with its own reason, and one failure should be logged once rather than twice. Only
+    /// <see cref="KnownCoAuthors"/> values survive: a value a self-committing model wrote into its own
+    /// commit message never reaches a merge's re-emitted trailers.</summary>
     private async Task<IReadOnlyList<string>> CoAuthorTrailersUnlocked(ResolvedCli git, string range, CancellationToken cancellation)
     {
         var r = await Run(git, ["log", "--format=%(trailers:key=" + CoAuthorKey + ",valueonly)", range], "", cancellation);
@@ -371,7 +369,7 @@ public class GitTrail
         return seen.Select(v => CoAuthorKey + ": " + v).ToList();
     }
 
-    // --- Row 35: worktree, merge and branch primitives ----------------------------------------------
+    // Worktree, merge and branch primitives
 
     /// <summary>True when <see cref="Root"/> has at least one commit (HEAD is not unborn); false,
     /// quietly, otherwise or when git/the repository is unavailable.</summary>
@@ -478,7 +476,7 @@ public class GitTrail
 
     /// <summary>The short name of the repository operation in progress at <see cref="Root"/> (`"merge"`,
     /// `"cherry-pick"`, `"revert"`, `"rebase"`, `"unmerged paths"`), or null when none is. A commit or a
-    /// merge over one of these would finalise it with conflict markers still in the tree (row 35).</summary>
+    /// merge over one of these would finalise it with conflict markers still in the tree.</summary>
     public async Task<string?> OperationInProgressAsync(CancellationToken cancellation = default)
     {
         var git = Resolve();
@@ -502,11 +500,11 @@ public class GitTrail
         return paths;
     }
 
-    /// <summary>Removes administrative data for exactly one worktree at <paramref name="path"/> - never
+    /// <summary>Removes administrative data for exactly one worktree at <paramref name="path"/>, never
     /// every stale entry a blanket `worktree prune` would touch, which could also drop an owner's own
     /// registered worktree elsewhere in the same repository whose folder merely happens to be missing
-    /// (an unmounted drive; row 35). Finds the admin directory under the repository's common
-    /// git dir (`rev-parse --git-common-dir`) whose `worktrees/&lt;name&gt;/gitdir` file names
+    /// (an unmounted drive). Finds the admin directory under the repository's common git dir
+    /// (`rev-parse --git-common-dir`) whose `worktrees/&lt;name&gt;/gitdir` file names
     /// <c>&lt;path&gt;\.git</c>, and deletes only that directory. Does nothing (quietly) when no such
     /// registration is found, or on a read/delete failure.</summary>
     public async Task PruneWorktreeAsync(string path, CancellationToken cancellation = default)
@@ -551,10 +549,9 @@ public class GitTrail
     /// rule (<see cref="ConfiguredIdentityAsync"/>). A conflicting or otherwise-failing merge is aborted before returning,
     /// so <see cref="Root"/>'s HEAD and working tree are exactly what they were before the call. Refuses
     /// (<see cref="MergeResult.Failed"/>) rather than merging when the tree already has uncommitted
-    /// tracked changes right before the merge itself starts - checked from inside this same gated call,
-    /// closing the window between a caller's own "commit the owner's edits first" step and the merge
-    /// actually running, during which something else could dirty the tree again (row 35 review
-    /// fix).</summary>
+    /// tracked changes right before the merge itself starts, checked from inside this same gated call.
+    /// That closes the window between a caller's own "commit the hub owner's edits first" step and the
+    /// merge running, during which something else could dirty the tree again.</summary>
     public async Task<MergeOutcome> MergeAsync(string branch, string message, CancellationToken cancellation = default)
     {
         await _gate.WaitAsync(cancellation);
@@ -568,9 +565,9 @@ public class GitTrail
             var status = await Run(git, ["status", "--porcelain", "--untracked-files=no"], "", cancellation);
             if (status.ExitCode == 0 && status.StandardOutput.Trim().Length > 0)
                 return new(MergeResult.Failed, null, [], "the room directory has uncommitted changes", before);
-            // Row 46: the merge is authored under the identity rule and its last paragraph carries
-            // every distinct Co-authored-by line on the commits being merged, so the room's
-            // first-parent history says who contributed without opening the branch.
+            // The merge is authored under the identity rule and its last paragraph carries every
+            // distinct Co-authored-by line on the commits being merged, so the room's first-parent
+            // history says who contributed without opening the branch.
             var trailers = await CoAuthorTrailersUnlocked(git, "HEAD.." + branch, cancellation);
             var args = new List<string>(BaseOptions) { "merge", "--no-ff", "-m", message };
             if (trailers.Count > 0) { args.Add("-m"); args.Add(string.Join("\n", trailers)); }
@@ -614,11 +611,11 @@ public class GitTrail
         finally { _gate.Release(); }
     }
 
-    /// <summary>Aborts a merge left in progress at <see cref="Root"/> ONLY when it is the hub's own
-    /// exchange merge - its message starts `Merge exchange #` and its `MERGE_HEAD` is the current tip
-    /// of some `chopitup/*` branch - never an owner's own conflicted merge, which is left exactly alone
-    /// (row 35). Null when nothing is in progress; otherwise `"aborted"`, the abort's failure
-    /// text, or `"left alone"`.</summary>
+    /// <summary>Aborts a merge left in progress at <see cref="Root"/> only when it is the hub's own
+    /// exchange merge (its message starts `Merge exchange #` and its `MERGE_HEAD` is the current tip
+    /// of some `chopitup/*` branch), never an owner's own conflicted merge, which is left exactly
+    /// alone. Null when nothing is in progress; otherwise `"aborted"`, the abort's failure text, or
+    /// `"left alone"`.</summary>
     public async Task<string?> AbortStaleExchangeMergeAsync(CancellationToken cancellation = default)
     {
         await _gate.WaitAsync(cancellation);
@@ -639,8 +636,8 @@ public class GitTrail
                 if (File.Exists(full))
                 {
                     // An unreadable message (locked, permission-denied) can never be proven the hub's
-                    // own merge - treated as empty, which falls through to "left alone" below, exactly
-                    // as if MERGE_MSG had no `Merge exchange #` prefix (row 35).
+                    // own merge: treated as empty, which falls through to "left alone" below, exactly
+                    // as if MERGE_MSG had no `Merge exchange #` prefix.
                     try { message = File.ReadAllText(full); }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException) { message = ""; }
                 }

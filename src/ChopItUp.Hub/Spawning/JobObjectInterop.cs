@@ -4,8 +4,8 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ChopItUp.Hub.Spawning;
 
-/// <summary>Row 29: the Win32 surface for one Job Object per hub-started process. Only what the row
-/// needs — create, set kill-on-close, assign, membership query — nothing else.</summary>
+/// <summary>The Win32 surface for one Job Object per hub-started process. Only what is needed
+/// (create, set kill-on-close, assign, membership query), nothing else.</summary>
 [SupportedOSPlatform("windows")]
 internal static partial class JobObjectInterop
 {

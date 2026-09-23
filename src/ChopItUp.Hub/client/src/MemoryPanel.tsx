@@ -12,32 +12,31 @@ interface Props {
   onDecide: (id: number, decision: 'approve' | 'reject') => void;
 }
 
-/** Row 18 (L6): the hub's words for the hints it computes, because a slug is not a reason. */
+/** The hub's words for the hints it computes, because a slug is not a reason. */
 const FLAG_TEXT: Record<string, string> = {
   'instruction-like': 'reads like an instruction, not a fact',
   fence: 'contains a memory fence line',
   'from-directory': 'proposed from a room with files and network',
 };
 
-/** Row 23 (AC7): the name the pre-consolidation copy takes on approval, mirroring `MemoryStore.PathOf`
- *  plus `Rewrite`'s `<file>.rewrite-<id>.bak`. Built here because neither card state this warning can
- *  appear on has written anything yet — `writtenTo` is null on both — and a warning that cannot name
+/** The name the pre-consolidation copy takes on approval, mirroring `MemoryStore.PathOf` plus
+ *  `Rewrite`'s `<file>.rewrite-<id>.bak`. Built here because neither card state this warning can
+ *  appear on has written anything yet (`writtenTo` is null on both), and a warning that cannot name
  *  the file is not a warning. */
 function backupPath(topic: string, id: number): string {
   return `${topic === 'core' ? 'MEMORY.md' : `topics/${topic}.md`}.rewrite-${id}.bak`;
 }
 
-/** The owner's approval surface (D15: agents propose, the owner approves in the room). Every undecided
- *  proposal of the open room, oldest first — pending ones with Reject and Approve, and the rare
+/** The hub owner's approval surface: agents propose, the hub owner approves in the room. Every undecided
+ *  proposal of the open room, oldest first: pending ones with Reject and Approve, and the rare
  *  approved-but-unwritten one (the hub died between marking and writing) with Retry. Renders nothing
- *  when there is nothing to decide, so a room without proposals looks exactly as it did before this row
- *  shipped. Bodies go through the same sanitised markdown as messages; an imported proposal shows where
- *  it came from, so it can never pass for something a model said live in the room.
+ *  when there is nothing to decide. Bodies go through the same sanitised markdown as messages; an
+ *  imported proposal shows where it came from, so it can never pass for something a model said live
+ *  in the room.
  *
- *  Row 18 (L6, AC5) puts on the card what the owner needs to judge a proposal rather than merely read
- *  it: which entry approval retires, why the text might be an instruction wearing a fact's clothes, and
- *  the closest entries the topic already holds. All three are absent from a plain proposal's card, so
- *  the ordinary case looks exactly as it did before. */
+ *  The card shows what the hub owner needs to judge a proposal rather than merely read it: which entry
+ *  approval retires, why the text might be an instruction wearing a fact's clothes, and the closest
+ *  entries the topic already holds. All three are absent from a plain proposal's card. */
 function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
   if (proposals.length === 0) return null;
   return (
@@ -56,16 +55,15 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
         {proposals.map((p) => {
           const busy = busyId === p.id;
           const unwritten = p.status === 'approved';
-          // Row 23 (AC7, ticket 06): a consolidation's body is the whole topic file, so the card shows
-          // the change instead. An empty or missing diff falls back to the body — the hub sends null
-          // for every other kind, and an empty box would tell the owner less than the raw text does.
+          // A consolidation's body is the whole topic file, so the card shows the change instead. An
+          // empty or missing diff falls back to the body: the hub sends null for every other kind,
+          // and an empty box would tell the hub owner less than the raw text does.
           const diff = p.kind === 'rewrite' && p.diff && p.diff.length > 0 ? p.diff : null;
           const removed = p.removedTitles ?? [];
           const lost = p.provenanceLost ?? 0;
-          // Finding J: availability is knowable before the write, which is what makes it worth saying.
-          // Both card states it can appear on are still approvable — Retry is what performs the write —
-          // and on both, nothing has been written yet, so the backup really would be the only copy. AC7
-          // scopes the whole card contract to a rewrite "pending or approved-but-unwritten", and
+          // Availability is knowable before the write, which is what makes it worth saying. Both card
+          // states it can appear on are still approvable (Retry is what performs the write), and on
+          // both, nothing has been written yet, so the backup really would be the only copy.
           // `MemoryApi.MapForList` computes `gitAvailable` for exactly that pair.
           const noGit = diff !== null && p.gitAvailable === false;
           return (
@@ -82,10 +80,10 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 <span className="memory-id">#{p.id}</span>
               </div>
               <h3 className="memory-card-title">{p.title}</h3>
-              {/* Row 40: an editor row is not an import. One reaches this panel only when the hub
-                  died mid-save — after the mark, leaving the approved-but-unwritten card Retry
-                  writes, or before it, leaving a pending card Approve writes — so the line names the
-                  button this card actually offers. */}
+              {/* An editor row is not an import. One reaches this panel only when the hub died
+                  mid-save: after the mark, leaving the approved-but-unwritten card Retry writes, or
+                  before it, leaving a pending card Approve writes. So the line names the button this
+                  card actually offers. */}
               {p.source && (
                 <p className="memory-source">
                   {p.source === 'editor'

@@ -7,11 +7,11 @@ using Microsoft.Extensions.Time.Testing;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Row 19, task 14: <c>GET /api/rooms/{roomId}/run</c>, the strip's only source. The rows
-/// here are written straight through <see cref="RunStore"/> rather than driven through a spawn: the
-/// endpoint is a projection of the store, and the three states it has to answer for include two
-/// (<c>parked</c>, <c>ended</c>) that a real hub cannot be walked into inside a builder task — the
-/// caps are hard code, so parking one for real costs 8 hours or 80 spawns (pass 2's F-20).</summary>
+/// <summary><c>GET /api/rooms/{roomId}/run</c>, the strip's only source. The rows here are written
+/// straight through <see cref="RunStore"/> rather than driven through a spawn: the endpoint is a
+/// projection of the store, and the three states it has to answer for include two
+/// (<c>parked</c>, <c>ended</c>) that a real hub cannot be walked into inside a test: the caps are
+/// hard code, so parking one for real costs 8 hours or 80 spawns.</summary>
 public sealed class RunsApiTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.Parse("2026-03-01T09:00:00Z");
@@ -140,11 +140,10 @@ public sealed class RunsApiTests : IAsyncLifetime
         Assert.Equal(12, body.GetProperty("elapsedMinutes").GetInt32());
     }
 
-    /// <summary>Every tag the run has passed through, not just the one it sits in. The M19 live check
+    /// <summary>Every tag the run has passed through, not just the one it sits in. The run live check
     /// asserts "two distinct phases were entered" and the only alternative source is polling the
-    /// endpoint and unioning what it happens to catch — which turns a phase the run left between two
-    /// polls into a FAIL indistinguishable from a conductor that never entered it (task 15d's whole
-    /// point is removing that ambiguity, not adding to it).</summary>
+    /// endpoint and unioning what it happens to catch, which turns a phase the run left between two
+    /// polls into a FAIL indistinguishable from a conductor that never entered it.</summary>
     [Fact]
     public async Task Run14_the_run_answers_every_phase_tag_it_entered_not_only_the_one_it_sits_in()
     {

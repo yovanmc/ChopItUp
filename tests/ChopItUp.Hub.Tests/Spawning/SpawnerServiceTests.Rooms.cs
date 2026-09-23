@@ -23,12 +23,12 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         {"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[{"tool_name":"Bash","tool_use_id":"t2","tool_input":{"command":"git commit -m nope"}}]}
         """;
 
-    // Row 35: gitRef reads a branch other than the one checked out at dir - a directory room's own
-    // exchange branches (see ExchangeWorktrees.Branch) share dir's repository, so its refs are visible
-    // from dir even though the commits on them were made from a linked worktree. skip is row 35's own
-    // addition: once a close merges an exchange's branch into dir, its commits are still reachable from
-    // dir's own HEAD, just not at the top (the merge commit is) - skip walks past the newer entries
-    // without needing the branch name (deleted by then) or the merge commit's own hash.
+    // gitRef reads a branch other than the one checked out at dir: a directory room's own exchange
+    // branches (see ExchangeWorktrees.Branch) share dir's repository, so its refs are visible from dir
+    // even though the commits on them were made from a linked worktree. Once a close merges an
+    // exchange's branch into dir, its commits are still reachable from dir's own HEAD, just not at the
+    // top (the merge commit is); skip walks past the newer entries without needing the branch name
+    // (deleted by then) or the merge commit's own hash.
     private static async Task<string> GitLog(string dir, string format, int n = 5, string? gitRef = null, int skip = 0)
     {
         // --date-order: without it, git's default log order only sorts by commit timestamp, which is
@@ -63,7 +63,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await PostAsOwnerIn("lab", "@sonnet create hello.txt");
         var spec = await _runner.NextSpecAsync(Wait);
         var root = Spawner.Snapshot("lab").RootMessageId!.Value;
-        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // row 35: works in its own worktree
+        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // works in its own worktree
         Assert.Equal(tree, spec.WorkingDirectory);
         Assert.Contains("dontAsk", spec.Arguments);
         Assert.Equal("stream-json", spec.Arguments[spec.Arguments.ToList().IndexOf("--output-format") + 1]);
@@ -78,8 +78,8 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.Contains("Your edits were committed first as", note.Body);
         Assert.Contains("\"Bash(git commit *)\"", settingsAtLaunch);
 
-        // Row 35: the exchange concludes and its worktree is merged into the room directory -
-        // wait for that note, then read only dir (the worktree is gone once the close finishes).
+        // The exchange concludes and its worktree is merged into the room directory: wait for that
+        // note, then read only dir (the worktree is gone once the close finishes).
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var roomLog = (await GitLog(dir, "%an <%ae>|%cn|%s", 3)).Split('\n');
         Assert.Equal([
@@ -365,8 +365,8 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         var holdConductor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _runner.Handler = async (spec, _, _) =>
         {
-            // Ignores the cancellation token on purpose (AC9): a run's cancelled conductor
-            // is not really gone until its own process ends, and this reproduces exactly that window.
+            // Ignores the cancellation token on purpose: a run's cancelled conductor is not really
+            // gone until its own process ends, and this reproduces exactly that window.
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") await holdConductor.Task;
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
@@ -391,9 +391,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
     [Fact]
     public async Task R35_AC9_a_room_directory_launch_waits_for_a_running_close()
     {
-        // The direction AC9 had no test for at all: a worktree close's merge is genuinely running (the
-        // repository's write gate is held) when a run's conductor - a room-directory launch - would
-        // otherwise be due; it must get no spec until the close finishes.
+        // A worktree close's merge is genuinely running (the repository's write gate is held) when a
+        // run's conductor (a room-directory launch) would otherwise be due; it must get no spec until
+        // the close finishes.
         var delayingRunner = new DelayingMergeRunner();
         var localDir = _dir + "_close_wait";
         await using var host = await HubTestHost.StartAsync(localDir, processRunner: _runner, limits: Fast,
@@ -442,7 +442,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await PostAsOwnerIn("lab", "@gpt-6-astra look around");
         var spec = await _runner.NextSpecAsync(Wait);
         var root = Spawner.Snapshot("lab").RootMessageId!.Value;
-        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // row 35: works in its own worktree
+        var tree = ExchangeWorktrees.PathFor(dir, root);                                      // works in its own worktree
         var args = spec.Arguments.ToList();
         Assert.Equal(tree, spec.WorkingDirectory);
         Assert.Equal(tree, args[args.IndexOf("-C") + 1]);
@@ -452,8 +452,8 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.StartsWith(Path.Combine(_dir, "spawns"), args[args.IndexOf("-o") + 1]);
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("for gpt-6-astra: 0 file(s) changed, 0 shell command(s).", note.Body);   // empty commit, empty log
-        // Row 35: wait for the close's merge note, then read the merged history in dir itself -
-        // the branch is deleted once the merge lands.
+        // Wait for the close's merge note, then read the merged history in dir itself: the branch is
+        // deleted once the merge lands.
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var log = (await GitLog(dir, "%an <%ae>", 3)).Split('\n');
         Assert.Equal([
@@ -480,9 +480,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("HEAD moved during the spawn: sonnet committed on its own.", note.Body);
         var root = Spawner.Snapshot("lab").RootMessageId!.Value;
-        // Row 35: wait for the close's merge note, then read the merged history in dir - the
-        // room itself was unborn, so ExchangeWorktrees made one empty start commit for the branch to
-        // fork from, and that start commit is what the merge commit's other parent already is.
+        // Wait for the close's merge note, then read the merged history in dir. The room itself was
+        // unborn, so ExchangeWorktrees made one empty start commit for the branch to fork from, and
+        // that start commit is what the merge commit's other parent already is.
         await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         var log = (await GitLog(dir, "%an|%s", 4)).Split('\n');
         Assert.Equal(4, log.Length);
@@ -544,7 +544,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.Contains("Turn 2 of 4;", second.StandardInput);
     }
 
-    /// <summary>Row 36: like <see cref="DelayingMergeRunner"/>, but holds `git worktree remove`. The close
+    /// <summary>Like <see cref="DelayingMergeRunner"/>, but holds `git worktree remove`. The close
     /// has committed and the exchange's worktree is still registered and on disk, which is exactly the window
     /// a reopened exchange must not lease into (EnsureAsync would hand back the path without taking the gate).</summary>
     private sealed class DelayingRemoveRunner : IProcessRunner
@@ -630,7 +630,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
     {
         var dir = await MakeRoom("lab");
         Assert.True((await new GitTrail(dir).CommitAllAsync("seed", GitTrail.Hub, allowEmpty: true)).Created);
-        // Reserve a history id without dispatch: M49 ordinary owner HTTP posts now start on-call work.
+        // Reserve a history id without dispatch: ordinary owner HTTP posts start on-call work.
         var probe = _host.Services.GetRequiredService<MessageStore>().Post("lab", "claude", "branch collision id probe", null);
         var root = probe.Message.Id + 1;
         var made = await new ProcessRunner().RunAsync(
@@ -684,9 +684,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
             await using (var first = await HubTestHost.StartAsync(dir, deleteOnDispose: false))
             {
                 first.Services.GetRequiredService<MessageStore>().CreateRoom("lab-recover", "Lab", roomDir);
-                // Captured while the minting host is alive (row 28): the plaintext bearer itself outlives
-                // it, since it is the same secret whose hash is persisted to tokens.json - a later host
-                // over the SAME data dir can be handed it directly even though it cannot look it back up.
+                // Captured while the minting host is alive: the plaintext bearer itself outlives it,
+                // since it is the same secret whose hash is persisted to tokens.json, so a later host
+                // over the same data dir can be handed it directly even though it cannot look it back up.
                 ownerToken = first.TokenFor(ChopDb.OwnerParticipantId);
                 // A worktree left registered with no close ever having run - exactly what a hub killed
                 // mid-exchange leaves behind (no spawn needed to reproduce it: EnsureAsync's own

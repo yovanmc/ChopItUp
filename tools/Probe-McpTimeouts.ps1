@@ -1,13 +1,12 @@
 <#
 .SYNOPSIS
-    Row 20, task 5: round-trips the three MCP timeout knobs (ledger 10/11/25) against a scratch hub,
-    with real claude.exe calls, to prove which ones actually cut a long tool call and that the raised
-    knobs (row 20, task 3) keep one alive past the CLI's documented 5-minute idle default.
+    Round-trips the three MCP timeout knobs against a scratch hub, with real claude.exe calls, to
+    prove which ones actually cut a long tool call and whether the raised knobs keep one alive past
+    the CLI's documented 5-minute idle default.
 
 .DESCRIPTION
-    SPEND: four Sonnet calls, about 10 minutes wall clock. This script is NOT part of the automated
-    suite - the orchestrator runs it by hand, once, after task 3 has merged to this branch, and records
-    the result in docs\verification.md. Never invoke it from a builder subagent or a CI job.
+    SPEND: four Sonnet calls, about 10 minutes wall clock. This script is not part of the automated
+    suite: run it by hand and record the result in docs\verification.md. Never from CI.
 
     Never touches C:\Self Apps, %USERPROFILE%\ChopItUp or any real data directory: -DataDir, -RoomsRoot
     and the leg-4 scratch repo all default to fresh folders under $env:TEMP and are left behind with
@@ -24,31 +23,29 @@
       2. No env knob, "timeout": 5000 on the chopitup server entry in the per-leg mcp.json.
       Legs 1-2 PASS when the process exits in < 30s AND the stream-json output carries a tool_result
       content block marked as an error.
-      3. CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=5000 in the env, no other knob. Measured probe run 1: the
-         installed CLI (2.1.220, Bun-compiled) polls its idle clock on a 30-second setInterval rather
-         than cutting at the knob's own 5s value, so the cut lands on the first or second tick. Leg 3
-         PASSes when the process exits with an error tool_result AND total wall clock is under 65s (one
-         or two 30-s ticks) AND shorter than leg 0's own elapsed time.
-      4. RESCUE LEG (pass-1 M5), the product path: legs 0-3 only prove a knob can shorten a call: this
-         leg proves the opposite direction the design actually needs - a call the CLI's 5-minute idle
-         default WOULD cut survives when the hub raises the knobs it sets on its own in-run spawns
-         (task 3). Installs tools\skills\probe-sleep (SKILL.md + scripts\sleep.ps1, this task) into the
-         probe's own scratch hub, binds a directory room to a fresh scratch git repository (`git init`
-         plus one commit, made by this script - a room directory must be a repository root), posts
-         "/probe-sleep @sonnet", and waits (<= 20 min) for the run to end. PASS when the run's own gate
-         list records "sleep" at exit 0 (hub-controlled fact) and the run ended by the conductor's ping
-         rather than a silence park. One Sonnet spawn: the conductor calls run_gate itself, in the same
-         turn it posts the phase: ping (probe run 1's task 3b fix; the lite path's own shape).
+      3. CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=5000 in the env, no other knob. Measured: the installed CLI
+         (2.1.220, Bun-compiled) polls its idle clock on a 30-second setInterval rather than cutting at
+         the knob's own 5s value, so the cut lands on the first or second tick. Leg 3 PASSes when the
+         process exits with an error tool_result AND total wall clock is under 65s (one or two 30-s
+         ticks) AND shorter than leg 0's own elapsed time.
+      4. RESCUE LEG, the product path: legs 0-3 only prove a knob can shorten a call; this leg proves
+         the direction the design needs - a call the CLI's 5-minute idle default WOULD cut survives
+         in a hub in-run spawn. Installs tools\skills\probe-sleep (SKILL.md + scripts\sleep.ps1) into
+         the probe's own scratch hub, binds a directory room to a fresh scratch git repository
+         (`git init` plus one commit, made by this script - a room directory must be a repository
+         root), posts "/probe-sleep @sonnet", and waits (<= 20 min) for the run to end. PASS when the
+         run's own gate list records "sleep" at exit 0 (hub-controlled fact) and the run ended by the
+         conductor's ping rather than a silence park. One Sonnet spawn: the conductor calls run_gate
+         itself, in the same turn it posts the phase: ping.
 
-      A leg-4 FAIL with legs 1-3 all passing means the hub's progress notifications (task 3b) are not
-      reaching the client, even though the CLI's own timeout knobs are fine - that RE-OPENS TASK 3B, not
-      this probe: nothing here should be "fixed" to make leg 4 pass on its own.
+      A leg-4 FAIL with legs 1-3 all passing means the hub's progress notifications are not reaching
+      the client, even though the CLI's own timeout knobs are fine; fix the notifications, not this
+      probe: nothing here should be changed to make leg 4 pass on its own.
 
     Stream-json parsing (legs 0-3): the Claude Code CLI's `--output-format stream-json --verbose` shape
     is read as newline-delimited JSON events; a completed tool call is taken to surface as a
-    `{"type":"tool_result", ..., "is_error":true|false}` content block inside one of those events. THIS
-    SHAPE IS ASSUMED from the CLI's documented streaming format (ledger 11/25) and has not been
-    confirmed against real output before this script's first live run - leg 0 is what confirms or
+    `{"type":"tool_result", ..., "is_error":true|false}` content block inside one of those events.
+    This shape is assumed from the CLI's documented streaming format; leg 0 is what confirms or
     refutes it (see Test-StreamJsonToolResult below).
 
     Every leg prints PASS/FAIL; the last line is "Results: n/5 PASS". The hub is stopped by PID,
@@ -128,10 +125,10 @@ Add-Content -Path $log -Value ("MCP timeout probe {0} exe={1} data={2} rooms={3}
 $work = "$DataDir.work"
 New-Item -ItemType Directory -Path $work -Force | Out-Null
 
-# NOTE: the parameter is $argv, never $args - PowerShell reserves $args, and a helper that names a
-# parameter $args silently receives nothing (Probe-SpawnCli.ps1, measured 2026-09-05).
+# The parameter is $argv, never $args: PowerShell reserves $args, and a helper that names a parameter
+# $args silently receives nothing.
 #
-# $RemoveEnv strips inherited knobs BEFORE $Env adds the one under test, so a leg can only be cut by
+# $RemoveEnv strips inherited knobs before $Env adds the one under test, so a leg can only be cut by
 # the knob it names, never by whatever this script's own shell happened to have set.
 function Invoke-Child {
     param([string]$FileName, [string[]]$argv, [hashtable]$Env, [string[]]$RemoveEnv, [string]$Stdin, [string]$WorkDir, [int]$KillAfterMs = 90000)
@@ -153,7 +150,7 @@ function Invoke-Child {
     $p.StandardInput.Write($Stdin)
     $p.StandardInput.Close()
     if (-not $p.WaitForExit($KillAfterMs)) { try { $p.Kill($true) } catch { } }
-    $p.WaitForExit()   # parameterless: guarantees the async reads above are drained (LESSONS M4)
+    $p.WaitForExit()   # parameterless: guarantees the async reads above are drained
     [pscustomobject]@{ Exit = $p.ExitCode; Out = $out.Result; Err = $err.Result; Seconds = [double]$sw.Elapsed.TotalSeconds; ProcessId = $p.Id }
 }
 
@@ -246,13 +243,13 @@ function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
     return $state
 }
 
-# --import-skill runs BEFORE the hub starts, same order M19/M20 use (row 11's m6 precondition): a
-# second process must never touch chopitup.db while the hub holds it. A setup failure here is not one
-# of the five named legs, so it stays a hard guard (exit 2), same as the fresh-directory checks above.
+# --import-skill runs before the hub starts: a second process must never touch chopitup.db while the
+# hub holds it. A setup failure here is not one of the five named legs, so it stays a hard guard
+# (exit 2), same as the fresh-directory checks above.
 $importOut = Join-Path $DataDir 'import.out.log'
 $importErr = Join-Path $DataDir 'import.err.log'
-# Every path below is quoted INSIDE the argument string (LESSONS, 2026-09-07): Start-Process joins
-# -ArgumentList with spaces and quotes nothing, and this repo lives under 'C:\Agent Projects'.
+# Every path below is quoted inside the argument string: Start-Process joins -ArgumentList with
+# spaces and quotes nothing, and this repo lives under 'C:\Agent Projects'.
 $import = Start-Process -FilePath $HubExe -ArgumentList @('--data', "`"$DataDir`"", '--import-skill', "`"$SleepSkillSource`"") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput $importOut -RedirectStandardError $importErr
 if ($import.ExitCode -ne 0) {

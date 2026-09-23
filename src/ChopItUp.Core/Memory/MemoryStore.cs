@@ -13,7 +13,7 @@ public sealed record RelatedEntry(string Title, string Snippet, bool Replaced);
 /// topic); <see cref="Truncated"/> says the file was longer, <see cref="FullChars"/> how long.</summary>
 public sealed record MemoryText(string Text, bool Truncated, int FullChars);
 
-/// <summary>D15: the centralised memory is markdown on disk under <c>&lt;data&gt;\memory\</c> —
+/// <summary>The centralised memory is markdown on disk under <c>&lt;data&gt;\memory\</c>:
 /// <c>MEMORY.md</c> (the core, injected into every spawn's prompt) and <c>topics\&lt;slug&gt;.md</c>
 /// (fetched with the <c>recall</c> tool). The owner edits these files by hand or approves proposals;
 /// nothing else writes here. Pure file I/O: no git (that is the hub's <c>MemoryGit</c>), no SQLite.</summary>
@@ -23,15 +23,14 @@ public sealed class MemoryStore
     public const string TopicsDirName = "topics";
     /// <summary>The pseudo-topic that appends to the core file itself.</summary>
     public const string CoreTopic = "core";
-    /// <summary>≈1,500 tokens at ~4 characters per token (D15). The hub has no tokenizer for either
-    /// vendor; characters are the cap, and a longer core is cut at injection with a line saying so.</summary>
+    /// <summary>≈1,500 tokens at ~4 characters per token. The hub has no tokenizer for either vendor;
+    /// characters are the cap, and a longer core is cut at injection with a line saying so.</summary>
     public const int CoreChars = 6_000;
-    /// <summary>Row 18 (L7), budget ruling: the room topic (decision 8) gets its own, smaller cap on
-    /// top of the core's ≈1,500 tokens — ≈500 tokens more, the rest reachable with <c>recall(topic)</c>.</summary>
+    /// <summary>The room topic gets its own, smaller cap on top of the core's ≈1,500 tokens: ≈500
+    /// tokens more, the rest reachable with <c>recall(topic)</c>.</summary>
     public const int RoomChars = 2_000;
-    /// <summary>A topic can be any size (row 18's supersede shrinks it; approvals grow it), so a topic
-    /// read is capped too (critique pass 1, P1-6); <c>recall</c> reports the cut and <c>ListTopics</c>
-    /// reports sizes.</summary>
+    /// <summary>A topic can be any size (a supersede shrinks it; approvals grow it), so a topic read
+    /// is capped too; <c>recall</c> reports the cut and <c>ListTopics</c> reports sizes.</summary>
     public const int TopicChars = 24_000;
     public const int MaxTitleChars = 120;
     public const int MaxBodyChars = 4_000;
@@ -39,9 +38,9 @@ public sealed class MemoryStore
     public static readonly Regex TopicSlug = new("^[a-z0-9][a-z0-9-]{0,63}$", RegexOptions.Compiled);
 
     public const string SupersededPrefix = "<!-- superseded: ";
-    /// <summary>Row 23 (item 3): the marker a rewrite leaves on the line under the H1. Stripped from
-    /// a submitted body only at that position, never elsewhere — row 18 decision 1 says a marker
-    /// quoted inside an entry body is text and stays text.</summary>
+    /// <summary>The marker a rewrite leaves on the line under the H1. Stripped from a submitted body
+    /// only at that position, never elsewhere: a marker quoted inside an entry body is text and stays
+    /// text.</summary>
     public const string RewrittenPrefix = "<!-- rewritten: ";
     public const int SnippetChars = 300;
     public const int RelatedSnippetChars = 160;
@@ -55,8 +54,8 @@ public sealed class MemoryStore
     private static readonly UTF8Encoding Utf8 = new(encoderShouldEmitUTF8Identifier: false);
 
     /// <summary>A crash between the temp write and the move must not leave a <c>.tmp</c> that the next
-    /// approval's <c>git add -A</c> commits (critique pass 1, P1-14). <c>*.bak</c> (row 18, decision 1)
-    /// is <see cref="Supersede"/>'s pre-rewrite copy of the file: not part of the git history either.</summary>
+    /// approval's <c>git add -A</c> commits. <c>*.bak</c> is <see cref="Supersede"/>'s pre-rewrite copy
+    /// of the file: not part of the git history either.</summary>
     internal const string GitIgnore = "*.tmp\n*.bak\n";
 
     internal const string SeedCore = """
@@ -112,7 +111,7 @@ public sealed class MemoryStore
         return File.Exists(path) ? Cut(File.ReadAllText(path, Utf8), topic == CoreTopic ? int.MaxValue : TopicChars) : null;
     }
 
-    /// <summary>Row 18 (L7): the topic a directory room's spawns also receive. Room ids are at most
+    /// <summary>The topic a directory room's spawns also receive. Room ids are at most
     /// <c>RoomIds.MaxChars</c> (40) of <c>[a-z0-9-]</c>, so this always satisfies <see cref="TopicSlug"/>.</summary>
     public static string RoomTopic(string roomId) => "room-" + roomId;
 
@@ -137,10 +136,10 @@ public sealed class MemoryStore
     /// <summary>Non-superseded titles, file order: what <c>recall()</c> lists per topic.</summary>
     public IReadOnlyList<string> Titles(string topic) => Entries(topic).Where(e => !e.Superseded).Select(e => e.Title).ToList();
 
-    /// <summary>Row 18 (L1, decision 1): the entry titled <paramref name="replaces"/> keeps its heading
-    /// and provenance and gains a superseded comment; its body goes; the new entry is appended. The file
-    /// is rewritten whole (decision 2). Idempotent on <paramref name="dedupKey"/> like <see cref="Append"/>.
-    /// Throws <see cref="KeyNotFoundException"/> when the topic or a live entry with that title is missing.</summary>
+    /// <summary>The entry titled <paramref name="replaces"/> keeps its heading and provenance and
+    /// gains a superseded comment; its body goes; the new entry is appended. The file is rewritten
+    /// whole. Idempotent on <paramref name="dedupKey"/> like <see cref="Append"/>. Throws
+    /// <see cref="KeyNotFoundException"/> when the topic or a live entry with that title is missing.</summary>
     public string Supersede(string topic, string replaces, string title, string body, string provenance, string? dedupKey = null)
     {
         RequireSlug(topic);
@@ -155,7 +154,7 @@ public sealed class MemoryStore
                 var existing = File.ReadAllText(path, Utf8);
                 if (dedupKey is not null && HasProvenance(existing, dedupKey)) break;
                 var composed = ComposeSupersede(existing, replaces, title, body, provenance);   // throws before anything is touched
-                File.Copy(path, path + ".bak", overwrite: true);                                 // decision 1, critique P1-6: the old body survives without git
+                File.Copy(path, path + ".bak", overwrite: true);                                 // the old body survives without git
                 WriteAtomic(path, composed);
                 break;
             }
@@ -164,8 +163,8 @@ public sealed class MemoryStore
         return Path.GetRelativePath(Root, path).Replace('\\', '/');
     }
 
-    /// <summary>What the core would be, in characters, after this approval — composed exactly as
-    /// <see cref="Append"/> or <see cref="Supersede"/> would write it (decision 3).</summary>
+    /// <summary>What the core would be, in characters, after this approval, composed exactly as
+    /// <see cref="Append"/> or <see cref="Supersede"/> would write it.</summary>
     public int ProjectedCoreChars(string? replaces, string title, string body, string provenance)
     {
         Validate(title, body);
@@ -176,9 +175,9 @@ public sealed class MemoryStore
             : ComposeSupersede(existing, replaces, title, body, provenance).Length;
     }
 
-    /// <summary>Row 23 (item 3): replaces the whole topic file with a consolidated version. The previous
-    /// content survives at <c>&lt;file&gt;.rewrite-&lt;proposalId&gt;.bak</c> — a per-proposal name a later
-    /// write never reuses, unlike <see cref="Supersede"/>'s shared <c>.bak</c> slot. Idempotent on
+    /// <summary>Replaces the whole topic file with a consolidated version. The previous content
+    /// survives at <c>&lt;file&gt;.rewrite-&lt;proposalId&gt;.bak</c>, a per-proposal name a later write
+    /// never reuses, unlike <see cref="Supersede"/>'s shared <c>.bak</c> slot. Idempotent on
     /// <paramref name="dedupKey"/> like <see cref="Append"/> and <see cref="Supersede"/>. Throws
     /// <see cref="KeyNotFoundException"/> when the topic has no file.</summary>
     public string Rewrite(string topic, string body, string provenance, long proposalId, string? dedupKey = null)
@@ -215,9 +214,9 @@ public sealed class MemoryStore
         return string.Join('\n', lines);
     }
 
-    /// <summary>What the topic would be, in characters, after this rewrite — composed exactly as
-    /// <see cref="Rewrite"/> would write it. This is the authoritative cap check (pass 2 finding A):
-    /// it is the only one that can see the carried-forward provenance lines.</summary>
+    /// <summary>What the topic would be, in characters, after this rewrite, composed exactly as
+    /// <see cref="Rewrite"/> would write it. This is the authoritative cap check: it is the only one
+    /// that can see the carried-forward provenance lines.</summary>
     public int ProjectedRewriteChars(string topic, string body, string provenance)
     {
         RequireSlug(topic);
@@ -225,19 +224,19 @@ public sealed class MemoryStore
         return ComposeRewrite(this, topic, body, provenance).Length;
     }
 
-    /// <summary>Refuses a replacement body on its own terms — a whole file, not one entry, so
+    /// <summary>Refuses a replacement body on its own terms: a whole file, not one entry, so
     /// <see cref="Validate"/> does not apply. Requires at least one non-empty <c>## </c> heading, no
-    /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b> (claim 8:
-    /// <c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its length
-    /// arithmetic is an honest floor (row 40): the raw composed text, charged for the H1 and the marker
-    /// line only when the body does not already carry them itself (a body an editor save round-trips
-    /// often carries both), and nothing per heading (<see cref="ComposeRewrite"/> only ever adds a
-    /// carried-forward provenance line to a <i>surviving</i> live entry, never to a new or renamed
-    /// heading, so the minimum any heading costs is zero) — the smallest the composed file could possibly
-    /// be. Charging for an H1 or a marker line the body already has would let the floor exceed the
-    /// composed size and refuse a text the authoritative cap check had accepted. It can still under-count
-    /// a body that keeps many surviving titles, whose real carried-forward provenance this floor cannot
-    /// see, so it must never be relied on as the cap; <see cref="ProjectedRewriteChars"/> is the cap.</summary>
+    /// heading over <see cref="MaxTitleChars"/>, and no two headings equal under <b>Ordinal</b>
+    /// (<c>OrdinalIgnoreCase</c> would be stricter than the store's own title-collision guard). Its
+    /// length arithmetic is an honest floor: the raw composed text, charged for the H1 and the marker
+    /// line only when the body does not already carry them (a body an editor save round-trips often
+    /// carries both), and nothing per heading (<see cref="ComposeRewrite"/> only adds a carried-forward
+    /// provenance line to a <i>surviving</i> live entry, never to a new or renamed heading, so the
+    /// minimum any heading costs is zero). Charging for an H1 or a marker line the body already has
+    /// would let the floor exceed the composed size and refuse a text the authoritative cap check had
+    /// accepted. It can still under-count a body that keeps many surviving titles, whose real
+    /// carried-forward provenance this floor cannot see, so it must never be relied on as the cap;
+    /// <see cref="ProjectedRewriteChars"/> is the cap.</summary>
     public static void ValidateRewrite(string? topic, string? body)
     {
         RequireSlug(topic);
@@ -254,9 +253,9 @@ public sealed class MemoryStore
             if (!seen.Add(title)) throw new ArgumentException($"duplicate heading '{title}'.", nameof(body));
         }
         var cap = topic == CoreTopic ? CoreChars : TopicChars;
-        // An honest floor (row 40): a body that already carries its H1, or the marker line ComposeRewrite
-        // drops and re-inserts, is not charged for them a second time. Without this the floor could
-        // exceed the composed size and refuse a text the authoritative cap check had accepted.
+        // An honest floor: a body that already carries its H1, or the marker line ComposeRewrite drops
+        // and re-inserts, is not charged for them a second time. Without this the floor could exceed
+        // the composed size and refuse a text the authoritative cap check had accepted.
         var lines = normalized.Trim('\n').Split('\n');
         var hasH1 = lines.Length > 0 && lines[0].StartsWith("# ", StringComparison.Ordinal);
         var marker = lines.Length > 1 && lines[1].StartsWith(RewrittenPrefix, StringComparison.Ordinal) ? lines[1].Length + 1 : 0;
@@ -264,9 +263,9 @@ public sealed class MemoryStore
         if (floor > cap) throw new ArgumentException($"body would produce a file over {cap} characters, even at its minimum possible composed size.", nameof(body));
     }
 
-    /// <summary>Row 23, pass 2 finding I: the live entry titles that carry a provenance comment today and
-    /// would not get one back under <see cref="ComposeRewrite"/> — a rename or a drop, indistinguishable
-    /// from a normal fold on a diff unless something counts it.</summary>
+    /// <summary>The live entry titles that carry a provenance comment today and would not get one back
+    /// under <see cref="ComposeRewrite"/>: a rename or a drop, indistinguishable from a normal fold on
+    /// a diff unless something counts it.</summary>
     public IReadOnlyList<string> ProvenanceLost(string topic, string body)
     {
         RequireSlug(topic);
@@ -281,12 +280,11 @@ public sealed class MemoryStore
             .ToList();
     }
 
-    /// <summary>Row 23: normalises the submitted body into what <see cref="Rewrite"/> writes. Drops a
-    /// leading marker the body may already carry (line index 1, only there), ensures an H1, inserts a
-    /// fresh marker at index 1, then — when <paramref name="store"/> is given — re-inserts each surviving
-    /// live entry's original provenance comment beneath its heading, unless the body already put one
-    /// there. <paramref name="store"/> is null only for callers that do not need the carry-forward (none
-    /// today; kept so a future caller can compose without touching disk).</summary>
+    /// <summary>Normalises the submitted body into what <see cref="Rewrite"/> writes. Drops a leading
+    /// marker the body may already carry (line index 1, only there), ensures an H1, inserts a fresh
+    /// marker at index 1, then, when <paramref name="store"/> is given, re-inserts each surviving live
+    /// entry's original provenance comment beneath its heading, unless the body already put one there.
+    /// <paramref name="store"/> null composes without touching disk (no carry-forward).</summary>
     internal static string ComposeRewrite(MemoryStore? store, string topic, string body, string provenance)
     {
         var lines = body.Replace("\r\n", "\n").Trim('\n').Split('\n').ToList();
@@ -313,7 +311,7 @@ public sealed class MemoryStore
     }
 
     /// <summary>Case-insensitive substring over titles and bodies of every non-superseded entry, core
-    /// first then topics in slug order, or one topic; at most <see cref="MaxHits"/> (decision 7).</summary>
+    /// first then topics in slug order, or one topic; at most <see cref="MaxHits"/>.</summary>
     public IReadOnlyList<MemoryHit> Search(string query, string? topic = null)
     {
         var q = (query ?? "").Trim();
@@ -334,8 +332,8 @@ public sealed class MemoryStore
         return hits;
     }
 
-    /// <summary>The approval card's context (L6): the entry <paramref name="replaces"/> names first,
-    /// then live entries whose title shares a word of four or more letters or digits with
+    /// <summary>The approval card's context: the entry <paramref name="replaces"/> names first, then
+    /// live entries whose title shares a word of four or more letters or digits with
     /// <paramref name="title"/>, file order, at most <see cref="MaxRelated"/>.</summary>
     public IReadOnlyList<RelatedEntry> Related(string topic, string title, string? replaces)
     {
@@ -351,15 +349,14 @@ public sealed class MemoryStore
         return replaced.Concat(similar).Take(MaxRelated).ToList();
     }
 
-    /// <summary>Appends one approved entry — H2 title, an HTML-comment provenance line, the body — to
+    /// <summary>Appends one approved entry (H2 title, an HTML-comment provenance line, the body) to
     /// the topic file, creating it with an H1 when new, and returns the path written relative to
     /// <see cref="Root"/> with forward slashes. A new file is written beside and moved over; an
     /// existing file is appended to, never rewritten, so a spawn reading it or the owner's editor
-    /// holding it never collides with a whole-file replace (critique pass 1, P1-14). With a
-    /// <paramref name="dedupKey"/> the write is idempotent: a file that already holds a provenance
-    /// comment line containing the key gets nothing (a replayed approval, critique pass 1, P1-4). Only
-    /// a comment line counts — a body that quotes the key must not suppress a real approval (critique
-    /// pass 2, P2-3). One retry on a sharing violation.</summary>
+    /// holding it never collides with a whole-file replace. With a <paramref name="dedupKey"/> the
+    /// write is idempotent: a file that already holds a provenance comment line containing the key
+    /// gets nothing (a replayed approval). Only a comment line counts: a body that quotes the key must
+    /// not suppress a real approval. One retry on a sharing violation.</summary>
     public string Append(string topic, string title, string body, string provenance, string? dedupKey = null)
     {
         RequireSlug(topic);
@@ -421,8 +418,8 @@ public sealed class MemoryStore
             var provenance = "";
             if (i < lines.Length && IsComment(lines[i]) && !lines[i].StartsWith(SupersededPrefix, StringComparison.Ordinal))
                 provenance = CommentText(lines[i++]);
-            // The marker counts only here, in the header position (decision 1, critique P1-2); a body
-            // line that quotes it is text, like a body that quotes a dedup key (M10 P2-3).
+            // The marker counts only here, in the header position; a body line that quotes it is text,
+            // like a body that quotes a dedup key.
             var superseded = false;
             if (i < lines.Length && lines[i].StartsWith(SupersededPrefix, StringComparison.Ordinal)) { superseded = true; i++; }
             var body = new StringBuilder();

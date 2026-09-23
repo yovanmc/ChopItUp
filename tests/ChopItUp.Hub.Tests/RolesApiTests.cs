@@ -8,12 +8,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Row 14 task 5: <c>/api/rooms/{roomId}/roles</c> (read), <c>/api/rooms/{roomId}/persona</c>,
+/// <summary><c>/api/rooms/{roomId}/roles</c> (read), <c>/api/rooms/{roomId}/persona</c>,
 /// <c>/api/participants/{id}/role</c> and <c>/api/rooms/{roomId}/roles/{participantId}</c> (writes).
 /// Every write here is a non-GET <c>/api</c> route, so <c>BearerTokenMiddleware</c> guards it by
-/// method already (ledger 8); this file proves that gate holds here too, that the GET reads the live
-/// roster rather than the startup-static singleton, and that D-b's "clear the override" and "no role
-/// in this room" requests are told apart.</summary>
+/// method already; this file proves that gate holds here too, that the GET reads the live roster
+/// rather than the startup-static singleton, and that "clear the override" and "no role in this
+/// room" requests are told apart.</summary>
 public sealed class RolesApiTests : IAsyncLifetime
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_roles_" + Guid.NewGuid().ToString("N"));
@@ -22,7 +22,7 @@ public sealed class RolesApiTests : IAsyncLifetime
     public async Task InitializeAsync()
     {
         _host = await HubTestHost.StartAsync(_dir);
-        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // row 28: every non-GET /api call here needs a credential
+        _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
     }
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
@@ -202,9 +202,9 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 
-    /// <summary>D-b's fourth state: a stored empty string is not the global role, and a cleared
-    /// override falls all the way back to it. The two requests differ only in whether "role" is
-    /// present in the body, so this is the test a blank-means-delete implementation fails.</summary>
+    /// <summary>A stored empty string is not the global role, and a cleared override falls all the
+    /// way back to it. The two requests differ only in whether "role" is present in the body, so this
+    /// is the test a blank-means-delete implementation fails.</summary>
     [Fact]
     public async Task Suppress_sentinel_and_clear_are_different_requests_with_different_outcomes()
     {
@@ -223,7 +223,7 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal("Global reviewer", Str(afterClear, "effectiveRole"));
     }
 
-    /// <summary>Row 14 review fix 1: a whitespace-only room override normalises like <c>SetRole</c> and
+    /// <summary>A whitespace-only room override normalises like <c>SetRole</c> and
     /// <c>MessageStore.SetPersona</c> instead of storing the raw spaces.</summary>
     [Fact]
     public async Task Room_role_of_whitespace_only_stores_the_suppress_sentinel_not_the_spaces()
@@ -268,7 +268,7 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal("A room for reviewing PRs.", general.GetProperty("persona").GetString());
     }
 
-    // -- Unauthenticated: refused AND the stored value is unchanged afterwards (AC8), not merely the status code. --
+    // -- Unauthenticated: refused AND the stored value is unchanged afterwards, not merely the status code. --
 
     [Fact]
     public async Task Persona_write_with_no_credential_is_401_and_the_stored_value_is_unchanged()
@@ -300,10 +300,10 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Null(Participants.RoomRole("general", "opus"));
     }
 
-    /// <summary>Row 14 review fix 3a (AC8): the guard is owner-class, not merely "some resolvable
-    /// bearer" — a model-class participant's own token resolves fine on <c>BearerTokenMiddleware</c>
-    /// (it is spawnable and valid) but must still be refused on every guarded write, with the stored
-    /// value left exactly as it was, not merely a status code this test never checked before.</summary>
+    /// <summary>The guard is owner-class, not merely "some resolvable bearer": a model-class
+    /// participant's own token resolves fine on <c>BearerTokenMiddleware</c> (it is spawnable and
+    /// valid) but must still be refused on every guarded write, with the stored value left exactly as
+    /// it was.</summary>
     [Fact]
     public async Task Writes_from_a_model_class_bearer_are_403_and_the_stored_values_are_unchanged()
     {
@@ -331,12 +331,12 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 
-    // -- Milestone 51: the roster's classes, model and effort are shown beside each row, read-only. --
+    // -- The roster's classes, model and effort are shown beside each row, read-only. --
 
     private static List<string?> Strs(JsonElement e, string prop) =>
         e.GetProperty(prop).EnumerateArray().Select(x => x.GetString()).ToList();
 
-    /// <summary>Milestone 51: every listed row carries the model name its host is launched with, its
+    /// <summary>Every listed row carries the model name its host is launched with, its
     /// normalised class set and the effort flag those classes earn inside a run (<c>judge</c> gets
     /// <c>high</c>, anyone else gets no flag, so null). The seed roster is the fixture: opus is
     /// visible+judge, sonnet is plumbing, gpt-5.5 has no classes at all.</summary>

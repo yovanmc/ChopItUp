@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { readOwnerToken } from './ownerToken';
 
-/** Row 12, B2. The desktop shell mints an owner bearer per launch and puts it on the page as a global
- *  on every document of the hub origin — in memory, never in storage, so nothing survives Quit and no
- *  other process on this machine can read a copy out of the WebView2 profile. This file is about the
- *  precedence that makes that work: the injected value wins, and everything else about the module is
- *  as it was, because a browser tab still has only the pasted token.
+/** The desktop shell mints an owner bearer per launch and puts it on the page as a global on every
+ *  document of the hub origin: in memory, never in storage, so nothing survives Quit and no other
+ *  process on this machine can read a copy out of the WebView2 profile. This file is about the
+ *  precedence that makes that work: the injected value wins, and a browser tab still has only the
+ *  pasted token.
  *
  *  No jsdom here (`api.test.ts` says why), so `window` is a stub and "no stub at all" is the plain
  *  browser with storage unavailable. */
