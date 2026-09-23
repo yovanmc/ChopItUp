@@ -56,7 +56,7 @@ public static class CorpusBuilder
     /// <paramref name="messages"/> total exist only in the write-ahead log (autocheckpoint is
     /// disabled before they are inserted, and a deterministic <c>wal_checkpoint(TRUNCATE)</c> runs
     /// just before that, so the split is exact, not approximate).</summary>
-    public static CorpusHandle Build(string dataDir, int messages, int rooms, int leaveInWal, int? seed = null, int schemaVersion = 1)
+    public static CorpusHandle Build(string dataDir, int messages, int rooms, int leaveInWal, int schemaVersion = 1)
     {
         if (messages < 0) throw new ArgumentOutOfRangeException(nameof(messages));
         if (rooms < 1) throw new ArgumentOutOfRangeException(nameof(rooms));

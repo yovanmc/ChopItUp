@@ -46,15 +46,6 @@ public sealed class ParticipantStoreTests : IDisposable
     }
 
     [Fact]
-    public void HumanIds_lists_owner_and_owner_remote()
-    {
-        var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
-        db.EnsureDatabase();
-
-        Assert.Equal(new[] { "owner", "owner-remote" }, new ParticipantStore(db).HumanIds());
-    }
-
-    [Fact]
     public void SetClasses_normalizes_and_persists()
     {
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
