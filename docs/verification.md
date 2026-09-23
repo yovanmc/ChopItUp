@@ -168,7 +168,7 @@ most one Claude call and one Codex call per leg; never retries internally.
 `-SeedOnly` spends no model call: it starts the hub, binds the directory room, and confirms the hub
 itself ran `git init` there — no exchange ever opens. Run that leg first: `pwsh
 tools\Invoke-Row35LiveCheck.ps1 -SeedOnly`. The full run (`pwsh tools\Invoke-Row35LiveCheck.ps1`) needs
-`claude auth status` reporting `loggedIn: true` first (LESSONS Row 26) — a signed-out CLI fails every
+`claude auth status` reporting `loggedIn: true` first — a signed-out CLI fails every
 Claude leg with no hub-side symptom. `-SkipClaude` / `-SkipCodex` re-run one leg alone.
 
 **The Codex `.git`-file worktree question.** A linked worktree's `.git` is a file, not a folder (row
