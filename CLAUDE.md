@@ -10,7 +10,7 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 - **No automation of claude.ai / chatgpt.com** (browser driving, session cookies, reverse-engineered endpoints): banned by both consumer ToS.
 - **Loopback only.** The hub binds `127.0.0.1`; no tunnel, no LAN bind, without a board row that says why.
 - **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo will be public.
-- **No confidentiality gate here** (owner ruling 2026-09-04): a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
+- **No confidentiality gate here.** This is a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
 - Never `Stop-Process -Name` a GUI app (Claude, ChatGPT); kill only PIDs you launched.
 - **No agent writes the deployed hub's data directory** — not via `--import-skill` in any argument form (omitting `--data` defaults there), and its `tokens.json` is never read for a credential; skills reach a deployed hub only through propose-and-approve.
 
@@ -25,7 +25,7 @@ dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
 ```
 `src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS, M3) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · `src/ChopItUp.Desktop` (WPF + WebView2 shell, row 12; dev: `dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe`).
 
-Affected checks are the default; CI is the final gate. Full fallback/reuse: `docs/affected-tests.md` (owner policy 2026-09-21).
+Affected checks are the default. CI is the final gate. Full fallback/reuse: `docs/affected-tests.md`.
 
 ## Deploy
 Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.

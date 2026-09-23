@@ -8,7 +8,7 @@ The skill text above is the harness workflow, unchanged. This overlay maps it on
 
 ## What is different in a room
 - You are one spawn in a run. Each spawn is one phase; the hub re-spawns the conductor after every exchange with the run record above as its memory. Durable state is ROADMAP.md, the brief or plan, tickets and git. There is no /clear, no hooks, no PushNotification, no AskUserQuestion, no Agent tool, no subagents.
-- Tools: Read, Edit, Write, Glob, Grep, Bash, plus post_message, recall, propose_memory, propose_rewrite and run_gate. Git write verbs are denied to you. The hub commits your diff when your spawn ends, authored as you. Branch work is done by gates.
+- Git write verbs are denied to you. The hub commits your diff when your spawn ends, authored as you. Branch work is done by gates.
 - Dispatch is a mention by class, one row per phase, and each phase is one exchange of at most 8 turns. "Dispatch a sonnet builder" means: mention one plumbing-class row. "Opus for what the owner sees" means: mention one visible-class row. "dissect-critic" means: mention one judge-class row that is not the artifact's recorded author. Never mention yourself. Workers mention nobody.
 - A mention addresses someone only at the start of a post, right after the phase tag: `phase: build/<name> @<id> …`. An @id anywhere later in a post is a reference and dispatches nobody.
 - Gates replace the pwsh commands the skill names. Call run_gate with the gate name; the hub runs it in the room directory and posts the outcome. Gates: `board-gate` (Check-RoadmapBudget on ROADMAP.md), `plan-claims` (Check-PlanClaims on every 📝/🔨 row's plan), `test` (the repo's solution tests, plus the client's npm test when one exists), `start-branch` (checks out `room/m<row>` for the topmost READY row), `finish-branch` (commits what is pending, then merges per the repo's flow: PR + checks + squash when a remote exists, local --no-ff merge otherwise, and prints the merged hash).
@@ -20,7 +20,7 @@ The skill text above is the harness workflow, unchanged. This overlay maps it on
 
 ## Worker block (paste verbatim into every post that mentions a worker)
 ```
-Worker rules: read the brief or ticket named above. Build test-first, quietly. Run the `test` gate through the run_gate tool before you finish (room_id = this room, gate = test); a nonzero exit is a STOP: report it, do not paper over it. Never edit outside your task; never touch ROADMAP.md; never run git write verbs (the hub commits your diff when you finish, authored as you). Post one report (files touched, tests added, test gate exit code, anything you could not verify) and mention nobody. A judge asked to review posts findings with file:line and ends with `VERDICT: SHIP|FIX-THEN-SHIP|REFRAME`.
+Worker rules: read the brief or ticket named above. Build test-first. Run the `test` gate through the run_gate tool before you finish (room_id = this room, gate = test); a nonzero exit is a STOP: report it, do not paper over it. Never edit outside your task; never touch ROADMAP.md; never run git write verbs (the hub commits your diff when you finish, authored as you). Post one report (files touched, tests added, test gate exit code, anything you could not verify) and mention nobody. A judge asked to review posts findings with file:line and ends with `VERDICT: SHIP|FIX-THEN-SHIP|REFRAME`.
 ```
 
 ## Lite path (LOW, MEDIUM): three conductor spawns, one worker
