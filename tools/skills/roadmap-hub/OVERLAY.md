@@ -1,40 +1,55 @@
 ---
 run: true
-gates: board-gate, plan-claims, test, start-branch, finish-branch
+gates: board-gate, plan-claims, test, start-branch
 ---
-# Room overlay for /roadmap
+# Room adapter for /roadmap
 
-The skill text above is the harness workflow, unchanged. This overlay maps it onto a hub run. Where the two disagree inside a room, this overlay wins; where this overlay is silent, the skill text stands.
+The skill text above is the delivery core every host shares, with its Risk and review rules. This overlay is the room's adapter, and inside a room it wins where they differ. The files they point at (engineering.md, verification-tiers.md, a host's skills) are outside the room, and this overlay replaces them.
 
-## What is different in a room
-- You are one spawn in a run. Each spawn is one phase; the hub re-spawns the conductor after every exchange with the run record above as its memory. Durable state is ROADMAP.md, the brief or plan, tickets and git. There is no /clear, no hooks, no PushNotification, no AskUserQuestion, no Agent tool, no subagents.
-- Git write verbs are denied to you. The hub commits your diff when your spawn ends, authored as you. Branch work is done by gates.
-- Dispatch is a mention by class, one row per phase, and each phase is one exchange of at most 8 turns. "Dispatch a sonnet builder" means: mention one plumbing-class row. "Opus for what the owner sees" means: mention one visible-class row. "dissect-critic" means: mention one judge-class row that is not the artifact's recorded author. Never mention yourself. Workers mention nobody.
-- A mention addresses someone only at the start of a post, right after the phase tag: `phase: build/<name> @<id> …`. An @id anywhere later in a post is a reference and dispatches nobody.
-- Gates replace the pwsh commands the skill names. Call run_gate with the gate name; the hub runs it in the room directory and posts the outcome. Gates: `board-gate` (Check-RoadmapBudget on ROADMAP.md), `plan-claims` (Check-PlanClaims on every 📝/🔨 row's plan), `test` (the repo's solution tests, plus the client's npm test when one exists), `start-branch` (checks out `room/m<row>` for the topmost READY row), `finish-branch` (commits what is pending, then merges per the repo's flow: PR + checks + squash when a remote exists, local --no-ff merge otherwise, and prints the merged hash).
-- Never ask. A question resolves repo-default → punch list in the ping → park. Park is a `phase: ping` post whose first line after the tag is `PARKED: <one-line why>`, followed by the punch list. If the text above the skill fence tells you this is your last turn and to ask the owner whether to continue, that sentence does not apply to a conductor: your turn always ends in a `phase:` post, never a question. A human message after the root post is a steer: obey it before advancing.
-- Never deploy inside a run. The hub you run in may be the app being deployed. The ping names deploy as the next harness step when the repo has a launch dir.
-- The run always works the topmost READY row. The arguments of the /roadmap post are free text for you (a hint such as `lite`), never a row selector: the start-branch gate names its branch from the topmost READY row and the two must agree.
-- The tier fork holds: LOW and MEDIUM take the lite path below. HIGH takes the full path below. Doubt resolves upward. A lite-path run never calls `plan-claims`.
-- Workers do not see this text. Everything a worker must know travels in your post: paste the worker block below into every build, verify and critique post, after your instruction.
+## The room
+- You are one spawn in a run, and each spawn is one phase. The hub re-spawns the conductor after every exchange with the run record above as its memory. Durable state is ROADMAP.md, the brief and git. There are no hooks, subagents, owner questions or notifications.
+- This replaces the core's Delegation section. The conductor never writes code and a room has no lean builder, so every code change comes from a worker row and the brief is its packet. A worker is a plumbing-class row, or a visible-class row when the owner will see the output. The peers line shows each row's classes.
+- The hub commits every spawn's tracked and new files when it ends, even when nothing changed, but never an ignored file. A Claude row's git write verbs are denied. A Codex row's sandbox stops neither git nor the network, so for it the no-push rule is this text alone.
+- Gates replace the commands the core names. Call run_gate with the gate name, and the hub runs it in the room directory. `board-gate` checks ROADMAP.md against its schema. `plan-claims` rechecks the claim ledger of each plan a 📝 or 🔨 row names, stages that plan even when it is ignored so the hub commits it, and prints `<n> plan(s) checked`. `test` runs the solution's tests, and the client's npm test when one exists. `start-branch` returns to the default branch (reset to origin when there is one) and checks out `room/m<row>` for the topmost READY row that is not 📝 or 🔨 and has no `room/m<row>` branch yet, printing that branch.
+
+## The row and the stop boundary
+- A run works one row: the number in the /roadmap post, else the row `start-branch` picks.
+- The run stops at a reviewed room branch. The native owner session (Claude Code or Codex) that picks it up reviews it again, merges, deploys and checks the installed form. The room never merges, pushes, deploys or starts the app, which may be the hub it runs in.
+- A defect outside the row never goes into its code. Before the 🔨 flip it becomes one `docs/BUGS.md` line, and after it the ping's punch list carries it.
+- Never ask. A question resolves to the repository default, then the punch list, then a park: a `phase: ping` post whose first line after the tag is `PARKED: <one-line why>`, then the punch list. A human message after the root post is a steer: obey it before advancing.
+
+## Spawn 1
+Read ROADMAP.md and list its OWNER rows.
+- The assigned row is 🔨 and `git rev-parse --abbrev-ref HEAD` prints `room/m<row>`: resume it per the core. Skip `start-branch`, run `board-gate`, `plan-claims` and `test`, then dispatch the build for what the branch does not yet do, or go to the review when it does it all. A 🔨 row with the clone on any other branch parks.
+- Otherwise run `board-gate` and `start-branch`, then `test` for the baseline. A FAIL or nonzero exit parks, and so does a `start-branch` that picked a row other than the assigned one.
+- Class the row per the core's Risk. Doubt resolves upward, and a surface the repository's instruction file marks HIGH is sensitive. A sensitive row parks with `PARKED: sensitive rows go to a native session`, because the room has no design-review path.
+
+## The brief
+At `.scratch/m<row>-<slug>/brief.md`, at most 6 tasks, and every claim a task rests on is a ledger row whose recheck exits 0 while it holds and fails once it does not:
+```
+# m<row> <title>
+Risk: <class>, because <effect>
+Sessions: room <id>, base <default-branch hash at spawn 1>
+## Acceptance
+## Baseline
+## Tasks
+1. <task>: <files>
+## Claim ledger
+| # | Claim | Verified at | Recheck |
+|---|---|---|---|
+| 1 | Greeter defines Greet(string) | <hash> | `pwsh -c "if((gc src/Lib/Greeter.cs -Raw) -match 'static string Greet\(string'){exit 0}else{exit 1}"` |
+## Cannot verify here
+```
 
 ## Worker block (paste verbatim into every post that mentions a worker)
 ```
-Worker rules: read the brief or ticket named above. Build test-first. Run the `test` gate through the run_gate tool before you finish (room_id = this room, gate = test); a nonzero exit is a STOP: report it, do not paper over it. Never edit outside your task; never touch ROADMAP.md; never run git write verbs (the hub commits your diff when you finish, authored as you). Post one report (files touched, tests added, test gate exit code, anything you could not verify) and mention nobody. A judge asked to review posts findings with file:line and ends with `VERDICT: SHIP|FIX-THEN-SHIP|REFRAME`.
+Worker rules: read the brief named above. Build test-first and show the failing test before the fix. Run the `test` gate through the run_gate tool before you finish (room_id = this room, gate = test). A nonzero exit is a STOP: report it, never paper over it. Never edit outside your task, never touch ROADMAP.md or the brief, never run git write verbs or push (the hub commits your changes when you finish). Post one report (files touched, tests added, the test gate's exit code, anything you could not verify) and mention nobody.
 ```
 
-## Lite path (LOW, MEDIUM): three conductor spawns, one worker
-Spawn 1, trigger = the /roadmap post. Read ROADMAP.md. List OWNER rows. Take the topmost READY row. Run `board-gate`; a FAIL parks. Run `start-branch`; a nonzero exit parks. Measure the baseline with the `test` gate. Write the brief at `.scratch/m<row>-<slug>/brief.md` per the skill (acceptance, baseline, ≤ 6 tasks with files, lessons consulted, could-not-verify). Flip the row to 📝 / READY with the brief path in the Plan cell, and run `board-gate` again. Post:
-```
-phase: build/<slug> @<one plumbing-class row, or a visible-class row when the owner will see the output>
-Brief: .scratch/m<row>-<slug>/brief.md. Do the tasks in order.
-<the worker block>
-```
+## Tiny and standard rows
+Spawn 1 writes the brief, flips the row to 🔨 with the brief in its Plan cell, and runs `board-gate` and `plan-claims`. Anything but exit 0 with `<n> plan(s) checked`, where n is the number of 📝 and 🔨 rows naming a plan, parks. Then it posts `phase: build/<slug> @<worker>` with the brief path, "Do the tasks in order" and the worker block. From here the conductor edits nothing, so the tree it reviews is the tree the owner merges.
 Spawn 2 is the worker.
-Spawn 3, trigger = the build exchange concluded. Read the brief, then `git log --oneline -5` and `git show --stat HEAD` (read verbs are allowed). Check every acceptance criterion against the diff and the test gate result in the run record. Not met → post `phase: build/<slug> @<the same worker row>` again with the punch list (the fourth entry of the same phase parks the run; say so in the punch list). Pick workers from the peers line above, which shows each row's classes: a build mention must be a plumbing- or visible-class row, never a row with no class. Met → flip the row to ✅ / DONE with Notes `Merged by room run; hash in git log and in the ping.` (never a hash placeholder: the merge has not happened yet), delete the previous ✅ row, delete the brief directory, run `board-gate`, then run `finish-branch` exactly once. A nonzero exit parks with the gate's tail in the ping. Otherwise the hash the gate printed goes into the ping, and nothing is edited after the merge. Post the ping.
-
-## Full path (HIGH): defined here, exercised by a later row
-Consensus `phase: plan/consensus @<judge> @<visible>` (≤ 8 turns; each participant posts one position). Writer `phase: plan/write @<visible>` (the plan per the skill, claim ledger measured in-room, tickets under .scratch). Critique `phase: critique/pass-1 @<judge not the author>` with `artifact: <the plan's path>` on its own line. Fold `phase: plan/fold @<the writer>`. Critique `phase: critique/pass-2 @<another judge, or the same judge told what pass 1 found>` with `artifact: <the plan's path>` on its own line. Preflight: the conductor runs `plan-claims`. Build: one `phase: build/<ticket> @<the worker row>` per ticket frontier, review each with `git show` and, for MEDIUM and HIGH, `phase: verify/review @<judge>` on the branch diff. Verify: `test`. Finish as in the lite path.
+Spawn 3, after the build exchange: you wrote no code, so you are the non-author review. Read the brief and `git diff <base>...HEAD`, open every changed file, and check each acceptance criterion against the diff and the `test` result in the run record. Your verdict is PASS, CHANGES REQUIRED or BLOCKED, each finding `<BLOCKER|MAJOR|MINOR> <file:line>: how it fails, which way to fix it`, closed by `HEAD <short hash> · FILES <changed> · READ <opened>`. CHANGES REQUIRED posts `phase: build/<slug> @<the same worker>` with the findings. The hub stops a phase at its fourth entry. PASS posts the ping with your review in it.
 
 ## The ping post
-First line `phase: ping`. Then `<Project> row <n> <title>: merged <hash>` (or `PARKED: <why>` and the punch list), the count line `Owner items: A n / B 0 / C n`, deploy pending or not, then `Next: post /roadmap in this room, mentioning the conductor row, to plan the next row.` Never write an @id anywhere in a ping: a conductor post whose leading mention is the conductor is refused, and a ping mentions nobody. The hub ends the run on this post.
+First line `phase: ping`. Then `<Project> row <n> <title>: room/m<n> reviewed at <hash>, base <hash>, review PASS by <reviewer id without @>` (or `PARKED: <why>`), the Risk line, the review's verdict, findings and HEAD line, the punch list, and `Pending for the native owner: its own non-author review (the room's review does not replace it), merge, deploy, installed check`, adding `UI judgment, UIA` when the diff touches UI. Last, `Next: in a native session, git fetch <this room's directory> room/m<n>:room/m<n>, check git diff <hash> room/m<n> is empty (the hub's trail commits add nothing), check git ls-remote origin lists no room/ branch and git merge-base --is-ancestor <hash> origin/main exits 1, then resume row <n>.` Never write an @id in a ping: it mentions nobody, and the hub ends the run on it.

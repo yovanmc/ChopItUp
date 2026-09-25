@@ -1,5 +1,8 @@
 ﻿#requires -Version 7
 # Gate: Check-PlanClaims on every plan a 📝 or 🔨 row names. No such row = nothing to check, exit 0.
+# Each plan is also staged with `git add -f`: plans live under an ignored .scratch/, the hub's commit
+# (`git add -A`) skips ignored files and a room spawn cannot run git add, so without this the plan
+# never reaches the branch the native owner fetches.
 [CmdletBinding()] param()
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false   # native exit codes are read from $LASTEXITCODE; 'Stop' must not throw on them (pwsh 7.6.5 default False, measured)
@@ -19,6 +22,8 @@ foreach ($line in Get-Content -LiteralPath $roadmap) {
     $plan = Join-Path $root $planCell
     if (-not (Test-Path -LiteralPath $plan -PathType Leaf)) { Write-Host "plan-claims: row $($cells[0]) names '$planCell' which does not exist"; $worst = [Math]::Max($worst, 1); continue }
     $checked++
+    & git add -f -- $plan
+    if ($LASTEXITCODE -ne 0) { Write-Host "plan-claims: could not stage '$planCell'"; $worst = [Math]::Max($worst, 1) }
     & pwsh -NoProfile -NonInteractive -File $gate -PlanPath $plan -RepoPath $root
     $worst = [Math]::Max($worst, $LASTEXITCODE)
 }

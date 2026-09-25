@@ -112,17 +112,29 @@ outside the job on 10 of 15 runs, while the worker process the command line name
 
 ## Running /roadmap in a room
 
-Import with its overlay before the hub starts: `ChopItUp.Hub.exe --import-skill <skill dir>
---overlay <overlay dir>`. Class rows to build or judge, hub stopped: `--set-classes
+The room skill is built on the owner's machine, because its shared delivery texts never enter this
+repo. With the hub stopped, from a checkout:
+
+```powershell
+& .\tools\Build-RoomSkill.ps1 -Out "$env:TEMP\chopitup-room-skill\roadmap"
+& '<install dir>\ChopItUp.Hub.exe' --import-skill "$env:TEMP\chopitup-room-skill\roadmap" --overlay .\tools\skills\roadmap-hub --force
+```
+
+The build prints the character counts, and `GET /api/skills` should then list `roadmap` with its
+room description and that count. Class rows to build or judge, hub stopped: `--set-classes
 <id>=<classes>` (comma-separated; empty after `=` clears). Bind a room to a repository root:
 `POST /api/rooms {name, directory}`.
 
-Start a run: post `/roadmap @<conductor>` in the room (text after the mention is a free-text
-hint, never a row selector). Only a human roster row can start a run (`SpawnerService.ResolveSkill`
+Start a run: post `/roadmap @<conductor>` in the room, optionally with a row number after the
+mention. The conductor works that row, or the row `start-branch` picks when none is given, and parks
+when the two differ. Only a human roster row can start a run (`SpawnerService.ResolveSkill`
 returns nothing for any other author), so an agent driving the hub needs the `owner-remote`
 credential rather than its own MCP identity. Steer an active run by posting in the room; the conductor reads it
 before its next phase post. `/stop` ends the run outright; a `phase: ping` post ends it on its
-own. Deploy only after a run ends, never inside one: the ping names deploy as the next step.
+own. The room works tiny and standard rows only and parks a sensitive one. A finished run stops at
+a reviewed `room/m<row>` branch: the ping names the reviewed hash and the fetch command, and a native
+Claude Code or Codex session reviews it again, merges and deploys. The room never merges, pushes or
+deploys.
 
 Owner-remote setup: `--print-config` writes `<data>\host-configs\claude-code-owner-remote.json`
 under the hub's DATA directory, not the repo. Merge its `chopitup` entry into the phone-driven
@@ -146,9 +158,10 @@ steer), as long as the run is still active. A ping whose body starts `PARKED:` h
 ENDED the run; re-post `/roadmap` to start a new one.
 
 The room clone's default branch is hub-owned: empty trail commits land on it, and the next
-`start-branch` gate resets it from origin. A branch already pushed with an open PR is reused
-by the next `finish-branch`, or closed by hand with `gh pr close`. To abandon a run's
-unfinished work outright, delete `room/m<row>` locally and on origin from a harness session.
+`start-branch` gate returns to it and resets it from origin. A run that parks after its 🔨 flip
+leaves the clone on `room/m<row>`, and `/roadmap @<conductor> <row>` resumes it there. `start-branch`
+skips any row that already has a `room/m<row>` branch, so to restart a row from scratch, delete
+that branch in the room clone from a native session first. Room branches are never pushed.
 
 ## Exchanges in worktrees, live
 

@@ -1,13 +1,17 @@
 <#
 .SYNOPSIS
-    Roadmap-skill live check: proves that the ported roadmap skill, run as a hub run, drives a scratch
-    .NET repo's topmost READY row from `/roadmap @<conductor>` to a merged ping, with a Codex row as
-    the only plumbing worker.
+    Roadmap-skill live check: proves that the room's roadmap skill, run as a hub run, drives a scratch
+    .NET repo's topmost READY row from `/roadmap @<conductor>` to a reviewed room/m1 branch and a
+    ping, with a Codex row as the only plumbing worker, and that nothing reaches the repo's origin.
 
 .DESCRIPTION
+    The skill is built by Build-RoomSkill.ps1 into a folder beside -DataDir unless -SkillSource names
+    one. The scratch repo gets a local bare origin, so start-branch takes the fetch-and-reset path a
+    real room takes. The run ends at the ping: a native session, not the room, merges.
+
     Spends real model calls on the owner's subscription: the conductor (-Conductor, default opus,
     effort high - opus is judge-classed) is re-spawned several times, and the worker (-Worker,
-    default gpt-5.4-mini, a Codex row) once for the build phase. Never touches C:\Self Apps,
+    default gpt-5.6-terra, a Codex row) once for the build phase. Never touches C:\Self Apps,
     %USERPROFILE%\ChopItUp or any real data directory: -DataDir and -RoomsRoot default to fresh
     folders under $env:TEMP and are left behind with the log (the scratch repo and data dir are
     themselves deleted at the end unless -KeepArtifacts is passed).
@@ -31,7 +35,7 @@
     always, and every orphan whose command line names this run's -DataDir is swept in the same
     `finally`.
 
-    Cost: conductor opus x3-4 at effort high, Codex gpt-5.4-mini x1, plus one re-entry at most;
+    Cost: conductor opus x3-4 at effort high, Codex gpt-5.6-terra x1, plus one re-entry at most;
     ~10-20 minutes. Agent-run only - never invoke `claude` or `codex` directly, and never run this
     against the real ChopItUp repo or a live hub's data directory.
 #>
@@ -42,10 +46,10 @@ param(
     [string]$RoomsRoot = '',
     [int]$Port = 8803,
     [int]$TimeoutSeconds = 3600,
-    [string]$SkillSource = (Join-Path $HOME '.claude\skills\roadmap'),
+    [string]$SkillSource = '',
     [string]$OverlaySource = (Join-Path $PSScriptRoot 'skills\roadmap-hub'),
     [string]$Conductor = 'opus',
-    [string]$Worker = 'gpt-5.4-mini',
+    [string]$Worker = 'gpt-5.6-terra',
     [switch]$KeepArtifacts,
     # Dry-run leg (no hub, no spend): seeds ONLY the scratch repo (step 1) at "$DataDir.repo" and
     # exits 0 once the seed commit exists and the baseline `dotnet test` is green.
@@ -114,7 +118,7 @@ function Initialize-ScratchRepo {
         Set-Content -LiteralPath 'CLAUDE.md' -Value @(
             '# Scratch - M20 roadmap-in-room check',
             '',
-            'LOCAL-ONLY repo, thrown away after the check runs.',
+            'Scratch repo with a local bare origin, thrown away after the check runs.',
             '',
             "Test command: dotnet test $slnFile -c Debug --nologo -v minimal",
             '',
@@ -131,7 +135,7 @@ function Initialize-ScratchRepo {
             '<!-- roadmap-schema: whitelist-v3 -->',
             '',
             '## Definition',
-            'Scratch repo for the M20 roadmap-in-room check. Repo: LOCAL-ONLY.',
+            'Scratch repo for the M20 roadmap-in-room check. Repo: a local bare origin.',
             '',
             '## Milestones',
             '| # | Title | Status | Ready | Plan | Notes |',
@@ -153,12 +157,22 @@ function Initialize-ScratchRepo {
         if ($LASTEXITCODE -ne 0) { throw "git commit failed (exit $LASTEXITCODE)" }
         $seedHash = (git rev-parse HEAD).Trim()
 
+        # A bare origin beside the repo, so start-branch fetches and resets the way it does in a real
+        # room, and the run can be checked for anything it pushed.
+        $originPath = "$RepoPath.origin"
+        git init --quiet --bare -b main $originPath | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git init --bare failed (exit $LASTEXITCODE)" }
+        git remote add origin $originPath | Out-Null
+        git push --quiet -u origin main 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "git push to the scratch origin failed (exit $LASTEXITCODE)" }
+        git remote set-head origin main | Out-Null
+
         # Not itself a check (plan step 1): warms the build cache and proves the seed is green before
         # anything is spent on a run against it.
         dotnet test $slnFile -c Debug --nologo -v minimal
         if ($LASTEXITCODE -ne 0) { throw "baseline 'dotnet test $slnFile' failed (exit $LASTEXITCODE); the seed itself is broken" }
 
-        return [pscustomobject]@{ SeedHash = $seedHash; SlnFile = $slnFile; UsedSlnx = $usedSlnx }
+        return [pscustomobject]@{ SeedHash = $seedHash; SlnFile = $slnFile; UsedSlnx = $usedSlnx; OriginPath = $originPath }
     }
     finally {
         Pop-Location
@@ -216,15 +230,28 @@ if (-not (Test-Path -LiteralPath $HubExe -PathType Leaf)) {
     Write-Error "Hub exe not found at '$HubExe'. Build first, or pass -HubExe." -ErrorAction Continue
     exit 2
 }
+$builtSkillRoot = "$DataDir.skill"
+if (-not $SkillSource) {
+    if (Test-Path -LiteralPath $builtSkillRoot) {
+        Write-Error "'$builtSkillRoot' already exists; this script only ever builds into a fresh folder." -ErrorAction Continue
+        exit 2
+    }
+    $SkillSource = Join-Path $builtSkillRoot 'roadmap'
+    & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'Build-RoomSkill.ps1') -Out $SkillSource -Overlay (Join-Path $OverlaySource 'OVERLAY.md')
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Build-RoomSkill.ps1 failed (exit $LASTEXITCODE)." -ErrorAction Continue
+        exit 2
+    }
+}
 if (-not (Test-Path -LiteralPath (Join-Path $SkillSource 'SKILL.md') -PathType Leaf)) {
-    Write-Error "No SKILL.md at '$SkillSource'. Pass -SkillSource pointing at the canonical roadmap skill folder." -ErrorAction Continue
+    Write-Error "No SKILL.md at '$SkillSource'. Pass -SkillSource pointing at a Build-RoomSkill.ps1 output folder." -ErrorAction Continue
     exit 2
 }
 if (-not (Test-Path -LiteralPath (Join-Path $OverlaySource 'OVERLAY.md') -PathType Leaf)) {
     Write-Error "No OVERLAY.md at '$OverlaySource'. Pass -OverlaySource pointing at tools\skills\roadmap-hub." -ErrorAction Continue
     exit 2
 }
-foreach ($d in @($DataDir, $RoomsRoot, $repoPath)) {
+foreach ($d in @($DataDir, $RoomsRoot, $repoPath, "$repoPath.origin")) {
     if (Test-Path -LiteralPath $d) {
         Write-Error "'$d' already exists; this script only ever runs against fresh directories." -ErrorAction Continue
         exit 2
@@ -241,7 +268,9 @@ $ownerToken = (Initialize-ChopScratchTokens -DataDir $DataDir -ParticipantIds @(
 # --- Step 1: seed the scratch repo, record its HEAD as the pre-run baseline ------------------------
 $seed = Initialize-ScratchRepo -RepoPath $repoPath
 $seedHash = $seed.SeedHash
-Add-Content -Path $log -Value "seed: hash=$seedHash slnFile=$($seed.SlnFile) usedSlnx=$($seed.UsedSlnx) repo=$repoPath"
+$originPath = $seed.OriginPath
+$originRefsBefore = (git -C $originPath for-each-ref --format='%(refname) %(objectname)') -join "`n"
+Add-Content -Path $log -Value "seed: hash=$seedHash slnFile=$($seed.SlnFile) usedSlnx=$($seed.UsedSlnx) repo=$repoPath origin=$originPath"
 
 $base = "http://127.0.0.1:$Port"
 $hub = $null
@@ -381,7 +410,7 @@ try {
     Add-ModelTriggeredCheck -Name 'run.phases-include-build-and-ping' -Passed ($sawBuild -and $sawPing) `
         -Detail "phases recorded: $($recorded -join ',')" -RoomId $roomId
 
-    foreach ($gateName in @('start-branch', 'test', 'board-gate', 'finish-branch')) {
+    foreach ($gateName in @('start-branch', 'test', 'board-gate', 'plan-claims')) {
         $gateHits = @($finalRun.gateRuns | Where-Object { $_.gate -eq $gateName -and $_.exitCode -eq 0 })
         Add-ModelTriggeredCheck -Name "gate.$gateName-exit-0" -Passed ($gateHits.Count -ge 1) `
             -Detail "gateRuns=$(($finalRun.gateRuns | ForEach-Object { "$($_.gate):$($_.outcome):$($_.exitCode)" }) -join ' | ')" -RoomId $roomId
@@ -391,16 +420,45 @@ try {
     Add-ModelTriggeredCheck -Name 'run.codex-worker-posted' -Passed ($codexPosted.Count -gt 0) `
         -Detail "count=$($codexPosted.Count)" -RoomId $roomId
 
-    $mainNow = (git -C $repoPath rev-parse main).Trim()
-    Add-ModelTriggeredCheck -Name 'repo.main-advanced' -Passed ($mainNow -ne $seedHash) `
-        -Detail "seedHash=$seedHash mainNow=$mainNow" -RoomId $roomId
+    # The room stops at a reviewed branch: nothing may reach the origin.
+    $originRefsAfter = (git -C $originPath for-each-ref --format='%(refname) %(objectname)') -join "`n"
+    Add-Check -Name 'repo.origin-unchanged' -Passed ($originRefsAfter -eq $originRefsBefore) `
+        -Detail "before=[$($originRefsBefore -replace "`n", '; ')] after=[$($originRefsAfter -replace "`n", '; ')]"
 
-    $roadmapAfter = Get-Content -LiteralPath (Join-Path $repoPath 'ROADMAP.md') -Raw
-    $rowFlipped = $roadmapAfter -match '\|\s*1\s*\|[^|]*\|\s*✅[^|]*\|\s*DONE'
-    Add-ModelTriggeredCheck -Name 'repo.row-flipped' -Passed ([bool]$rowFlipped) -Detail "row 1 status/ready cells flipped=$rowFlipped" -RoomId $roomId
+    git -C $repoPath rev-parse --verify --quiet room/m1 | Out-Null
+    $hasRoomBranch = $LASTEXITCODE -eq 0
+    Add-ModelTriggeredCheck -Name 'repo.room-branch-exists' -Passed $hasRoomBranch -Detail 'room/m1' -RoomId $roomId
 
-    $greeterAfter = Get-Content -LiteralPath (Join-Path $repoPath 'src/Scratch.Lib/Greeter.cs') -Raw
-    Add-ModelTriggeredCheck -Name 'repo.greeter-implemented' -Passed ($greeterAfter -like '*Hello, *') -Detail 'looked for the literal "Hello, " in Greeter.cs' -RoomId $roomId
+    $greeterOnBranch = if ($hasRoomBranch) { (git -C $repoPath show 'room/m1:src/Scratch.Lib/Greeter.cs') -join "`n" } else { '' }
+    Add-ModelTriggeredCheck -Name 'repo.greeter-implemented-on-room-branch' -Passed ($greeterOnBranch -like '*Hello, *') `
+        -Detail 'looked for the literal "Hello, " in room/m1:src/Scratch.Lib/Greeter.cs' -RoomId $roomId
+
+    $roadmapOnBranch = if ($hasRoomBranch) { (git -C $repoPath show 'room/m1:ROADMAP.md') -join "`n" } else { '' }
+    $rowBuilding = $roadmapOnBranch -match '\|\s*1\s*\|[^|]*\|\s*🔨[^|]*\|\s*READY'
+    Add-ModelTriggeredCheck -Name 'repo.row-at-building-on-room-branch' -Passed ([bool]$rowBuilding) -Detail "row 1 at 🔨 READY=$rowBuilding" -RoomId $roomId
+
+    # The ping names the reviewed hash. The hub's later commits on the branch are empty, so the tree
+    # the native owner fetches must equal the reviewed one.
+    $ping = $allMessages | Where-Object { $_.authorId -eq $Conductor -and $_.body -match '^phase: ping' } | Select-Object -Last 1
+    $reviewed = if ($ping -and $ping.body -match 'reviewed at ([0-9a-f]{7,40})') { $Matches[1] } else { $null }
+    $treeSame = $false
+    if ($reviewed -and $hasRoomBranch) { git -C $repoPath diff --quiet $reviewed room/m1; $treeSame = $LASTEXITCODE -eq 0 }
+    Add-ModelTriggeredCheck -Name 'repo.reviewed-tree-is-the-branch-tree' -Passed $treeSame -Detail "reviewed=$reviewed" -RoomId $roomId
+
+    # What the native owner does first: fetch room/m1 into another clone and gate its board. The brief
+    # the 🔨 row names must be committed for this to pass.
+    $clonePath = "$repoPath.native"
+    $cloneGateExit = -1
+    if ($hasRoomBranch) {
+        git clone --quiet --branch room/m1 $repoPath $clonePath 2>&1 | Out-Null
+        $env:ROADMAP_GATE_BASELINE = Join-Path $DataDir 'native-clone-baselines.json'
+        try {
+            & pwsh -NoProfile -File (Join-Path $SkillSource 'preflight\Check-RoadmapBudget.ps1') -RoadmapPath (Join-Path $clonePath 'ROADMAP.md') -RequireSchema -RepoRoot $clonePath | Out-Null
+            $cloneGateExit = $LASTEXITCODE
+        }
+        finally { Remove-Item Env:ROADMAP_GATE_BASELINE -ErrorAction SilentlyContinue }
+    }
+    Add-ModelTriggeredCheck -Name 'repo.fresh-clone-board-gate-passes' -Passed ($cloneGateExit -eq 0) -Detail "exit=$cloneGateExit clone=$clonePath" -RoomId $roomId
 }
 finally {
     if ($hub -and -not $hub.HasExited) { Stop-Process -Id $hub.Id -Force -ErrorAction SilentlyContinue }
@@ -420,12 +478,12 @@ finally {
     # (hub stdout/stderr, transcripts under $DataDir) lives inside them.
     $allPassed = ($total -gt 0) -and ($passed -eq $total)
     if ($allPassed -and -not $KeepArtifacts) {
-        foreach ($d in @($DataDir, $RoomsRoot, $repoPath)) {
+        foreach ($d in @($DataDir, $RoomsRoot, $repoPath, "$repoPath.origin", "$repoPath.native", $builtSkillRoot)) {
             if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue }
         }
     }
     else {
-        Write-Host "Artifacts kept: data=$DataDir rooms=$RoomsRoot repo=$repoPath"
+        Write-Host "Artifacts kept: data=$DataDir rooms=$RoomsRoot repo=$repoPath origin=$repoPath.origin skill=$SkillSource"
     }
 }
 exit $(if ($passed -eq $total -and $total -gt 0) { 0 } else { 1 })
