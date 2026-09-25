@@ -7,7 +7,7 @@ namespace ChopItUp.Hub.Tests.Skills;
 
 /// <summary>The room's <c>/roadmap</c>: <c>tools/Build-RoomSkill.ps1</c> assembles the skill from the
 /// owner's shared delivery texts, and the committed <c>tools/skills/roadmap-hub</c> overlay composes
-/// onto it at import. The shared texts live on the owner's machine and never enter this repo, so the
+/// onto it at import. The shared texts live on the hub's machine and never enter this repo, so the
 /// build runs here against fixture roots of the same shape. The import target is a scratch store
 /// under <see cref="Path.GetTempPath"/>: nothing here touches an installed skill or a data
 /// directory.</summary>
