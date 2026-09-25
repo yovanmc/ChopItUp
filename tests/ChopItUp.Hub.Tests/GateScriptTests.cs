@@ -9,7 +9,7 @@ namespace ChopItUp.Hub.Tests;
 /// temporary git repository under <see cref="Path.GetTempPath"/> with its own local git identity.
 ///
 /// <c>board-gate</c> and <c>plan-claims</c> against a REAL plan are not exercised here: they need the
-/// harness's <c>preflight/Check-RoadmapBudget.ps1</c> / <c>Check-PlanClaims.ps1</c>, which
+/// shared <c>preflight/Check-RoadmapBudget.ps1</c> / <c>Check-PlanClaims.ps1</c>, which
 /// <c>tools/Build-RoomSkill.ps1</c> copies into the room skill it builds on the hub's machine. The
 /// repo never carries them, so CI cannot run them. The plan-claims tests below reproduce composition's
 /// shape instead: an unmodified copy of the real script next to a stub preflight script.</summary>

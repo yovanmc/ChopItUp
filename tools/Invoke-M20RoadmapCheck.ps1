@@ -303,8 +303,8 @@ function Wait-Run([string]$RoomId, [string]$Until, [int]$Seconds) {
 }
 
 # Any path passed through -ArgumentList is quoted inside the argument string, always:
-# Start-Process joins -ArgumentList with spaces and quotes nothing itself, and this repo's own
-# default paths (and -SkillSource) live under 'C:\Agent Projects', which has a space in it.
+# Start-Process joins -ArgumentList with spaces and quotes nothing itself, and a checkout, -DataDir or
+# -SkillSource can sit under a folder whose name has a space in it.
 function Invoke-HubHostCommand {
     param([string[]]$Arguments, [string]$Label)
     $outLog = Join-Path $DataDir "$Label.out.log"

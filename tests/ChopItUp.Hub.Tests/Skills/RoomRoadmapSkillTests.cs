@@ -13,7 +13,7 @@ namespace ChopItUp.Hub.Tests.Skills;
 /// directory.</summary>
 public sealed class RoomRoadmapSkillTests : IDisposable
 {
-    private const string CoreHeading = "# Milestone delivery: the shared core";
+    private const string CoreHeading = "# Core fixture";
 
     private readonly string _root = Path.Combine(Path.GetTempPath(), "chopitup_roomroadmap_" + Guid.NewGuid().ToString("N"));
     private readonly string _repo;
@@ -32,7 +32,7 @@ public sealed class RoomRoadmapSkillTests : IDisposable
         Write(Path.Combine(_claudeRoot, "skills", "roadmap", "preflight", "Check-RoadmapBudget.ps1"), "# budget preflight stand-in\nexit 0\n");
         Write(Path.Combine(_claudeRoot, "skills", "roadmap", "preflight", "Check-PlanClaims.ps1"), "# claims preflight stand-in\nexit 0\n");
         Write(Path.Combine(_codexRoot, "guidance", "engineering.md"),
-            "# Engineering\n\n## Before\n\nNot copied.\n\n## Risk and review\n\nThe shared review rules.\n\n## User data and release\n\nNot copied either.\n");
+            "# Guidance fixture\n\n## Earlier section\n\nNot copied.\n\n## Risk and review\n\nThe shared review rules.\n\n## Later section\n\nNot copied either.\n");
         _db = new ChopDb(Path.Combine(_root, "chopitup.db"));
         _db.EnsureDatabase();
         _hashes = new SkillHashes(_db);
