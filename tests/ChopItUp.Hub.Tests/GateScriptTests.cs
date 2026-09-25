@@ -68,11 +68,74 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
         Assert.Contains("start-branch: on room/m5 from main", first.Stdout);
         Assert.Equal("room/m5", CurrentBranch(repo));
 
-        // Idempotent: same call again, tree still clean, already on room/m5.
+        // Same call again: the branch holds no work yet, so it is cut again and the clone stays on room/m5.
         var second = RunGate(_fixture.StartBranchScript, repo);
         Assert.Equal(0, second.ExitCode);
-        Assert.Contains("start-branch: already on room/m5", second.Stdout);
+        Assert.Contains("start-branch: dropped room/m5", second.Stdout);
+        Assert.Contains("start-branch: on room/m5 from main", second.Stdout);
         Assert.Equal("room/m5", CurrentBranch(repo));
+    }
+
+    [Fact]
+    public void start_branch_cuts_an_unflipped_room_branch_again_from_origins_advanced_main()
+    {
+        // A run that parked before its flip leaves room/m1 holding only the hub's empty trail commit.
+        // The next run must start row 1 from origin's current main, not resume it on the old base.
+        string repo = NewRepoWithOrigin("startbranch_rebase",
+            "| 1 | First | [ ] | READY | — | LOW |",
+            "| 2 | Second | [ ] | READY | — | LOW |");
+        Assert.Equal(0, RunGate(_fixture.StartBranchScript, repo).ExitCode);
+        RunGit(repo, "commit", "--quiet", "--allow-empty", "-m", "trail");
+        PushFromAnotherClone(repo, "new.txt");
+
+        var result = RunGate(_fixture.StartBranchScript, repo);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("start-branch: dropped room/m1", result.Stdout);
+        Assert.Equal("room/m1", CurrentBranch(repo));
+        Assert.Equal(Rev(repo, "origin/main"), Rev(repo, "HEAD"));
+    }
+
+    [Fact]
+    public void start_branch_stays_on_an_unflipped_room_branch_that_holds_work()
+    {
+        string repo = NewTempRepo("startbranch_holds_work");
+        WriteRoadmap(repo, "| 1 | First | [ ] | READY | — | LOW |");
+        RunGit(repo, "add", "-A");
+        RunGit(repo, "commit", "--quiet", "-m", "seed");
+        Assert.Equal(0, RunGate(_fixture.StartBranchScript, repo).ExitCode);
+        Directory.CreateDirectory(Path.Combine(repo, "docs"));
+        File.WriteAllText(Path.Combine(repo, "docs", "BUGS.md"), "- a defect the run met\n");
+        RunGit(repo, "add", "-A");
+        RunGit(repo, "commit", "--quiet", "-m", "trail with a bug line");
+        string head = Rev(repo, "HEAD");
+
+        var result = RunGate(_fixture.StartBranchScript, repo);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("start-branch: already on room/m1, which holds work", result.Stdout);
+        Assert.Equal(head, Rev(repo, "HEAD"));
+    }
+
+    [Fact]
+    public void start_branch_skips_a_row_flipped_on_another_origin_branch()
+    {
+        // A native session flips its row on its own run branch and pushes that branch, so origin's
+        // main still reads the row as unflipped.
+        string repo = NewRepoWithOrigin("startbranch_native_branch",
+            "| 1 | First | [ ] | READY | — | LOW |",
+            "| 2 | Second | [ ] | READY | — | LOW |");
+        RunGit(repo, "checkout", "--quiet", "-b", "feat/first");
+        WriteRoadmap(repo,
+            "| 1 | First | 🔨 | READY | .scratch/m1-first/brief.md | LOW |",
+            "| 2 | Second | [ ] | READY | — | LOW |");
+        RunGit(repo, "commit", "--quiet", "-am", "flip row 1");
+        RunGit(repo, "push", "--quiet", "origin", "feat/first");
+        RunGit(repo, "checkout", "--quiet", "main");
+        RunGit(repo, "branch", "--quiet", "-D", "feat/first");
+
+        var result = RunGate(_fixture.StartBranchScript, repo);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("start-branch: row 1 is open on origin/feat/first", result.Stdout);
+        Assert.Equal("room/m2", CurrentBranch(repo));
     }
 
     [Fact]
@@ -144,7 +207,7 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
     }
 
     [Fact]
-    public void start_branch_skips_a_row_a_native_session_already_holds()
+    public void start_branch_skips_a_row_flipped_on_the_default_branch()
     {
         string repo = NewTempRepo("startbranch_skip_building");
         WriteRoadmap(repo,
@@ -262,6 +325,22 @@ public sealed class GateScriptTests : IClassFixture<GateScriptFixture>, IDisposa
         RunGit(repo, "push", "--quiet", "-u", "origin", "main");
         RunGit(repo, "remote", "set-head", "origin", "main");
         return repo;
+    }
+
+    /// <summary>Commits <paramref name="fileName"/> to origin's main from a second clone, so origin moves
+    /// on while <paramref name="repo"/> is elsewhere.</summary>
+    private void PushFromAnotherClone(string repo, string fileName)
+    {
+        string origin = RunGit(repo, "remote", "get-url", "origin").Stdout.Trim();
+        string other = Path.Combine(Path.GetTempPath(), $"chopitup_gatetest_other_{Guid.NewGuid():N}");
+        _tempDirs.Add(other);
+        RunGit(Path.GetTempPath(), "clone", "--quiet", origin, other);
+        RunGit(other, "config", "user.name", "Gate Script Test");
+        RunGit(other, "config", "user.email", "gate-script-test@chopitup.local");
+        File.WriteAllText(Path.Combine(other, fileName), "moved on\n");
+        RunGit(other, "add", "-A");
+        RunGit(other, "commit", "--quiet", "-m", "origin moves on");
+        RunGit(other, "push", "--quiet", "origin", "main");
     }
 
     /// <summary>gh with an empty config folder and no token variables has no login, the state that

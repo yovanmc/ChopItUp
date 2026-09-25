@@ -51,6 +51,9 @@ $PSNativeCommandUseErrorActionPreference = $false
 
 function Stop-Build([string]$Why) { Write-Host "Build-RoomSkill: $Why"; exit 1 }
 
+# A relative -Out means the shell's location, which Set-Location moves and the .NET write below does not see.
+$Out = [IO.Path]::GetFullPath($Out, (Get-Location).ProviderPath)
+
 $core = Join-Path $ClaudeRoot 'skills\roadmap\references\core.md'
 $engineering = Join-Path $CodexRoot 'guidance\engineering.md'
 $preflight = Join-Path $ClaudeRoot 'skills\roadmap\preflight'
@@ -85,9 +88,13 @@ New-Item -ItemType Directory -Force -Path (Join-Path $Out 'preflight') | Out-Nul
 [IO.File]::WriteAllText((Join-Path $Out 'SKILL.md'), $skill, [Text.UTF8Encoding]::new($false))
 foreach ($s in $scripts) { Copy-Item -LiteralPath (Join-Path $preflight $s) -Destination (Join-Path $Out "preflight\$s") -Force }
 
+$git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 foreach ($pair in @(@($ClaudeRoot, 'skills/roadmap'), @($CodexRoot, 'guidance/engineering.md'))) {
-    $commit = & git -C $pair[0] log -1 --format=%h -- $pair[1] 2>$null
-    if ($LASTEXITCODE -ne 0 -or -not $commit) { $commit = 'not in a git repository' }
+    if (-not $git) { $commit = 'unknown, git is not on PATH' }
+    else {
+        $commit = & $git -C $pair[0] log -1 --format=%h -- $pair[1] 2>$null
+        if ($LASTEXITCODE -ne 0 -or -not $commit) { $commit = 'not in a git repository' }
+    }
     Write-Host "Build-RoomSkill: $($pair[1]) at $commit"
 }
 Write-Host "Build-RoomSkill: built $Out (SKILL.md $($skill.Length) characters, OVERLAY.md $overlayChars, $total of $Budget)"
