@@ -128,7 +128,43 @@ public sealed class RoomRoadmapSkillTests : IDisposable
         Assert.False(Directory.Exists(outDir));
     }
 
-    private (int ExitCode, string Stdout, string Stderr) Build(string outDir)
+    [Fact]
+    public void The_build_resolves_a_relative_output_folder_against_the_shell_location()
+    {
+        // An owner's shell moves with Set-Location, which does not move the process directory.
+        string location = Path.Combine(_root, "work");
+        Directory.CreateDirectory(location);
+        string script = Path.Combine(_repo, "tools", "Build-RoomSkill.ps1");
+
+        var result = Run(
+            "-NoProfile", "-Command",
+            $"Set-Location -LiteralPath '{location}'; & '{script}' -ClaudeRoot '{_claudeRoot}' -CodexRoot '{_codexRoot}' -Out 'out\\roadmap'; exit $LASTEXITCODE");
+
+        Assert.True(result.ExitCode == 0, result.Stdout + result.Stderr);
+        Assert.True(File.Exists(Path.Combine(location, "out", "roadmap", "SKILL.md")));
+    }
+
+    [Fact]
+    public void The_build_still_builds_when_git_is_not_on_the_path()
+    {
+        string outDir = Path.Combine(_root, "built", "roadmap");
+        string system32 = Environment.GetFolderPath(Environment.SpecialFolder.System);
+
+        var result = Build(outDir, new Dictionary<string, string?> { ["PATH"] = system32 });
+
+        Assert.True(result.ExitCode == 0, result.Stdout + result.Stderr);
+        Assert.True(File.Exists(Path.Combine(outDir, "SKILL.md")));
+        Assert.Contains("git is not on PATH", result.Stdout);
+    }
+
+    private (int ExitCode, string Stdout, string Stderr) Build(string outDir, IReadOnlyDictionary<string, string?>? environment = null) =>
+        Run(environment,
+            "-NoProfile", "-File", Path.Combine(_repo, "tools", "Build-RoomSkill.ps1"),
+            "-ClaudeRoot", _claudeRoot, "-CodexRoot", _codexRoot, "-Out", outDir);
+
+    private (int ExitCode, string Stdout, string Stderr) Run(params string[] args) => Run(null, args);
+
+    private (int ExitCode, string Stdout, string Stderr) Run(IReadOnlyDictionary<string, string?>? environment, params string[] args)
     {
         var psi = new ProcessStartInfo("pwsh")
         {
@@ -138,11 +174,12 @@ public sealed class RoomRoadmapSkillTests : IDisposable
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        foreach (var arg in new[]
+        foreach (var (name, value) in environment ?? new Dictionary<string, string?>())
         {
-            "-NoProfile", "-File", Path.Combine(_repo, "tools", "Build-RoomSkill.ps1"),
-            "-ClaudeRoot", _claudeRoot, "-CodexRoot", _codexRoot, "-Out", outDir,
-        })
+            if (value is null) psi.Environment.Remove(name);
+            else psi.Environment[name] = value;
+        }
+        foreach (var arg in args)
         {
             psi.ArgumentList.Add(arg);
         }

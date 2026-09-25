@@ -159,9 +159,19 @@ ENDED the run; re-post `/roadmap` to start a new one.
 
 The room clone's default branch is hub-owned: empty trail commits land on it, and the next
 `start-branch` gate returns to it and resets it from origin. A run that parks after its 🔨 flip
-leaves the clone on `room/m<row>`, and `/roadmap @<conductor> <row>` resumes it there. `start-branch`
-skips any row that already has a `room/m<row>` branch, so to restart a row from scratch, delete
-that branch in the room clone from a native session first. Room branches are never pushed.
+leaves the clone on `room/m<row>`, and `/roadmap @<conductor>` resumes it there, with or without
+the row number. A run that parks before its flip, a sensitive row included, leaves a branch with no
+work on it, and the next `start-branch` drops it and cuts it again from origin's tip.
+`start-branch` skips any row that already has a `room/m<row>` branch, so to restart a flipped row
+from scratch, run `git checkout main` and `git branch -D room/m<row>` in the room clone from a
+native session first. Room branches are never pushed.
+
+`start-branch` also skips a row flipped on any other origin branch, which is where a native
+session keeps an open run. The reverse is not visible: a native session cannot see a room's run,
+so do not start a row natively while a room holds it. A sensitive topmost row parks every room run
+until a native session opens it or the board moves it down. After a ping, post nothing in the room
+until the native session has fetched the branch, because an exchange there commits onto
+`room/m<row>` past the reviewed hash.
 
 ## Exchanges in worktrees, live
 
