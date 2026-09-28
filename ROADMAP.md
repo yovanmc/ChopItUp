@@ -7,6 +7,7 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
+| 66 | CI never runs everything on main | [ ] | LEAD: `ci.yml` triggers only on `pull_request` and `workflow_dispatch` | — | The PR run is the affected selector, so no run covers the whole suite after merges. Verify read-only, then add a full run on push to `main` or on a schedule. |
 | 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
 | 52 | Research tools in plain rooms | [ ] | BACKLOG | — | Web search and fetch for plain-room spawns with honest unavailable-tool messages; files and shell stay directory-room only (SpawnCommands.cs:24-32). |
 | 53 | Task usage telemetry | [ ] | BACKLOG | — | Model, effort, duration, tool and retry counts, termination reason, token metrics when reported (else unknown), per task. |
