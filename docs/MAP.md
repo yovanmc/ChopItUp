@@ -57,3 +57,4 @@ Rules live in CLAUDE.md, live checks and runbooks in docs/verification.md.
 - `docs/governing-context.md` - `/objective` and `/correction` behavior
 - `docs/testing/hub-test-resources.md` - Hub.Tests shared resources, parallel collections
 - `docs/agents/issue-tracker.md` - where tickets live
+- `docs/critique-scores.tsv` - design-review score log the hub's roadmap skill appends to
