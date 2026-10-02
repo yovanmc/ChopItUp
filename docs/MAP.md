@@ -19,10 +19,10 @@ Rules live in CLAUDE.md, live checks and runbooks in docs/verification.md.
 - `src/ChopItUp.Hub/` - ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR: `Hosting/` (options, CLI commands, host configs), `Mcp/` (MCP tools), `Web/` (`*Api.cs` endpoints), `Spawning/` (spawner, exchanges, runs, prompts), `Security/` (tokens, peer check), `Memory/`, `Skills/`, `Rooms/`, `Git/`, `Realtime/`
 - `src/ChopItUp.Hub/client/` - React + Vite + TS client: `src/api.ts`, `src/types.ts`, one component per file, `src/shell/` desktop bridge
 - `src/ChopItUp.Desktop/` - WPF + WebView2 shell: `Hub/` child hub process, `Bridge/` host bridge, tray, single instance
-- `tests/ChopItUp.Core.Tests/` - xUnit, one per src project; folders mirror `src/ChopItUp.Core/`
-- `tests/ChopItUp.Hub.Tests/` - `*ApiTests.cs` at the root, `HubTestHost.cs`, folders mirror `src/ChopItUp.Hub/`; shared resources in `docs/testing/hub-test-resources.md`
+- `tests/ChopItUp.Core.Tests/` - folders mirror `src/ChopItUp.Core/`; every `tests/` project is xUnit, one per src project
+- `tests/ChopItUp.Hub.Tests/` - `*ApiTests.cs` at the root, `HubTestHost.cs`, Hosting and Realtime tests at the root, other folders mirror `src/ChopItUp.Hub/` where present; shared resources in `docs/testing/hub-test-resources.md`
 - `tests/ChopItUp.Desktop.Tests/` - desktop shell tests
-- `tools/` - dev only, never referenced by `src/`: `Invoke-*Check.ps1` and `Invoke-*DryRun.ps1` checks, `Build-RoomSkill.ps1`, `Measure-TestTimings.ps1`
+- `tools/` - dev only, never referenced by `src/`: `Invoke-*Check.ps1` and `Invoke-*DryRun.ps1` checks (`Invoke-M2DryRun.ps1` is the migration dry run), `Build-RoomSkill.ps1`, `Measure-TestTimings.ps1`
 - `tools/ChopItUp.Corpus/` - builds synthetic corpora for dry runs
 - `tools/skills/` - room skills: `roadmap-hub/` overlay and gates, small fixture skills for checks
 
@@ -32,15 +32,15 @@ Rules live in CLAUDE.md, live checks and runbooks in docs/verification.md.
 - To change a store, start in `src/ChopItUp.Core/Storage/`, tests in `tests/ChopItUp.Core.Tests/Storage/`
 - To change an MCP tool, start in `src/ChopItUp.Hub/Mcp/`, then `src/ChopItUp.Core/Storage/` and `tests/ChopItUp.Hub.Tests/`
 - To add or change an endpoint, start in `src/ChopItUp.Hub/Web/`, then `src/ChopItUp.Hub/client/src/types.ts` and `api.ts`, tests in `tests/ChopItUp.Hub.Tests/`
-- To change a screen, start in `src/ChopItUp.Hub/client/src/`, with its `*.test.tsx` beside it
+- To change a screen, start in `src/ChopItUp.Hub/client/src/`, with its `*.test.tsx` beside it when one exists
 - To change CLI flags, host configs or tokens, start in `src/ChopItUp.Hub/Hosting/`, then `src/ChopItUp.Hub/Security/`
 - To change memory export, import or git, start in `src/ChopItUp.Hub/Memory/`, tests in `tests/ChopItUp.Hub.Tests/Memory/`, runbook in `docs/verification.md`
 - To change a skill or the room roadmap overlay, start in `src/ChopItUp.Hub/Skills/` or `tools/skills/roadmap-hub/`, tests in `tests/ChopItUp.Hub.Tests/Skills/`
 - To change deploy, start in `tools/Deploy-ChopItUp.ps1`, tests in `tests/ChopItUp.Hub.Tests/DeployScriptTests.cs`
 
 ## Skip
-- `src/ChopItUp.Hub/wwwroot/` - built client
-- `src/ChopItUp.Hub/client/dist/` - Vite output
+- `src/ChopItUp.Hub/wwwroot/` - built client, the Vite output
+- `src/ChopItUp.Hub/client/dist/` - stray build folder, gitignored
 - `node_modules/` - any depth
 - `bin/` - and `obj/`, any depth
 - `.data/` - dev hub data, private
