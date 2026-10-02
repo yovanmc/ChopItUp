@@ -20,7 +20,7 @@ Rules live in CLAUDE.md, live checks and runbooks in docs/verification.md.
 - `src/ChopItUp.Hub/client/` - React + Vite + TS client: `src/api.ts`, `src/types.ts`, one component per file, `src/shell/` desktop bridge
 - `src/ChopItUp.Desktop/` - WPF + WebView2 shell: `Hub/` child hub process, `Bridge/` host bridge, tray, single instance
 - `tests/ChopItUp.Core.Tests/` - folders mirror `src/ChopItUp.Core/`; every `tests/` project is xUnit, one per src project
-- `tests/ChopItUp.Hub.Tests/` - `*ApiTests.cs` at the root, `HubTestHost.cs`, Hosting and Realtime tests at the root, other folders mirror `src/ChopItUp.Hub/` where present; shared resources in `docs/testing/hub-test-resources.md`
+- `tests/ChopItUp.Hub.Tests/` - check the root first: it holds every `*ApiTests.cs`, `HubTestHost.cs` and the hosting, realtime, token and room-tool tests; subfolders mirror `src/ChopItUp.Hub/` where present; shared resources in `docs/testing/hub-test-resources.md`
 - `tests/ChopItUp.Desktop.Tests/` - desktop shell tests
 - `tools/` - dev only, never referenced by `src/`: `Invoke-*Check.ps1` and `Invoke-*DryRun.ps1` checks (`Invoke-M2DryRun.ps1` is the migration dry run), `Build-RoomSkill.ps1`, `Measure-TestTimings.ps1`
 - `tools/ChopItUp.Corpus/` - builds synthetic corpora for dry runs
