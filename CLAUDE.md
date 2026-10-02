@@ -1,6 +1,7 @@
 # Chop It Up — agent/developer contract
 
 State: `ROADMAP.md` (whitelist-v3). Lessons: `docs/LESSONS.md`. Keep this contract under 4 KB.
+Map: read [docs/MAP.md](docs/MAP.md) before exploring. Working files go in `.scratch/`, never `docs/`.
 
 ## What this is
 Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop) and GPT (Codex UI in the ChatGPT desktop app) talk in one thread. Every model joins through **MCP on its own subscription**. One long-running .NET process owns SQLite, the MCP Streamable HTTP endpoint and the web UI; hosts reach it over loopback (Claude Desktop via `mcp-remote`, Codex UI by URL).
@@ -17,13 +18,14 @@ Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop
 ## Git flow
 `main` is protected: branch → PR → `gh pr checks --watch` → `gh pr merge --squash --delete-branch` → `git pull`. Commit as the repo-configured identity, plain `git commit`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (folder `AGENTS.md`).
 
-## Layout + commands
+## Commands
 ```powershell
 pwsh -File tools/Invoke-AffectedTests.ps1  # local affected gate; -PlanOnly / -Full
 dotnet run --project src/ChopItUp.Hub -- --data .data --print-config      # host configs into .data\host-configs\
 dotnet run --project src/ChopItUp.Hub -- --data .data --rotate-token claude
+dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe  # desktop shell, dev
 ```
-`src/ChopItUp.Hub` (ASP.NET Core + `ModelContextProtocol.AspNetCore` + SignalR) · `src/ChopItUp.Core` (domain, SQLite) · `tests/*` (xUnit, one per project) · `src/ChopItUp.Hub/client` (React + Vite + TS) · `tools/*` (dev only, never referenced by `src/`: `ChopItUp.Corpus` builds synthetic corpora, `Invoke-M2DryRun.ps1` is the migration dry run) · `src/ChopItUp.Desktop` (WPF + WebView2 shell, dev: `dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub/bin/Debug/net10.0/ChopItUp.Hub.exe`).
+`tools/*` is dev only, never referenced by `src/`.
 
 Affected checks are the default. Full fallback/reuse: `docs/affected-tests.md`.
 
