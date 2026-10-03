@@ -13,7 +13,7 @@ Single-user local hub: shared chat rooms where Yovan, Claude (Claude Desktop) an
 - **No agent writes the deployed hub's data directory**, including through `--import-skill` in any argument form (omitting `--data` defaults there). Its `tokens.json` is never read for a credential. Skills reach a deployed hub only through propose-and-approve.
 
 ## Git
-`main` is protected. PRs land with `gh pr merge --squash --delete-branch`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (`C:\Agent Projects\AGENTS.md`).
+Never push to `main`. PRs land after `gh pr checks <PR#> --watch` passes, with `gh pr merge --squash --delete-branch`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (`C:\Agent Projects\AGENTS.md`).
 
 ## Commands
 ```powershell
