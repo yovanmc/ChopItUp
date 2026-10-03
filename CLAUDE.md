@@ -1,22 +1,19 @@
-# Chop It Up — agent/developer contract
+# Chop It Up agent contract
 
-State: `ROADMAP.md` (whitelist-v3). Lessons: `docs/LESSONS.md`. Keep this contract under 4 KB.
-Map: read [docs/MAP.md](docs/MAP.md) before exploring. Working files go in `.scratch/`, never `docs/`.
+State: `ROADMAP.md`. Lessons: `docs/LESSONS.md`. Exploring code: `docs/MAP.md` says where each part lives. Working files go in `.scratch/`. `docs/` holds only maintained docs.
 
 ## What this is
-Single-user local hub: shared chat rooms where the owner, Claude (Claude Desktop) and GPT (Codex UI in the ChatGPT desktop app) talk in one thread. Every model joins through **MCP on its own subscription**. One long-running .NET process owns SQLite, the MCP Streamable HTTP endpoint and the web UI; hosts reach it over loopback (Claude Desktop via `mcp-remote`, Codex UI by URL).
+Single-user local hub: shared chat rooms where Yovan, Claude (Claude Desktop) and GPT (Codex UI in the ChatGPT desktop app) talk in one thread. Every model joins through **MCP on its own subscription**. One long-running .NET process owns SQLite, the MCP Streamable HTTP endpoint and the web UI. Hosts reach it over loopback (Claude Desktop via `mcp-remote`, Codex UI by URL).
 
 ## Safety invariants (override workflow rules on conflict)
 - **No API keys, ever.** The app holds no Anthropic or OpenAI credential and makes no model calls itself. A plan that adds one is wrong.
 - **No automation of claude.ai / chatgpt.com** (browser driving, session cookies, reverse-engineered endpoints): banned by both consumer ToS.
-- **Loopback only.** The hub binds `127.0.0.1`; no tunnel, no LAN bind, without a board row that says why.
+- **Loopback only.** The hub binds `127.0.0.1`. A tunnel or LAN bind needs a board row that says why.
 - **Never commit** `*.db*`, generated host tokens, `data\`, `.scratch\`, `.claude\`. Room content is private even though the repo is public.
-- **No confidentiality gate here.** This is a from-scratch personal app with no employer content, so `confidentiality-review` does not run per push. The "never commit" line above still binds.
-- Never `Stop-Process -Name` a GUI app (Claude, ChatGPT); kill only PIDs you launched.
-- **No agent writes the deployed hub's data directory** — not via `--import-skill` in any argument form (omitting `--data` defaults there), and its `tokens.json` is never read for a credential; skills reach a deployed hub only through propose-and-approve.
+- **No agent writes the deployed hub's data directory**, including through `--import-skill` in any argument form (omitting `--data` defaults there). Its `tokens.json` is never read for a credential. Skills reach a deployed hub only through propose-and-approve.
 
-## Git flow
-`main` is protected: branch → PR → `gh pr checks --watch` → `gh pr merge --squash --delete-branch` → `git pull`. Commit as the repo-configured identity, plain `git commit`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (folder `AGENTS.md`).
+## Git
+Never push to `main`. PRs land after `gh pr checks <PR#> --watch` passes, with `gh pr merge --squash --delete-branch`. Commits with substantive Codex-generated changes append `Co-authored-by: Codex <noreply@openai.com>` (`C:\Agent Projects\AGENTS.md`).
 
 ## Commands
 ```powershell
@@ -27,16 +24,13 @@ dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub
 ```
 `tools/*` is dev only, never referenced by `src/`.
 
-Affected checks are the default. Full fallback/reuse: `docs/affected-tests.md`.
+Affected checks are the default. Full fallback and reuse: `docs/affected-tests.md`.
 
 Test gate: `.github/workflows/ci.yml` · selector · ci · 10.4 min [V 2026-09-28 82b51ad1]
 
 ## Deploy
-Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand; verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. Merged-but-not-deployed is not done.
-Live checks (real CLIs/models, scratch hub, spend real calls): see `docs/verification.md`. UI proof: `.claude/skills/verify-chopitup/` (gitignored).
-
-## Gate
-`ROADMAP.md` is whitelist-v3; gate with `pwsh -NoProfile -File ~\.claude\skills\roadmap\preflight\Check-RoadmapBudget.ps1 -RoadmapPath ROADMAP.md -RequireSchema -RepoRoot .` on every board touch.
+Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand. Verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. A change is done once deployed, not when merged.
+Live checks (real CLIs and models, scratch hub, real spend): `docs/verification.md`. UI proof: `.claude/skills/verify-chopitup/` (gitignored).
 
 ## Agent skills
 ### Issue tracker
