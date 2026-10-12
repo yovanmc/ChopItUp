@@ -11,6 +11,7 @@ public sealed class RoomStoreTests : IDisposable
 
     public RoomStoreTests()
     {
+        TemplateDatabase.SeedInto(_dir);
         _db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         _db.EnsureDatabase();
         _store = new MessageStore(_db);

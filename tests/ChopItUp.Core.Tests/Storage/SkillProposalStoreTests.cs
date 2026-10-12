@@ -15,6 +15,7 @@ public sealed class SkillProposalStoreTests : IDisposable
 
     public SkillProposalStoreTests()
     {
+        TemplateDatabase.SeedInto(_dir);
         _db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         _db.EnsureDatabase();
         _store = new SkillProposalStore(_db);

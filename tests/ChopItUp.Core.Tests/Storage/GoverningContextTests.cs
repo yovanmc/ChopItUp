@@ -12,6 +12,7 @@ public sealed class GoverningContextTests : IDisposable
 
     public GoverningContextTests()
     {
+        TemplateDatabase.SeedInto(_dir);
         _db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         _db.EnsureDatabase();
         _store = new MessageStore(_db);

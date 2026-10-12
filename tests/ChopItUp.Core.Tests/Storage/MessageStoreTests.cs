@@ -10,6 +10,7 @@ public sealed class MessageStoreTests : IDisposable
 
     public MessageStoreTests()
     {
+        TemplateDatabase.SeedInto(_dir);
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
         _store = new MessageStore(db);

@@ -16,7 +16,8 @@ using ModelContextProtocol.Protocol;
 
 namespace ChopItUp.Hub.Tests;
 
-/// <summary>Starts the real hub on 127.0.0.1:0 against a temp data dir. Disposal stops the host and
+/// <summary>Starts the real hub on 127.0.0.1:0 against a temp data dir. A dir with no database gets
+/// a copy of <see cref="TemplateDatabase"/>'s current-schema file first. Disposal stops the host and
 /// (by default) deletes the directory.</summary>
 public sealed class HubTestHost : IAsyncDisposable
 {
@@ -59,6 +60,7 @@ public sealed class HubTestHost : IAsyncDisposable
     {
         using var timing = FixtureTiming.Measure("HubTestHost.start");
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
+        TemplateDatabase.SeedInto(dir);
         // Port 0 (the default) never gets the [::1] listener (see HubHost), so a caller that needs
         // to prove anything over IPv6 passes a fixed free port instead.
         var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled, ShellToken: shellToken);

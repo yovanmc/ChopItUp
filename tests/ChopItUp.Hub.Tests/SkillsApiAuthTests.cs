@@ -61,8 +61,10 @@ public sealed class SkillsApiAuthTests : IAsyncLifetime
     private Task<HttpResponseMessage> Reject(long id, string? token) =>
         Send(HttpMethod.Post, $"api/skills/proposals/{id}/reject", token);
 
+    /// <summary>Also acceptance 5, last line: "the unauthenticated refusal's shape matches the one the
+    /// authenticated channel already returns", which is /mcp's own 401 body and header.</summary>
     [Fact]
-    public async Task Approve_with_no_credential_is_unauthenticated_and_changes_nothing()
+    public async Task Approve_with_no_credential_is_unauthenticated_changes_nothing_and_matches_the_mcp_refusal_shape()
     {
         var id = await ProposeAsync();
 
@@ -71,6 +73,8 @@ public sealed class SkillsApiAuthTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode);
         Assert.Equal("pending", Proposals.Get(id)!.Status);
         Assert.False(Directory.Exists(Path.Combine(Skills.Root, "demo")));
+        Assert.Equal("{\"error\":\"unauthorized\"}", await r.Content.ReadAsStringAsync());
+        Assert.Contains("Bearer realm=\"chopitup\"", r.Headers.WwwAuthenticate.Select(h => h.ToString()));
     }
 
     [Fact]
@@ -83,19 +87,6 @@ public sealed class SkillsApiAuthTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.Unauthorized, r.StatusCode);
         Assert.Equal("pending", Proposals.Get(id)!.Status);
         Assert.False(Directory.Exists(Path.Combine(Skills.Root, "demo")));
-    }
-
-    /// <summary>Acceptance 5, last line: "the unauthenticated refusal's shape matches the one the
-    /// authenticated channel already returns" — /mcp's own 401 body and header.</summary>
-    [Fact]
-    public async Task Approve_unauthenticated_refusal_shape_matches_the_mcp_channels_own()
-    {
-        var id = await ProposeAsync();
-
-        var r = await Approve(id, token: null);
-
-        Assert.Equal("{\"error\":\"unauthorized\"}", await r.Content.ReadAsStringAsync());
-        Assert.Contains("Bearer realm=\"chopitup\"", r.Headers.WwwAuthenticate.Select(h => h.ToString()));
     }
 
     [Fact]

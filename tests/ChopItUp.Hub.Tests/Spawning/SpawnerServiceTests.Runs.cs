@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Json;
+using System.Net.Http.Json;
 using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -857,26 +857,6 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
     // run_gate's launch-time wiring
 
-    /// <summary>12e: an in-run Claude conductor's directory spawn gets run_gate ADDED to the ordinary
-    /// six-builtin-plus-three-MCP allowlist; the built-in --tools list (what actually turns Bash etc
-    /// on) is untouched either way.</summary>
-    [Fact]
-    public async Task Run12e_an_in_run_claude_conductor_is_launched_with_run_gate_on_its_allowlist()
-    {
-        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
-        await using var _ = host;
-        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
-
-        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
-        var spec = await runner.NextSpecAsync(Wait);
-
-        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
-        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
-        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
-        Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
-    }
-
     /// <summary>An in-run Codex conductor's directory spawn gets the MCP tool-call timeout raised from
     /// the ordinary 60 s to this run's RunLimits.EffectiveGateTimeout (25 min by default, not the full
     /// 30-minute SpawnTimeout: the 5-minute reserve is what lets a model post after a gate that ran to
@@ -897,12 +877,17 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
-    /// <summary>The per-server `timeout` field in the conductor's own mcp.json and both environment
+    /// <summary>An in-run Claude conductor's directory spawn, checked on one launch:
+    /// <list type="bullet">
+    /// <item>12e: run_gate is ADDED to the ordinary six-builtin-plus-three-MCP allowlist; the built-in
+    /// --tools list (what actually turns Bash etc on) is untouched either way.</item>
+    /// <item>12g: the per-server `timeout` field in the conductor's own mcp.json and both environment
     /// variables, all three at EffectiveGateTimeout: none of them is left behind. MCP_TOOL_TIMEOUT
     /// matters because the installed Claude CLI's own MCP tool-call timeout could otherwise kill a
-    /// run_gate call from an in-run Claude spawn well before the hub's own per-spawn timeout.</summary>
+    /// run_gate call from an in-run Claude spawn well before the hub's own per-spawn timeout.</item>
+    /// </list></summary>
     [Fact]
-    public async Task Run12g_an_in_run_claude_spawn_gets_the_per_server_timeout_and_both_env_vars_at_GateTimeout()
+    public async Task Run12e_Run12g_an_in_run_claude_conductor_gets_run_gate_on_its_allowlist_and_every_timeout_at_GateTimeout()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
         var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
@@ -913,6 +898,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var spec = await runner.NextSpecAsync(Wait);
 
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
+        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
+        Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
+
         var mcpJson = runner.McpJsonOf(spec) ?? throw new InvalidOperationException("the fake captured no mcp.json for this spec");
         using (var doc = JsonDocument.Parse(mcpJson))
             Assert.Equal(1_500_000, doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("timeout").GetInt32());
@@ -920,39 +909,14 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpIdleTimeoutEnvVar]);
     }
 
-    /// <summary>The same timeout applies to a Codex worker a Claude conductor mentions inside a run,
-    /// not only to a Codex conductor: the timeout is computed once, at Launch, for whichever host the
-    /// spawn actually is.</summary>
-    [Fact]
-    public async Task Run12h_an_in_run_codex_spawn_tool_timeout_is_GateTimeout_seconds()
-    {
-        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
-        await using var _ = host;
-        var codexWorker = new TaskCompletionSource<ProcessSpec>(TaskCreationOptions.RunContinuationsAsynchronously);
-        runner.Handler = async (spec, _, _) =>
-        {
-            switch (FakeProcessRunner.ParticipantOf(spec))
-            {
-                case "opus": await PostAsInHost(host, "opus", room, "phase: build @sonnet @gpt-6-astra write the thing"); break;
-                case "gpt-6-astra": codexWorker.TrySetResult(spec); break;
-            }
-            return FakeProcessRunner.Ok("""{"result":"working"}""");
-        };
-
-        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @opus begin" });
-
-        var codexSpec = await codexWorker.Task.WaitAsync(Wait);
-        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", codexSpec.Arguments);
-        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", codexSpec.Arguments);
-    }
-
     /// <summary>A Codex-hosted judge worker inside a run gets both the effort override and the raised
     /// tool timeout; a Codex plumbing worker in the same run gets the raised timeout but no effort
-    /// flag. Classes are set through ParticipantStore.SetClasses before the hub starts, since the
-    /// roster is read once at startup.</summary>
+    /// flag. Both are Codex workers a Claude conductor mentions (12h): the timeout applies to them, not
+    /// only to a Codex conductor, because it is computed once, at Launch, for whichever host the spawn
+    /// actually is. Classes are set through ParticipantStore.SetClasses before the hub starts, since
+    /// the roster is read once at startup.</summary>
     [Fact]
-    public async Task Run11_AC7_a_codex_hosted_judge_worker_inside_a_run_gets_model_reasoning_effort_high()
+    public async Task Run11_AC7_Run12h_codex_workers_inside_a_run_get_the_raised_tool_timeout_and_only_the_judge_gets_effort_high()
     {
         var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
         var (host, runner, room) = await StartRunHostAsync(Instant, runLimits, seedClasses: p =>
@@ -980,12 +944,15 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var judgeArgs = await judge.Task.WaitAsync(Wait);
         Assert.Contains("model_reasoning_effort=high", judgeArgs);
         Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", judgeArgs);
+        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", judgeArgs);
 
         var plumbingArgs = await plumbing.Task.WaitAsync(Wait);
         Assert.DoesNotContain(plumbingArgs, a => a.StartsWith("model_reasoning_effort=", StringComparison.Ordinal));
+        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", plumbingArgs);
+        Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", plumbingArgs);
     }
 
-    /// <summary>The other half of Run12g's MCP_TOOL_TIMEOUT check: a Claude directory spawn OUTSIDE any run never sees the variable -
+    /// <summary>The other half of the in-run MCP_TOOL_TIMEOUT check (Run12g): a Claude directory spawn OUTSIDE any run never sees the variable -
     /// only an in-run spawn's launch site passes it.</summary>
     [Fact]
     public async Task Run12f_claude_an_out_of_run_claude_directory_spawn_gets_no_MCP_TOOL_TIMEOUT()

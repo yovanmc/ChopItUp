@@ -63,6 +63,7 @@ public sealed class ParticipantStoreTests : IDisposable
 
     private ParticipantStore MakeStore(out ChopDb db)
     {
+        TemplateDatabase.SeedInto(_dir);
         db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
         return new ParticipantStore(db);
