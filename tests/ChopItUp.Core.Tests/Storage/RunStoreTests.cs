@@ -21,6 +21,7 @@ public sealed class RunStoreTests : IDisposable
 
     public RunStoreTests()
     {
+        TemplateDatabase.SeedInto(_dir);
         _db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         _db.EnsureDatabase();
         _store = new RunStore(_db);

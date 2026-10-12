@@ -33,6 +33,7 @@ public sealed class RoomRoadmapSkillTests : IDisposable
         Write(Path.Combine(_claudeRoot, "skills", "roadmap", "preflight", "Check-PlanClaims.ps1"), "# claims preflight stand-in\nexit 0\n");
         Write(Path.Combine(_codexRoot, "guidance", "engineering.md"),
             "# Guidance fixture\n\n## Earlier section\n\nNot copied.\n\n## Risk and review\n\nThe shared review rules.\n\n## Later section\n\nNot copied either.\n");
+        TemplateDatabase.SeedInto(_root);
         _db = new ChopDb(Path.Combine(_root, "chopitup.db"));
         _db.EnsureDatabase();
         _hashes = new SkillHashes(_db);

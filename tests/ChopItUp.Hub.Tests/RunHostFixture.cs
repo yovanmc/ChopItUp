@@ -30,6 +30,7 @@ internal static class RunHostFixture
         var runner = new FakeProcessRunner();
         if (seedClasses is not null)
         {
+            TemplateDatabase.SeedInto(dir);
             var seedDb = new ChopDb(Path.Combine(dir, "chopitup.db"));
             seedDb.EnsureDatabase();
             seedClasses(new ParticipantStore(seedDb));

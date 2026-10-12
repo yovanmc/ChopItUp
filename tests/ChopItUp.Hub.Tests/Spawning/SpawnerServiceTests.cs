@@ -827,6 +827,7 @@ public sealed class SpawnerTimingTests : IAsyncLifetime
     {
         _runner = new FakeProcessRunner(_clock);
         Directory.CreateDirectory(_dir);
+        TemplateDatabase.SeedInto(_dir);
         var db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         db.EnsureDatabase();
         using (var conn = db.Open())

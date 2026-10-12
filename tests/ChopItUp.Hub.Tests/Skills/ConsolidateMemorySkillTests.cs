@@ -31,6 +31,7 @@ public sealed class ConsolidateMemorySkillTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         _source = Path.Combine(FindRepoRoot(), "tools", "skills", SkillName);
+        TemplateDatabase.SeedInto(_root);
         _db = new ChopDb(Path.Combine(_root, "chopitup.db"));
         _db.EnsureDatabase();
         _hashes = new SkillHashes(_db);

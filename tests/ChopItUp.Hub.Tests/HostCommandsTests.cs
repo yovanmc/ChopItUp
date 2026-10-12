@@ -42,6 +42,7 @@ public sealed class HostCommandsTests : IDisposable
     /// <summary>What "start the hub once" leaves behind: a v3 database and a full tokens.json.</summary>
     private static void StartedOnce(string dir)
     {
+        TemplateDatabase.SeedInto(dir);
         new ChopDb(Path.Combine(dir, "chopitup.db")).EnsureDatabase();
         TokenStore.Load(dir, Participants);
     }

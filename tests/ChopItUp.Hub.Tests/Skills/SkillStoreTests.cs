@@ -18,6 +18,7 @@ public sealed class SkillStoreTests : IDisposable
     public SkillStoreTests()
     {
         Directory.CreateDirectory(_dir);
+        TemplateDatabase.SeedInto(_dir);
         _db = new ChopDb(Path.Combine(_dir, "chopitup.db"));
         _db.EnsureDatabase();
         _hashes = new SkillHashes(_db);

@@ -40,4 +40,6 @@ The JSON report records each suite's elapsed interval, slowest individual tests 
 
 Tests with distinct inputs, authentication boundaries, persisted state or process integration remain separate. Lower test counts are not the objective; retained failure detection is. Deployment path coverage adds forward-slash variants and rejects ambiguous/root paths before any writes. Normalize paths before both process guards and containment checks; keep the sibling-prefix guard, data-preservation assertions and restoration checks.
 
+Store tests in Core.Tests and every hub host in Hub.Tests start from a copy of one current-schema database that each test process builds once with the production `ChopDb.EnsureDatabase` (`TemplateDatabase.cs` in each project), not from an empty directory. Each test still owns its copy. Tests of schema creation, migration and fresh-directory startup build their own databases.
+
 The deployment helper is exercised against synthetic install directories, including a running scratch executable, without touching a live installation.

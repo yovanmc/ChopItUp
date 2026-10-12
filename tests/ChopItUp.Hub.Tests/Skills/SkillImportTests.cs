@@ -22,6 +22,7 @@ public sealed class SkillImportTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         _skillsRoot = Path.Combine(_root, "skills");
+        TemplateDatabase.SeedInto(_root);
         _db = new ChopDb(Path.Combine(_root, "chopitup.db"));
         _db.EnsureDatabase();
         _hashes = new SkillHashes(_db);
