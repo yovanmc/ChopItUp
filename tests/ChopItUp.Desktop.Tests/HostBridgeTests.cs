@@ -130,49 +130,27 @@ public sealed class HostBridgeTests
 
     // ===== trust matrix ======================================================================
 
-    [Fact]
-    public void Hub_origin_any_path_is_trusted_without_a_nonce() =>
-        Assert.True(HostBridge.IsTrusted("http://127.0.0.1:8795/some/path", new Uri(HubOrigin), null, LaunchNonce));
+    private const string DataBootUri = "data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==";
 
-    [Fact]
-    public void Hub_origin_is_trusted_case_insensitively() =>
-        Assert.True(HostBridge.IsTrusted("HTTP://127.0.0.1:8795/", new Uri(HubOrigin), null, LaunchNonce));
-
-    [Fact]
-    public void Other_port_is_not_trusted_even_with_the_right_nonce() =>
-        Assert.False(HostBridge.IsTrusted("http://127.0.0.1:8796/", new Uri(HubOrigin), LaunchNonce, LaunchNonce));
-
-    [Fact]
-    public void Https_elsewhere_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted("https://example.com", new Uri(HubOrigin), null, LaunchNonce));
-
-    [Fact]
-    public void About_blank_with_the_launch_nonce_is_trusted() =>
-        Assert.True(HostBridge.IsTrusted("about:blank", new Uri(HubOrigin), LaunchNonce, LaunchNonce));
-
-    [Fact]
-    public void About_blank_with_the_wrong_nonce_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted("about:blank", new Uri(HubOrigin), "not-the-nonce", LaunchNonce));
-
-    [Fact]
-    public void About_blank_without_a_nonce_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted("about:blank", new Uri(HubOrigin), null, LaunchNonce));
-
-    [Fact]
-    public void Data_html_boot_uri_with_the_launch_nonce_is_trusted() =>
-        Assert.True(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), LaunchNonce, LaunchNonce));
-
-    [Fact]
-    public void Data_html_boot_uri_without_a_nonce_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), null, LaunchNonce));
-
-    [Fact]
-    public void Data_html_boot_uri_with_the_wrong_nonce_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted("data:text/html;charset=utf-8;base64,PGh0bWw+PC9odG1sPg==", new Uri(HubOrigin), "not-the-nonce", LaunchNonce));
-
-    [Fact]
-    public void Null_source_is_not_trusted() =>
-        Assert.False(HostBridge.IsTrusted(null, new Uri(HubOrigin), LaunchNonce, LaunchNonce));
+    /// <summary>One row per source and nonce pair. The first argument names the case, so a failure
+    /// reads as the rule it broke.</summary>
+    [Theory]
+    [InlineData("hub origin, any path, no nonce", "http://127.0.0.1:8795/some/path", null, true)]
+    [InlineData("hub origin, case-insensitive scheme", "HTTP://127.0.0.1:8795/", null, true)]
+    [InlineData("other port, even with the right nonce", "http://127.0.0.1:8796/", LaunchNonce, false)]
+    [InlineData("https elsewhere", "https://example.com", null, false)]
+    [InlineData("about:blank with the launch nonce", "about:blank", LaunchNonce, true)]
+    [InlineData("about:blank with the wrong nonce", "about:blank", "not-the-nonce", false)]
+    [InlineData("about:blank without a nonce", "about:blank", null, false)]
+    [InlineData("data boot uri with the launch nonce", DataBootUri, LaunchNonce, true)]
+    [InlineData("data boot uri without a nonce", DataBootUri, null, false)]
+    [InlineData("data boot uri with the wrong nonce", DataBootUri, "not-the-nonce", false)]
+    [InlineData("null source", null, LaunchNonce, false)]
+    public void Trust_matrix(string @case, string? source, string? nonce, bool trusted)
+    {
+        _ = @case;
+        Assert.Equal(trusted, HostBridge.IsTrusted(source, new Uri(HubOrigin), nonce, LaunchNonce));
+    }
 
     [Fact]
     public void ExtractNonce_reads_the_nonce_field()

@@ -30,57 +30,34 @@ public sealed class TokenScanTests : IDisposable
         Assert.Equal(43, FakeToken.Length);
     }
 
-    /// <summary>The real claude-desktop.json shape: a JSON string value, nested under
-    /// <c>mcpServers.chopitup.env.CHOPITUP_TOKEN</c>, holding <c>"Bearer &lt;token&gt;"</c>. The
-    /// candidate must be the token alone, never the whole header string.</summary>
-    [Fact]
-    public void Finds_the_token_inside_the_real_claude_desktop_host_config()
+    /// <summary>The three real host-config shapes. The candidate must be the token alone, never the
+    /// whole <c>"Bearer &lt;token&gt;"</c> header string.
+    /// <list type="bullet">
+    /// <item>claude-desktop.json: a JSON string value nested under
+    /// <c>mcpServers.chopitup.env.CHOPITUP_TOKEN</c>.</item>
+    /// <item>codex-config.toml: <c>http_headers = { Authorization = "Bearer &lt;token&gt;" }</c>, an
+    /// inline TOML table, not JSON at all.</item>
+    /// <item>claude-code-owner-remote.json (SpawnCommands.ClaudeMcpConfigJson): the token sits nested
+    /// three levels deep at <c>mcpServers.chopitup.headers.Authorization</c>, not under an env var
+    /// like the Desktop file. Proves nesting depth is not special-cased.</item>
+    /// </list></summary>
+    [Theory]
+    [InlineData("claude", "claude-desktop.json")]
+    [InlineData("codex", "codex-config.toml")]
+    [InlineData(ChopDb.OwnerRemoteParticipantId, "claude-code-owner-remote.json")]
+    public void Finds_the_token_inside_the_real_host_config(string participant, string fileName)
     {
         Directory.CreateDirectory(_dir);
-        var tokens = new Dictionary<string, string> { ["claude"] = FakeToken };
-        var roster = ChopDb.SeedRoster.Where(p => p.Id == "claude").ToList();
+        var tokens = new Dictionary<string, string> { [participant] = FakeToken };
+        var roster = ChopDb.SeedRoster.Where(p => p.Id == participant).ToList();
         var folder = HostConfigs.Write(_dir, 5177, tokens, roster);
-        var text = File.ReadAllText(Path.Combine(folder, "claude-desktop.json"));
+        var text = File.ReadAllText(Path.Combine(folder, fileName));
 
         var candidates = TokenScan.Candidates(text).ToList();
 
         Assert.Contains(FakeToken, candidates);
         Assert.DoesNotContain("Bearer " + FakeToken, candidates);
         Assert.DoesNotContain(candidates, c => c.Contains("Bearer"));
-    }
-
-    /// <summary>The real codex-config.toml shape: <c>http_headers = { Authorization = "Bearer
-    /// &lt;token&gt;" }</c>, an inline TOML table, not JSON at all.</summary>
-    [Fact]
-    public void Finds_the_token_inside_the_real_codex_toml_host_config()
-    {
-        Directory.CreateDirectory(_dir);
-        var tokens = new Dictionary<string, string> { ["codex"] = FakeToken };
-        var roster = ChopDb.SeedRoster.Where(p => p.Id == "codex").ToList();
-        var folder = HostConfigs.Write(_dir, 5177, tokens, roster);
-        var text = File.ReadAllText(Path.Combine(folder, "codex-config.toml"));
-
-        var candidates = TokenScan.Candidates(text).ToList();
-
-        Assert.Contains(FakeToken, candidates);
-        Assert.DoesNotContain(candidates, c => c.Contains("Bearer"));
-    }
-
-    /// <summary>The real claude-code-owner-remote.json shape (SpawnCommands.ClaudeMcpConfigJson): the
-    /// token sits nested three levels deep at <c>mcpServers.chopitup.headers.Authorization</c>, not
-    /// under an env var like the Desktop file. Proves nesting depth is not special-cased.</summary>
-    [Fact]
-    public void Finds_the_token_nested_three_levels_deep_in_the_owner_remote_config()
-    {
-        Directory.CreateDirectory(_dir);
-        var tokens = new Dictionary<string, string> { [ChopDb.OwnerRemoteParticipantId] = FakeToken };
-        var roster = ChopDb.SeedRoster.Where(p => p.Id == ChopDb.OwnerRemoteParticipantId).ToList();
-        var folder = HostConfigs.Write(_dir, 5177, tokens, roster);
-        var text = File.ReadAllText(Path.Combine(folder, "claude-code-owner-remote.json"));
-
-        var candidates = TokenScan.Candidates(text).ToList();
-
-        Assert.Contains(FakeToken, candidates);
     }
 
     /// <summary>Must not require the text to parse: truncated/hand-edited JSON still yields its

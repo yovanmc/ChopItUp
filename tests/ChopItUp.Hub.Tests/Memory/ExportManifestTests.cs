@@ -70,46 +70,24 @@ public sealed class ExportManifestTests : IDisposable
 
     // ---- TryRead never throws ---------------------------------------------
 
-    [Fact]
-    public void T2_TryRead_returns_null_on_a_missing_file()
+    /// <summary>Manifest text that must read as null. A null text means no manifest file at all.</summary>
+    public static TheoryData<string, string?> UnreadableManifests => new()
     {
-        var targetDir = NewDir("missing");
-        Assert.Null(ExportManifest.TryRead(targetDir));
-    }
+        { "missing file", null },
+        { "truncated json", "{ \"Version\": 1, \"SourceRoot\": \"C:" },
+        { "empty object", "{}" },
+        { "newer version", $"{{\"Version\": {ExportManifest.CurrentVersion + 1}, \"SourceRoot\": \"C:\\\\store\", " +
+                           "\"SourceFingerprint\": \"abc\", \"ExportedAt\": \"2026-01-01T00:00:00Z\", \"Files\": {}}" },
+        { "missing field (no SourceRoot)", "{\"Version\": 1, \"SourceFingerprint\": \"abc\", \"ExportedAt\": \"2026-01-01T00:00:00Z\", \"Files\": {}}" },
+    };
 
-    [Fact]
-    public void T2_TryRead_returns_null_on_truncated_json()
+    [Theory]
+    [MemberData(nameof(UnreadableManifests))]
+    public void T2_TryRead_returns_null_on_an_unreadable_manifest(string @case, string? manifestJson)
     {
-        var targetDir = NewDir("truncated");
-        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "{ \"Version\": 1, \"SourceRoot\": \"C:");
-        Assert.Null(ExportManifest.TryRead(targetDir));
-    }
-
-    [Fact]
-    public void T2_TryRead_returns_null_on_an_empty_object()
-    {
-        var targetDir = NewDir("empty-object");
-        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "{}");
-        Assert.Null(ExportManifest.TryRead(targetDir));
-    }
-
-    [Fact]
-    public void T2_TryRead_returns_null_on_a_newer_version()
-    {
-        var targetDir = NewDir("newer-version");
-        var json = $"{{\"Version\": {ExportManifest.CurrentVersion + 1}, \"SourceRoot\": \"C:\\\\store\", " +
-                   "\"SourceFingerprint\": \"abc\", \"ExportedAt\": \"2026-01-01T00:00:00Z\", \"Files\": {}}";
-        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), json);
-        Assert.Null(ExportManifest.TryRead(targetDir));
-    }
-
-    [Fact]
-    public void T2_TryRead_returns_null_on_a_missing_field()
-    {
-        var targetDir = NewDir("missing-field");
-        // No SourceRoot.
-        var json = "{\"Version\": 1, \"SourceFingerprint\": \"abc\", \"ExportedAt\": \"2026-01-01T00:00:00Z\", \"Files\": {}}";
-        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), json);
+        _ = @case;
+        var targetDir = NewDir("unreadable");
+        if (manifestJson is not null) File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), manifestJson);
         Assert.Null(ExportManifest.TryRead(targetDir));
     }
 
@@ -191,27 +169,20 @@ public sealed class ExportManifestTests : IDisposable
 
     // ---- Verify: the six states ---------------------------------------------
 
-    [Fact]
-    public void T2_Verify_is_Absent_for_a_missing_directory()
+    [Theory]
+    [InlineData(false)]   // the directory does not exist
+    [InlineData(true)]    // the directory exists and is empty
+    public void T2_Verify_is_Absent_for_a_missing_or_empty_directory(bool directoryExists)
     {
         var store = NewStore(NewDir("verify-absent-store"));
-        var targetDir = Path.Combine(_root, "does-not-exist-" + Guid.NewGuid().ToString("N"));
+        var targetDir = directoryExists
+            ? NewDir("verify-absent-target")
+            : Path.Combine(_root, "does-not-exist-" + Guid.NewGuid().ToString("N"));
 
         var verdict = ExportManifest.Verify(null, targetDir, store);
 
         Assert.Equal(TargetState.Absent, verdict.State);
         Assert.Empty(verdict.Paths);
-    }
-
-    [Fact]
-    public void T2_Verify_is_Absent_for_an_empty_directory()
-    {
-        var store = NewStore(NewDir("verify-absent-store2"));
-        var targetDir = NewDir("verify-absent-target2");
-
-        var verdict = ExportManifest.Verify(null, targetDir, store);
-
-        Assert.Equal(TargetState.Absent, verdict.State);
     }
 
     [Fact]

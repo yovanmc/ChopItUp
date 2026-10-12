@@ -138,24 +138,19 @@ describe('the owner token on writes', () => {
   /** The regression the merge rule exists to stop: `decideSkillProposal` builds its own
    *  `authorization` from the token it was HANDED, which is the value the owner typed into the skill
    *  card. A blanket attach that overwrote it would silently send the stored one instead, so a
-   *  just-pasted token would appear not to work and the owner would have no way to tell why. */
-  test('the skills approve path keeps the token it was handed, not the stored one', async () => {
-    storeToken('stored-owner-token');
-    const calls = stubFetch(() => json({}));
+   *  just-pasted token would appear not to work, with no way to tell why. The reject path builds a
+   *  different init, so it is checked as well. */
+  test.each(['approve', 'reject'] as const)(
+    'the skills %s path keeps the token it was handed, not the stored one',
+    async (decision) => {
+      storeToken('stored-owner-token');
+      const calls = stubFetch(() => json({}));
 
-    await api.decideSkillProposal(PROPOSAL, 'approve', 'the-token-the-owner-typed');
+      await api.decideSkillProposal(PROPOSAL, decision, 'the-token-the-owner-typed');
 
-    expect(authOf(calls[0])).toBe('Bearer the-token-the-owner-typed');
-  });
-
-  test('and the reject path, which builds a different init, keeps it as well', async () => {
-    storeToken('stored-owner-token');
-    const calls = stubFetch(() => json({}));
-
-    await api.decideSkillProposal(PROPOSAL, 'reject', 'the-token-the-owner-typed');
-
-    expect(authOf(calls[0])).toBe('Bearer the-token-the-owner-typed');
-  });
+      expect(authOf(calls[0])).toBe('Bearer the-token-the-owner-typed');
+    },
+  );
 });
 
 /** A reply names the message it answers; a post that is not a reply sends no `replyToId` at all, so
