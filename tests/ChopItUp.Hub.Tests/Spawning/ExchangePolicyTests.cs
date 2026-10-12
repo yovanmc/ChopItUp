@@ -572,46 +572,38 @@ public sealed class ExchangePolicyTests
         return p.RefuseConductorPost(msg, run, p.MentionedSpawnable(msg), artifactAuthor ?? (_ => null), artifactExists ?? (_ => false));
     }
 
-    [Fact]
-    public void A_conductor_post_with_no_valid_phase_tag_is_refused()
+    /// <summary>Each refused conductor post and the words its refusal must contain. Roster classes
+    /// from the seed: sonnet is plumbing, opus is visible and judge, fable is judge only, gpt-6-astra
+    /// carries none. A recorded author, where given, is what the artifact lookup answers.</summary>
+    [Theory]
+    [InlineData("no valid phase tag", "just talking, no tag", "sonnet", null, "phase tag")]
+    [InlineData("the conductor mentions itself", "phase: build @sonnet go", "sonnet", null, "itself")]
+    [InlineData("a non-ping phase with no mention", "phase: plan thinking out loud", "sonnet", null, "mention")]
+    [InlineData("critique without an artifact line", "phase: critique @opus have a look", "fable", null, "artifact:")]
+    [InlineData("critique naming an artifact neither recorded nor in the room tree", "phase: critique @opus have a look\nartifact: src/Foo.cs", "fable", null, "neither recorded")]
+    // The qualifying judge rows other than the recorded author "sonnet" are named.
+    [InlineData("critique with no judge mentioned", "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", "fable", "sonnet", "a judge mentioned other than the artifact's recorded author", "@opus, @fable")]
+    // opus (judge) IS the recorded author.
+    [InlineData("critique whose only judge is the artifact's own recorded author", "phase: critique @opus have a look\nartifact: src/Foo.cs", "fable", "opus", "other than")]
+    public void A_conductor_post_breaking_a_phase_rule_is_refused(string @case, string body, string conductor, string? recordedAuthor, params string[] expected)
     {
-        var refusal = Refuse(Policy(), "just talking, no tag");
+        _ = @case;
+        var refusal = Refuse(Policy(), body, conductor, artifactAuthor: _ => recordedAuthor);
         Assert.NotNull(refusal);
-        Assert.Contains("phase tag", refusal);
+        foreach (var words in expected) Assert.Contains(words, refusal);
     }
 
-    [Fact]
-    public void A_conductor_post_mentioning_itself_is_refused()
+    /// <summary>Each conductor post the phase rules accept.</summary>
+    [Theory]
+    [InlineData("ping needs no mention and skips every other rule", "phase: ping all done", "sonnet", null, false)]
+    [InlineData("build mentioning a plumbing row (sonnet)", "phase: build @sonnet go", "fable", null, false)]
+    [InlineData("build mentioning a visible row (opus)", "phase: build @opus go", "fable", null, false)]
+    [InlineData("critique naming a recorded artifact and a different judge", "phase: critique @opus review this\nartifact: src/Foo.cs", "fable", "sonnet", false)]
+    [InlineData("critique naming an artifact in the room tree that was never recorded", "phase: critique @opus review this\nartifact: src/Foo.cs", "fable", null, true)]
+    public void A_conductor_post_meeting_the_phase_rules_is_accepted(string @case, string body, string conductor, string? recordedAuthor, bool inRoomTree)
     {
-        var refusal = Refuse(Policy(), "phase: build @sonnet go");   // sonnet is both author and conductor here
-        Assert.NotNull(refusal);
-        Assert.Contains("itself", refusal);
-    }
-
-    [Fact]
-    public void Ping_needs_no_mention_and_skips_every_other_rule()
-    {
-        Assert.Null(Refuse(Policy(), "phase: ping all done"));
-    }
-
-    [Fact]
-    public void A_non_ping_phase_with_no_mention_is_refused()
-    {
-        var refusal = Refuse(Policy(), "phase: plan thinking out loud");
-        Assert.NotNull(refusal);
-        Assert.Contains("mention", refusal);
-    }
-
-    [Fact]
-    public void Build_mentioning_a_plumbing_row_is_accepted()
-    {
-        Assert.Null(Refuse(Policy(), "phase: build @sonnet go", conductor: "fable"));   // sonnet: plumbing
-    }
-
-    [Fact]
-    public void Build_mentioning_a_visible_row_is_accepted()
-    {
-        Assert.Null(Refuse(Policy(), "phase: build @opus go", conductor: "fable"));     // opus: visible,judge
+        _ = @case;
+        Assert.Null(Refuse(Policy(), body, conductor, artifactAuthor: _ => recordedAuthor, artifactExists: _ => inRoomTree));
     }
 
     // A refusal names the rows that would have satisfied the rule
@@ -626,55 +618,6 @@ public sealed class ExchangePolicyTests
         var noneClassed = ChopDb.SeedRoster.Select(p => p with { Classes = null }).ToList();
         var noneRefusal = Refuse(new ExchangePolicy(noneClassed, Limits), "phase: build @gpt-6-astra go", conductor: "fable");
         Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: none is classed; set one with --set-classes", noneRefusal);
-    }
-
-    [Fact]
-    public void Critique_without_an_artifact_line_is_refused()
-    {
-        var refusal = Refuse(Policy(), "phase: critique @opus have a look", conductor: "fable");
-        Assert.NotNull(refusal);
-        Assert.Contains("artifact:", refusal);
-    }
-
-    [Fact]
-    public void Critique_naming_an_artifact_neither_recorded_nor_in_the_room_tree_is_refused()
-    {
-        var refusal = Refuse(Policy(), "phase: critique @opus have a look\nartifact: src/Foo.cs", conductor: "fable");
-        Assert.NotNull(refusal);
-        Assert.Contains("neither recorded", refusal);
-    }
-
-    [Fact]
-    public void Critique_with_no_judge_mentioned_is_refused()
-    {
-        var refusal = Refuse(Policy(), "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", conductor: "fable",
-            artifactAuthor: _ => "sonnet");
-        Assert.NotNull(refusal);
-        Assert.Contains("a judge mentioned other than the artifact's recorded author", refusal);
-        Assert.Contains("@opus, @fable", refusal);   // the qualifying judge rows other than "sonnet"
-    }
-
-    [Fact]
-    public void Critique_mentioning_only_the_artifacts_own_recorded_author_as_judge_is_refused()
-    {
-        var refusal = Refuse(Policy(), "phase: critique @opus have a look\nartifact: src/Foo.cs", conductor: "fable",
-            artifactAuthor: _ => "opus");   // opus (judge) IS the recorded author
-        Assert.NotNull(refusal);
-        Assert.Contains("other than", refusal);
-    }
-
-    [Fact]
-    public void A_valid_critique_naming_a_recorded_artifact_and_a_different_judge_is_accepted()
-    {
-        Assert.Null(Refuse(Policy(), "phase: critique @opus review this\nartifact: src/Foo.cs", conductor: "fable",
-            artifactAuthor: _ => "sonnet"));
-    }
-
-    [Fact]
-    public void An_artifact_present_in_the_room_tree_but_never_recorded_still_passes()
-    {
-        Assert.Null(Refuse(Policy(), "phase: critique @opus review this\nartifact: src/Foo.cs", conductor: "fable",
-            artifactAuthor: _ => null, artifactExists: _ => true));
     }
 
     [Fact]

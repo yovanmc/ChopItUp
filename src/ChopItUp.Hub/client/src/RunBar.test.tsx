@@ -128,22 +128,19 @@ describe('RunBar', () => {
     expect(render({ ...BASE, status: 'parked', reason: null })).toContain('no reason recorded');
   });
 
-  test('an active run offers the stop the owner can reach', () => {
-    expect(render(BASE)).toContain('>Stop run</button>');
-  });
-
   /** The strip takes no exchange prop at all, which is what makes "in every such state" true by
    *  construction: an active run with no open exchange and nothing in flight renders the same strip
-   *  as any other. */
-  test('a parked run offers the same stop, which is the state that had none', () => {
-    const html = render({ ...BASE, status: 'parked', reason: 'the 80-spawn cap is spent' });
+   *  as any other. Parked is the state that had no stop before. The control is labelled for the
+   *  run, not for the exchange. */
+  test.each([
+    ['active', BASE],
+    ['parked', { ...BASE, status: 'parked', reason: 'the 80-spawn cap is spent' } satisfies RunSnapshot],
+  ])('a %s run offers the stop the owner can reach, labelled for the run', (_state, run) => {
+    const html = render(run);
 
     expect(html).toContain('>Stop run</button>');
     expect(html).toContain('class="quiet danger"');
-  });
-
-  test('the control is labelled for the run, not for the exchange', () => {
-    expect(render(BASE)).not.toContain('Stop exchange');
+    expect(html).not.toContain('Stop exchange');
   });
 
   /** Nothing left to end, so nothing to press. A room that never had a run renders the empty
@@ -161,25 +158,18 @@ describe('RunBar', () => {
     expect(render(BASE, false)).not.toContain('disabled');
   });
 
-  /** Client half: pressing it runs the caller's stop. That the run then reaches `ended` is the
-   *  server's half and the interactive gate's to prove. */
-  test('pressing the control calls the stop it was handed', () => {
+  /** Client half: pressing it runs the caller's stop, in the active and the parked state alike. That
+   *  the run then reaches `ended` is the server's half and the interactive gate's to prove. */
+  test.each([
+    ['active', BASE],
+    ['parked', { ...BASE, status: 'parked', reason: 'stalled' } satisfies RunSnapshot],
+  ])('pressing the control in the %s state calls the stop it was handed', (_state, run) => {
     let calls = 0;
-    const found = button(BASE, false, () => {
+    const found = button(run, false, () => {
       calls += 1;
     });
 
     expect(found).not.toBeNull();
-    found?.props.onClick?.();
-    expect(calls).toBe(1);
-  });
-
-  test('the parked state is wired to the same stop', () => {
-    let calls = 0;
-    const found = button({ ...BASE, status: 'parked', reason: 'stalled' }, false, () => {
-      calls += 1;
-    });
-
     found?.props.onClick?.();
     expect(calls).toBe(1);
   });

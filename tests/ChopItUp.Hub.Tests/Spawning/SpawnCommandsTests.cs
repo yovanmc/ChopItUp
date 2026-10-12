@@ -126,40 +126,29 @@ public sealed class SpawnCommandsTests
     // "high" here stands in for whatever Launch decided (SpawnerService computes the value; these are
     // argument-list assertions on the builders alone) - never xhigh/max.
     [Theory]
-    [InlineData("high")]   // in-run conductor, or in-run judge
-    [InlineData(null)]     // in-run plumbing (an ordinary row), or out-of-run
-    public void Claude_command_line_carries_the_effort_flag_only_when_one_is_given(string? effort)
+    [InlineData(false, "high")]   // in-run conductor, or in-run judge
+    [InlineData(false, null)]     // in-run plumbing (an ordinary row), or out-of-run
+    [InlineData(true, "high")]
+    [InlineData(true, null)]
+    public void Claude_command_line_carries_the_effort_flag_only_when_one_is_given(bool inDirectory, string? effort)
     {
-        var spec = SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1", "PROMPT", "opus/s1", effort);
+        var spec = inDirectory
+            ? SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort)
+            : SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1", "PROMPT", "opus/s1", effort);
         if (effort is null) Assert.DoesNotContain("--effort", spec.Arguments);
         else Assert.Equal(["--effort", effort], spec.Arguments.TakeLast(2));
     }
 
     [Theory]
-    [InlineData("high")]
-    [InlineData(null)]
-    public void ClaudeInDirectory_command_line_carries_the_effort_flag_only_when_one_is_given(string? effort)
+    [InlineData(false, "high")]
+    [InlineData(false, null)]
+    [InlineData(true, "high")]
+    [InlineData(true, null)]
+    public void Codex_command_line_carries_the_effort_config_only_when_one_is_given(bool inDirectory, string? effort)
     {
-        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort);
-        if (effort is null) Assert.DoesNotContain("--effort", spec.Arguments);
-        else Assert.Equal(["--effort", effort], spec.Arguments.TakeLast(2));
-    }
-
-    [Theory]
-    [InlineData("high")]
-    [InlineData(null)]
-    public void Codex_command_line_carries_the_effort_config_only_when_one_is_given(string? effort)
-    {
-        var spec = SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\data\spawns\s2", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort);
-        AssertEffortConfig(spec, effort);
-    }
-
-    [Theory]
-    [InlineData("high")]
-    [InlineData(null)]
-    public void CodexInDirectory_command_line_carries_the_effort_config_only_when_one_is_given(string? effort)
-    {
-        var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort);
+        var spec = inDirectory
+            ? SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort)
+            : SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\data\spawns\s2", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort);
         AssertEffortConfig(spec, effort);
     }
 
