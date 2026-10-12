@@ -56,11 +56,13 @@ public sealed class HubTestHost : IAsyncDisposable
                 _mintedHostFile[p.Id] = Tokens.MintFor(p.Id);
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null, bool seedDatabase = true)
     {
         using var timing = FixtureTiming.Measure("HubTestHost.start");
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
-        TemplateDatabase.SeedInto(dir);
+        // A test that proves the hub creates its own database passes seedDatabase: false.
+        if (seedDatabase)
+            TemplateDatabase.SeedInto(dir);
         // Port 0 (the default) never gets the [::1] listener (see HubHost), so a caller that needs
         // to prove anything over IPv6 passes a fixed free port instead.
         var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled, ShellToken: shellToken);

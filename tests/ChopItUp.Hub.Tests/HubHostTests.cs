@@ -17,13 +17,16 @@ public sealed class HubHostTests : IAsyncLifetime
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "chopitup_hub_" + Guid.NewGuid().ToString("N"));
     private HubTestHost _host = null!;
 
-    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir);
+    // No template seed: these tests prove a fresh start creates the database itself.
+    public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir, seedDatabase: false);
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
     [Fact]
     public void Startup_creates_db_and_tokens_and_binds_loopback()
     {
-        Assert.True(File.Exists(Path.Combine(_dir, "chopitup.db")));
+        var dbPath = Path.Combine(_dir, "chopitup.db");
+        Assert.True(File.Exists(dbPath));
+        Assert.Equal(ChopDb.LatestSchemaVersion, new ChopDb(dbPath).GetSchemaVersion());
         Assert.True(File.Exists(Path.Combine(_dir, "tokens.json")));
         Assert.Equal("127.0.0.1", _host.BaseAddress.Host);
 
