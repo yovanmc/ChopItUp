@@ -897,27 +897,10 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
     }
 
-    /// <summary>The installed Claude CLI's own MCP tool-call timeout could kill a run_gate call from
-    /// an in-run Claude spawn well before the hub's own per-spawn timeout. An in-run Claude
-    /// conductor's directory spawn gets MCP_TOOL_TIMEOUT set to this run's EffectiveGateTimeout in
-    /// milliseconds.</summary>
-    [Fact]
-    public async Task Run12f_claude_an_in_run_claude_conductor_is_launched_with_MCP_TOOL_TIMEOUT_set_to_the_run_gate_timeout()
-    {
-        var runLimits = new RunLimits(Spawns: 10, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
-        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
-        await using var _ = host;
-        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
-
-        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
-        var spec = await runner.NextSpecAsync(Wait);
-
-        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
-        Assert.Equal("1500000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
-    }
-
     /// <summary>The per-server `timeout` field in the conductor's own mcp.json and both environment
-    /// variables, all three at EffectiveGateTimeout: none of them is left behind.</summary>
+    /// variables, all three at EffectiveGateTimeout: none of them is left behind. MCP_TOOL_TIMEOUT
+    /// matters because the installed Claude CLI's own MCP tool-call timeout could otherwise kill a
+    /// run_gate call from an in-run Claude spawn well before the hub's own per-spawn timeout.</summary>
     [Fact]
     public async Task Run12g_an_in_run_claude_spawn_gets_the_per_server_timeout_and_both_env_vars_at_GateTimeout()
     {
@@ -1002,7 +985,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain(plumbingArgs, a => a.StartsWith("model_reasoning_effort=", StringComparison.Ordinal));
     }
 
-    /// <summary>The other half: a Claude directory spawn OUTSIDE any run never sees the variable -
+    /// <summary>The other half of Run12g's MCP_TOOL_TIMEOUT check: a Claude directory spawn OUTSIDE any run never sees the variable -
     /// only an in-run spawn's launch site passes it.</summary>
     [Fact]
     public async Task Run12f_claude_an_out_of_run_claude_directory_spawn_gets_no_MCP_TOOL_TIMEOUT()

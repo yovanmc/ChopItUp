@@ -146,16 +146,12 @@ describe('RunBar', () => {
     expect(render(BASE)).not.toContain('Stop exchange');
   });
 
-  /** Nothing left to end, so nothing to press, and a room that never had a run still renders
-   *  the empty string, so the control cannot appear where there is no strip. */
+  /** Nothing left to end, so nothing to press. A room that never had a run renders the empty
+   *  string (the first test here), so the control cannot appear where there is no strip. */
   test('an ended run offers no stop', () => {
     expect(render({ ...BASE, status: 'ended', endedAt: '2026-03-01T12:05:00.0000000+00:00' })).not.toContain(
       '<button',
     );
-  });
-
-  test('a room that never had a run has no control either', () => {
-    expect(render(null)).not.toContain('<button');
   });
 
   /** `stopping` is App's in-flight flag for the stop call itself, held until the refreshed run
