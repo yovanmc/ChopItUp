@@ -94,7 +94,6 @@ xUnit cannot split one class across threads, so the SpawnerService tests are one
 | SkillsApiTests | SkillsApiTests.cs | R4 | parallel |
 | SkillStoreTests | Skills/SkillStoreTests.cs | R3 | process-state |
 | SkillToolsTests | Skills/SkillToolsTests.cs | R4 | parallel |
-| SmokeTests | SmokeTests.cs | none | parallel |
 | SpaMissingClientTests | SpaServingTests.cs | R4 | parallel |
 | SpaServingTests | SpaServingTests.cs | R4 | parallel |
 | SpawnCommandsTests | Spawning/SpawnCommandsTests.cs | none | parallel |
@@ -115,7 +114,7 @@ xUnit cannot split one class across threads, so the SpawnerService tests are one
 | TokenScanTests | Security/TokenScanTests.cs | none | parallel |
 | TokenStoreTests | TokenStoreTests.cs | none | parallel |
 
-Totals: 74 classes, 65 `parallel`, 9 `process-state`. R1 is left out of the table because it is inert.
+Totals: 73 classes, 64 `parallel`, 9 `process-state`. R1 is left out of the table because it is inert.
 
 ## Measured
 
