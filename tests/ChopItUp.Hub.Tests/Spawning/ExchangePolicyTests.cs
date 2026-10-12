@@ -603,16 +603,6 @@ public sealed class ExchangePolicyTests
     }
 
     [Fact]
-    public void Build_without_a_plumbing_or_visible_row_mentioned_is_refused()
-    {
-        // fable is judge-only; gpt-6-astra carries no classes at all.
-        var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
-        Assert.NotNull(refusal);
-        Assert.Contains("plumbing- or visible-class row", refusal);
-        Assert.Contains("@opus, @sonnet", refusal);   // the qualifying rows, named
-    }
-
-    [Fact]
     public void Build_mentioning_a_plumbing_row_is_accepted()
     {
         Assert.Null(Refuse(Policy(), "phase: build @sonnet go", conductor: "fable"));   // sonnet: plumbing
@@ -629,6 +619,7 @@ public sealed class ExchangePolicyTests
     [Fact]
     public void A_refused_build_post_names_the_qualifying_rows()
     {
+        // fable is judge-only; gpt-6-astra carries no classes at all.
         var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
         Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: @opus, @sonnet", refusal);
 

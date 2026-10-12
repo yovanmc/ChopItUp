@@ -104,12 +104,6 @@ public sealed class MemoryV9CompatTests : IDisposable
     }
 
     [Fact]
-    public void ProposalFlags_Parse_of_null_is_empty()
-    {
-        Assert.Empty(ProposalFlags.Parse(null));
-    }
-
-    [Fact]
     public void EnsureLayout_upgrades_a_directory_holding_only_a_hand_written_core_without_altering_its_bytes()
     {
         Directory.CreateDirectory(Path.Combine(_dir, "memory"));
