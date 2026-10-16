@@ -93,7 +93,7 @@ public sealed class MentionsTests
 
     [Theory]
     [InlineData("ask @claude-2 or @claude.x or @claudette")]   // a longer word does not match
-    [InlineData("mail me at me@opus.com")]                     // an email address is not a mention
+    [InlineData("mail me at me@opus.test")]                     // an email address is not a mention
     [InlineData("x-@sonnet")]
     [InlineData("@nobody @ owner")]                            // unknown ids
     [InlineData("")]
