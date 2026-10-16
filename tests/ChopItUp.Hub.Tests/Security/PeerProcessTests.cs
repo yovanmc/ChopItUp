@@ -36,10 +36,12 @@ public sealed class PeerProcessTests
         return new PeerProcess.Endpoints(remote.Address, remote.Port, local.Address, local.Port);
     }
 
-    [Fact]
-    public void The_client_end_of_an_IPv4_loopback_connection_resolves_to_this_process()
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("::1")]    // binds PeerProcess's MIB_TCP6ROW_OWNER_PID field order, which was recalled, not measured
+    public void The_client_end_of_an_IPv4_or_IPv6_loopback_connection_resolves_to_this_process(string loopback)
     {
-        var (listener, client, accepted) = Connect(IPAddress.Loopback);
+        var (listener, client, accepted) = Connect(IPAddress.Parse(loopback));
         try
         {
             var pid = PeerProcess.OwningPid(EndpointsFor(accepted));
@@ -60,18 +62,6 @@ public sealed class PeerProcessTests
             var otherPort = ((IPEndPoint)spare.LocalEndpoint).Port;
             var wrong = new PeerProcess.Endpoints(e.RemoteAddress, e.RemotePort, e.LocalAddress, otherPort);
             Assert.Null(PeerProcess.OwningPid(wrong));
-        }
-        finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
-    }
-
-    [Fact]
-    public void The_client_end_of_an_IPv6_loopback_connection_resolves_to_this_process()
-    {
-        var (listener, client, accepted) = Connect(IPAddress.IPv6Loopback);
-        try
-        {
-            var pid = PeerProcess.OwningPid(EndpointsFor(accepted));
-            Assert.Equal(Environment.ProcessId, pid);
         }
         finally { client.Dispose(); accepted.Dispose(); listener.Stop(); }
     }

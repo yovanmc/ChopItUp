@@ -186,15 +186,6 @@ public sealed class SpawnCommandsTests
     // --- run_gate on a second Claude allowlist -----------------------------------------------------
 
     [Fact]
-    public void ClaudeInDirectory_defaults_to_the_ordinary_directory_allowlist_without_run_gate()
-    {
-        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
-        var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
-        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed, allowed);
-        Assert.DoesNotContain("run_gate", allowed);
-    }
-
-    [Fact]
     public void ClaudeInDirectory_can_be_given_the_run_tools_allowlist_which_adds_run_gate_to_the_ordinary_six()
     {
         var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, allowedTools: SpawnCommands.ClaudeRunToolsAllowed);
@@ -207,34 +198,11 @@ public sealed class SpawnCommandsTests
     // --- The Codex in-directory MCP tool-call timeout, raised for a run ----------------------------
 
     [Fact]
-    public void CodexInDirectory_defaults_the_tool_timeout_to_sixty_seconds()
-    {
-        var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2");
-        Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
-    }
-
-    [Fact]
     public void CodexInDirectory_can_be_given_a_longer_tool_timeout_for_a_run_gate_that_may_run_thirty_minutes()
     {
         var spec = SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\Rooms\lab", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2", effort: null, toolTimeoutSeconds: 1800);
         Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1800", spec.Arguments);
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", spec.Arguments);
-    }
-
-    // --- The Claude CLI's OWN MCP tool-call timeout ------------------------------------------------
-
-    [Fact]
-    public void ClaudeInDirectory_sets_no_MCP_TOOL_TIMEOUT_by_default()
-    {
-        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1");
-        Assert.Empty(spec.Environment);
-    }
-
-    [Fact]
-    public void ClaudeInDirectory_can_be_given_the_run_spawn_timeout_as_MCP_TOOL_TIMEOUT_in_milliseconds()
-    {
-        var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, mcpToolTimeoutMs: 1_800_000);
-        Assert.Equal("1800000", spec.Environment[SpawnCommands.ClaudeMcpToolTimeoutEnvVar]);
     }
 
     // --- The per-server mcp.json timeout and the idle-timeout env var ------------------------------

@@ -11,22 +11,17 @@ public sealed class EffortPolicyTests
 {
     private static Participant Row(string id, string? classes) => new(id, id, "model", "claude", id, null, classes);
 
-    [Fact]
-    public void A_judge_class_row_is_configured_for_the_raised_effort()
-    {
-        Assert.Equal(EffortPolicy.Raised, EffortPolicy.ForClasses(Row("opus", "visible,judge")));
-        Assert.Equal(EffortPolicy.Raised, EffortPolicy.ForClasses(Row("fable", "judge")));
-    }
-
     [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("plumbing")]
-    [InlineData("visible")]
-    [InlineData("bogus")]
-    public void Any_other_row_is_configured_for_no_flag(string? classes)
+    [InlineData("opus", "visible,judge", true)]
+    [InlineData("fable", "judge", true)]
+    [InlineData("sonnet", null, false)]
+    [InlineData("sonnet", "", false)]
+    [InlineData("sonnet", "plumbing", false)]
+    [InlineData("sonnet", "visible", false)]
+    [InlineData("sonnet", "bogus", false)]
+    public void A_judge_class_row_is_configured_for_the_raised_effort_and_any_other_row_for_no_flag(string id, string? classes, bool raised)
     {
-        Assert.Null(EffortPolicy.ForClasses(Row("sonnet", classes)));
+        Assert.Equal(raised ? EffortPolicy.Raised : null, EffortPolicy.ForClasses(Row(id, classes)));
     }
 
     [Fact]

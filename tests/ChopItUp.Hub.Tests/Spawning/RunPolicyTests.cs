@@ -69,18 +69,7 @@ public sealed class RunPolicyTests
         Assert.False(park.CapSpent);
     }
 
-    // A valid ping ends the run.
-    [Fact]
-    public void Row5_valid_ping_ends_the_run()
-    {
-        var s = Base();
-        var evt = new RunEvent.ConductorPosted(MessageId: 44, Tag: new PhaseTag("ping", null), Mentioned: [], Refusal: null);
-        var decision = _policy.Decide(s, evt, []);
-
-        Assert.IsType<RunDecision.End>(decision);
-    }
-
-    // A ping-caused End must carry the Run cause, never Owner: the run ended itself.
+    // A valid ping ends the run. A ping-caused End must carry the Run cause, never Owner: the run ended itself.
     [Fact]
     public void Row5_valid_ping_ends_the_run_with_the_run_cause_not_the_owner()
     {
@@ -223,31 +212,22 @@ public sealed class RunPolicyTests
     // SpawnsUsed and Elapsed are kept under their caps here so the spawn/wall-clock checks cannot be
     // the ones firing: this state is "parked because the phase-entry cap tripped", which sets
     // CapSpent without tripping those checks.
-    [Fact]
-    public void Row16_human_post_into_hard_capped_park_is_refused()
+    // The second case: the spawn/wall-clock cap checks must not re-fire for a run that is not active.
+    // A hard-capped park's SpawnsUsed/Elapsed stay at or over the cap forever; without the
+    // Status == Active guard, this HumanPosted resume attempt would hit the spawn cap check first and
+    // re-Park instead of refusing.
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Row16_human_post_into_hard_capped_park_is_refused(bool spawnAndWallClockCapsStillOverTheirLimits)
     {
         var s = Base() with { Status = RunStatus.Parked, CapSpent = true };
+        if (spawnAndWallClockCapsStillOverTheirLimits)
+            s = s with { SpawnsUsed = Limits.Spawns + 1, Elapsed = Limits.WallClock + TimeSpan.FromHours(1) };
         var decision = _policy.Decide(s, new RunEvent.HumanPosted(16), []);
 
         var refuse = Assert.IsType<RunDecision.Refuse>(decision);
         Assert.Equal("this run is parked because a cap is spent; /stop and start a new one", refuse.Note);
-    }
-
-    // The spawn/wall-clock cap checks must not re-fire for a run that is not active. A hard-capped
-    // park's SpawnsUsed/Elapsed stay at or over the cap forever; without the Status == Active guard,
-    // this HumanPosted resume attempt would hit the spawn cap check first and re-Park instead of
-    // refusing.
-    [Fact]
-    public void Row16_refuses_even_though_the_spawn_and_wall_clock_caps_are_still_over_their_limits()
-    {
-        var s = Base() with
-        {
-            Status = RunStatus.Parked, CapSpent = true,
-            SpawnsUsed = Limits.Spawns + 1, Elapsed = Limits.WallClock + TimeSpan.FromHours(1),
-        };
-        var decision = _policy.Decide(s, new RunEvent.HumanPosted(16), []);
-
-        var refuse = Assert.IsType<RunDecision.Refuse>(decision);
         Assert.Equal(RunPolicy.CapSpentRefusal, refuse.Note);
     }
 

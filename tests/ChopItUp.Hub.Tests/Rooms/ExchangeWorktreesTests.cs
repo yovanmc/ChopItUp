@@ -154,25 +154,19 @@ public sealed class ExchangeWorktreesTests : IDisposable
         Assert.False(Directory.Exists(lease.Path));
     }
 
-    [Fact]
-    public async Task Close_keeps_the_branch_of_a_stopped_exchange()
+    [Theory]
+    [InlineData(3, "lab4", ExchangeStatus.Stopped, false, false, "was not merged: it was stopped")]                       // a stopped exchange
+    [InlineData(4, "lab5", ExchangeStatus.Concluded, true, false, "a run owns this room")]                               // a run owns the room
+    [InlineData(14, "lab13", ExchangeStatus.Concluded, false, true, "a spawn of it was stopped or timed out")]          // a spawn was interrupted
+    public async Task Close_keeps_the_branch_of_a_stopped_exchange_or_when_a_run_owns_the_room_or_a_spawn_was_interrupted(
+        int root, string room, ExchangeStatus status, bool runOwnsRoom, bool interrupted, string expectedInNote)
     {
-        var dir = await RoomWithCommit("lab4");
-        await _worktrees.EnsureAsync(dir, 3, CancellationToken.None);
-        var note = await _worktrees.CloseAsync(Close(dir, 3, "lab4", ExchangeStatus.Stopped), CancellationToken.None);
-        Assert.Contains("was not merged: it was stopped", note);
-        Assert.Contains("chopitup/x3", note);
-        Assert.True(await _trails.For(dir).BranchExistsAsync("chopitup/x3"));
-    }
-
-    [Fact]
-    public async Task Close_keeps_the_branch_when_a_run_owns_the_room()
-    {
-        var dir = await RoomWithCommit("lab5");
-        await _worktrees.EnsureAsync(dir, 4, CancellationToken.None);
-        var note = await _worktrees.CloseAsync(Close(dir, 4, "lab5", ExchangeStatus.Concluded, runOwnsRoom: true), CancellationToken.None);
-        Assert.Contains("a run owns this room", note);
-        Assert.True(await _trails.For(dir).BranchExistsAsync("chopitup/x4"));
+        var dir = await RoomWithCommit(room);
+        await _worktrees.EnsureAsync(dir, root, CancellationToken.None);
+        var note = await _worktrees.CloseAsync(Close(dir, root, room, status, interrupted: interrupted, runOwnsRoom: runOwnsRoom), CancellationToken.None);
+        Assert.Contains(expectedInNote, note);
+        if (status == ExchangeStatus.Stopped) Assert.Contains($"chopitup/x{root}", note);
+        Assert.True(await _trails.For(dir).BranchExistsAsync($"chopitup/x{root}"));
     }
 
     [Fact]
@@ -306,16 +300,6 @@ public sealed class ExchangeWorktreesTests : IDisposable
         Assert.False(Directory.Exists(lease.Path));
         Assert.True(Directory.Exists(notesPath));
         Assert.True(await git.BranchExistsAsync("notes-branch"));
-    }
-
-    [Fact]
-    public async Task Close_keeps_the_branch_when_a_spawn_was_interrupted()
-    {
-        var dir = await RoomWithCommit("lab13");
-        await _worktrees.EnsureAsync(dir, 14, CancellationToken.None);
-        var note = await _worktrees.CloseAsync(Close(dir, 14, "lab13", ExchangeStatus.Concluded, interrupted: true), CancellationToken.None);
-        Assert.Contains("a spawn of it was stopped or timed out", note);
-        Assert.True(await _trails.For(dir).BranchExistsAsync("chopitup/x14"));
     }
 
     [Fact]

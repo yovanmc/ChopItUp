@@ -74,45 +74,30 @@ public sealed class SkillStoreTests : IDisposable
         Assert.DoesNotContain("\r", ok.Skill.Body);
     }
 
-    [Fact]
-    public void Title_falls_back_to_the_first_H1_heading_when_there_is_no_frontmatter()
+    [Theory]
+    [InlineData("headed", "# Heading Title\n\nSome body text.\n", "Heading Title")]                    // the first H1 heading when there is no frontmatter
+    [InlineData("bare-skill", "Just some prose, nothing else.\n", "bare-skill")]                        // the directory name when there is neither frontmatter nor a heading
+    public void Title_falls_back_to_the_first_H1_heading_then_the_directory_name(string name, string content, string expectedTitle)
     {
-        WriteSkill("headed", "# Heading Title\n\nSome body text.\n");
+        WriteSkill(name, content);
 
-        var ok = Assert.IsType<SkillRead.Ok>(_store.Read("headed"));
+        var ok = Assert.IsType<SkillRead.Ok>(_store.Read(name));
 
-        Assert.Equal("Heading Title", ok.Skill.Title);
+        Assert.Equal(expectedTitle, ok.Skill.Title);
     }
 
-    [Fact]
-    public void Title_falls_back_to_the_directory_name_when_there_is_neither_frontmatter_nor_a_heading()
-    {
-        WriteSkill("bare-skill", "Just some prose, nothing else.\n");
-
-        var ok = Assert.IsType<SkillRead.Ok>(_store.Read("bare-skill"));
-
-        Assert.Equal("bare-skill", ok.Skill.Title);
-    }
-
-    [Fact]
-    public void An_invalid_directory_name_is_skipped_by_List_and_NotFound_from_Read()
+    [Theory]
+    [InlineData("Invalid_Name", true)]     // an invalid directory name
+    [InlineData("empty-dir", false)]       // a directory with no SKILL.md
+    public void An_invalid_directory_name_or_a_directory_with_no_SKILL_md_is_skipped_by_List_and_NotFound_from_Read(string dirName, bool withSkillMd)
     {
         Directory.CreateDirectory(_store.Root);
-        var badDir = Path.Combine(_store.Root, "Invalid_Name");
-        Directory.CreateDirectory(badDir);
-        File.WriteAllText(Path.Combine(badDir, "SKILL.md"), ValidSkillBody);
+        var dir = Path.Combine(_store.Root, dirName);
+        Directory.CreateDirectory(dir);
+        if (withSkillMd) File.WriteAllText(Path.Combine(dir, "SKILL.md"), ValidSkillBody);
 
-        Assert.IsType<SkillRead.NotFound>(_store.Read("Invalid_Name"));
-        Assert.DoesNotContain(_store.List(), s => s.Name == "Invalid_Name");
-    }
-
-    [Fact]
-    public void A_directory_with_no_SKILL_md_is_skipped_by_List_and_NotFound_from_Read()
-    {
-        Directory.CreateDirectory(Path.Combine(_store.Root, "empty-dir"));
-
-        Assert.IsType<SkillRead.NotFound>(_store.Read("empty-dir"));
-        Assert.DoesNotContain(_store.List(), s => s.Name == "empty-dir");
+        Assert.IsType<SkillRead.NotFound>(_store.Read(dirName));
+        Assert.DoesNotContain(_store.List(), s => s.Name == dirName);
     }
 
     [Fact]
@@ -168,18 +153,14 @@ public sealed class SkillStoreTests : IDisposable
         Assert.Equal(0, calls);
     }
 
-    [Fact]
-    public void A_path_traversal_name_resolves_to_nothing()
-    {
-        Assert.IsType<SkillRead.NotFound>(_store.Read("../../secrets"));
-    }
-
-    [Fact]
-    public void An_uppercase_name_never_matches_even_when_the_directory_exists()
+    [Theory]
+    [InlineData("../../secrets")]   // a path traversal name
+    [InlineData("Grill")]           // an uppercase name never matches even when the lowercase directory exists
+    public void A_path_traversal_or_uppercase_name_resolves_to_nothing(string name)
     {
         WriteSkill("grill", ValidSkillBody);
 
-        Assert.IsType<SkillRead.NotFound>(_store.Read("Grill"));
+        Assert.IsType<SkillRead.NotFound>(_store.Read(name));
     }
 
     [Fact]

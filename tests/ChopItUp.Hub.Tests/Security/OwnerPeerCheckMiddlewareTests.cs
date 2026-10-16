@@ -41,7 +41,7 @@ public sealed class OwnerPeerCheckMiddlewareTests
             .GetProperty("messages").EnumerateArray().Select(m => m.GetProperty("body").GetString()).ToList();
 
     [Fact]
-    public async Task Owner_class_from_inside_a_spawn_is_403_on_api_with_the_fixed_error_and_writes_nothing()
+    public async Task Owner_class_from_inside_a_spawn_is_403_on_api_with_the_fixed_error_writes_nothing_and_notes_the_spawn_and_pid_in_the_room()
     {
         var (host, fake) = await StartAsync();
         await using var _ = host;
@@ -53,14 +53,22 @@ public sealed class OwnerPeerCheckMiddlewareTests
         Assert.Equal(BearerTokenMiddleware.InsideSpawnError, error.GetString());
 
         Assert.DoesNotContain("forged", await MessageBodiesAsync(host));
+
+        var messages = (await host.Client.GetFromJsonAsync<JsonElement>("api/rooms/general/messages"))
+            .GetProperty("messages").EnumerateArray().ToList();
+        var last = messages[^1];
+        Assert.Equal(ChopDb.HubParticipantId, last.GetProperty("authorId").GetString());
+        Assert.Equal("Refused an owner-class credential presented from inside @opus's spawn (pid 4242).", last.GetProperty("body").GetString());
     }
 
-    [Fact]
-    public async Task A_second_refusal_against_the_same_job_posts_no_second_note()
+    [Theory]
+    [InlineData("general", "opus", false)]   // a second refusal against the same job (no note due)
+    [InlineData(null, null, true)]           // a spawn job with no room to write into
+    public async Task A_refusal_posts_no_note_for_a_job_already_noted_or_with_no_room(string? room, string? participant, bool noteDue)
     {
         var (host, fake) = await StartAsync();
         await using var _ = host;
-        fake.Verdict = new OwnerPeerVerdict.InsideSpawn(4242, new SpawnJobEntry(4242, "opus/x", "general", "opus"), NoteDue: false);
+        fake.Verdict = new OwnerPeerVerdict.InsideSpawn(4242, new SpawnJobEntry(4242, "opus/x", room, participant), noteDue);
         host.AuthorizeAs("owner");
 
         var before = (await MessageBodiesAsync(host)).Count;
@@ -86,37 +94,6 @@ public sealed class OwnerPeerCheckMiddlewareTests
         var http = Assert.IsType<System.Net.Http.HttpRequestException>(ex);
         Assert.Equal(HttpStatusCode.Forbidden, http.StatusCode);
         Assert.Contains(BearerTokenMiddleware.InsideSpawnError, http.Message);
-    }
-
-    [Fact]
-    public async Task The_room_note_names_the_spawn_and_pid()
-    {
-        var (host, fake) = await StartAsync();
-        await using var _ = host;
-        fake.Verdict = new OwnerPeerVerdict.InsideSpawn(4242, new SpawnJobEntry(4242, "opus/x", "general", "opus"), NoteDue: true);
-        host.AuthorizeAs("owner");
-
-        await ErrorBodyOf(await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "forged" }));
-
-        var messages = (await host.Client.GetFromJsonAsync<JsonElement>("api/rooms/general/messages"))
-            .GetProperty("messages").EnumerateArray().ToList();
-        var last = messages[^1];
-        Assert.Equal(ChopDb.HubParticipantId, last.GetProperty("authorId").GetString());
-        Assert.Equal("Refused an owner-class credential presented from inside @opus's spawn (pid 4242).", last.GetProperty("body").GetString());
-    }
-
-    [Fact]
-    public async Task A_spawn_job_with_no_room_writes_no_note()
-    {
-        var (host, fake) = await StartAsync();
-        await using var _ = host;
-        fake.Verdict = new OwnerPeerVerdict.InsideSpawn(4242, new SpawnJobEntry(4242, "opus/x", null, null), NoteDue: true);
-        host.AuthorizeAs("owner");
-
-        var before = (await MessageBodiesAsync(host)).Count;
-        await ErrorBodyOf(await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "forged" }));
-        var after = (await MessageBodiesAsync(host)).Count;
-        Assert.Equal(before, after);
     }
 
     [Fact]

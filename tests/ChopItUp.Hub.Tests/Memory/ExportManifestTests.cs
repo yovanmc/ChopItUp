@@ -122,35 +122,21 @@ public sealed class ExportManifestTests : IDisposable
 
     // ---- Fingerprint: report-only, never a refusal predicate ---------------
 
-    [Fact]
-    public void T2_Fingerprint_is_stable_across_calls()
+    public static TheoryData<string, Action<MemoryStore>> FingerprintChanges => new()
     {
-        var store = NewStore(NewDir("fp-stable"));
-        store.Append("user", "A", "Body A.", "prov");
+        { "Original body.", store => store.Supersede("user", "A", "A", "Edited body.", "prov") },   // an edited body
+        { "Body A.", store => store.Append("user", "B", "Body B.", "prov") },                       // an added entry
+    };
 
-        Assert.Equal(ExportManifest.Fingerprint(store), ExportManifest.Fingerprint(store));
-    }
-
-    [Fact]
-    public void T2_Fingerprint_changes_on_an_edited_body()
+    [Theory]
+    [MemberData(nameof(FingerprintChanges))]
+    public void T2_Fingerprint_changes_on_an_edited_body_or_an_added_entry(string initialBody, Action<MemoryStore> change)
     {
-        var store = NewStore(NewDir("fp-edit"));
-        store.Append("user", "A", "Original body.", "prov");
+        var store = NewStore(NewDir("fp-change"));
+        store.Append("user", "A", initialBody, "prov");
         var before = ExportManifest.Fingerprint(store);
 
-        store.Supersede("user", "A", "A", "Edited body.", "prov");
-
-        Assert.NotEqual(before, ExportManifest.Fingerprint(store));
-    }
-
-    [Fact]
-    public void T2_Fingerprint_changes_on_an_added_entry()
-    {
-        var store = NewStore(NewDir("fp-add"));
-        store.Append("user", "A", "Body A.", "prov");
-        var before = ExportManifest.Fingerprint(store);
-
-        store.Append("user", "B", "Body B.", "prov");
+        change(store);
 
         Assert.NotEqual(before, ExportManifest.Fingerprint(store));
     }
@@ -198,62 +184,58 @@ public sealed class ExportManifestTests : IDisposable
         Assert.Contains("someone-elses-file.md", verdict.Paths);
     }
 
-    [Fact]
-    public void T2_Verify_is_Unreadable_when_the_manifest_file_is_present_but_corrupt_and_alone_reports_an_empty_list()
+    [Theory]
+    [InlineData(false)]   // a directory holding ONLY a corrupt manifest legitimately reports an empty list (carried-over fix from the T2 review): there is nothing else in there to name
+    [InlineData(true)]    // the unparseable-manifest refusal must list every affected path by recursive relative path, not an empty Paths list regardless of what else is in the directory
+    public void T2_Verify_is_Unreadable_when_the_manifest_file_is_present_but_corrupt_and_names_the_real_files_beside_it(bool withRealFiles)
     {
-        // A directory holding ONLY a corrupt manifest legitimately reports an empty list (carried-over
-        // fix from the T2 review): there is nothing else in there to name.
         var store = NewStore(NewDir("verify-unreadable-store"));
         var targetDir = NewDir("verify-unreadable-target");
         File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "not json at all {{{");
+        if (withRealFiles)
+        {
+            Directory.CreateDirectory(Path.Combine(targetDir, "sub"));
+            File.WriteAllText(Path.Combine(targetDir, "real-file.md"), "real content");
+            File.WriteAllText(Path.Combine(targetDir, "sub", "nested.md"), "nested content");
+        }
         var manifest = ExportManifest.TryRead(targetDir);
         Assert.Null(manifest);   // sanity: TryRead itself already returned null
 
         var verdict = ExportManifest.Verify(manifest, targetDir, store);
 
         Assert.Equal(TargetState.Unreadable, verdict.State);
-        Assert.Empty(verdict.Paths);
-    }
-
-    [Fact]
-    public void T2_Verify_is_Unreadable_and_names_the_real_files_beside_a_corrupt_manifest()
-    {
-        // The unparseable-manifest refusal must list every affected path by recursive relative path,
-        // not an empty Paths list regardless of what else is in the directory.
-        var store = NewStore(NewDir("verify-unreadable-named-store"));
-        var targetDir = NewDir("verify-unreadable-named-target");
-        Directory.CreateDirectory(Path.Combine(targetDir, "sub"));
-        File.WriteAllText(Path.Combine(targetDir, ExportManifest.FileName), "not json at all {{{");
-        File.WriteAllText(Path.Combine(targetDir, "real-file.md"), "real content");
-        File.WriteAllText(Path.Combine(targetDir, "sub", "nested.md"), "nested content");
-        var manifest = ExportManifest.TryRead(targetDir);
-        Assert.Null(manifest);   // sanity: TryRead itself already returned null
-
-        var verdict = ExportManifest.Verify(manifest, targetDir, store);
-
-        Assert.Equal(TargetState.Unreadable, verdict.State);
-        Assert.Contains("real-file.md", verdict.Paths);
-        Assert.Contains("sub/nested.md", verdict.Paths);
+        if (withRealFiles)
+        {
+            Assert.Contains("real-file.md", verdict.Paths);
+            Assert.Contains("sub/nested.md", verdict.Paths);
+        }
+        else
+        {
+            Assert.Empty(verdict.Paths);
+        }
         Assert.DoesNotContain(ExportManifest.FileName, verdict.Paths);
     }
 
-    [Fact]
-    public void T2_Verify_returns_DifferentSource_for_two_stores_with_identical_entries_at_different_roots_and_every_hash_matched()
+    [Theory]
+    [InlineData("A", "Same body.", false)]   // identical entries at a different root: nothing about the FILES distinguishes the stores, only the manifest's SourceRoot does
+    [InlineData("B", "Body B.", true)]       // a different store whose target is also drifted
+    public void T2_Verify_returns_DifferentSource_for_a_store_at_a_different_root_and_names_a_drifted_file(string titleB, string bodyB, bool targetDrifted)
     {
         var storeA = NewStore(NewDir("verify-diffsrc-a"));
         storeA.Append("user", "A", "Same body.", "prov");
         var storeB = NewStore(NewDir("verify-diffsrc-b"));
-        storeB.Append("user", "A", "Same body.", "prov");
+        storeB.Append("user", titleB, bodyB, "prov");
 
         var targetDir = NewDir("verify-diffsrc-target");
         var manifest = WriteExport(storeA, targetDir);
+        // Tamper with the target beyond just the source mismatch.
+        if (targetDrifted) File.WriteAllText(Path.Combine(targetDir, "extra-file.md"), "not part of either export");
 
-        // storeB's entries are byte-identical to storeA's, so nothing about the FILES distinguishes
-        // them; only the manifest's SourceRoot, bound to storeA, does.
         var verdict = ExportManifest.Verify(manifest, targetDir, storeB);
 
         Assert.Equal(TargetState.DifferentSource, verdict.State);
-        Assert.Empty(verdict.Paths);   // every file hash matched — the attack this guards against
+        if (targetDrifted) Assert.Contains("extra-file.md", verdict.Paths);
+        else Assert.Empty(verdict.Paths);   // every file hash matched — the attack this guards against
     }
 
     [Fact]
@@ -271,25 +253,6 @@ public sealed class ExportManifestTests : IDisposable
 
         Assert.Equal(TargetState.Clean, verdict.State);
         Assert.Empty(verdict.Paths);
-    }
-
-    [Fact]
-    public void T2_DifferentSource_carries_a_non_empty_drift_list_when_the_target_is_also_drifted()
-    {
-        var storeA = NewStore(NewDir("verify-diffsrc-drift-a"));
-        storeA.Append("user", "A", "Body A.", "prov");
-        var storeB = NewStore(NewDir("verify-diffsrc-drift-b"));
-        storeB.Append("user", "B", "Body B.", "prov");
-
-        var targetDir = NewDir("verify-diffsrc-drift-target");
-        var manifest = WriteExport(storeA, targetDir);
-        // Tamper with the target beyond just the source mismatch.
-        File.WriteAllText(Path.Combine(targetDir, "extra-file.md"), "not part of either export");
-
-        var verdict = ExportManifest.Verify(manifest, targetDir, storeB);
-
-        Assert.Equal(TargetState.DifferentSource, verdict.State);
-        Assert.Contains("extra-file.md", verdict.Paths);
     }
 
     [Fact]

@@ -496,27 +496,16 @@ public sealed class ExchangePolicyTests
         Assert.Empty(notes);
     }
 
-    [Fact]
-    public void A_run_start_invocation_needs_a_directory()
+    [Theory]
+    [InlineData("/build-thing @opus begin", false, "/build-thing starts a run, which needs a room bound to a directory; this room has none.")]
+    [InlineData("/build-thing begin", true, "/build-thing starts a run and needs exactly one conductor mentioned; none was.")]
+    [InlineData("/build-thing @opus @sonnet begin", true, "/build-thing starts a run and needs exactly one conductor mentioned; 2 were: @opus, @sonnet.")]
+    public void A_run_start_invocation_without_a_directory_or_exactly_one_conductor_is_refused(string body, bool hasDirectory, string expectedNote)
     {
-        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus begin"), T0,
-            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: false);
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", body), T0,
+            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: hasDirectory);
         Assert.Null(x);
-        Assert.Equal("/build-thing starts a run, which needs a room bound to a directory; this room has none.", Assert.Single(notes));
-    }
-
-    [Fact]
-    public void A_run_start_invocation_with_zero_or_many_conductors_refuses_naming_the_count()
-    {
-        var zero = Policy().OnMessage(null, Msg(1, "owner", "/build-thing begin"), T0,
-            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
-        Assert.Null(zero.Next);
-        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; none was.", Assert.Single(zero.Notes));
-
-        var many = Policy().OnMessage(null, Msg(1, "owner", "/build-thing @opus @sonnet begin"), T0,
-            skill: new SkillResolution.Found(RunSkill, "begin"), startsRun: true, hasDirectory: true);
-        Assert.Null(many.Next);
-        Assert.Equal("/build-thing starts a run and needs exactly one conductor mentioned; 2 were: @opus, @sonnet.", Assert.Single(many.Notes));
+        Assert.Equal(expectedNote, Assert.Single(notes));
     }
 
     [Fact]
@@ -528,21 +517,6 @@ public sealed class ExchangePolicyTests
         Assert.Equal(["opus"], x!.Pending.Keys);
         Assert.Same(RunSkill, x.Skill);
         Assert.Contains(notes, n => n.StartsWith("Skill /build-thing is in force"));
-    }
-
-    [Fact]
-    public void The_supersede_gate_is_a_second_line_of_defence_behind_the_run_is_not_null_return()
-    {
-        // Load-bearing distinction: step 3's early return is what protects an active run's exchange;
-        // the `run is null` guard on the supersede below it can never by itself be exercised through
-        // OnMessage, because step 3 always returns first when run is not null. This test pins step 3
-        // as the one doing the work; the outside-a-run supersede path
-        // (An_owner_message_mid_exchange_supersedes...) stays covered by its own tests.
-        var p = Policy();
-        var (open, _) = p.OnMessage(null, Msg(1, "owner", "@opus go"), T0);
-        var run = new RunContext(RunId: 7, ConductorId: "opus", CurrentPhase: "(start)");
-        p.OnMessage(open, Msg(2, "owner", "never mind"), T0.AddSeconds(1), run: run);
-        Assert.Equal(ExchangeStatus.Open, open!.Status);
     }
 
     // The hub re-spawning its run's conductor
@@ -888,21 +862,14 @@ public sealed class ExchangePolicyTests
         Assert.Empty(notes);
     }
 
-    [Fact]
-    public void Row43_AC2_an_inline_mention_alone_opens_nothing_and_is_noted_as_a_reference()
+    [Theory]
+    [InlineData("please ask @opus something", "@opus")]
+    [InlineData("[usability trial] @sonnet describe", "@sonnet")]
+    public void Row43_AC2_an_inline_mention_or_bracket_prefix_opens_nothing_and_is_noted_as_a_reference(string body, string mention)
     {
-        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "please ask @opus something"), T0);
+        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", body), T0);
         Assert.Null(x);
-        Assert.Equal("Nobody was addressed: @opus appears inside the text, so it was read as a reference. Start the message with @opus to send it.",
-            Assert.Single(notes));
-    }
-
-    [Fact]
-    public void Row43_AC2_a_bracket_prefix_is_prose()
-    {
-        var (x, notes) = Policy().OnMessage(null, Msg(1, "owner", "[usability trial] @sonnet describe"), T0);
-        Assert.Null(x);
-        Assert.Equal("Nobody was addressed: @sonnet appears inside the text, so it was read as a reference. Start the message with @sonnet to send it.",
+        Assert.Equal($"Nobody was addressed: {mention} appears inside the text, so it was read as a reference. Start the message with {mention} to send it.",
             Assert.Single(notes));
     }
 

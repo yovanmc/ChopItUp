@@ -657,56 +657,39 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
     }
 
     /// <summary>The hard-cap check parks the run while the conductor's own exchange is still open
-    /// (its spawn is still in flight, mid-Handler), so ParkRun's exchange-stop note fires. It must
-    /// not read as an owner stop: the run parked itself.</summary>
-    [Fact]
-    public async Task Run19_M27_a_hard_cap_park_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
+    /// (its spawn is still in flight, mid-Handler), so ParkRun's exchange-stop note fires. A valid
+    /// "phase: ping" likewise ends the run while the conductor's own exchange is still open, so EndRun's
+    /// exchange-stop note fires. Neither must read as an owner stop: the run parked or ended itself.</summary>
+    [Theory]
+    [InlineData(true)]    // the spawn cap parks the run
+    [InlineData(false)]   // a valid ping ends the run
+    public async Task Run19_M27_a_hard_cap_park_or_a_ping_end_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner(bool hardCapPark)
     {
-        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var runLimits = hardCapPark
+            ? new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100)
+            : RunLimits.Default;
         var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
         await using var _ = host;
 
         runner.Handler = async (spec, _, _) =>
         {
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
-                await PostAsInHost(host, "sonnet", room, "phase: build @opus - the spawn cap is already spent by the launch");
+                await PostAsInHost(host, "sonnet", room, hardCapPark ? "phase: build @opus - the spawn cap is already spent by the launch" : "phase: ping all done");
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
 
         await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
         await runner.NextSpecAsync(Wait);
 
-        await WaitForNoteContaining(host, room, "parked");
-
-        var messages = await AllMessagesFrom(host, room);
-        var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
-        Assert.DoesNotContain("by the owner", exchangeNote.Body);
-        Assert.DoesNotContain("by you", exchangeNote.Body);
-        Assert.Equal("Exchange stopped by the run: 1 of 4 turns used.", exchangeNote.Body);   // run-start exchange: SpawnLimits.Budget, not the 1-turn re-spawn shape
-    }
-
-    /// <summary>A valid "phase: ping" ends the run while the conductor's own exchange is still open,
-    /// so EndRun's exchange-stop note fires. Same rule as the hard-cap park: the run ended itself, so
-    /// the note must not read as an owner stop.</summary>
-    [Fact]
-    public async Task Run19_M27_a_ping_end_with_the_conductors_exchange_open_does_not_attribute_the_stop_to_the_owner()
-    {
-        var runLimits = RunLimits.Default;
-        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
-        await using var _ = host;
-
-        runner.Handler = async (spec, _, _) =>
+        if (hardCapPark)
         {
-            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
-                await PostAsInHost(host, "sonnet", room, "phase: ping all done");
-            return FakeProcessRunner.Ok("""{"result":"working"}""");
-        };
-
-        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
-        await runner.NextSpecAsync(Wait);
-
-        var ended = await WaitForNoteContaining(host, room, "ended");
-        Assert.Contains("the conductor pinged", ended.Body);
+            await WaitForNoteContaining(host, room, "parked");
+        }
+        else
+        {
+            var ended = await WaitForNoteContaining(host, room, "ended");
+            Assert.Contains("the conductor pinged", ended.Body);
+        }
 
         var messages = await AllMessagesFrom(host, room);
         var exchangeNote = messages.Single(m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith("Exchange stopped"));
@@ -969,11 +952,14 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
     // /stop and the stop control
 
-    [Fact]
-    public async Task Run13_stop_ends_an_active_run_stops_its_in_flight_spawn_and_posts_no_unknown_skill_note()
+    [Theory]
+    [InlineData(false)]   // the owner's /stop post
+    [InlineData(true)]    // the stop control
+    public async Task Run13_stop_ends_an_active_run_and_stops_its_in_flight_spawn_and_posts_no_unknown_skill_note(bool viaStopControl)
     {
+        var room = viaStopControl ? "lab-run-button-stop" : "lab-run-stop";
         WriteSkill("build-thing", RunSkillMd);
-        await MakeRoom("lab-run-stop");
+        await MakeRoom(room);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken sonnetCt = default;
         _runner.Handler = async (spec, _, ct) =>
@@ -982,23 +968,37 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
 
-        await PostAsOwnerIn("lab-run-stop", "/build-thing @sonnet begin");
+        await PostAsOwnerIn(room, "/build-thing @sonnet begin");
         await _runner.NextSpecAsync(Wait);
-        var run = Runs.Active("lab-run-stop");
+        var run = Runs.Active(room);
         Assert.NotNull(run);
 
-        await PostAsOwnerIn("lab-run-stop", "/stop");
+        if (viaStopControl)
+        {
+            var stop = await _host.Client.PostAsync($"api/rooms/{room}/exchange/stop", null);
+            Assert.Equal(System.Net.HttpStatusCode.OK, stop.StatusCode);
+            Assert.True(sonnetCt.IsCancellationRequested);
+        }
+        else
+        {
+            await PostAsOwnerIn(room, "/stop");
+        }
 
-        var ended = await WaitForMessageIn("lab-run-stop", m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith($"Run #{run!.Id} ended"));
+        var ended = await WaitForMessageIn(room, m => m.Author == ChopDb.HubParticipantId && m.Body.StartsWith($"Run #{run!.Id} ended"));
         Assert.Contains("stopped by the owner", ended.Body);
         Assert.True(sonnetCt.IsCancellationRequested);
         Assert.Equal(RunStatus.Ended, Runs.ById(run!.Id)!.Status);
-        Assert.DoesNotContain(await MessagesIn("lab-run-stop"), m => m.Body.Contains("No skill named"));
+        Assert.DoesNotContain(await MessagesIn(room), m => m.Body.Contains("No skill named"));
         release.SetResult();
     }
 
-    [Fact]
-    public async Task Run13_stop_ends_a_parked_run_without_resuming_it_first_even_when_a_hard_cap_is_spent()
+    /// <summary>The stop control (second case) must work even with nothing in flight: a parked run
+    /// sitting with no open exchange and no in-flight spawn must not get the null (409 at the API)
+    /// that "nothing to stop" answers.</summary>
+    [Theory]
+    [InlineData(false)]   // the owner's /stop post
+    [InlineData(true)]    // the stop control
+    public async Task Run13_stop_ends_a_parked_run_without_resuming_it_first_even_when_a_hard_cap_is_spent_and_nothing_is_in_flight(bool viaStopControl)
     {
         var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
         var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
@@ -1008,14 +1008,22 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
         await runner.NextSpecAsync(Wait);   // sonnet's one allowed spawn; the spawn cap parks the run (hard cap)
 
-        await WaitForNoteContaining(host, room, "parked");
+        await WaitForNoteContaining(host, room, "parked");   // hard-capped park: nothing open, nothing in flight now
         var runs = host.Services.GetRequiredService<RunStore>();
         var parked = runs.Latest(room);
         Assert.Equal(RunStatus.Parked, parked!.Status);
         Assert.True(parked.CapSpent);   // a hard-capped park must still get End, never a resume attempt
 
-        var stop = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/stop" });
-        Assert.Equal(System.Net.HttpStatusCode.Created, stop.StatusCode);
+        if (viaStopControl)
+        {
+            var stop = await host.Client.PostAsync($"api/rooms/{room}/exchange/stop", null);
+            Assert.Equal(System.Net.HttpStatusCode.OK, stop.StatusCode);   // not 409 - the room's run is still stoppable
+        }
+        else
+        {
+            var stop = await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/stop" });
+            Assert.Equal(System.Net.HttpStatusCode.Created, stop.StatusCode);
+        }
 
         var ended = await WaitForNoteContaining(host, room, "ended");
         Assert.Contains("stopped by the owner", ended.Body);
@@ -1031,56 +1039,6 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.Equal("Nothing to stop: no run is active or parked in this room.", note.Body);
         Assert.DoesNotContain(await Messages(), m => m.Body.Contains("No skill named"));
         Assert.Null(Runs.Latest("general"));
-    }
-
-    [Fact]
-    public async Task Run13_the_stop_control_ends_an_active_run_and_cancels_its_in_flight_spawn()
-    {
-        WriteSkill("build-thing", RunSkillMd);
-        await MakeRoom("lab-run-button-stop");
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancellationToken sonnetCt = default;
-        _runner.Handler = async (spec, _, ct) =>
-        {
-            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet") { sonnetCt = ct; await release.Task.WaitAsync(ct); }
-            return FakeProcessRunner.Ok("""{"result":"working"}""");
-        };
-
-        await PostAsOwnerIn("lab-run-button-stop", "/build-thing @sonnet begin");
-        await _runner.NextSpecAsync(Wait);
-
-        var stop = await _host.Client.PostAsync("api/rooms/lab-run-button-stop/exchange/stop", null);
-        Assert.Equal(System.Net.HttpStatusCode.OK, stop.StatusCode);
-
-        Assert.True(sonnetCt.IsCancellationRequested);
-        var ended = await WaitForMessageIn("lab-run-button-stop", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains(" ended"));
-        Assert.Contains("stopped by the owner", ended.Body);
-        Assert.Equal(RunStatus.Ended, Runs.Latest("lab-run-button-stop")!.Status);
-        release.SetResult();
-    }
-
-    /// <summary>The stop control must work even with nothing in flight: a parked run sitting with no
-    /// open exchange and no in-flight spawn must not get the null (409 at the API) that "nothing to
-    /// stop" answers.</summary>
-    [Fact]
-    public async Task Run13_the_stop_control_ends_a_parked_run_even_with_nothing_in_flight()
-    {
-        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
-        var (host, runner, room) = await StartRunHostAsync(Instant, runLimits);
-        await using var _ = host;
-
-        runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
-        await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
-        await runner.NextSpecAsync(Wait);
-        await WaitForNoteContaining(host, room, "parked");   // hard-capped park: nothing open, nothing in flight now
-
-        var stop = await host.Client.PostAsync($"api/rooms/{room}/exchange/stop", null);
-        Assert.Equal(System.Net.HttpStatusCode.OK, stop.StatusCode);   // not 409 - the room's run is still stoppable
-
-        var runs = host.Services.GetRequiredService<RunStore>();
-        Assert.Equal(RunStatus.Ended, runs.Latest(room)!.Status);
-        var ended = await WaitForNoteContaining(host, room, "ended");
-        Assert.Contains("stopped by the owner", ended.Body);
     }
 
     /// <summary>The effort selection rule. The builder tests prove each spawn builder appends the flag
