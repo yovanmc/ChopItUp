@@ -350,7 +350,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     }
 
     [Fact]
-    public void Deploy_to_a_fresh_target_lands_both_exes_by_rename_and_the_client()
+    public void Deploy_to_a_fresh_target_lands_both_exes_and_the_client()
     {
         string target = NewScratchPath("target");
         try

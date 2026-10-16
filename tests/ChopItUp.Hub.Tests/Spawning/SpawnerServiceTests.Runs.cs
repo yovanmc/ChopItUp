@@ -1018,6 +1018,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         {
             var stop = await host.Client.PostAsync($"api/rooms/{room}/exchange/stop", null);
             Assert.Equal(System.Net.HttpStatusCode.OK, stop.StatusCode);   // not 409 - the room's run is still stoppable
+            Assert.Equal(RunStatus.Ended, runs.Latest(room)!.Status);   // the 200 answers only once the run has ended
         }
         else
         {

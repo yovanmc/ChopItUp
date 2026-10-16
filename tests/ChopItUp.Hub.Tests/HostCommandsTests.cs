@@ -194,7 +194,7 @@ public sealed class HostCommandsTests : IDisposable
         }
 
         // The plaintext this test presents comes from MintFor, the mint entry point the CLI verb
-        // itself calls, rather than from stdout. A6_rotate_replaces_one_token_and_leaves_the_others_alone
+        // itself calls, rather than from stdout. A6_rotate_replaces_one_token_prints_the_new_one_once_and_writes_it_to_no_file
         // covers the CLI verb's own exit code and isolation.
         var newToken = TokenStore.Load(dir, Participants).MintFor("claude");
         Assert.NotEqual(old, newToken);

@@ -660,7 +660,7 @@ public sealed class SkillImportTests : IDisposable
     {
         // The extension allowlist is a propose-time refusal: skills needing a binary stay on the CLI
         // path, where the hub owner is already at the keyboard. Same fixture as
-        // A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name above, which
+        // A_file_with_an_extension_outside_the_reviewable_allowlist_or_with_none_is_refused_by_name above, which
         // proves Validate still refuses it; this proves Run (the CLI path) does not.
         var source = NewSourceDir("demo", ValidSkillBody);
         File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
