@@ -160,30 +160,22 @@ describe('ExchangeBar', () => {
     }
   });
 
-  test('an open exchange with no run offers its own stop', () => {
-    expect(render(BASE)).toContain('>Stop exchange</button>');
-  });
-
-  test('a live run takes the stop over, so the bar renders none', () => {
-    expect(render(BASE, true)).not.toContain('Stop exchange');
-  });
-
   /** The yield does not depend on the exchange being open: a run parks with its exchange already
-   *  closed and its spawns already cancelled, and the bar must stay quiet there too. */
-  test('a live run also takes it over from a closed exchange with a spawn still talking', () => {
-    const closed: ExchangeSnapshot = { ...BASE, status: 'superseded', inFlight: ['sonnet'] };
+   *  closed and its spawns already cancelled, and the bar must stay quiet there too. The yield is for
+   *  the life of the run, not for the life of the room. Once the run has `ended`, App's `runStoppable`
+   *  is false again and this bar is exactly what it would be with no run, including for a spawn that
+   *  outlived its exchange. */
+  test.each([
+    ['an open exchange with no run offers its own stop', 'open', false, true],
+    ['a live run takes the stop over, so the bar renders none', 'open', true, false],
+    ['a closed exchange with a spawn still talking offers the stop when no run owns it', 'superseded', false, true],
+    ['a live run also takes it over from a closed exchange with a spawn still talking', 'superseded', true, false],
+    ['an ended run gives the stop back, unchanged', 'stopped', false, true],
+  ] as const)('%s', (_name, status, runStoppable, offered) => {
+    const exchange: ExchangeSnapshot = { ...BASE, status, inFlight: ['sonnet'] };
 
-    expect(render(closed)).toContain('>Stop exchange</button>');
-    expect(render(closed, true)).not.toContain('Stop exchange');
-  });
-
-  /** The yield is for the life of the run, not for the life of the room. Once the run has `ended`,
-   *  App's `runStoppable` is false again and this bar is exactly what it would be with no run,
-   *  including for a spawn that outlived its exchange. */
-  test('an ended run gives the stop back, unchanged', () => {
-    const afterRun: ExchangeSnapshot = { ...BASE, status: 'stopped', inFlight: ['sonnet'] };
-
-    expect(render(afterRun, false)).toContain('>Stop exchange</button>');
+    if (offered) expect(render(exchange, runStoppable)).toContain('>Stop exchange</button>');
+    else expect(render(exchange, runStoppable)).not.toContain('Stop exchange');
   });
 
   test('with no run the old gate still decides: no spawns and a closed exchange means no button', () => {
@@ -197,27 +189,17 @@ describe('ExchangeBar', () => {
   /** Every `RunPolicy` park is policy-driven and so is a ping-End, and all of them close the
    *  conductor's exchange, so without the cause on the wire a cap the hub owner never touched would tell
    *  him he had stopped it. The marker has to attribute the stop to whoever actually made it. */
-  test('a run-stopped exchange says the run did it, not the owner', () => {
-    const markup = render({ ...BASE, status: 'stopped', stoppedBy: 'run', inFlight: [] });
-
-    expect(markup).toContain('Stopped by the run');
-    expect(markup).not.toContain('Stopped by you');
-  });
-
-  test('an owner-stopped exchange still reads exactly as it did', () => {
-    expect(render({ ...BASE, status: 'stopped', stoppedBy: 'owner', inFlight: [] })).toContain(
-      'Stopped by you',
-    );
-  });
-
   /** A snapshot from an older hub, and any stop the hub could not attribute, sends no cause. Guessing
    *  "you" there would blame the hub owner wrongly, so the null case is neutral. */
-  test('a stop with no cause on the wire claims nothing about who caused it', () => {
-    const markup = render({ ...BASE, status: 'stopped', stoppedBy: null, inFlight: [] });
+  test.each([
+    ['run', 'Stopped by the run', ['Stopped by you']],
+    ['owner', 'Stopped by you', []],
+    [null, 'Exchange stopped ·', ['Stopped by you', 'Stopped by the run']],
+  ] as const)('a stop attributed to %s says who did it and nobody else', (stoppedBy, says, doesNotSay) => {
+    const markup = render({ ...BASE, status: 'stopped', stoppedBy, inFlight: [] });
 
-    expect(markup).toContain('Exchange stopped ·');
-    expect(markup).not.toContain('Stopped by you');
-    expect(markup).not.toContain('Stopped by the run');
+    expect(markup).toContain(says);
+    for (const other of doesNotSay) expect(markup).not.toContain(other);
   });
 
   test('an idle room and a room with no exchange still render nothing at all', () => {
@@ -384,12 +366,11 @@ describe('ExchangeBar with a continuable exchange', () => {
     expect(render({ ...topLevel, rootMessageId: null })).not.toContain('Continue exchange');
   });
 
-  test('a live run hides Continue', () => {
-    expect(render(ONE, true)).not.toContain('Continue exchange');
-  });
-
-  test('an open exchange has no Continue', () => {
-    expect(render({ ...TWO, exchanges: [{ ...NEWER, continuable: false }] })).not.toContain('Continue exchange');
+  test.each<[string, ExchangeSnapshot, boolean]>([
+    ['a live run hides Continue', ONE, true],
+    ['an open exchange has no Continue', { ...TWO, exchanges: [{ ...NEWER, continuable: false }] }, false],
+  ])('%s', (_name, exchange, runStoppable) => {
+    expect(render(exchange, runStoppable)).not.toContain('Continue exchange');
   });
 
   test('a continue in flight disables only that strip', () => {

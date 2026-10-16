@@ -89,38 +89,16 @@ public sealed class SpawnOutputTests
         {"type":"turn.completed","usage":{"input_tokens":1}}
         """;
 
-    [Fact]
-    public void codex_failure_unwraps_a_turn_failed_message_that_is_itself_a_json_error_envelope()
+    [Theory]
+    [InlineData(CodexTurnFailedWrappedJson, "The 'gpt-bogus-model' model is not supported for this request.")]   // a turn.failed message that is itself a json error envelope is unwrapped
+    [InlineData(CodexTurnFailedPlain, "context deadline exceeded")]                                           // a plain turn.failed message is returned as is
+    [InlineData(CodexErrorLineOnly, "stream disconnected")]                                                    // an error line is the fallback when no turn.failed event exists
+    [InlineData(CodexTurnCompletedNoFailure, null)]                                                            // the turn completed without failing
+    [InlineData("not json\n{\"type\":\"turn.failed\"}\n{\"error\":5}\n[1,2]\n", null)]                           // junk
+    [InlineData("", null)]                                                                                     // empty stdout
+    public void codex_failure_reads_the_failure_message_from_the_stream_and_is_null_without_one(string stdout, string? expected)
     {
-        Assert.Equal(
-            "The 'gpt-bogus-model' model is not supported for this request.",
-            SpawnOutput.CodexFailure(CodexTurnFailedWrappedJson));
-    }
-
-    [Fact]
-    public void codex_failure_returns_a_plain_turn_failed_message_as_is()
-    {
-        Assert.Equal("context deadline exceeded", SpawnOutput.CodexFailure(CodexTurnFailedPlain));
-    }
-
-    [Fact]
-    public void codex_failure_falls_back_to_an_error_line_when_no_turn_failed_event_exists()
-    {
-        Assert.Equal("stream disconnected", SpawnOutput.CodexFailure(CodexErrorLineOnly));
-    }
-
-    [Fact]
-    public void codex_failure_is_null_when_the_turn_completed_without_failing()
-    {
-        Assert.Null(SpawnOutput.CodexFailure(CodexTurnCompletedNoFailure));
-    }
-
-    [Fact]
-    public void codex_failure_is_null_for_junk_or_empty_stdout()
-    {
-        const string junk = "not json\n{\"type\":\"turn.failed\"}\n{\"error\":5}\n[1,2]\n";
-        Assert.Null(SpawnOutput.CodexFailure(junk));
-        Assert.Null(SpawnOutput.CodexFailure(""));
+        Assert.Equal(expected, SpawnOutput.CodexFailure(stdout));
     }
 
     [Fact]

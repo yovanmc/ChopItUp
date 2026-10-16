@@ -119,33 +119,22 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
         Assert.Contains("demo", Skills.List().Select(s => s.Name));
     }
 
-    [Fact]
-    public async Task GET_reports_sourceChanged_and_suppresses_file_contents_once_the_source_has_been_edited()
+    [Theory]
+    [InlineData(false)]   // the source was edited: sourceChanged, file contents suppressed
+    [InlineData(true)]    // the source directory is gone: sourceMissing rather than an empty tree
+    public async Task GET_reports_sourceChanged_or_sourceMissing_and_suppresses_file_contents(bool deleted)
     {
         var source = NewRoomSource("demo", ValidSkillBody);
         await ProposeAsync(source);
-        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: swapped.\n---\n# Swapped\n");
+        if (deleted) Directory.Delete(source, recursive: true);
+        else File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: swapped.\n---\n# Swapped\n");
 
         var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
 
-        Assert.True(row.GetProperty("sourceChanged").GetBoolean());
-        Assert.False(row.GetProperty("sourceMissing").GetBoolean());
+        Assert.Equal(!deleted, row.GetProperty("sourceChanged").GetBoolean());
+        Assert.Equal(deleted, row.GetProperty("sourceMissing").GetBoolean());
         Assert.Empty(row.GetProperty("entries").EnumerateArray());
         Assert.Empty(row.GetProperty("gates").EnumerateArray());
-    }
-
-    [Fact]
-    public async Task GET_reports_sourceMissing_rather_than_an_empty_tree_once_the_source_directory_is_gone()
-    {
-        var source = NewRoomSource("demo", ValidSkillBody);
-        await ProposeAsync(source);
-        Directory.Delete(source, recursive: true);
-
-        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
-
-        Assert.True(row.GetProperty("sourceMissing").GetBoolean());
-        Assert.False(row.GetProperty("sourceChanged").GetBoolean());
-        Assert.Empty(row.GetProperty("entries").EnumerateArray());
     }
 
     [Fact]
@@ -253,52 +242,39 @@ public sealed class SkillsApiProposalsTests : IAsyncLifetime
     /// and counted against <see cref="SkillProposalStore.MaxUndecidedPerRoom"/>.
     ///
     /// The sequence is the ordinary one, not an exotic one: approve, the install completes, the hub dies
-    /// before <c>MarkInstalled</c>, and the proposer then cleans up its room directory.</summary>
-    [Fact]
-    public async Task A_retry_row_whose_source_vanished_after_a_completed_install_is_approvable_and_finishes()
+    /// before <c>MarkInstalled</c>, and the proposer then cleans up its room directory. The same rescue
+    /// holds through the other flag: an edit to the leftover source after the install completed sets
+    /// <c>sourceChanged</c>, which disqualified the row just as <c>sourceMissing</c> did, and just as
+    /// wrongly, since approve never reads the source on this path.</summary>
+    [Theory]
+    [InlineData(true)]    // the proposer cleaned its room directory up
+    [InlineData(false)]   // the leftover source was edited after the install
+    public async Task A_retry_row_whose_source_vanished_or_changed_after_a_completed_install_is_approvable_and_finishes(bool vanished)
     {
         var source = NewRoomSource("demo", ValidSkillBody);
         var id = (await ProposeAsync(source)).GetProperty("id").GetInt64();
         Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(Proposals.Get(id)!.SourceDir, Skills.Root, force: false, new SkillHashes(Db)).Outcome);
         Assert.NotNull(Proposals.MarkApproved(id));   // the crash state: install finished, installed_at never recorded
-        Directory.Delete(source, recursive: true);    // and the proposer has since cleaned its room directory up
+        if (vanished) Directory.Delete(source, recursive: true);
+        else File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: edited after the install.\n---\n# Edited\n");
 
         var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
-        Assert.True(row.GetProperty("sourceMissing").GetBoolean());
+        Assert.Equal(vanished, row.GetProperty("sourceMissing").GetBoolean());
+        Assert.Equal(!vanished, row.GetProperty("sourceChanged").GetBoolean());
         Assert.True(row.GetProperty("approvable").GetBoolean());
 
-        // The install is already on disk, and a re-run is impossible anyway (refusal 1: the source is
-        // gone), so an OK here is itself the proof that Approve finished the row from the installed
-        // tree rather than by re-entering SkillImport.Run.
+        // The install is already on disk, and when the source is gone a re-run is impossible anyway
+        // (refusal 1), so an OK here is itself the proof that Approve finished the row from the
+        // installed tree rather than by re-entering SkillImport.Run.
         var installedBytes = File.ReadAllBytes(Path.Combine(Skills.Root, "demo", "SKILL.md"));
         var r = await PostApprove(id, null);
 
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         Assert.NotEqual(JsonValueKind.Null, JsonDocument.Parse(await r.Content.ReadAsStringAsync()).RootElement.GetProperty("installedAt").ValueKind);
-        Assert.Equal(installedBytes, File.ReadAllBytes(Path.Combine(Skills.Root, "demo", "SKILL.md")));
-        Assert.False(Directory.Exists(Path.Combine(Skills.Root, "demo.importing")));
-    }
-
-    /// <summary>The same rescue, through the other flag: an edit to the leftover source after the
-    /// install completed sets <c>sourceChanged</c>, which disqualified the row just as
-    /// <c>sourceMissing</c> did — and just as wrongly, since approve never reads the source on this
-    /// path.</summary>
-    [Fact]
-    public async Task A_retry_row_whose_source_changed_after_a_completed_install_is_approvable_and_finishes()
-    {
-        var source = NewRoomSource("demo", ValidSkillBody);
-        var id = (await ProposeAsync(source)).GetProperty("id").GetInt64();
-        Assert.Equal(SkillImportOutcome.Ok, SkillImport.Run(Proposals.Get(id)!.SourceDir, Skills.Root, force: false, new SkillHashes(Db)).Outcome);
-        Assert.NotNull(Proposals.MarkApproved(id));
-        File.WriteAllText(Path.Combine(source, "SKILL.md"), "---\nname: demo\ndescription: edited after the install.\n---\n# Edited\n");
-
-        var row = Assert.Single((await Get("api/skills/proposals")).EnumerateArray());
-        Assert.True(row.GetProperty("sourceChanged").GetBoolean());
-        Assert.True(row.GetProperty("approvable").GetBoolean());
-
-        Assert.Equal(HttpStatusCode.OK, (await PostApprove(id, null)).StatusCode);
         Assert.NotNull(Proposals.Get(id)!.InstalledAt);
-        Assert.Equal(ValidSkillBody, File.ReadAllText(Path.Combine(Skills.Root, "demo", "SKILL.md")));   // the edit never installed
+        Assert.Equal(installedBytes, File.ReadAllBytes(Path.Combine(Skills.Root, "demo", "SKILL.md")));
+        Assert.Equal(ValidSkillBody, File.ReadAllText(Path.Combine(Skills.Root, "demo", "SKILL.md")));   // an edit to the source never installed
+        Assert.False(Directory.Exists(Path.Combine(Skills.Root, "demo.importing")));
     }
 
     /// <summary>The rule that must NOT move: the rescue is for a row the owner already approved, never

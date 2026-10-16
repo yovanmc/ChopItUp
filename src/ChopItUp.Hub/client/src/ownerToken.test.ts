@@ -33,14 +33,11 @@ describe('readOwnerToken', () => {
     expect(readOwnerToken()).toBe('launch');
   });
 
-  test('a plain browser still reads the pasted token out of storage', () => {
-    vi.stubGlobal('window', { localStorage: { getItem: () => 'pasted', setItem: () => undefined, removeItem: () => undefined } });
-
-    expect(readOwnerToken()).toBe('pasted');
-  });
-
-  test('an empty injected value is not a token, so the pasted one is still used', () => {
-    vi.stubGlobal('window', { __chopitupShellToken: '', localStorage: { getItem: () => 'pasted', setItem: () => undefined, removeItem: () => undefined } });
+  test.each([
+    ['a plain browser still reads the pasted token out of storage', {}],
+    ['an empty injected value is not a token, so the pasted one is still used', { __chopitupShellToken: '' }],
+  ])('%s', (_name, injected) => {
+    vi.stubGlobal('window', { ...injected, localStorage: { getItem: () => 'pasted', setItem: () => undefined, removeItem: () => undefined } });
 
     expect(readOwnerToken()).toBe('pasted');
   });

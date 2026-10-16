@@ -10,6 +10,9 @@ public sealed class ParticipationTests : IAsyncLifetime
     public async Task InitializeAsync() => _host = await HubTestHost.StartAsync(_dir);
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
+    /// <summary>The instructions a real client receives carry the room rules, name every human id and
+    /// say the hub stamps which one typed, and state the leading-mention rule in the same words as the
+    /// spawn prompt, the README and the room overlay.</summary>
     [Fact]
     public async Task A1_server_instructions_reach_a_real_client_and_carry_the_room_rules()
     {
@@ -37,27 +40,13 @@ public sealed class ParticipationTests : IAsyncLifetime
         Assert.DoesNotContain("Give every post_message call a fresh, unique client_key", instructions);
         Assert.Contains("propose_memory(room_id, topic, title, body)", instructions);
         Assert.Contains("nothing is remembered until approved", instructions);
-    }
 
-    /// <summary>The Rules constant's "only human here" line becomes a {HUMANS} placeholder naming every
-    /// human id and saying the hub stamps which one typed.</summary>
-    [Fact]
-    public async Task Instructions_name_every_human_id_and_say_the_hub_stamps_which()
-    {
-        await using var client = await _host.ClientFor("claude");
-        var instructions = client.ServerInstructions;
+        // The Rules constant's "only human here" line becomes a {HUMANS} placeholder naming every
+        // human id and saying the hub stamps which one typed.
         Assert.DoesNotContain("The owner is the only human here.", instructions);
         Assert.Contains("owner-remote", instructions);
         Assert.Contains("the hub stamps which", instructions);
-    }
 
-    /// <summary>Every reader of the instructions is told the leading-mention rule, in the same words as
-    /// the spawn prompt, the README and the room overlay.</summary>
-    [Fact]
-    public async Task Row43_AC5_instructions_state_the_leading_rule()
-    {
-        await using var client = await _host.ClientFor("claude");
-        var instructions = client.ServerInstructions;
         Assert.Contains("Address a participant by starting your message with @ and its id", instructions);
         Assert.Contains("elsewhere in the text is a reference", instructions);
     }

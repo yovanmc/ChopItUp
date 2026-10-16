@@ -69,8 +69,8 @@ describe('reply-to', () => {
 describe('nextReply', () => {
   test('Reply sets the target for its message\'s room', () =>
     expect(nextReply({}, { kind: 'reply', message: root })).toEqual({ general: root }));
-  test('a successful send clears only that room', () =>
-    expect(nextReply({ general: root, other: root }, { kind: 'sent', roomId: 'general' })).toEqual({
+  test.each(['sent', 'cancel'] as const)('%s clears only that room', (kind) =>
+    expect(nextReply({ general: root, other: root }, { kind, roomId: 'general' })).toEqual({
       general: null,
       other: root,
     }));
@@ -78,11 +78,6 @@ describe('nextReply', () => {
     const state = { general: root };
     expect(nextReply(state, { kind: 'failed', roomId: 'general' })).toBe(state);
   });
-  test('Cancel clears only that room', () =>
-    expect(nextReply({ general: root, other: root }, { kind: 'cancel', roomId: 'general' })).toEqual({
-      general: null,
-      other: root,
-    }));
   test('a switch keeps the other room\'s target', () => {
     const state = { general: root };
     expect(nextReply(state, { kind: 'cancel', roomId: 'other' })).toEqual({ general: root, other: null });

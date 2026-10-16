@@ -99,45 +99,32 @@ public sealed class SkillImportTests : IDisposable
         AssertTargetAbsent("nope");
     }
 
-    [Fact]
-    public void Refuses_an_invalid_directory_name()
+    public static TheoryData<string, string, string?> BadSourceNameOrHeader => new()
     {
-        var source = NewSourceDir("Invalid_Name", ValidSkillBody);
+        { "Invalid_Name", ValidSkillBody, null },
+        // The reserved `/stop` and `/continue` commands cannot be shadowed by an installed skill. Checked
+        // purely on the directory name, before the frontmatter is read: ValidSkillBody's own `name: demo`
+        // would otherwise mismatch the reserved directory and refuse for a different reason (Refusal 5),
+        // which would prove nothing about the reserved-name rule itself.
+        { RunCommands.StopName, ValidSkillBody, "reserved" },
+        { ExchangeCommands.ContinueName, ValidSkillBody, "reserved" },
+        { "huge", "---\nname: huge\ndescription: big.\n---\n" + new string('A', SkillStore.MaxSkillChars + 1), SkillStore.MaxSkillChars.ToString() },
+        { "mydir", "---\nname: other-name\ndescription: x.\n---\n# X\n", null },
+        // The frontmatter name check engages on CRLF line endings too.
+        { "mydir2", "---\r\nname: other-name\r\ndescription: x.\r\n---\r\n# X\r\n", null },
+    };
+
+    [Theory]
+    [MemberData(nameof(BadSourceNameOrHeader))]
+    public void Refuses_an_invalid_reserved_or_oversized_source_or_a_frontmatter_name_that_disagrees_with_the_directory(string dirName, string skillMd, string? expectedInMessage)
+    {
+        var source = NewSourceDir(dirName, skillMd);
 
         var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
 
         Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        AssertTargetAbsent("Invalid_Name");
-    }
-
-    // The reserved `/stop` command cannot be shadowed by an installed skill. Checked purely on the
-    // directory name, before the frontmatter is read: ValidSkillBody's own `name: demo` would
-    // otherwise mismatch the "stop" directory and refuse for a different reason (Refusal 5), which
-    // would prove nothing about the reserved-name rule itself.
-    [Fact]
-    public void Refuses_to_import_a_skill_named_stop_the_reserved_run_command()
-    {
-        var source = NewSourceDir(RunCommands.StopName, ValidSkillBody);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        Assert.Contains("reserved", result.Message);
-        AssertTargetAbsent(RunCommands.StopName);
-    }
-
-    // The reserved `/continue` command cannot be shadowed by an installed skill either, checked the
-    // same way and for the same reason as `/stop` above.
-    [Fact]
-    public void Refuses_the_reserved_continue_name()
-    {
-        var source = NewSourceDir(ExchangeCommands.ContinueName, ValidSkillBody);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        Assert.Contains("reserved", result.Message);
-        AssertTargetAbsent(ExchangeCommands.ContinueName);
+        if (expectedInMessage is not null) Assert.Contains(expectedInMessage, result.Message);
+        AssertTargetAbsent(dirName);
     }
 
     [Fact]
@@ -150,43 +137,6 @@ public sealed class SkillImportTests : IDisposable
 
         Assert.Equal(SkillImportOutcome.SourceMissing, result.Outcome);
         AssertTargetAbsent("empty");
-    }
-
-    [Fact]
-    public void Refuses_a_SKILL_md_over_the_character_cap()
-    {
-        var huge = "---\nname: huge\ndescription: big.\n---\n" + new string('A', SkillStore.MaxSkillChars + 1);
-        var source = NewSourceDir("huge", huge);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        Assert.Contains(SkillStore.MaxSkillChars.ToString(), result.Message);
-        AssertTargetAbsent("huge");
-    }
-
-    [Fact]
-    public void Refuses_when_frontmatter_name_disagrees_with_the_directory()
-    {
-        var mismatched = "---\nname: other-name\ndescription: x.\n---\n# X\n";
-        var source = NewSourceDir("mydir", mismatched);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        AssertTargetAbsent("mydir");
-    }
-
-    [Fact]
-    public void The_frontmatter_name_check_engages_on_CRLF_line_endings()
-    {
-        var crlf = "---\r\nname: other-name\r\ndescription: x.\r\n---\r\n# X\r\n";
-        var source = NewSourceDir("mydir2", crlf);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        AssertTargetAbsent("mydir2");
     }
 
     [Fact]
@@ -296,7 +246,7 @@ public sealed class SkillImportTests : IDisposable
     }
 
     [Fact]
-    public void A_valid_source_is_copied_and_its_hash_recorded()
+    public void A_valid_source_is_copied_its_hash_recorded_and_every_installed_file_manifested()
     {
         var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
 
@@ -310,6 +260,15 @@ public sealed class SkillImportTests : IDisposable
         var expectedHash = Convert.ToHexString(SHA256.HashData(installed)).ToLowerInvariant();
         Assert.Equal(expectedHash, _hashes.Expected("demo"));
         Assert.False(Directory.Exists(Path.Combine(_skillsRoot, "demo.importing")));
+        // The whole-tree manifest holds every installed file, hashed after the copy.
+        var manifest = _hashes.ExpectedTree("demo");
+        Assert.Equal(2, manifest.Count);
+        foreach (var relative in new[] { "SKILL.md", "references/notes.md" })
+        {
+            var installedFile = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", relative));
+            var expectedFileHash = Convert.ToHexString(SHA256.HashData(installedFile)).ToLowerInvariant();
+            Assert.Equal(expectedFileHash, manifest[relative]);
+        }
     }
 
     [Fact]
@@ -384,24 +343,6 @@ public sealed class SkillImportTests : IDisposable
     }
 
     // The whole-tree manifest
-
-    [Fact]
-    public void A_valid_import_records_a_manifest_of_every_installed_file_hashed_after_the_copy()
-    {
-        var source = NewSourceDir("demo", ValidSkillBody, withReference: true);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
-        var manifest = _hashes.ExpectedTree("demo");
-        Assert.Equal(2, manifest.Count);
-        foreach (var relative in new[] { "SKILL.md", "references/notes.md" })
-        {
-            var installed = File.ReadAllBytes(Path.Combine(_skillsRoot, "demo", relative));
-            var expectedHash = Convert.ToHexString(SHA256.HashData(installed)).ToLowerInvariant();
-            Assert.Equal(expectedHash, manifest[relative]);
-        }
-    }
 
     [Fact]
     public void A_forced_reimport_replaces_the_manifest_rather_than_accumulating_stale_entries()
@@ -660,30 +601,20 @@ public sealed class SkillImportTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(freshRoot, "demo")));   // Validate never restores .replaced
     }
 
-    [Fact]
-    public void Validate_returns_the_same_refusal_message_Run_would_for_an_invalid_name()
+    [Theory]
+    [InlineData("Invalid_Name", true)]    // an invalid directory name
+    [InlineData("empty", false)]          // a missing SKILL.md
+    public void Validate_returns_the_same_refusal_message_Run_would(string dirName, bool withSkillMd)
     {
-        var source = NewSourceDir("Invalid_Name", ValidSkillBody);
+        var source = withSkillMd ? NewSourceDir(dirName, ValidSkillBody) : Path.Combine(_root, "sources", dirName);
+        Directory.CreateDirectory(source);
 
         var validated = SkillImport.Validate(source, _skillsRoot, force: false);
         var run = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
 
         Assert.Equal(run.Outcome, validated.Outcome);
         Assert.Equal(run.Message, validated.Message);
-        AssertTargetAbsent("Invalid_Name");
-    }
-
-    [Fact]
-    public void Validate_returns_the_same_refusal_message_Run_would_for_a_missing_SKILL_md()
-    {
-        var dir = Path.Combine(_root, "sources", "empty");
-        Directory.CreateDirectory(dir);
-
-        var validated = SkillImport.Validate(dir, _skillsRoot, force: false);
-        var run = SkillImport.Run(dir, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(run.Outcome, validated.Outcome);
-        Assert.Equal(run.Message, validated.Message);
+        if (withSkillMd) AssertTargetAbsent(dirName);
     }
 
     [Fact]
@@ -709,16 +640,18 @@ public sealed class SkillImportTests : IDisposable
         }
     }
 
-    [Fact]
-    public void A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name()
+    [Theory]
+    [InlineData("helper.exe", "MZ")]    // an extension outside the reviewable allowlist (bytes 0x4D 0x5A)
+    [InlineData("LICENSE", "MIT")]      // no extension at all
+    public void A_file_with_an_extension_outside_the_reviewable_allowlist_or_with_none_is_refused_by_name(string fileName, string content)
     {
         var source = NewSourceDir("demo", ValidSkillBody);
-        File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
+        File.WriteAllText(Path.Combine(source, fileName), content);
 
         var result = SkillImport.Validate(source, _skillsRoot, force: false);
 
         Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        Assert.Contains("helper.exe", result.Message);
+        Assert.Contains(fileName, result.Message);
         AssertTargetAbsent("demo");
     }
 
@@ -727,7 +660,7 @@ public sealed class SkillImportTests : IDisposable
     {
         // The extension allowlist is a propose-time refusal: skills needing a binary stay on the CLI
         // path, where the hub owner is already at the keyboard. Same fixture as
-        // A_file_with_an_extension_outside_the_reviewable_allowlist_is_refused_by_name above, which
+        // A_file_with_an_extension_outside_the_reviewable_allowlist_or_with_none_is_refused_by_name above, which
         // proves Validate still refuses it; this proves Run (the CLI path) does not.
         var source = NewSourceDir("demo", ValidSkillBody);
         File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
@@ -747,19 +680,6 @@ public sealed class SkillImportTests : IDisposable
         var result = SkillImport.Validate(source, _skillsRoot, force: false);
 
         Assert.True(result.Outcome == SkillImportOutcome.Ok, result.Message);
-    }
-
-    [Fact]
-    public void A_file_with_no_extension_is_refused()
-    {
-        var source = NewSourceDir("demo", ValidSkillBody);
-        File.WriteAllText(Path.Combine(source, "LICENSE"), "MIT");
-
-        var result = SkillImport.Validate(source, _skillsRoot, force: false);
-
-        Assert.Equal(SkillImportOutcome.BadArgument, result.Outcome);
-        Assert.Contains("LICENSE", result.Message);
-        AssertTargetAbsent("demo");
     }
 
     [Fact]
@@ -864,24 +784,25 @@ public sealed class SkillImportTests : IDisposable
 
     // SkillImport.Run pins the staged copy
 
-    [Fact]
-    public void FindTreeMismatch_names_the_first_differing_path_and_returns_null_when_the_manifests_agree()
+    private static readonly Dictionary<string, string> TwoFileTree = new() { ["SKILL.md"] = "aaa", ["references/notes.md"] = "bbb" };
+    private static readonly Dictionary<string, string> TwoFileTreeWithADifferentHash = new() { ["SKILL.md"] = "aaa", ["references/notes.md"] = "ccc" };
+    private static readonly Dictionary<string, string> OneFileTree = new() { ["SKILL.md"] = "aaa" };
+    private static readonly Dictionary<string, string> OneFileTreeWithAnExtraPath = new() { ["SKILL.md"] = "aaa", ["extra.md"] = "zzz" };
+
+    public static TheoryData<Dictionary<string, string>, Dictionary<string, string>, string?> TreePairs => new()
     {
-        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "bbb" };
-        var actualDiffers = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["references/notes.md"] = "ccc" };
+        { TwoFileTreeWithADifferentHash, TwoFileTree, "references/notes.md" },   // the first differing path
+        { TwoFileTree, TwoFileTree, null },                                      // the manifests agree
+        { OneFileTreeWithAnExtraPath, OneFileTree, "extra.md" },                 // a path present in only one manifest, either way round
+        { OneFileTree, OneFileTreeWithAnExtraPath, "extra.md" },
+    };
 
-        Assert.Equal("references/notes.md", SkillImport.FindTreeMismatch(actualDiffers, expected));
-        Assert.Null(SkillImport.FindTreeMismatch(expected, expected));
-    }
-
-    [Fact]
-    public void FindTreeMismatch_names_a_path_present_in_only_one_manifest()
+    [Theory]
+    [MemberData(nameof(TreePairs))]
+    public void FindTreeMismatch_names_the_first_differing_or_one_sided_path_and_returns_null_when_the_manifests_agree(
+        Dictionary<string, string> actual, Dictionary<string, string> expected, string? expectedPath)
     {
-        var expected = new Dictionary<string, string> { ["SKILL.md"] = "aaa" };
-        var actualWithExtra = new Dictionary<string, string> { ["SKILL.md"] = "aaa", ["extra.md"] = "zzz" };
-
-        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(actualWithExtra, expected));
-        Assert.Equal("extra.md", SkillImport.FindTreeMismatch(expected, actualWithExtra));
+        Assert.Equal(expectedPath, SkillImport.FindTreeMismatch(actual, expected));
     }
 
     [Fact]
@@ -929,16 +850,5 @@ public sealed class SkillImportTests : IDisposable
         Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
         Assert.Equal("demo", result.Name);
         Assert.True(File.Exists(Path.Combine(_skillsRoot, "demo", "references", "notes.md")));
-    }
-
-    [Fact]
-    public void Run_given_no_expected_tree_behaves_exactly_as_it_did_before_this_task()
-    {
-        var source = NewSourceDir("demo", ValidSkillBody);
-
-        var result = SkillImport.Run(source, _skillsRoot, force: false, _hashes);
-
-        Assert.Equal(SkillImportOutcome.Ok, result.Outcome);
-        Assert.Equal("demo", result.Name);
     }
 }

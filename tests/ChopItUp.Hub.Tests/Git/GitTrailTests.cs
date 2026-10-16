@@ -413,8 +413,10 @@ public sealed class GitTrailTests : IDisposable
         return r.ExitCode ?? -1;
     }
 
-    [Fact]
-    public async Task Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values()
+    [Theory]
+    [InlineData("x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>", "Claude <noreply@anthropic.com>")]   // the union keeps only the host's own co-author values
+    [InlineData("x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>", null)]                                                                  // the merge carries nothing when the branch trailers are all foreign
+    public async Task Row46_I1_merge_union_keeps_only_the_hosts_own_co_author_values_and_nothing_when_all_are_foreign(string message, string? expectedTrailer)
     {
         var git = new GitTrail(_dir);
         Assert.True(await git.InitAsync());
@@ -425,35 +427,15 @@ public sealed class GitTrailTests : IDisposable
         Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
         File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
         Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
-        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>\nCo-authored-by: Claude <noreply@anthropic.com>";
         Assert.Equal(0, await RawCommitViaStdin(wt, message));
         Assert.Null(await git.RemoveWorktreeAsync(wt));
 
         var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
         Assert.Equal(MergeResult.Merged, m.Result);
-        Assert.Equal("Claude <noreply@anthropic.com>",
-            (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
-    }
-
-    [Fact]
-    public async Task Row46_I1_merge_carries_nothing_when_the_branch_trailers_are_all_foreign()
-    {
-        var git = new GitTrail(_dir);
-        Assert.True(await git.InitAsync());
-        await ConfigureRoomOwner(_dir);
-        await git.CommitAllAsync("Room trail start", author: null, allowEmpty: true);
-
-        var wt = _dir + "_wt";
-        Assert.Null(await git.AddWorktreeAsync(wt, "chopitup/x9", newBranch: true));
-        File.WriteAllText(Path.Combine(wt, "one.txt"), "1");
-        Assert.Equal(0, (await RawGit(wt, "add", "-A")).ExitCode);
-        var message = "x: turn 1/8\n\nbody\n\nCo-authored-by: Evil Injector <evil@attacker.test>";
-        Assert.Equal(0, await RawCommitViaStdin(wt, message));
-        Assert.Null(await git.RemoveWorktreeAsync(wt));
-
-        var m = await git.MergeAsync("chopitup/x9", "Merge exchange #9 (lab)");
-        Assert.Equal(MergeResult.Merged, m.Result);
-        Assert.Equal("Merge exchange #9 (lab)", (await GitOut(_dir, "log", "-1", "--format=%B")).Trim());
+        if (expectedTrailer is not null)
+            Assert.Equal(expectedTrailer, (await GitOut(_dir, "log", "-1", "--format=%(trailers:key=Co-authored-by,valueonly)")).Trim());
+        else
+            Assert.Equal("Merge exchange #9 (lab)", (await GitOut(_dir, "log", "-1", "--format=%B")).Trim());
     }
 
     [Fact]

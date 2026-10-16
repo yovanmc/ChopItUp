@@ -4,46 +4,29 @@ namespace ChopItUp.Core.Tests.Memory;
 
 public sealed class MemoryDiffTests
 {
-    [Fact]
-    public void Identical_inputs_report_no_change()
-    {
-        var text = "a\nb\nc\n";
-        var diff = MemoryDiff.Compute(text, text);
-        Assert.All(diff, l => Assert.Equal(DiffOp.Same, l.Op));
-        Assert.Equal(new[] { "a", "b", "c", "" }, diff.Select(l => l.Text));
-    }
+    public static IEnumerable<object[]> LineDiffs() =>
+    [
+        // identical inputs report no change
+        ["a\nb\nc\n", "a\nb\nc\n",
+            new[] { (DiffOp.Same, "a"), (DiffOp.Same, "b"), (DiffOp.Same, "c"), (DiffOp.Same, "") }],
+        // a single altered line is a deletion then an addition in place
+        ["a\nb\nc\n", "a\nB\nc\n",
+            new[] { (DiffOp.Same, "a"), (DiffOp.Del, "b"), (DiffOp.Add, "B"), (DiffOp.Same, "c"), (DiffOp.Same, "") }],
+        // an insertion at the head is located there
+        ["a\nb\n", "x\na\nb\n",
+            new[] { (DiffOp.Add, "x"), (DiffOp.Same, "a"), (DiffOp.Same, "b"), (DiffOp.Same, "") }],
+        // a deletion at the tail is located there
+        ["a\nb\nc\n", "a\nb\n",
+            new[] { (DiffOp.Same, "a"), (DiffOp.Same, "b"), (DiffOp.Del, "c"), (DiffOp.Same, "") }],
+    ];
 
-    [Fact]
-    public void A_single_altered_line_is_a_deletion_then_an_addition_in_place()
+    [Theory]
+    [MemberData(nameof(LineDiffs))]
+    public void Compute_reports_no_change_for_identical_inputs_and_locates_each_change_where_it_happened(
+        string before, string after, (DiffOp, string)[] expected)
     {
-        var before = "a\nb\nc\n";
-        var after = "a\nB\nc\n";
         var diff = MemoryDiff.Compute(before, after);
-        Assert.Equal(
-            new[] { (DiffOp.Same, "a"), (DiffOp.Del, "b"), (DiffOp.Add, "B"), (DiffOp.Same, "c"), (DiffOp.Same, "") },
-            diff.Select(l => (l.Op, l.Text)));
-    }
-
-    [Fact]
-    public void An_insertion_at_the_head_is_located_there()
-    {
-        var before = "a\nb\n";
-        var after = "x\na\nb\n";
-        var diff = MemoryDiff.Compute(before, after);
-        Assert.Equal(
-            new[] { (DiffOp.Add, "x"), (DiffOp.Same, "a"), (DiffOp.Same, "b"), (DiffOp.Same, "") },
-            diff.Select(l => (l.Op, l.Text)));
-    }
-
-    [Fact]
-    public void A_deletion_at_the_tail_is_located_there()
-    {
-        var before = "a\nb\nc\n";
-        var after = "a\nb\n";
-        var diff = MemoryDiff.Compute(before, after);
-        Assert.Equal(
-            new[] { (DiffOp.Same, "a"), (DiffOp.Same, "b"), (DiffOp.Del, "c"), (DiffOp.Same, "") },
-            diff.Select(l => (l.Op, l.Text)));
+        Assert.Equal(expected, diff.Select(l => (l.Op, l.Text)));
     }
 
     [Fact]

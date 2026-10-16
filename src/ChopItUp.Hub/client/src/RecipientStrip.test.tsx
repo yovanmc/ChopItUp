@@ -72,13 +72,16 @@ describe('RecipientStrip', () => {
   });
 
   test('a word still being typed is not flagged until a separator follows it', () => {
-    expect(render('@nob')).toBe('');
     expect(render('@nob ')).toContain('@nob · no such participant');
   });
 
-  test('an empty or ordinary draft renders nothing', () => {
-    expect(render('')).toBe('');
-    expect(render('hello')).toBe('');
+  test.each([
+    ['an empty draft', ''],
+    ['an ordinary draft', 'hello'],
+    ['a word still being typed', '@nob'],
+    ['a turns token after prose', 'how many turns: 3 did we burn?'],
+  ])('%s renders nothing', (_name, draft) => {
+    expect(render(draft)).toBe('');
   });
 
   /** The token is part of the leading run the reader already walks, so the strip says what it will
@@ -116,9 +119,5 @@ describe('RecipientStrip', () => {
     expect(markup).toContain('>5 turns</li>');
     expect(markup).not.toContain('Sends to');
     expect(markup).not.toContain('Asks for');
-  });
-
-  test('a turns token after prose adds nothing', () => {
-    expect(render('how many turns: 3 did we burn?')).toBe('');
   });
 });

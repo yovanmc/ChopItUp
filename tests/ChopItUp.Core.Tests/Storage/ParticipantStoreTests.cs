@@ -108,24 +108,17 @@ public sealed class ParticipantStoreTests : IDisposable
         Assert.Null(store.EffectiveRole("lab", "opus"));
     }
 
-    [Fact]
-    public void SetRole_on_owner_returns_false_and_stores_nothing()
+    [Theory]
+    [InlineData("owner")]
+    // The named trap: claude and codex are kind 'model' with model = NULL, app-backed windows
+    // the hub never spawns. `kind = 'model'` alone would wrongly accept this id.
+    [InlineData("claude")]
+    public void SetRole_on_a_participant_the_hub_never_spawns_returns_false_and_stores_nothing(string id)
     {
         var store = MakeStore(out _);
 
-        Assert.False(store.SetRole("owner", "Should not stick"));
-        Assert.Null(store.GlobalRole("owner"));
-    }
-
-    [Fact]
-    public void SetRole_on_claude_returns_false_and_stores_nothing_because_it_is_kind_model_with_a_null_model()
-    {
-        // The named trap: claude and codex are kind 'model' with model = NULL, app-backed windows
-        // the hub never spawns. `kind = 'model'` alone would wrongly accept this id.
-        var store = MakeStore(out _);
-
-        Assert.False(store.SetRole("claude", "Should not stick"));
-        Assert.Null(store.GlobalRole("claude"));
+        Assert.False(store.SetRole(id, "Should not stick"));
+        Assert.Null(store.GlobalRole(id));
     }
 
     [Fact]
@@ -161,17 +154,20 @@ public sealed class ParticipantStoreTests : IDisposable
         Assert.Equal("Global reviewer", store.EffectiveRole("lab", "opus"));
     }
 
-    [Fact]
-    public void SetRoomRole_with_empty_string_stores_the_suppress_sentinel_not_the_global()
+    [Theory]
+    // The fourth state: a room can say "no role here" without deleting the override row.
+    // A SetRoomRole that turns "" into a DELETE is the defect this test binds.
+    [InlineData("")]
+    [InlineData("   ")]
+    public void SetRoomRole_with_empty_or_whitespace_text_stores_the_suppress_sentinel_not_the_global(string text)
     {
-        // The fourth state: a room can say "no role here" without deleting the override row.
-        // A SetRoomRole that turns "" into a DELETE is the defect this test binds.
         var store = MakeStore(out var db);
         MakeRooms(db);
         Assert.True(store.SetRole("opus", "Global reviewer"));
 
-        Assert.True(store.SetRoomRole("lab", "opus", ""));
+        Assert.True(store.SetRoomRole("lab", "opus", text));
 
+        Assert.Equal("", store.RoomRole("lab", "opus"));
         Assert.Equal("", store.EffectiveRole("lab", "opus"));
     }
 
@@ -185,19 +181,6 @@ public sealed class ParticipantStoreTests : IDisposable
         Assert.True(store.SetRoomRole("lab", "opus", "Second"));
 
         Assert.Equal("Second", store.RoomRole("lab", "opus"));
-    }
-
-    [Fact]
-    public void SetRoomRole_with_whitespace_only_stores_the_suppress_sentinel_not_the_spaces()
-    {
-        var store = MakeStore(out var db);
-        MakeRooms(db);
-        Assert.True(store.SetRole("opus", "Global reviewer"));
-
-        Assert.True(store.SetRoomRole("lab", "opus", "   "));
-
-        Assert.Equal("", store.RoomRole("lab", "opus"));
-        Assert.Equal("", store.EffectiveRole("lab", "opus"));
     }
 
     [Fact]

@@ -119,16 +119,18 @@ public sealed class SkillToolsTests : IAsyncLifetime
         Assert.False(Directory.Exists(Path.Combine(Skills.Root, "empty")));
     }
 
-    [Fact]
-    public async Task Refuses_a_file_extension_outside_the_reviewable_allowlist_surfacing_Validates_message()
+    [Theory]
+    [InlineData("helper.exe", "MZ")]       // a file extension outside the reviewable allowlist, surfacing Validate's message (bytes 0x4D 0x5A)
+    [InlineData("OVERLAY.md", "sneaky\n")] // a source carrying its own overlay
+    public async Task Refuses_a_source_with_a_disallowed_file_surfacing_Validates_message(string fileName, string content)
     {
         var source = NewRoomSource("demo", ValidSkillBody);
-        File.WriteAllBytes(Path.Combine(source, "helper.exe"), [0x4D, 0x5A]);
+        File.WriteAllText(Path.Combine(source, fileName), content);
         await using var client = await _host.ClientFor("opus");
 
         var err = ErrorText(await Call(client, "propose_skill", new() { ["room_id"] = "proj", ["source_dir"] = source }));
 
-        Assert.Contains("helper.exe", err);
+        Assert.Contains(fileName, err);
         Assert.Empty(Proposals.List(null, null));
     }
 
@@ -146,19 +148,6 @@ public sealed class SkillToolsTests : IAsyncLifetime
             (again.GetProperty("id").GetInt64(), again.GetProperty("duplicate").GetBoolean(), again.GetProperty("author_id").GetString()));
         Assert.Single(Proposals.List("proj", SkillProposalStore.Undecided));
         Assert.Single(await Messages(), m => m.Body.StartsWith("Skill proposal #"));
-    }
-
-    [Fact]
-    public async Task Refuses_a_source_carrying_its_own_overlay()
-    {
-        var source = NewRoomSource("demo", ValidSkillBody);
-        File.WriteAllText(Path.Combine(source, "OVERLAY.md"), "sneaky\n");
-        await using var client = await _host.ClientFor("opus");
-
-        var err = ErrorText(await Call(client, "propose_skill", new() { ["room_id"] = "proj", ["source_dir"] = source }));
-
-        Assert.Contains("OVERLAY.md", err);
-        Assert.Empty(Proposals.List(null, null));
     }
 
     [Fact]

@@ -362,27 +362,15 @@ public sealed class SpawnPromptTests
         return n;
     }
 
-    [Fact]
-    public void R14_a_persona_alone_renders_the_room_line_and_no_role_line()
+    [Theory]
+    [InlineData("Everyone here is blunt and short.", null, "This room: Everyone here is blunt and short.\n", "You in this room:")]
+    [InlineData(null, "You are the reviewer here, not the author.", "You in this room: You are the reviewer here, not the author.\n", "This room:")]
+    [InlineData("Blunt and short.", "You are the reviewer.", "This room: Blunt and short.\nYou in this room: You are the reviewer.\n", null)]
+    public void R14_persona_and_role_render_only_their_own_lines_persona_first_inside_one_fence_pair(string? persona, string? role, string expectedLines, string? absentLabel)
     {
-        var p = SpawnPrompt.Render(Standing("Everyone here is blunt and short.", null), SpawnLimits.Default);
-        Assert.Contains("--- begin standing general-1-1-abcd1234 ---\nThis room: Everyone here is blunt and short.\n--- end standing general-1-1-abcd1234 ---\n", p);
-        Assert.DoesNotContain("You in this room:", p);
-    }
-
-    [Fact]
-    public void R14_a_role_alone_renders_the_role_line_and_no_room_line()
-    {
-        var p = SpawnPrompt.Render(Standing(null, "You are the reviewer here, not the author."), SpawnLimits.Default);
-        Assert.Contains("--- begin standing general-1-1-abcd1234 ---\nYou in this room: You are the reviewer here, not the author.\n--- end standing general-1-1-abcd1234 ---\n", p);
-        Assert.DoesNotContain("This room:", p);
-    }
-
-    [Fact]
-    public void R14_both_render_as_two_lines_persona_first_inside_one_fence_pair()
-    {
-        var p = SpawnPrompt.Render(Standing("Blunt and short.", "You are the reviewer."), SpawnLimits.Default);
-        Assert.Contains("--- begin standing general-1-1-abcd1234 ---\nThis room: Blunt and short.\nYou in this room: You are the reviewer.\n--- end standing general-1-1-abcd1234 ---\n", p);
+        var p = SpawnPrompt.Render(Standing(persona, role), SpawnLimits.Default);
+        Assert.Contains("--- begin standing general-1-1-abcd1234 ---\n" + expectedLines + "--- end standing general-1-1-abcd1234 ---\n", p);
+        if (absentLabel is not null) Assert.DoesNotContain(absentLabel, p);
         Assert.Equal(1, CountOf(p, SpawnPrompt.StandingFenceBegin));
         Assert.Equal(1, CountOf(p, SpawnPrompt.StandingFenceEnd));
     }
@@ -565,18 +553,6 @@ public sealed class SpawnPromptTests
     public void R14_a_prompt_with_no_standing_text_is_byte_for_byte_the_capture_taken_before_this_row()
     {
         Assert.Equal(File.ReadAllText(GoldenPath()), SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default));
-    }
-
-    /// <summary>The leading-mention rule, stated in both the participant sentence and the conductor's
-    /// phase-tag sentence; <see cref="GoldenInput"/>'s run carries <c>selfIsConductor: true</c>, so
-    /// both render.</summary>
-    [Fact]
-    public void Row43_AC5_the_prompt_states_the_leading_rule()
-    {
-        var p = SpawnPrompt.Render(GoldenInput(), SpawnLimits.Default);
-        Assert.Contains("To hand the turn to a participant, start your reply with @ and its id", p);
-        Assert.Contains("Put the mention right after the phase tag", p);
-        Assert.Contains("phase: <kind>/<name> @<id> <what to do>", p);
     }
 
     [Fact]

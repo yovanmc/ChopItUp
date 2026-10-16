@@ -402,32 +402,21 @@ public sealed class MemoryApiTests : IAsyncLifetime
         Assert.Equal(before, File.ReadAllText(Memory.CorePath));
     }
 
-    [Fact]
-    public async Task R23_a_rewrite_whose_topic_was_deleted_after_proposal_is_409_on_the_pending_path()
+    [Theory]
+    [InlineData(false, "pending")]   // the pending path
+    [InlineData(true, "approved")]   // the retry path: the crash state, approved but unwritten
+    public async Task R23_a_rewrite_whose_topic_was_deleted_after_proposal_is_409_and_stays_retryable(bool crashed, string expectedStatus)
     {
         Memory.Append("user", "A", "old a.", "p1");
         Proposals.Create("general", "opus", "user", "Consolidate user", "## A\nnew a.\n", null, kind: MemoryProposalStore.KindRewrite);
+        if (crashed) Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
         File.Delete(Path.Combine(Memory.TopicsDir, "user.md"));   // the owner deleted the topic by hand
-
-        var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
-        Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);
-        Assert.Contains("No topic 'user' to rewrite.", await r.Content.ReadAsStringAsync());
-        Assert.Equal("pending", Proposals.Get(1)!.Status);
-    }
-
-    [Fact]
-    public async Task R23_a_rewrite_whose_topic_was_deleted_after_proposal_is_409_on_the_retry_path_too()
-    {
-        Memory.Append("user", "A", "old a.", "p1");
-        Proposals.Create("general", "opus", "user", "Consolidate user", "## A\nnew a.\n", null, kind: MemoryProposalStore.KindRewrite);
-        Assert.NotNull(Proposals.Decide(1, MemoryProposalStore.Approved, null, null));   // the crash state: approved, unwritten
-        File.Delete(Path.Combine(Memory.TopicsDir, "user.md"));
 
         var r = await _host.Client.PostAsync("api/memory/proposals/1/approve", null);
         Assert.Equal(HttpStatusCode.Conflict, r.StatusCode);   // never a 500
         Assert.Contains("No topic 'user' to rewrite.", await r.Content.ReadAsStringAsync());
         var row = Proposals.Get(1)!;
-        Assert.Equal("approved", row.Status);
+        Assert.Equal(expectedStatus, row.Status);
         Assert.Null(row.WrittenTo);   // still the retryable state
     }
 

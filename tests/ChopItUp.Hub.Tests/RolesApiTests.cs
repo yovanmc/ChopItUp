@@ -101,98 +101,55 @@ public sealed class RolesApiTests : IAsyncLifetime
         Assert.Equal("Local solar reviewer", Str(row, "effectiveRole"));
     }
 
-    [Fact]
-    public async Task A_read_taken_immediately_after_a_write_reflects_it()
+    [Theory]
+    [InlineData("global", "claude")]
+    [InlineData("global", "owner")]
+    [InlineData("room", "codex")]
+    public async Task A_role_for_a_non_spawnable_participant_is_400_and_stores_nothing(string scope, string id)
     {
-        Assert.Equal(HttpStatusCode.OK, (await SetGlobalRole("opus", "Fresh")).StatusCode);
-        Assert.Equal("Fresh", Str(Row(await GetRoles(), "opus"), "role"));
-
-        Assert.Equal(HttpStatusCode.OK, (await SetGlobalRole("opus", "Fresher")).StatusCode);
-        Assert.Equal("Fresher", Str(Row(await GetRoles(), "opus"), "role"));
-    }
-
-    [Fact]
-    public async Task Global_role_for_claude_is_refused_and_stores_nothing()
-    {
-        var r = await SetGlobalRole("claude", "Should not land");
+        var r = scope == "global" ? await SetGlobalRole(id, "Should not land") : await SetRoomRole("general", id, "Should not land");
 
         Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Null(Participants.GlobalRole("claude"));
+        Assert.Null(scope == "global" ? Participants.GlobalRole(id) : Participants.RoomRole("general", id));
     }
 
-    [Fact]
-    public async Task Global_role_for_owner_is_refused_with_400()
+    [Theory]
+    [InlineData("POST", "api/participants/nope/role", "{\"role\":\"text\"}")]
+    [InlineData("POST", "api/rooms/nope/roles/opus", "{\"role\":\"text\"}")]
+    [InlineData("POST", "api/rooms/general/roles/nope", "{\"role\":\"text\"}")]
+    [InlineData("POST", "api/rooms/nope/persona", "{\"persona\":\"text\"}")]
+    [InlineData("GET", "api/rooms/nope/roles", null)]
+    public async Task An_unknown_participant_or_room_is_404(string method, string path, string? json)
     {
-        var r = await SetGlobalRole("owner", "Should not land");
-        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-    }
-
-    [Fact]
-    public async Task Room_role_for_codex_is_400_a_non_spawnable_row()
-    {
-        var r = await SetRoomRole("general", "codex", "Should not land");
-        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-    }
-
-    [Fact]
-    public async Task Global_role_for_an_unknown_participant_is_404()
-    {
-        var r = await SetGlobalRole("nope", "text");
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        if (json is not null) request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+        var r = await _host.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
     }
 
-    [Fact]
-    public async Task Room_role_for_an_unknown_room_is_404_and_an_unknown_participant_is_404()
+    [Theory]
+    [InlineData("global")]
+    [InlineData("room")]
+    [InlineData("persona")]
+    public async Task An_over_length_role_override_or_persona_is_refused_and_stores_nothing(string kind)
     {
-        Assert.Equal(HttpStatusCode.NotFound, (await SetRoomRole("nope", "opus", "text")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await SetRoomRole("general", "nope", "text")).StatusCode);
-    }
+        var roleTooLong = new string('a', ParticipantStore.MaxRoleChars + 1);
+        var personaTooLong = new string('a', MessageStore.MaxPersonaChars + 1);
 
-    [Fact]
-    public async Task Persona_for_an_unknown_room_is_404()
-    {
-        var r = await SetPersona("nope", "text");
-        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
-    }
-
-    [Fact]
-    public async Task GET_roles_for_an_unknown_room_is_404()
-    {
-        var r = await _host.Client.GetAsync("api/rooms/nope/roles");
-        Assert.Equal(HttpStatusCode.NotFound, r.StatusCode);
-    }
-
-    [Fact]
-    public async Task A_2001_character_global_role_is_refused_and_stores_nothing()
-    {
-        var tooLong = new string('a', ParticipantStore.MaxRoleChars + 1);
-
-        var r = await SetGlobalRole("opus", tooLong);
+        var r = kind switch
+        {
+            "global" => await SetGlobalRole("opus", roleTooLong),
+            "room" => await SetRoomRole("general", "opus", roleTooLong),
+            _ => await SetPersona("general", personaTooLong),
+        };
 
         Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Null(Participants.GlobalRole("opus"));
-    }
-
-    [Fact]
-    public async Task A_2001_character_room_override_is_refused_and_stores_nothing()
-    {
-        var tooLong = new string('a', ParticipantStore.MaxRoleChars + 1);
-
-        var r = await SetRoomRole("general", "opus", tooLong);
-
-        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Null(Participants.RoomRole("general", "opus"));
-    }
-
-    [Fact]
-    public async Task A_2001_character_persona_is_refused_and_stores_nothing()
-    {
-        var tooLong = new string('a', MessageStore.MaxPersonaChars + 1);
-
-        var r = await SetPersona("general", tooLong);
-
-        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
-        Assert.Null(_host.Services.GetRequiredService<MessageStore>().GetRoom("general")!.Persona);
+        Assert.Null(kind switch
+        {
+            "global" => Participants.GlobalRole("opus"),
+            "room" => Participants.RoomRole("general", "opus"),
+            _ => _host.Services.GetRequiredService<MessageStore>().GetRoom("general")!.Persona,
+        });
     }
 
     [Fact]

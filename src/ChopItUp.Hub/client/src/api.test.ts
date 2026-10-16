@@ -80,11 +80,16 @@ const PROPOSAL: SkillProposal = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('the owner token on writes', () => {
-  test('a write carries the stored token', async () => {
+  // Every non-GET carries it, by method and not by list: a post, the background read-cursor write and a DELETE alike.
+  test.each([
+    ['a write', () => json({ id: 1 }), () => api.postMessage('lab', 'hello')],
+    ['the background read-cursor write', () => json({ roomId: 'lab', unread: 0 }), () => api.markRead('lab')],
+    ['a DELETE', () => json({ discarded: 2 }), () => api.discardImport('claude', 'C:/x/CLAUDE.md')],
+  ])('%s carries the stored token', async (_name, reply, send) => {
     storeToken('owner-secret');
-    const calls = stubFetch(() => json({ id: 1 }));
+    const calls = stubFetch(reply);
 
-    await api.postMessage('lab', 'hello');
+    await send();
 
     expect(authOf(calls[0])).toBe('Bearer owner-secret');
   });
@@ -117,24 +122,6 @@ describe('the owner token on writes', () => {
     expect(new Headers(calls[0]?.init?.headers).get('content-type')).toBe('application/json');
   });
 
-  test('the background read-cursor write carries it too — every non-GET does, by method not by list', async () => {
-    storeToken('owner-secret');
-    const calls = stubFetch(() => json({ roomId: 'lab', unread: 0 }));
-
-    await api.markRead('lab');
-
-    expect(authOf(calls[0])).toBe('Bearer owner-secret');
-  });
-
-  test('a DELETE is a write like any other', async () => {
-    storeToken('owner-secret');
-    const calls = stubFetch(() => json({ discarded: 2 }));
-
-    await api.discardImport('claude', 'C:/x/CLAUDE.md');
-
-    expect(authOf(calls[0])).toBe('Bearer owner-secret');
-  });
-
   /** The regression the merge rule exists to stop: `decideSkillProposal` builds its own
    *  `authorization` from the token it was HANDED, which is the value the owner typed into the skill
    *  card. A blanket attach that overwrote it would silently send the stored one instead, so a
@@ -156,20 +143,15 @@ describe('the owner token on writes', () => {
 /** A reply names the message it answers; a post that is not a reply sends no `replyToId` at all, so
  *  the body the hub reads is exactly what it was before replies existed. */
 describe('posting a reply', () => {
-  test('a reply sends its target alongside the body', async () => {
+  test.each([
+    ['a reply sends its target alongside the body', 7, '{"body":"hi","replyToId":7}'],
+    ['a plain post sends the body alone', undefined, '{"body":"hi"}'],
+  ])('%s', async (_name, replyToId, expected) => {
     const calls = stubFetch(() => json({ id: 8 }));
 
-    await api.postMessage('general', 'hi', 7);
+    await api.postMessage('general', 'hi', replyToId);
 
-    expect(calls[0]?.init?.body).toBe('{"body":"hi","replyToId":7}');
-  });
-
-  test('a plain post sends the body alone', async () => {
-    const calls = stubFetch(() => json({ id: 8 }));
-
-    await api.postMessage('general', 'hi');
-
-    expect(calls[0]?.init?.body).toBe('{"body":"hi"}');
+    expect(calls[0]?.init?.body).toBe(expected);
   });
 });
 
@@ -199,24 +181,19 @@ describe('stopping one exchange', () => {
 });
 
 describe('a failure keeps its status', () => {
-  test('a 401 is a credential refusal, and says so in words the owner can act on', async () => {
-    stubFetch(() => json({ error: 'unauthorized' }, 401));
+  // A 401 and a 403 are both refusals a paste can fix, and each names its own cause in words the owner can act on.
+  // The hub's own envelope word tells the owner nothing about what to do, so it is never shown as is.
+  test.each([
+    [401, 'unauthorized', 'owner token'],
+    [403, 'forbidden', 'not the owner'],
+  ])('a %i is a credential refusal, and says so in words the owner can act on', async (status, envelope, wording) => {
+    stubFetch(() => json({ error: envelope }, status));
 
     const failure = await refusal(() => api.postMessage('lab', 'hello'));
 
     expect(api.isCredentialRefusal(failure)).toBe(true);
-    expect(api.describeError(failure)).toContain('owner token');
-    // The hub's own envelope says "unauthorized", which tells the owner nothing about what to do.
-    expect(api.describeError(failure)).not.toBe('unauthorized');
-  });
-
-  test('a 403 is also a refusal a paste can fix, and names the different cause', async () => {
-    stubFetch(() => json({ error: 'forbidden' }, 403));
-
-    const failure = await refusal(() => api.postMessage('lab', 'hello'));
-
-    expect(api.isCredentialRefusal(failure)).toBe(true);
-    expect(api.describeError(failure)).toContain('not the owner');
+    expect(api.describeError(failure)).toContain(wording);
+    expect(api.describeError(failure)).not.toBe(envelope);
   });
 
   /** The 401-vs-500 split is the whole reason `unwrap` had to stop discarding the status: every
@@ -243,16 +220,14 @@ describe('a failure keeps its status', () => {
   /** `markRead` fires on every room open, so App must be able to recognise its refusal WITHOUT a
    *  prompt. It throws like every other call; the quiet handling is App's, and this is the value it
    *  branches on. */
-  test('a refused markRead throws a recognisable credential refusal', async () => {
-    stubFetch(() => json({ error: 'unauthorized' }, 401));
+  // A markRead that failed for any other reason is not one, so the rail stays quiet.
+  test.each([
+    [401, { error: 'unauthorized' }, true],
+    [404, { error: "Unknown room 'lab'." }, false],
+  ])('a markRead refused with %i is a credential refusal: %s', async (status, body, expected) => {
+    stubFetch(() => json(body, status));
 
-    expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(true);
-  });
-
-  test('a markRead that failed for any other reason is not one, so the rail stays quiet', async () => {
-    stubFetch(() => json({ error: "Unknown room 'lab'." }, 404));
-
-    expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(false);
+    expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(expected);
   });
 
   /** The one-exchange stop refuses a stop it cannot make (a run owns the room, or that exchange is

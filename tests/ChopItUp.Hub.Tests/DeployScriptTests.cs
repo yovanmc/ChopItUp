@@ -198,55 +198,26 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         }
     }
 
-    [Fact]
-    public void Deploy_refuses_a_staging_output_that_is_missing_the_client()
+    [Theory]
+    [InlineData("wwwroot/index.html", null)]
+    [InlineData("ChopItUp.Desktop.exe", "ChopItUp.Desktop.exe")]
+    public void Deploy_refuses_a_staging_output_that_is_missing_the_client_or_the_desktop_exe(string missing, string? namedInError)
     {
         string staging = CopyStaging();
-        File.Delete(Path.Combine(staging, "wwwroot", "index.html"));
+        File.Delete(Path.Combine(staging, missing.Replace('/', Path.DirectorySeparatorChar)));
         string target = NewScratchPath("target");
         try
         {
             var result = RunDeploy(target, staging);
             Assert.NotEqual(0, result.ExitCode);
             Assert.Contains("DEPLOY_FAILED", result.Stderr);
+            if (namedInError is not null) Assert.Contains(namedInError, result.Stderr);
             Assert.False(Directory.Exists(target));
         }
         finally
         {
             CleanupTargetAndBackups(target);
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void Deploy_lands_the_client_in_the_target()
-    {
-        string target = NewScratchPath("target");
-        try
-        {
-            var result = RunDeploy(target, _fixture.StagingDir);
-            Assert.Equal(0, result.ExitCode);
-
-            string indexPath = Path.Combine(target, "wwwroot", "index.html");
-            Assert.True(File.Exists(indexPath));
-            Assert.Equal(
-                File.ReadAllBytes(Path.Combine(_fixture.StagingDir, "wwwroot", "index.html")),
-                File.ReadAllBytes(indexPath));
-
-            string stagingAssets = Path.Combine(_fixture.StagingDir, "wwwroot", "assets");
-            string targetAssets = Path.Combine(target, "wwwroot", "assets");
-            var assetFiles = Directory.GetFiles(stagingAssets);
-            Assert.NotEmpty(assetFiles);
-            foreach (var file in assetFiles)
-            {
-                string targetFile = Path.Combine(targetAssets, Path.GetFileName(file));
-                Assert.True(File.Exists(targetFile));
-                Assert.Equal(File.ReadAllBytes(file), File.ReadAllBytes(targetFile));
-            }
-        }
-        finally
-        {
-            CleanupTargetAndBackups(target);
         }
     }
 
@@ -280,23 +251,6 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         finally
         {
             if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void Deploy_replaces_the_exe_by_rename_not_in_place()
-    {
-        string target = NewScratchPath("target");
-        try
-        {
-            var result = RunDeploy(target, _fixture.StagingDir);
-            Assert.Equal(0, result.ExitCode);
-            Assert.False(File.Exists(Path.Combine(target, "ChopItUp.Hub.exe.new")));
-            Assert.Equal(_fixture.StagingExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
-        }
-        finally
-        {
-            CleanupTargetAndBackups(target);
         }
     }
 
@@ -396,28 +350,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
     }
 
     [Fact]
-    public void Deploy_refuses_a_staging_output_that_is_missing_the_desktop_exe()
-    {
-        string staging = CopyStaging();
-        File.Delete(Path.Combine(staging, "ChopItUp.Desktop.exe"));
-        string target = NewScratchPath("target");
-        try
-        {
-            var result = RunDeploy(target, staging);
-            Assert.NotEqual(0, result.ExitCode);
-            Assert.Contains("DEPLOY_FAILED", result.Stderr);
-            Assert.Contains("ChopItUp.Desktop.exe", result.Stderr);
-            Assert.False(Directory.Exists(target));
-        }
-        finally
-        {
-            CleanupTargetAndBackups(target);
-            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-        }
-    }
-
-    [Fact]
-    public void Deploy_replaces_both_exes_and_leaves_no_new_files_behind()
+    public void Deploy_to_a_fresh_target_lands_both_exes_and_the_client()
     {
         string target = NewScratchPath("target");
         try
@@ -428,6 +361,23 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             Assert.False(File.Exists(Path.Combine(target, "ChopItUp.Desktop.exe.new")));
             Assert.Equal(_fixture.StagingExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
             Assert.Equal(_fixture.StagingDesktopExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Desktop.exe")));
+
+            string indexPath = Path.Combine(target, "wwwroot", "index.html");
+            Assert.True(File.Exists(indexPath));
+            Assert.Equal(
+                File.ReadAllBytes(Path.Combine(_fixture.StagingDir, "wwwroot", "index.html")),
+                File.ReadAllBytes(indexPath));
+
+            string stagingAssets = Path.Combine(_fixture.StagingDir, "wwwroot", "assets");
+            string targetAssets = Path.Combine(target, "wwwroot", "assets");
+            var assetFiles = Directory.GetFiles(stagingAssets);
+            Assert.NotEmpty(assetFiles);
+            foreach (var file in assetFiles)
+            {
+                string targetFile = Path.Combine(targetAssets, Path.GetFileName(file));
+                Assert.True(File.Exists(targetFile));
+                Assert.Equal(File.ReadAllBytes(file), File.ReadAllBytes(targetFile));
+            }
         }
         finally
         {

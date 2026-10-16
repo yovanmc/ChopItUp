@@ -8,16 +8,6 @@ namespace ChopItUp.Hub.Tests.Spawning;
 /// the next spawn with no hub restart.</summary>
 public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
 {
-    [Fact]
-    public async Task Row14_T4_a_global_role_is_rendered_into_the_spawned_prompt()
-    {
-        _host.Services.GetRequiredService<ParticipantStore>().SetRole("opus", "Row14 role: the team's skeptic.");
-
-        await PostAsOwner("@opus hi");
-        var spec = await _runner.NextSpecAsync(Wait);
-        Assert.Contains("You in this room: Row14 role: the team's skeptic.", spec.StandardInput);
-    }
-
     /// <summary>The test that binds the live-read design. A startup-snapshot implementation (reading
     /// role text off <c>_roster</c> instead of live from <see cref="ParticipantStore"/>) passes every
     /// other test in this file and fails only this one.</summary>
@@ -30,6 +20,7 @@ public sealed class SpawnerServiceRolesTests : SpawnerServiceTestBase
         await PostAsOwner("@opus first");
         var first = await _runner.NextSpecAsync(Wait);
         Assert.Contains("Row14 role A: the optimist.", first.StandardInput);
+        Assert.Contains("You in this room: Row14 role A: the optimist.", first.StandardInput);
         await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("Exchange concluded"));
 
         // Written through the store with the host still running - no restart, no new SpawnerService.
