@@ -84,8 +84,13 @@ public sealed class HostCommandsTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    /// <summary>--print-config embeds no live value (it writes a {{TOKEN}} placeholder; see the
+    /// print-config tests below), so printing a rotated token once is the only way it reaches the
+    /// operator. That rotate is owner-typed only, never agent-run, is stated in
+    /// docs/verification.md, not in test assertions: this test proves the mechanism (replaces only
+    /// the named token, printed once, resolves to the right participant, lands in no file).</summary>
     [Fact]
-    public void A6_rotate_replaces_one_token_and_leaves_the_others_alone()
+    public void A6_rotate_replaces_one_token_prints_the_new_one_once_and_writes_it_to_no_file()
     {
         var dir = NewDir();
         StartedOnce(dir);
@@ -106,24 +111,7 @@ public sealed class HostCommandsTests : IDisposable
         var stdout = output.ToString();
         foreach (var t in before.Values) Assert.DoesNotContain(t, stdout);
         foreach (var t in after.Values) Assert.DoesNotContain(t, stdout);
-    }
 
-    /// <summary>--print-config embeds no live value (it writes a {{TOKEN}} placeholder; see the
-    /// print-config tests below), so printing a rotated token once is the only way it reaches the
-    /// operator. That rotate is owner-typed only, never agent-run, is stated in
-    /// docs/verification.md, not in test assertions: this test proves the mechanism (printed once,
-    /// resolves to the right participant, lands in no file).</summary>
-    [Fact]
-    public void A6_rotate_prints_the_new_token_once_and_writes_it_to_no_file()
-    {
-        var dir = NewDir();
-        StartedOnce(dir);
-
-        var output = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), output, new StringWriter());
-
-        Assert.Equal(0, exit);
-        var stdout = output.ToString();
         var printed = TokenScan.Candidates(stdout).Distinct().ToList();
         Assert.Single(printed);
 
@@ -151,31 +139,47 @@ public sealed class HostCommandsTests : IDisposable
         foreach (var p in Roster) Assert.Contains(p, message);
     }
 
-    [Fact]
-    public void A6b_rotate_against_a_directory_with_no_tokens_file_creates_nothing()
+    [Theory]
+    [InlineData(HubCommand.RotateToken, 0)]
+    [InlineData(HubCommand.PrintConfig, 9123)]
+    public void A6b_A7_a_verb_against_a_directory_with_no_tokens_file_creates_nothing(HubCommand verb, int port)
     {
         var dir = NewDir();
+        var options = verb == HubCommand.RotateToken ? new HubOptions(dir, Port: port, verb, "claude") : new HubOptions(dir, Port: port, verb);
         var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), new StringWriter(), error);
+        var exit = HostCommands.Run(options, new StringWriter(), error);
 
         Assert.Equal(4, exit);
         Assert.Contains(TokenStore.FileName, error.ToString());
         Assert.False(Directory.Exists(dir));
     }
 
-    [Fact]
-    public async Task A6b_rotate_is_refused_while_a_hub_owns_the_data_dir()
+    [Theory]
+    [InlineData(HubCommand.RotateToken)]
+    [InlineData(HubCommand.SetClasses)]
+    [InlineData(HubCommand.ExportMemory)]
+    public async Task A6b_A8_A24_a_data_changing_verb_is_refused_while_a_hub_owns_the_data_dir(HubCommand verb)
     {
         var dir = NewDir();
+        var target = Path.Combine(NewDir(), "export-target");
+        if (verb == HubCommand.ExportMemory) SeedOneLiveMemory(dir);
         await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
-        var before = File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName));
+        var tokensPath = Path.Combine(dir, TokenStore.FileName);
+        var before = File.ReadAllBytes(tokensPath);
+        var options = verb switch
+        {
+            HubCommand.RotateToken => new HubOptions(dir, Port: 0, verb, "claude"),
+            HubCommand.SetClasses => new HubOptions(dir, Port: 0, verb, SetClassesSpec: "sonnet=judge"),
+            _ => new HubOptions(dir, Port: 0, verb, ExportMemoryPath: target),
+        };
 
         var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.RotateToken, "claude"), new StringWriter(), error);
+        var exit = HostCommands.Run(options, new StringWriter(), error);
 
         Assert.Equal(5, exit);
         Assert.Contains(dir, error.ToString());
-        Assert.Equal(before, File.ReadAllBytes(Path.Combine(dir, TokenStore.FileName)));
+        Assert.Equal(before, File.ReadAllBytes(tokensPath));
+        Assert.False(Directory.Exists(target));
     }
 
     [Fact]
@@ -401,18 +405,6 @@ public sealed class HostCommandsTests : IDisposable
     }
 
     [Fact]
-    public void A7_print_config_against_a_directory_with_no_tokens_file_creates_nothing()
-    {
-        var dir = NewDir();
-        var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), error);
-
-        Assert.Equal(4, exit);
-        Assert.Contains(TokenStore.FileName, error.ToString());
-        Assert.False(Directory.Exists(dir));
-    }
-
-    [Fact]
     public void A7_print_config_does_not_mint_a_missing_token()
     {
         var dir = NewDir();
@@ -556,8 +548,6 @@ public sealed class HostCommandsTests : IDisposable
 
         var bare = HubOptions.Parse([], _ => null);
         Assert.Equal(HubCommand.Serve, bare.Command);
-
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--rotate-token"], _ => null));
     }
 
     // --import-skill
@@ -572,8 +562,6 @@ public sealed class HostCommandsTests : IDisposable
 
         var withoutForce = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo"], _ => null);
         Assert.False(withoutForce.Force);
-
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill"], _ => null));
     }
 
     // --overlay
@@ -587,14 +575,6 @@ public sealed class HostCommandsTests : IDisposable
 
         var without = HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo"], _ => null);
         Assert.Null(without.OverlayPath);
-
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--overlay"], _ => null));
-    }
-
-    [Fact]
-    public void Overlay_without_import_skill_is_refused()
-    {
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--overlay", "C:\\somewhere\\odir"], _ => null));
     }
 
     /// <summary>A synthetic (never third-party) skill source directory outside the data dir.</summary>
@@ -678,15 +658,6 @@ public sealed class HostCommandsTests : IDisposable
 
         var clear = HubOptions.Parse(["--set-classes", "sonnet="], _ => null);
         Assert.Equal("sonnet=", clear.SetClassesSpec);
-
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes", "no-equals-sign"], _ => null));
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes"], _ => null));
-    }
-
-    [Fact]
-    public void Options_parse_rejects_an_empty_participant_id()
-    {
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--set-classes", "=judge"], _ => null));
     }
 
     [Fact]
@@ -706,47 +677,23 @@ public sealed class HostCommandsTests : IDisposable
         Assert.Equal("plumbing,judge", updated.Classes);
     }
 
-    [Fact]
-    public async Task A8_set_classes_is_refused_while_a_hub_owns_the_data_dir()
-    {
-        var dir = NewDir();
-        await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
-
-        var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "sonnet=judge"), new StringWriter(), error);
-
-        Assert.Equal(5, exit);
-        Assert.Contains(dir, error.ToString());
-    }
-
-    [Fact]
-    public void A8_set_classes_rejects_an_unknown_class_and_changes_nothing()
+    [Theory]
+    [InlineData("sonnet=bogus", 2, "bogus")]      // an unknown class
+    [InlineData("mallory=judge", 4, "mallory")]   // an unknown participant
+    public void A8_set_classes_rejects_a_bad_spec_and_changes_nothing(string spec, int expectedExit, string named)
     {
         var dir = NewDir();
         StartedOnce(dir);
         var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
-        var before = new ParticipantStore(db).List().Single(p => p.Id == "sonnet").Classes;
+        List<(string Id, string? Classes)> Classes() => new ParticipantStore(db).List().Select(p => (p.Id, p.Classes)).ToList();
+        var before = Classes();
 
         var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "sonnet=bogus"), new StringWriter(), error);
+        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: spec), new StringWriter(), error);
 
-        Assert.Equal(2, exit);
-        Assert.Contains("bogus", error.ToString());
-        var after = new ParticipantStore(db).List().Single(p => p.Id == "sonnet").Classes;
-        Assert.Equal(before, after);
-    }
-
-    [Fact]
-    public void A8_set_classes_with_an_unknown_participant_exits_4()
-    {
-        var dir = NewDir();
-        StartedOnce(dir);
-
-        var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.SetClasses, SetClassesSpec: "mallory=judge"), new StringWriter(), error);
-
-        Assert.Equal(4, exit);
-        Assert.Contains("mallory", error.ToString());
+        Assert.Equal(expectedExit, exit);
+        Assert.Contains(named, error.ToString());
+        Assert.Equal(before, Classes());
     }
 
     [Fact]
@@ -765,34 +712,7 @@ public sealed class HostCommandsTests : IDisposable
         Assert.False(File.Exists(Path.Combine(dir, TokenStore.FileName)));
     }
 
-    // The hub's owner-remote host config, and the unit half of its acceptance check
-
-    [Fact]
-    public void A7_print_config_writes_the_owner_remote_config_with_only_its_own_token()
-    {
-        var dir = NewDir();
-        StartedOnce(dir);
-        var tokens = TokenStore.ReadExisting(dir, Participants);
-
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 9123, HubCommand.PrintConfig), new StringWriter(), new StringWriter());
-        Assert.Equal(0, exit);
-
-        var path = Path.Combine(ConfigFolder(dir), "claude-code-owner-remote.json");
-        Assert.True(File.Exists(path));
-
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup");
-        Assert.Equal("http", server.GetProperty("type").GetString());
-        Assert.Equal("http://127.0.0.1:9123/mcp", server.GetProperty("url").GetString());
-        Assert.Equal("Bearer " + HostConfigs.TokenPlaceholder, server.GetProperty("headers").GetProperty("Authorization").GetString());
-
-        var text = File.ReadAllText(path);
-        foreach (var token in tokens.Values) Assert.DoesNotContain(token, text);
-
-        var readme = File.ReadAllText(Path.Combine(ConfigFolder(dir), "README.md"));
-        Assert.Contains("claude-code-owner-remote.json", readme);
-        Assert.Contains("| Classes |", readme);
-    }
+    // The owner-remote post, and the unit half of its acceptance check
 
     /// <summary>A post authenticated as <c>owner-remote</c> through the real MCP surface is stamped
     /// <c>owner-remote</c> and opens an exchange exactly as an <c>owner</c> post does. The live half
@@ -835,14 +755,6 @@ public sealed class HostCommandsTests : IDisposable
 
         var trimmed = HubOptions.Parse(["--export-memory", "C:\\x\\"], _ => null);
         Assert.Equal("C:\\x", trimmed.ExportMemoryPath);
-
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory"], _ => null));
-    }
-
-    [Fact]
-    public void Options_parse_refuses_a_drive_root_for_export_memory()
-    {
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory", "C:\\"], _ => null));
     }
 
     [Fact]
@@ -853,31 +765,24 @@ public sealed class HostCommandsTests : IDisposable
         Assert.True(withAccept.AcceptNewSource);
     }
 
-    [Fact]
-    public void Accept_new_source_or_overlay_used_with_the_wrong_verb_is_refused()
-    {
-        // --accept-new-source belongs to --export-memory only, the same idiom --overlay follows for
-        // --import-skill.
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--accept-new-source"], _ => null));
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--import-skill", "C:\\somewhere\\demo", "--accept-new-source"], _ => null));
-        Assert.Throws<ArgumentException>(() => HubOptions.Parse(["--export-memory", "C:\\somewhere\\odir", "--overlay", "C:\\somewhere\\odir2"], _ => null));
-    }
-
-    [Fact]
-    public async Task A24_export_memory_is_refused_while_a_hub_owns_the_data_dir()
-    {
-        var dir = NewDir();
-        SeedOneLiveMemory(dir);
-        var target = Path.Combine(NewDir(), "export-target");
-        await using var host = await HubTestHost.StartAsync(dir, deleteOnDispose: false);
-
-        var error = new StringWriter();
-        var exit = HostCommands.Run(new HubOptions(dir, Port: 0, HubCommand.ExportMemory, ExportMemoryPath: target), new StringWriter(), error);
-
-        Assert.Equal(5, exit);
-        Assert.Contains(dir, error.ToString());
-        Assert.False(Directory.Exists(target));
-    }
+    // Space-separated argument lists. A flag with no value, a verb-only flag used without its verb
+    // (--accept-new-source belongs to --export-memory only, the same idiom --overlay follows for
+    // --import-skill), an empty participant id, and a drive root for --export-memory are all refused.
+    [Theory]
+    [InlineData("--rotate-token")]
+    [InlineData("--import-skill")]
+    [InlineData("--import-skill C:\\somewhere\\demo --overlay")]
+    [InlineData("--overlay C:\\somewhere\\odir")]
+    [InlineData("--set-classes")]
+    [InlineData("--set-classes no-equals-sign")]
+    [InlineData("--set-classes =judge")]
+    [InlineData("--export-memory")]
+    [InlineData("--export-memory C:\\")]
+    [InlineData("--accept-new-source")]
+    [InlineData("--import-skill C:\\somewhere\\demo --accept-new-source")]
+    [InlineData("--export-memory C:\\somewhere\\odir --overlay C:\\somewhere\\odir2")]
+    public void Options_parse_refuses_a_flag_with_no_value_or_used_with_the_wrong_verb(string args) =>
+        Assert.Throws<ArgumentException>(() => HubOptions.Parse(args.Split(' '), _ => null));
 
     [Fact]
     public void A24_export_memory_against_a_data_dir_with_no_memory_directory_exits_4_and_creates_nothing()

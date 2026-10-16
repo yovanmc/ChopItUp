@@ -23,10 +23,12 @@ public sealed class SpaServingTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _host.DisposeAsync();
 
-    [Fact]
-    public async Task Root_url_serves_the_chat_shell()
+    [Theory]
+    [InlineData("")]
+    [InlineData("rooms/general")]   // a client route falls back to the shell
+    public async Task Root_url_and_a_client_route_serve_the_chat_shell(string path)
     {
-        var response = await _host.Client.GetAsync("");
+        var response = await _host.Client.GetAsync(path);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
@@ -40,15 +42,6 @@ public sealed class SpaServingTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Contains("console.log", await response.Content.ReadAsStringAsync());
-    }
-
-    [Fact]
-    public async Task A_client_route_falls_back_to_the_shell()
-    {
-        var response = await _host.Client.GetAsync("rooms/general");
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains("id=\"root\"", await response.Content.ReadAsStringAsync());
     }
 
     [Fact]

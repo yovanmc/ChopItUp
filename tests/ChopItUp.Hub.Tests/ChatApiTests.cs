@@ -35,10 +35,16 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal(1, general.GetProperty("messageCount").GetInt32());
     }
 
-    [Fact]
-    public async Task Reading_an_unknown_room_is_404()
+    [Theory]
+    [InlineData("GET", "api/rooms/nope/messages", null)]
+    [InlineData("POST", "api/rooms/nope/messages", "{\"body\":\"x\"}")]
+    [InlineData("POST", "api/rooms/nope/import", "{\"text\":\"hi\"}")]
+    [InlineData("GET", "api/rooms/nope/export", null)]
+    public async Task An_unknown_room_is_404_on_read_post_import_and_export(string method, string path, string? json)
     {
-        var response = await _host.Client.GetAsync("api/rooms/nope/messages");
+        using var request = new HttpRequestMessage(new HttpMethod(method), path);
+        if (json is not null) request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+        var response = await _host.Client.SendAsync(request);
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
@@ -136,18 +142,13 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Equal("owner-remote", posted.GetProperty("authorId").GetString());
     }
 
-    [Fact]
-    public async Task Posting_an_empty_body_is_a_400()
+    [Theory]
+    [InlineData("api/rooms/general/messages", "{\"body\":\"   \"}")]
+    [InlineData("api/rooms/general/import", "{\"text\":\"   \"}")]
+    public async Task A_blank_post_or_import_is_a_400(string path, string json)
     {
-        var response = await _host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "   " });
+        var response = await _host.Client.PostAsync(path, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Posting_to_an_unknown_room_is_404()
-    {
-        var response = await _host.Client.PostAsJsonAsync("api/rooms/nope/messages", new { body = "x" });
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     [Fact]
@@ -238,20 +239,6 @@ public sealed class ChatApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Import_to_an_unknown_room_is_404()
-    {
-        var response = await _host.Client.PostAsJsonAsync("api/rooms/nope/import", new { text = "hi" });
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-    }
-
-    [Fact]
-    public async Task Import_of_blank_text_is_a_400()
-    {
-        var response = await _host.Client.PostAsJsonAsync("api/rooms/general/import", new { text = "   " });
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
-    [Fact]
     public async Task Export_produces_markdown_with_every_message_author_and_timestamp_in_id_order()
     {
         await using var claude = await _host.ClientFor("claude");
@@ -269,13 +256,6 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.True(firstIdx >= 0 && secondIdx >= 0 && firstIdx < secondIdx);
         Assert.Contains("claude", markdown);
         Assert.Contains("codex", markdown);
-    }
-
-    [Fact]
-    public async Task Export_of_an_unknown_room_is_404()
-    {
-        var response = await _host.Client.GetAsync("api/rooms/nope/export");
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
     }
 
     private async Task<JsonElement> PostJson(object body)
@@ -309,8 +289,10 @@ public sealed class ChatApiTests : IAsyncLifetime
         Assert.Empty(list.RootElement.GetProperty("messages").EnumerateArray());
     }
 
+    /// <summary>The roster comes back in camel case. The API publishes a PARSED classes array, never
+    /// the raw delimited string, and an unclassed row answers [] rather than being absent or null.</summary>
     [Fact]
-    public async Task M8_A6_api_participants_returns_the_roster_in_camel_case()
+    public async Task M8_A6_api_participants_returns_the_roster_in_camel_case_with_each_rows_parsed_classes()
     {
         var response = await _host.Client.GetAsync("/api/participants");
         response.EnsureSuccessStatusCode();
@@ -322,16 +304,6 @@ public sealed class ChatApiTests : IAsyncLifetime
         var sol = rows.Single(r => r.GetProperty("id").GetString() == "gpt-5.6-sol");
         Assert.Equal("codex", sol.GetProperty("host").GetString());
         Assert.Equal("gpt-5.6-sol", sol.GetProperty("model").GetString());
-    }
-
-    /// <summary>The API publishes a PARSED array, never the raw delimited string, and an unclassed
-    /// row answers [] rather than being absent or null.</summary>
-    [Fact]
-    public async Task Api_participants_publishes_each_rows_parsed_classes()
-    {
-        var response = await _host.Client.GetAsync("/api/participants");
-        response.EnsureSuccessStatusCode();
-        var rows = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.EnumerateArray().ToArray();
 
         var ownerRemote = rows.Single(r => r.GetProperty("id").GetString() == "owner-remote");
         Assert.Equal("human", ownerRemote.GetProperty("kind").GetString());

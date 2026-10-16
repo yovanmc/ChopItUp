@@ -263,7 +263,7 @@ public sealed class RoomToolsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task M8_A4_list_rooms_returns_the_roster()
+    public async Task M8_A4_list_rooms_returns_the_roster_with_a_parsed_classes_array_on_every_row()
     {
         await using var claude = await _host.ClientFor("claude");
         var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
@@ -278,16 +278,9 @@ public sealed class RoomToolsTests : IAsyncLifetime
         var claudeRow = participants.Single(p => p.GetProperty("id").GetString() == "claude");
         Assert.True(claudeRow.TryGetProperty("model", out var model));
         Assert.Equal(JsonValueKind.Null, model.ValueKind);
-    }
 
-    /// <summary>Every roster row published by list_rooms carries a classes array, parsed (never the
-    /// raw delimited string), and an unclassed row answers [] rather than being absent.</summary>
-    [Fact]
-    public async Task M8_A4_list_rooms_roster_carries_a_classes_array_on_every_row()
-    {
-        await using var claude = await _host.ClientFor("claude");
-        var rooms = HubTestHost.Json(await claude.CallToolAsync("list_rooms", new Dictionary<string, object?>()));
-        var participants = rooms.GetProperty("participants").EnumerateArray().ToArray();
+        // Every roster row carries a classes array, parsed (never the raw delimited string), and an
+        // unclassed row answers [] rather than being absent.
         Assert.All(participants, p => Assert.Equal(JsonValueKind.Array, p.GetProperty("classes").ValueKind));
 
         var opus = participants.Single(p => p.GetProperty("id").GetString() == "opus");
