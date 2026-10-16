@@ -30,20 +30,14 @@ public class HubProbeTests
         Assert.False(HubProbe.LockIsHeld(dir));
     }
 
-    [Fact]
-    public void ReadPort_parses_a_valid_port()
+    [Theory]
+    [InlineData("8795", 8795)]
+    [InlineData("x", null)]
+    public void ReadPort_parses_a_valid_port_and_is_null_for_unparsable_content(string content, int? expected)
     {
         var dir = TestDirs.New();
-        File.WriteAllText(Path.Combine(dir, "hub.port"), "8795");
-        Assert.Equal(8795, HubProbe.ReadPort(dir));
-    }
-
-    [Fact]
-    public void ReadPort_is_null_for_unparsable_content()
-    {
-        var dir = TestDirs.New();
-        File.WriteAllText(Path.Combine(dir, "hub.port"), "x");
-        Assert.Null(HubProbe.ReadPort(dir));
+        File.WriteAllText(Path.Combine(dir, "hub.port"), content);
+        Assert.Equal(expected, HubProbe.ReadPort(dir));
     }
 
     [Fact]

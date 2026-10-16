@@ -28,20 +28,14 @@ public sealed class HostBridgeTests
         Assert.Equal(new[] { expectedCall }, host.Calls);
     }
 
-    [Fact]
-    public void ToggleMaximize_restores_when_already_maximized()
+    [Theory]
+    [InlineData(true, "Restore")]
+    [InlineData(false, "Maximize")]
+    public void ToggleMaximize_restores_when_maximized_and_maximizes_otherwise(bool maximized, string expectedCall)
     {
-        var host = NewHost(maximized: true);
+        var host = NewHost(maximized: maximized);
         HostBridge.Handle("""{"id":"1","cmd":"toggleMaximize"}""", host);
-        Assert.Equal(new[] { "Restore" }, host.Calls);
-    }
-
-    [Fact]
-    public void ToggleMaximize_maximizes_when_not_maximized()
-    {
-        var host = NewHost(maximized: false);
-        HostBridge.Handle("""{"id":"1","cmd":"toggleMaximize"}""", host);
-        Assert.Equal(new[] { "Maximize" }, host.Calls);
+        Assert.Equal(new[] { expectedCall }, host.Calls);
     }
 
     [Fact]
@@ -109,23 +103,16 @@ public sealed class HostBridgeTests
         Assert.Empty(host.Calls);
     }
 
-    [Fact]
-    public void Malformed_json_answers_ok_false()
+    [Theory]
+    [InlineData("{not json")]
+    [InlineData("""{"id":"1"}""")]
+    public void Malformed_json_or_a_missing_cmd_answers_ok_false(string message)
     {
         var host = NewHost();
-        var reply = HostBridge.Handle("{not json", host);
+        var reply = HostBridge.Handle(message, host);
         using var doc = JsonDocument.Parse(reply);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Empty(host.Calls);
-    }
-
-    [Fact]
-    public void Missing_cmd_answers_ok_false()
-    {
-        var host = NewHost();
-        var reply = HostBridge.Handle("""{"id":"1"}""", host);
-        using var doc = JsonDocument.Parse(reply);
-        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
     }
 
     // ===== trust matrix ======================================================================

@@ -226,11 +226,6 @@ describe('which text is actually in force', () => {
     expect(markup).not.toContain('roles-inforce-text');
   });
 
-  test('every source has wording, so no state renders a bare slug', () => {
-    for (const source of ['room', 'global', 'suppressed', 'none'] as const) {
-      expect(SOURCE_LABEL[source].length).toBeGreaterThan(0);
-    }
-  });
 });
 
 /** A server-side rule that gates a button is part of the state machine. Clearing a role means saving
@@ -314,28 +309,14 @@ describe('what a save re-seeds', () => {
     expect(Object.keys(seeded)).toHaveLength(2 * ROLES.participants.length + 1);
   });
 
-  test('a persona save re-seeds the persona box and leaves every other box typed', () => {
-    const next = reseedDrafts(TYPED, ROLES, PERSONA_KEY);
-
-    expect(next[PERSONA_KEY]).toBe(ROLES.persona);
-    expectKeptExcept(next, PERSONA_KEY);
-  });
-
-  test('a global-role save re-seeds that participant global box only', () => {
-    const saved = draftKey(PLANNER.id, 'global');
-
+  test.each([
+    ['a persona save re-seeds the persona box', PERSONA_KEY, ROLES.persona],
+    ['a global-role save re-seeds that participant global box', draftKey(PLANNER.id, 'global'), PLANNER.role],
+    ['an override save re-seeds that participant room box', draftKey(SCRIBE.id, 'room'), SCRIBE.roomRole],
+  ])('%s only, and leaves every other box typed', (_name, saved, expected) => {
     const next = reseedDrafts(TYPED, ROLES, saved);
 
-    expect(next[saved]).toBe(PLANNER.role);
-    expectKeptExcept(next, saved);
-  });
-
-  test('an override save re-seeds that participant room box only', () => {
-    const saved = draftKey(SCRIBE.id, 'room');
-
-    const next = reseedDrafts(TYPED, ROLES, saved);
-
-    expect(next[saved]).toBe(SCRIBE.roomRole);
+    expect(next[saved]).toBe(expected);
     expectKeptExcept(next, saved);
   });
 

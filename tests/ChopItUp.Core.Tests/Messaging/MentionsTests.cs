@@ -79,50 +79,33 @@ public sealed class MentionsTests
         }
     }
 
-    [Fact]
-    public void Finds_ids_in_first_appearance_order_without_duplicates()
+    [Theory]
+    [InlineData("@opus then @gpt-5.6-sol, and @opus again; back to @owner.", new[] { "opus", "gpt-5.6-sol", "owner" })]   // first appearance order, no duplicates
+    [InlineData("@Opus @GPT-6-ASTRA", new[] { "opus", "gpt-6-astra" })]                                                    // case-insensitive, canonical id
+    [InlineData("ask @claude.", new[] { "claude" })]                                                                        // sentence-final punctuation still matches
+    [InlineData("@gpt-5.6-sol please", new[] { "gpt-5.6-sol" })]                                                           // dotted ids win over their prefixes
+    [InlineData("@gpt-5.5 please", new[] { "gpt-5.5" })]
+    public void Find_returns_canonical_ids_in_first_appearance_order(string body, string[] expected)
     {
         var m = new Mentions(Ids);
-        Assert.Equal(["opus", "gpt-5.6-sol", "owner"], m.Find("@opus then @gpt-5.6-sol, and @opus again; back to @owner."));
+        Assert.Equal(expected, m.Find(body));
+    }
+
+    [Theory]
+    [InlineData("ask @claude-2 or @claude.x or @claudette")]   // a longer word does not match
+    [InlineData("mail me at me@opus.com")]                     // an email address is not a mention
+    [InlineData("x-@sonnet")]
+    [InlineData("@nobody @ owner")]                            // unknown ids
+    [InlineData("")]
+    public void Find_yields_nothing_for_longer_words_emails_unknown_ids_and_empty_bodies(string body)
+    {
+        var m = new Mentions(Ids);
+        Assert.Empty(m.Find(body));
     }
 
     [Fact]
-    public void Is_case_insensitive_and_reports_the_canonical_id()
+    public void An_empty_roster_finds_nothing()
     {
-        var m = new Mentions(Ids);
-        Assert.Equal(["opus", "gpt-6-astra"], m.Find("@Opus @GPT-6-ASTRA"));
-    }
-
-    [Fact]
-    public void Sentence_final_punctuation_still_matches_but_a_longer_word_does_not()
-    {
-        var m = new Mentions(Ids);
-        Assert.Equal(["claude"], m.Find("ask @claude."));
-        Assert.Empty(m.Find("ask @claude-2 or @claude.x or @claudette"));
-    }
-
-    [Fact]
-    public void Dotted_ids_win_over_their_prefixes()
-    {
-        var m = new Mentions(Ids);
-        Assert.Equal(["gpt-5.6-sol"], m.Find("@gpt-5.6-sol please"));
-        Assert.Equal(["gpt-5.5"], m.Find("@gpt-5.5 please"));
-    }
-
-    [Fact]
-    public void An_email_address_is_not_a_mention()
-    {
-        var m = new Mentions(Ids);
-        Assert.Empty(m.Find("mail me at me@opus.com"));
-        Assert.Empty(m.Find("x-@sonnet"));
-    }
-
-    [Fact]
-    public void Unknown_ids_and_empty_bodies_yield_nothing()
-    {
-        var m = new Mentions(Ids);
-        Assert.Empty(m.Find("@nobody @ owner"));
-        Assert.Empty(m.Find(""));
         Assert.Empty(new Mentions([]).Find("@opus"));
     }
 }

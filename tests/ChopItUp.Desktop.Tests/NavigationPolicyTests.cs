@@ -23,38 +23,21 @@ public class NavigationPolicyTests
     [InlineData("http://127.0.0.1:8795/", false)]
     [InlineData("http://127.0.0.1:8795/rooms/general?x=1#y", false)]
     [InlineData("HTTP://127.0.0.1:8795/Rooms", false)]
-    public void The_hub_origin_is_allowed_whatever_the_path_or_case(string uri, bool pending) =>
+    // about:blank is the documented NavigateToString behaviour; allowed unconditionally, as it was before the fix.
+    [InlineData("about:blank", true)]
+    [InlineData("about:blank", false)]
+    public void The_hub_origin_and_about_blank_are_allowed_whatever_the_path_or_case(string uri, bool pending) =>
         Assert.Equal(NavDecision.Allow, NavigationPolicy.Decide(uri, HubOrigin, pending));
 
     [Theory]
-    // Documented NavigateToString behaviour; allowed unconditionally, as it was before the fix.
-    [InlineData(true)]
-    [InlineData(false)]
-    public void About_blank_is_allowed(bool pending) =>
-        Assert.Equal(NavDecision.Allow, NavigationPolicy.Decide("about:blank", HubOrigin, pending));
-
-    [Theory]
-    [InlineData(BootPageUri)]
-    [InlineData("DATA:TEXT/HTML;charset=utf-8;base64,PGh0bWw+")]
-    [InlineData("data:text/html,<h1>hi</h1>")]
-    public void A_data_html_uri_is_the_shells_own_boot_page_while_one_is_pending(string uri) =>
-        Assert.Equal(NavDecision.Allow, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: true));
-
-    [Theory]
-    [InlineData(BootPageUri)]
-    [InlineData("DATA:TEXT/HTML;charset=utf-8;base64,PGh0bWw+")]
-    [InlineData("data:text/html,<h1>hi</h1>")]
-    public void The_same_data_uri_is_blocked_when_no_boot_page_is_pending(string uri) =>
-        Assert.Equal(NavDecision.Block, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: false));
-
-    [Theory]
-    // Only text/html is the boot page's shape; anything else a message could carry stays refused even
-    // in the window between asking for a boot page and getting it.
-    [InlineData("data:application/json;base64,e30=")]
-    [InlineData("data:text/plain,hello")]
-    [InlineData("data:image/svg+xml,<svg/>")]
-    public void Other_data_uris_are_blocked_even_while_a_boot_page_is_pending(string uri) =>
-        Assert.Equal(NavDecision.Block, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: true));
+    [InlineData(BootPageUri, true, NavDecision.Allow)]
+    [InlineData("DATA:TEXT/HTML;charset=utf-8;base64,PGh0bWw+", true, NavDecision.Allow)]
+    [InlineData("data:text/html,<h1>hi</h1>", true, NavDecision.Allow)]
+    [InlineData(BootPageUri, false, NavDecision.Block)]
+    [InlineData("DATA:TEXT/HTML;charset=utf-8;base64,PGh0bWw+", false, NavDecision.Block)]
+    [InlineData("data:text/html,<h1>hi</h1>", false, NavDecision.Block)]
+    public void A_data_html_uri_is_the_shells_own_boot_page_only_while_one_is_pending(string uri, bool pending, NavDecision expected) =>
+        Assert.Equal(expected, NavigationPolicy.Decide(uri, HubOrigin, pending));
 
     [Theory]
     // A link in a message is a link. The default browser gets it; this window does not.
@@ -65,13 +48,18 @@ public class NavigationPolicyTests
         Assert.Equal(NavDecision.OpenExternally, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: true));
 
     [Theory]
+    // Only text/html is the boot page's shape; anything else a message could carry stays refused even
+    // in the window between asking for a boot page and getting it.
+    [InlineData("data:application/json;base64,e30=")]
+    [InlineData("data:text/plain,hello")]
+    [InlineData("data:image/svg+xml,<svg/>")]
     [InlineData("file:///C:/Windows/System32/drivers/etc/hosts")]
     [InlineData("ms-appx:///index.html")]
     [InlineData("javascript:alert(1)")]
     [InlineData("about:srcdoc")]
     [InlineData("not a uri at all")]
     [InlineData("")]
-    public void Everything_else_is_blocked(string uri) =>
+    public void Everything_else_is_blocked_even_while_a_boot_page_is_pending(string uri) =>
         Assert.Equal(NavDecision.Block, NavigationPolicy.Decide(uri, HubOrigin, bootPagePending: true));
 
     [Theory]

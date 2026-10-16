@@ -4,20 +4,19 @@ namespace ChopItUp.Core.Tests.Model;
 
 public sealed class ParticipantClassesTests
 {
-    [Fact]
-    public void Parse_orders_by_the_All_vocabulary_regardless_of_stored_order()
+    [Theory]
+    // ordered by the All vocabulary regardless of stored order
+    [InlineData("judge,visible,plumbing", new[] { ParticipantClasses.Plumbing, ParticipantClasses.Visible, ParticipantClasses.Judge })]
+    // duplicates collapse
+    [InlineData("judge,visible,judge,visible", new[] { ParticipantClasses.Visible, ParticipantClasses.Judge })]
+    // case-insensitive and tolerant of surrounding whitespace
+    [InlineData("  JUDGE ,  Plumbing  ", new[] { ParticipantClasses.Plumbing, ParticipantClasses.Judge })]
+    // empty segments from a trailing or doubled comma are ignored
+    [InlineData("plumbing,,", new[] { ParticipantClasses.Plumbing })]
+    [InlineData(",plumbing,", new[] { ParticipantClasses.Plumbing })]
+    public void Parse_orders_by_the_All_vocabulary_collapses_duplicates_and_tolerates_case_whitespace_and_empty_segments(string stored, string[] expected)
     {
-        Assert.Equal(
-            [ParticipantClasses.Plumbing, ParticipantClasses.Visible, ParticipantClasses.Judge],
-            ParticipantClasses.Parse("judge,visible,plumbing"));
-    }
-
-    [Fact]
-    public void Parse_collapses_duplicates()
-    {
-        Assert.Equal(
-            [ParticipantClasses.Visible, ParticipantClasses.Judge],
-            ParticipantClasses.Parse("judge,visible,judge,visible"));
+        Assert.Equal(expected, ParticipantClasses.Parse(stored));
     }
 
     [Fact]
@@ -25,21 +24,6 @@ public sealed class ParticipantClassesTests
     {
         Assert.Equal([ParticipantClasses.Visible], ParticipantClasses.Parse("visible,astra,astra"));
         Assert.Equal(["astra"], ParticipantClasses.Unknown("visible,astra,astra"));
-    }
-
-    [Fact]
-    public void Parse_is_case_insensitive_and_tolerates_surrounding_whitespace()
-    {
-        Assert.Equal(
-            [ParticipantClasses.Plumbing, ParticipantClasses.Judge],
-            ParticipantClasses.Parse("  JUDGE ,  Plumbing  "));
-    }
-
-    [Fact]
-    public void Parse_ignores_empty_segments_from_a_trailing_or_doubled_comma()
-    {
-        Assert.Equal([ParticipantClasses.Plumbing], ParticipantClasses.Parse("plumbing,,"));
-        Assert.Equal([ParticipantClasses.Plumbing], ParticipantClasses.Parse(",plumbing,"));
     }
 
     [Fact]
