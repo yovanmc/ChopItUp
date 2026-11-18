@@ -218,6 +218,30 @@ public sealed class RunStore(ChopDb db)
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary><see cref="RecordArtifact"/> for one spawn's whole set of files, in one transaction,
+    /// because a render can write thousands of frames.</summary>
+    public void RecordArtifacts(long runId, IEnumerable<string> paths, string authorId, DateTimeOffset now)
+    {
+        using var conn = db.Open();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO run_artifacts (run_id, path, author_id, at) VALUES ($id, $path, $author, $at)
+            ON CONFLICT (run_id, path) DO UPDATE SET author_id = excluded.author_id, at = excluded.at
+            """;
+        cmd.Parameters.AddWithValue("$id", runId);
+        var path = cmd.Parameters.Add("$path", SqliteType.Text);
+        cmd.Parameters.AddWithValue("$author", authorId);
+        cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
+        foreach (var p in paths)
+        {
+            path.Value = Normalize(p);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
     public IReadOnlyList<RunArtifact> Artifacts(long runId)
     {
         using var conn = db.Open();
@@ -302,6 +326,8 @@ public sealed class RunStore(ChopDb db)
         }
         p = p.Replace('\\', '/');
         if (p.StartsWith("./", StringComparison.Ordinal)) p = p[2..];
+        if (ArtifactRef.IsReference(p) && p.AsSpan(ArtifactRef.Prefix.Length).StartsWith("./", StringComparison.Ordinal))
+            p = ArtifactRef.Prefix + p[(ArtifactRef.Prefix.Length + 2)..];
         return p.Trim().ToLowerInvariant();
     }
 

@@ -131,6 +131,11 @@ public sealed class RoomsApiTests : IAsyncLifetime
         var (status, body) = await Post("api/rooms", new { name = "Nested Worktree", directory = inside });
         Assert.Equal(HttpStatusCode.BadRequest, status);
         Assert.Contains("exchange worktrees", body.GetProperty("error").GetString());
+
+        var inFolder = Path.Combine(RoomArtifacts.FolderFor(labDir), "renders");
+        var (folderStatus, folderBody) = await Post("api/rooms", new { name = "Nested Artifacts", directory = inFolder });
+        Assert.Equal(HttpStatusCode.BadRequest, folderStatus);
+        Assert.Contains("artifacts folder", folderBody.GetProperty("error").GetString());
     }
 
     [Fact]

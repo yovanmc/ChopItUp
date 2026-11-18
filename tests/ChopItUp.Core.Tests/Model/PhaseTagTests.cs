@@ -46,9 +46,11 @@ public sealed class PhaseTagTests
     }
 
     [Fact]
-    public void Artifact_returns_the_trimmed_remainder_of_the_first_artifact_line()
+    public void Artifacts_returns_every_artifact_line_trimmed_and_says_whether_a_space_followed_the_colon()
     {
-        Assert.Equal("docs/PLAN.md", PhaseTag.Artifact("phase: critique/pass-1\nartifact:   docs/PLAN.md  \nmore text"));
-        Assert.Null(PhaseTag.Artifact("phase: build\nno artifact line here"));
+        Assert.Equal(
+            [new ArtifactLine("docs/PLAN.md", true), new ArtifactLine("artifact:a/b.png", true), new ArtifactLine("renders/x.png", false)],
+            PhaseTag.Artifacts("phase: critique/pass-1\nartifact:   docs/PLAN.md  \nmore text\n  artifact: artifact:a/b.png\nartifact:renders/x.png"));
+        Assert.Empty(PhaseTag.Artifacts("phase: build\nno artifact line here"));
     }
 }

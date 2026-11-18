@@ -2,6 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace ChopItUp.Core.Model;
 
+/// <summary>One <c>artifact:</c> line of a conductor post. <see cref="Spaced"/> is whether white space
+/// followed the colon: <c>artifact:x.png</c> is the spelling a reference is easily mistaken for.</summary>
+public sealed record ArtifactLine(string Value, bool Spaced);
+
 /// <summary>The hub's phase grammar: the FIRST LINE of a conductor post, exactly
 /// <c>phase: &lt;kind&gt;</c> or <c>phase: &lt;kind&gt;/&lt;name&gt;</c>, kind drawn from
 /// <see cref="Kinds"/>. Trailing text on the same line is ignored on purpose: requiring end-of-line
@@ -36,17 +40,19 @@ public sealed record PhaseTag(string Kind, string? Name)
         return true;
     }
 
-    /// <summary>Scans every line of <paramref name="body"/> for the first one that starts with
-    /// <c>artifact:</c> (after leading whitespace) and returns the trimmed remainder, or null.</summary>
-    public static string? Artifact(string body)
+    /// <summary>Every line of <paramref name="body"/> that starts with <c>artifact:</c> (after leading
+    /// whitespace), in order, each with its trimmed remainder.</summary>
+    public static IReadOnlyList<ArtifactLine> Artifacts(string body)
     {
+        var lines = new List<ArtifactLine>();
         foreach (var line in body.Replace("\r\n", "\n").Split('\n'))
         {
             var trimmed = line.TrimStart();
-            if (trimmed.StartsWith("artifact:", StringComparison.Ordinal))
-                return trimmed["artifact:".Length..].Trim();
+            if (!trimmed.StartsWith("artifact:", StringComparison.Ordinal)) continue;
+            var rest = trimmed["artifact:".Length..];
+            lines.Add(new ArtifactLine(rest.Trim(), rest.Length > 0 && char.IsWhiteSpace(rest[0])));
         }
-        return null;
+        return lines;
     }
 
     private static string FirstLine(string body)

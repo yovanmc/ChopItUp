@@ -33,6 +33,7 @@ const BASE: RunSnapshot = {
   endedAt: null,
   elapsedMinutes: 185,
   wallClockCapMinutes: 480,
+  artifactsOmitted: 0,
   artifacts: [],
   gateRuns: [],
 };

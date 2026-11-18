@@ -47,12 +47,13 @@ public sealed record RunSnapshot(
     bool CapSpent, string Phase, int PhaseEntries, int PhaseEntryCap, int Exchanges, int SpawnsUsed,
     int SpawnCap, DateTimeOffset StartedAt, DateTimeOffset? EndedAt, int ElapsedMinutes,
     int WallClockCapMinutes, IReadOnlyList<RunArtifact> Artifacts, IReadOnlyList<GateRun> GateRuns,
-    IReadOnlyDictionary<string, int> PhaseHistory)
+    IReadOnlyDictionary<string, int> PhaseHistory, int ArtifactsOmitted)
 {
     public static RunSnapshot Of(Run run, RunStore runs, RunLimits limits, DateTimeOffset now)
     {
         // One read, two uses: the current tag's count and the whole map are the same query.
         var entries = runs.PhaseEntries(run.Id);
+        var (artifacts, omitted) = RunArtifactList.Newest(runs.Artifacts(run.Id));
         return new(
         run.Id, run.RoomId, run.ConductorId, run.SkillName, run.Status, run.Reason, run.CapSpent,
         run.Phase, entries.GetValueOrDefault(run.Phase), limits.PhaseEntries,
@@ -60,6 +61,6 @@ public sealed record RunSnapshot(
         run.StartedAt, run.EndedAt,
         (int)RunStore.ActiveElapsed(run, run.EndedAt ?? now).TotalMinutes,
         (int)limits.WallClock.TotalMinutes,
-        runs.Artifacts(run.Id), runs.GateRuns(run.Id), entries);
+        artifacts, runs.GateRuns(run.Id), entries, omitted);
     }
 }

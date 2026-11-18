@@ -539,11 +539,49 @@ public sealed class ExchangePolicyTests
     // The phase tag, the conductor class rules, and the refusal counter
 
     private static string? Refuse(ExchangePolicy p, string body, string conductor = "sonnet",
-        Func<string, string?>? artifactAuthor = null, Func<string, bool>? artifactExists = null)
+        Func<string, string?>? artifactAuthor = null, Func<string, bool>? artifactExists = null, Func<string, bool>? artifactInFolder = null)
     {
         var msg = Msg(1, conductor, body);
         var run = new RunContext(RunId: 9, ConductorId: conductor, CurrentPhase: "(start)");
-        return p.RefuseConductorPost(msg, run, p.MentionedSpawnable(msg), artifactAuthor ?? (_ => null), artifactExists ?? (_ => false));
+        return p.RefuseConductorPost(msg, run, p.MentionedSpawnable(msg), artifactAuthor ?? (_ => null), artifactExists ?? (_ => false), artifactInFolder);
+    }
+
+    /// <summary>The critique rule over several artifact lines. Files: <c>a.png</c> by sonnet,
+    /// <c>o.png</c> by opus and <c>f.png</c> by fable exist in the artifacts folder. <c>gone.png</c> was
+    /// recorded for sonnet and then deleted. <c>src/Foo.cs</c> is in the repo, and <c>both.png</c> is in
+    /// the repo and the folder. A null expectation means the post is accepted.</summary>
+    [Theory]
+    [InlineData("phase: critique @opus look\nartifact: artifact:a.png", null)]
+    [InlineData("phase: critique @opus look\nartifact: artifact:o.png", "(@opus)")]
+    [InlineData("phase: critique @opus @fable look\nartifact: artifact:o.png", null)]                                   // fable is free
+    [InlineData("phase: critique @opus @fable look\nartifact: artifact:o.png\nartifact: artifact:f.png", "(@fable, @opus)")]   // neither is free
+    [InlineData("phase: critique @opus look\nartifact: artifact:a.png\nartifact: artifact:o.png", "(@opus, @sonnet)")]  // the second line counts
+    [InlineData("phase: critique @opus look\nartifact: artifact:a.png\nartifact: missing.cs", "'missing.cs' is neither recorded")]
+    [InlineData("phase: critique @opus look\nartifact: artifact:gone.png", "'artifact:gone.png' is not a file")]        // recorded, then deleted
+    [InlineData("phase: critique @opus look\nartifact: artifact:../x.png", "is not a file")]
+    [InlineData("phase: critique @opus look\nartifact: src/Foo.cs", null)]                                              // a plain repo path keeps its rule
+    [InlineData("phase: critique @opus look\nartifact: a.png", "write the line as: artifact: artifact:a.png")]
+    [InlineData("phase: critique @opus look\nartifact:a.png", "write the line as: artifact: artifact:a.png")]
+    [InlineData("phase: critique @opus look\nartifact: both.png", null)]                                                // spaced: the repo path
+    [InlineData("phase: critique @opus look\nartifact:both.png", "artifact: artifact:both.png for the folder file")]
+    public void A_critique_checks_every_artifact_line_and_needs_one_judge_who_authored_none(string body, string? refusal)
+    {
+        var authors = new Dictionary<string, string>
+        {
+            ["artifact:a.png"] = "sonnet", ["artifact:o.png"] = "opus", ["artifact:f.png"] = "fable", ["artifact:gone.png"] = "sonnet",
+        };
+        var inFolder = new[] { "a.png", "o.png", "f.png", "both.png" };
+        var inRepo = new[] { "src/foo.cs", "both.png" };
+        bool Exists(string v)
+        {
+            var n = RunStore.Normalize(v);
+            return n.StartsWith("artifact:") ? inFolder.Contains(n["artifact:".Length..]) : inRepo.Contains(n);
+        }
+
+        var actual = Refuse(Policy(), body, "sonnet", v => authors.GetValueOrDefault(RunStore.Normalize(v)), Exists, v => inFolder.Contains(RunStore.Normalize(v)));
+
+        if (refusal is null) Assert.Null(actual);
+        else Assert.Contains(refusal, actual);
     }
 
     /// <summary>Each refused conductor post and the words its refusal must contain. Roster classes

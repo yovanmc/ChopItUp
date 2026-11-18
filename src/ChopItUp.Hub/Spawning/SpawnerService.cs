@@ -61,10 +61,13 @@ public sealed partial class SpawnerService : BackgroundService
     private sealed record TickEvent : Event;
     // A worktree close finished off the loop thread; carries the note to post (or null).
     private sealed record WorktreeClosedEvent(string RoomId, string? Note) : Event;
+    // A room's artifacts folder check finished off the loop thread.
+    private sealed record ArtifactLeaseEvent(string RoomId, RoomArtifacts.Lease Lease) : Event;
 
     /// <summary>What the trail did around one spawn in a directory room; null when the room has no
     /// directory. <see cref="Leased"/> is true when the spawn body ran in a leased worktree.</summary>
-    private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved, bool Leased = false);
+    private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved, bool Leased = false,
+        IReadOnlyList<AddedFile>? LargeFiles = null, string? ArtifactsFolder = null);
 
     private sealed class SpawnHandle
     {
@@ -110,6 +113,11 @@ public sealed partial class SpawnerService : BackgroundService
     private readonly MemoryStore _memory;
     private readonly RoomTrails _trails;
     private readonly ExchangeWorktrees _worktrees;
+    private readonly RoomArtifacts _artifacts;
+    // Loop thread only. What the folder check answered per room; a launch waits until its room is here.
+    private readonly Dictionary<string, RoomArtifacts.Lease> _artifactLeases = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _artifactLeasing = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _artifactRefusalNoted = new(StringComparer.Ordinal);
     private readonly Participant _owner;
     // _roster stays the startup snapshot for identity, peers and tokens, but role and persona text
     // must reflect a web-UI edit without a hub restart, so they are read live at launch through
@@ -162,12 +170,12 @@ public sealed partial class SpawnerService : BackgroundService
 
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
-        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, ParticipantStore participants, SkillStore skills, TimeProvider clock,
+        CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, RoomArtifacts artifacts, ParticipantStore participants, SkillStore skills, TimeProvider clock,
         RunStore runs, RunLimits runLimits)
     {
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
-        _trails = trails; _worktrees = worktrees; _owner = roster.First(p => p.Id == participants.OwnerId());
+        _trails = trails; _worktrees = worktrees; _artifacts = artifacts; _owner = roster.First(p => p.Id == participants.OwnerId());
         _participants = participants;
         _policy = new ExchangePolicy(roster, limits);
         _skills = skills;
@@ -319,7 +327,53 @@ public sealed partial class SpawnerService : BackgroundService
                 // loop's LaunchDue/ArmWake pass right after Handle then launches anything that waited.
                 CloseIdleWorktrees(w.RoomId);
                 break;
+            case ArtifactLeaseEvent a:
+                _artifactLeasing.Remove(a.RoomId);
+                _artifactLeases[a.RoomId] = a.Lease;
+                if (a.Lease.Refusal is not null && _artifactRefusalNoted.Add(a.RoomId))
+                    PostNote(a.RoomId, $"This room has no artifacts folder: {a.Lease.Refusal}. Spawns here still run, and generated files stay in the working directory.");
+                break;
         }
+    }
+
+    /// <summary>Whether <paramref name="roomId"/>'s artifacts folder check has answered. The check
+    /// touches the room's drive, so it runs off the loop thread: a dead drive must not stall every
+    /// room. <see cref="ArtifactLeaseEvent"/> wakes the loop when it finishes.</summary>
+    private bool ArtifactLeaseKnown(string roomId, string directory)
+    {
+        if (_artifactLeases.ContainsKey(roomId)) return true;
+        if (_artifactLeasing.Add(roomId))
+            _ = Task.Run(async () =>
+            {
+                var lease = await RoomArtifacts.WithinAsync(() => _artifacts.Ensure(directory), RoomArtifacts.CheckLimit);
+                _events.Writer.TryWrite(new ArtifactLeaseEvent(roomId, lease));
+            });
+        return false;
+    }
+
+    /// <summary>The folder a launch may use. A transient refusal covers this launch only.</summary>
+    private string? ArtifactsFolderForLaunch(string roomId)
+    {
+        if (!_artifactLeases.TryGetValue(roomId, out var lease)) return null;
+        if (lease.Transient) _artifactLeases.Remove(roomId);
+        return lease.Path;
+    }
+
+    /// <summary>Credits the files a spawn wrote to it. Never throws: the spawn's commit comes next.</summary>
+    private void RecordArtifactChanges(long runId, string folder, ArtifactScan before, string authorId)
+    {
+        try
+        {
+            var changed = RoomArtifacts.Changed(before, RoomArtifacts.Scan(folder));
+            if (changed.Count > 0) _runs.RecordArtifacts(runId, changed.Select(path => ArtifactRef.Prefix + path), authorId, _clock.GetUtcNow());
+        }
+        catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"run {runId}: artifact scan error {e.GetType().Name}: {e.Message}"); }
+    }
+
+    private void PostTrailNotes(string roomId, string participantId, TrailReport trail)
+    {
+        PostNote(roomId, HubNotes.Trail(participantId, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
+        if (trail.LargeFiles is { Count: > 0 } large) PostNote(roomId, HubNotes.LargeFiles(participantId, large, trail.ArtifactsFolder));
     }
 
     /// <summary>Hands each closed, idle worktree exchange of <paramref name="roomId"/> to
@@ -645,7 +699,8 @@ public sealed partial class SpawnerService : BackgroundService
         var mentioned = _policy.MentionedSpawnable(m);
         var runContext = new RunContext(run.Id, run.ConductorId, run.Phase);
         var refusal = _policy.RefuseConductorPost(m, runContext, mentioned,
-            path => _runs.ArtifactAuthor(run.Id, path), path => ArtifactInRoomTree(run, path));
+            path => _runs.ArtifactAuthor(run.Id, path), path => ArtifactExists(run, path),
+            path => ArtifactExists(run, ArtifactRef.Prefix + RunStore.Normalize(path)));
         PhaseTag.TryParse(m.Body, out var tag);
         var ev = new RunEvent.ConductorPosted(m.Id, tag, mentioned, refusal);
 
@@ -743,15 +798,19 @@ public sealed partial class SpawnerService : BackgroundService
     }
 
     /// <summary>Whether <paramref name="path"/> is present in the room's own directory tree, which
-    /// satisfies "recorded or in the room tree" for an artifact nothing has recorded yet. Normalizes
-    /// with the same <see cref="RunStore.Normalize"/> the authorship lookup uses, so the two checks
-    /// never disagree on one path. A room with no directory, an absolute path, or one that walks
-    /// above the room root, is never "in the tree".</summary>
-    private bool ArtifactInRoomTree(Run run, string path)
+    /// satisfies "recorded or in the room tree" for an artifact nothing has recorded yet, or, for an
+    /// <c>artifact:</c> reference, in the folder this room's lease allows. Normalizes with the same
+    /// <see cref="RunStore.Normalize"/> the authorship lookup uses, so the two checks never disagree on
+    /// one path. A room with no directory, an absolute path, or one that walks above the room root, is
+    /// never "in the tree".</summary>
+    private bool ArtifactExists(Run run, string path)
     {
+        var normalized = RunStore.Normalize(path);
+        if (ArtifactRef.IsReference(normalized))
+            return _artifactLeases.TryGetValue(run.RoomId, out var lease) && lease.Path is not null
+                && ArtifactRef.TryRelative(normalized, out var relative) && RoomArtifacts.ReferenceExists(lease.Path, relative);
         var directory = _store.GetRoom(run.RoomId)?.Directory;
         if (directory is null) return false;
-        var normalized = RunStore.Normalize(path);
         if (Path.IsPathRooted(normalized) || normalized.Split('/').Contains("..")) return false;
         return File.Exists(Path.GetFullPath(Path.Combine(directory, normalized)));
     }
@@ -834,6 +893,7 @@ public sealed partial class SpawnerService : BackgroundService
             var directory = _store.GetRoom(x.RoomId)?.Directory;
             if (x.ModeLeg is { Preparing: true }) continue;
             var exclusive = directory is not null && x.ModeLeg?.Settings.Mode != "panel";
+            if (exclusive && !ArtifactLeaseKnown(x.RoomId, directory!)) continue;
             var over = UsesWorktrees(x.RoomId, directory) ? x.InFlight : null;
             // A worktree launch still waits while a spawn is in flight in the room directory itself
             // (a run just ended or stopped, its cancelled conductor not yet finished); otherwise the
@@ -953,6 +1013,7 @@ public sealed partial class SpawnerService : BackgroundService
             var core = _memory.ReadCore();
             var room = _store.GetRoom(request.RoomId);
             var directory = room?.Directory;
+            var artifactsFolder = directory is null ? null : ArtifactsFolderForLaunch(request.RoomId);
             // Capture the same selected limit for the runner and its timeout note. An active run
             // always wins, even when its room has a directory.
             var timeout = activeRun is not null ? _runLimits.SpawnTimeout
@@ -978,7 +1039,7 @@ public sealed partial class SpawnerService : BackgroundService
                 var text = _memory.ReadTopic(roomTopic, MemoryStore.RoomChars);
                 roomMemory = new RoomMemory(roomTopic, text?.Text ?? "", text?.Truncated ?? false);
             }
-            var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) : null;
+            var runView = activeRun is not null ? BuildRunView(activeRun, participant.Id, _clock.GetUtcNow()) with { ArtifactsAvailable = artifactsFolder is not null } : null;
             // Read fresh at launch, not from the startup-static _roster, so an owner edit through the
             // API takes effect on the next spawn with no hub restart.
             var standing = new SpawnPrompt.StandingText(room?.Persona, _participants.EffectiveRole(request.RoomId, participant.Id));
@@ -989,7 +1050,7 @@ public sealed partial class SpawnerService : BackgroundService
                 core.Text, core.Truncated, _memory.ListTopics().Select(t => t.Slug).ToList(), Directory: tree, Skill: x.Skill,
                 DirectoryCheckoutOf: inWorktree ? directory : null, Run: runView, RoomMemory: roomMemory, Standing: standing,
                 Reason: request.Reason, Addressee: x.Addressee, RefusedAt: request.RefusedAt, LastModelPost: x.LastModelPost,
-                Governing: context.Governing, RetrievalOmitted: context.RetrievalOmitted), _limits);
+                Governing: context.Governing, RetrievalOmitted: context.RetrievalOmitted, ArtifactsDirectory: artifactsFolder), _limits);
             if (x.ModeLeg is { } modeLeg)
             {
                 prompt += "\nThis is a bounded " + modeLeg.Settings.Mode + " exchange: the room's mode chose you for this turn, and the hub, not your mentions, decides who answers next. "
@@ -1022,7 +1083,7 @@ public sealed partial class SpawnerService : BackgroundService
                         // run_gate joins the allowlist only for an in-run spawn. The built-in tool set
                         // (--tools) is untouched either way.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null), tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs);
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null, artifactsFolder), tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs, artifactsFolder);
                     }
                     break;
                 }
@@ -1033,7 +1094,7 @@ public sealed partial class SpawnerService : BackgroundService
                     var toolTimeoutSeconds = activeRun is not null ? (int)_runLimits.EffectiveGateTimeout.TotalSeconds : 60;
                     spec = directory is null
                         ? SpawnCommands.Codex(Cli("codex"), participant.Model!, McpUrl(), token, workDir, Path.Combine(workDir, "last.txt"), prompt, label, effort)
-                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, tree!, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds);
+                        : SpawnCommands.CodexInDirectory(Cli("codex"), participant.Model!, McpUrl(), token, tree!, Path.Combine(workDir, "last.txt"), prompt, label, effort, toolTimeoutSeconds, artifactsFolder);
                     break;
                 default:
                     throw new InvalidOperationException($"Participant '{participant.Id}' has host '{participant.Host}', which the spawner does not know how to start.");
@@ -1079,11 +1140,21 @@ public sealed partial class SpawnerService : BackgroundService
                         else git = roomGit;
                         headBefore = await git.HeadAsync(CancellationToken.None);
                     }
+                    ArtifactScan? artifactsBefore = null;
+                    if (artifactsFolder is not null)
+                    {
+                        // The owner may have cleared the folder since the room's check answered.
+                        try { Directory.CreateDirectory(artifactsFolder); }
+                        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Console.Error.WriteLine($"spawn {spawnId}: artifacts folder error: {e.Message}"); }
+                        // Only a run is serial across its room, so only a run can say who wrote a file.
+                        if (activeRun is not null) artifactsBefore = RoomArtifacts.Scan(artifactsFolder);
+                    }
                     // RoomId/ParticipantId are set at this one line so the hub's owner-peer check's refusal
                     // note can name the spawn if this credential is later stolen and replayed.
                     var launched = false;
                     try { result = await _runner.RunAsync(spec with { RoomId = roomId, ParticipantId = participant.Id }, timeout, handle.Cancel.Token); launched = true; }
                     catch (Exception e) { result = new ProcessResult(null, false, false, "", "launch failed: " + e.Message, TimeSpan.Zero); }
+                    if (artifactsBefore is not null) RecordArtifactChanges(activeRun!.Id, artifactsFolder!, artifactsBefore, participant.Id);
                     if (git is not null)
                     {
                         // After: always a commit, empty or not, timed out or not — the trail says the spawn happened.
@@ -1096,7 +1167,10 @@ public sealed partial class SpawnerService : BackgroundService
                         var trailer = launched ? RoomCommits.CoAuthorTrailer(host) : null;
                         var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true,
                             trailers: trailer is null ? null : [trailer], cancellation: CancellationToken.None);
-                        trail = new TrailReport(owner, agent, commands.Count, headMoved, leased);
+                        IReadOnlyList<AddedFile> added = agent.Hash is null ? []
+                            : await git.AddedFilesAsync(headBefore is null ? agent.Hash : $"{headBefore}..{agent.Hash}", CancellationToken.None);
+                        trail = new TrailReport(owner, agent, commands.Count, headMoved, leased,
+                            added.Where(f => f.Size > HubNotes.LargeFileBytes).ToList(), artifactsFolder);
 
                         // Artifact authorship comes from the spawn's whole diff, not one commit, so a
                         // host that commits its own work mid-spawn (Codex, or a rogue Claude Bash call)
@@ -1178,7 +1252,7 @@ public sealed partial class SpawnerService : BackgroundService
         }
 
         TryDeleteDir(h.WorkDir);
-        if (trail is not null) PostNote(room, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
+        if (trail is not null) PostTrailNotes(room, id, trail);
         h.Cancel.Dispose();
         // Finished may return a synthesis-queuing note with Concluded false: the exchange is still
         // open, waiting on the addressee's wrap-up turn, so the run branch below is gated on

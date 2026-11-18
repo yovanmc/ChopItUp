@@ -184,6 +184,13 @@ Inside a directory room a spawned participant can read, create, edit, search and
 with network access, cwd set to the room; git is read-only for it by rule. Only one spawn runs at a
 time within one exchange, so two models never edit the same tree at once.
 
+Each directory room also has an artifacts folder beside it, `<room dir>.artifacts`. A spawn finds its
+path in the prompt and in `CHOPITUP_ARTIFACTS`, and writes renders and other large generated files
+there. Git does not track the folder, and it outlasts every exchange. `artifact:<path>` names a file
+in it, in a post or on a critique's `artifact:` line. In a run the hub records which spawn wrote each
+file, so a judge cannot critique its own output. A room whose folder cannot be used (it would overlap
+another room, or the path is a link or a file) keeps working without one, and the hub says so once.
+
 Outside a run, each of a directory room's exchanges works in its own git worktree at
 `<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's
 HEAD, so two exchanges edit the room's repository side by side without racing. When an exchange

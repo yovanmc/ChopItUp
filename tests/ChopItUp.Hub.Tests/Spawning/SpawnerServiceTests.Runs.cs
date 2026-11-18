@@ -222,6 +222,57 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         holdFurtherTurns.SetResult();
     }
 
+    [Fact]
+    public async Task In_a_run_each_artifact_belongs_to_the_spawn_that_last_changed_it_and_a_critique_needs_the_file_to_exist()
+    {
+        WriteSkill("build-thing", RunSkillMd);
+        var dir = await MakeRoom("lab-run-files");
+        var folder = dir + ".artifacts";
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        _runner.Handler = async (spec, _, ct) =>
+        {
+            switch (Interlocked.Increment(ref calls))
+            {
+                case 1:   // the conductor writes three files, one of them under the jobs folder
+                    File.WriteAllText(Path.Combine(folder, "a.png"), "a");
+                    File.WriteAllText(Path.Combine(folder, "b.png"), "b");
+                    Directory.CreateDirectory(Path.Combine(folder, "jobs", "7"));
+                    File.WriteAllText(Path.Combine(folder, "jobs", "7", "frame.png"), "job output");
+                    await PostAsIn("sonnet", "lab-run-files", "phase: build @opus rewrite b");
+                    break;
+                case 2:   // the worker rewrites one file and leaves the other alone
+                    File.WriteAllText(Path.Combine(folder, "b.png"), "b, rewritten");
+                    await PostAsIn("opus", "lab-run-files", "Rewrote b.");
+                    break;
+                case 3:   // a recorded file that is gone
+                    File.Delete(Path.Combine(folder, "a.png"));
+                    await PostAsIn("sonnet", "lab-run-files", "phase: critique/gone @fable look\nartifact: artifact:a.png");
+                    break;
+                case 4:   // the same post for a file that exists
+                    await PostAsIn("sonnet", "lab-run-files", "phase: critique/here @fable look\nartifact: artifact:b.png");
+                    break;
+                default:
+                    await hold.Task.WaitAsync(ct);
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await PostAsOwnerIn("lab-run-files", "/build-thing @sonnet begin");
+
+        await WaitForMessageIn("lab-run-files", m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("'artifact:a.png' is not a file"));
+        string? judge = null;
+        for (var i = 0; i < 5 && judge != "fable"; i++) judge = FakeProcessRunner.ParticipantOf(await _runner.NextSpecAsync(Wait));
+        Assert.Equal("fable", judge);
+
+        var run = Runs.Active("lab-run-files");
+        Assert.NotNull(run);
+        var artifacts = Runs.Artifacts(run!.Id).Where(a => a.Path.StartsWith(ArtifactRef.Prefix)).Select(a => (a.Path, a.AuthorId)).ToList();
+        Assert.Equal([("artifact:a.png", "sonnet"), ("artifact:b.png", "opus")], artifacts);
+        hold.SetResult();
+    }
+
     // Steer
 
     private async Task<long> MessageIdIn(string room, string body)

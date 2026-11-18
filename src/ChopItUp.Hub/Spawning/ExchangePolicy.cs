@@ -1,6 +1,7 @@
 using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Skills;
+using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Skills;
 
 namespace ChopItUp.Hub.Spawning;
@@ -362,9 +363,10 @@ public sealed class ExchangePolicy
     /// never recorded; <paramref name="artifactExists"/> answers whether the path is present in the
     /// room's directory tree. Either one satisfies "recorded or in the room tree". Those two
     /// functions are the service's impure edges; this class never touches a database or a
-    /// filesystem itself.</summary>
+    /// filesystem itself. <paramref name="artifactInFolder"/> answers whether a plain path also names
+    /// a file in the room's artifacts folder.</summary>
     public string? RefuseConductorPost(Message message, RunContext run, IReadOnlyList<string> mentioned,
-        Func<string, string?> artifactAuthor, Func<string, bool> artifactExists)
+        Func<string, string?> artifactAuthor, Func<string, bool> artifactExists, Func<string, bool>? artifactInFolder = null)
     {
         if (!PhaseTag.TryParse(message.Body, out var tag))
             return "the first line must be a valid phase tag: 'phase: <kind>' or 'phase: <kind>/<name>'";
@@ -382,17 +384,41 @@ public sealed class ExchangePolicy
 
         if (tag.Kind == "critique")
         {
-            var artifact = PhaseTag.Artifact(message.Body);
-            if (artifact is null) return "a critique needs an artifact: line";
-            var author = artifactAuthor(artifact);
-            if (author is null && !artifactExists(artifact))
-                return $"artifact '{artifact}' is neither recorded nor in the room tree";
-            if (!mentioned.Any(id => _roster.TryGetValue(id, out var p) && ParticipantClasses.Has(p, ParticipantClasses.Judge) && id != author))
-                return "a critique needs a judge mentioned other than the artifact's recorded author: " + QualifyingRows(p =>
-                    ParticipantClasses.Has(p, ParticipantClasses.Judge) && p.Id != author);
+            var lines = PhaseTag.Artifacts(message.Body);
+            if (lines.Count == 0) return "a critique needs an artifact: line";
+            var authors = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var line in lines)
+            {
+                if (RefuseArtifactLine(line, artifactAuthor, artifactExists, artifactInFolder ?? (_ => false)) is { } refused) return refused;
+                if (artifactAuthor(line.Value) is { } author) authors.Add(author);
+            }
+            bool Free(Participant p) => ParticipantClasses.Has(p, ParticipantClasses.Judge) && !authors.Contains(p.Id);
+            if (!mentioned.Any(id => _roster.TryGetValue(id, out var p) && Free(p)))
+                return "a critique needs a judge mentioned other than the artifact's recorded author"
+                    + (authors.Count == 0 ? "" : " (" + string.Join(", ", authors.Order(StringComparer.Ordinal).Select(a => "@" + a)) + ")")
+                    + ": " + QualifyingRows(Free);
         }
 
         return null;
+    }
+
+    /// <summary>Why one <c>artifact:</c> line cannot be critiqued, or null. A reference must name a file
+    /// that exists now: the scan records no deletions. A plain path keeps its recorded-or-in-the-tree
+    /// rule, and a value that was meant for the artifacts folder gets the exact line to write.</summary>
+    private static string? RefuseArtifactLine(ArtifactLine line, Func<string, string?> artifactAuthor, Func<string, bool> artifactExists, Func<string, bool> artifactInFolder)
+    {
+        var value = line.Value;
+        if (ArtifactRef.IsReference(RunStore.Normalize(value)))
+            return artifactExists(value) ? null : $"artifact '{value}' is not a file in the room's artifacts folder";
+        var inRepo = artifactAuthor(value) is not null || artifactExists(value);
+        var inFolder = artifactInFolder(value);
+        if (!inRepo)
+            return inFolder
+                ? $"artifact '{value}' is in the artifacts folder; write the line as: artifact: {ArtifactRef.Prefix}{value}"
+                : $"artifact '{value}' is neither recorded nor in the room tree";
+        return inFolder && !line.Spaced
+            ? $"artifact '{value}' names a repo path and a file in the artifacts folder; write artifact: {value} for the repo path or artifact: {ArtifactRef.Prefix}{value} for the folder file"
+            : null;
     }
 
     /// <summary>Every roster row a refused build or critique post could have mentioned to satisfy the

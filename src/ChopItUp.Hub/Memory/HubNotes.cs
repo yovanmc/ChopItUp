@@ -17,6 +17,7 @@ public static class HubNotes
     public const string ImportPrefix = "Memory import from ";
     public const string TrailPrefix = "Committed ";
     public const string TrailFailedPrefix = "Not committed for ";
+    public const long LargeFileBytes = 5L * 1024 * 1024;
 
     public static Message Post(MessageStore store, MessageSignal signal, string roomId, string text)
     {
@@ -81,6 +82,15 @@ public static class HubNotes
             + (current > MemoryStore.CoreChars
                 ? $"The core is already {current} characters; edit MEMORY.md by hand before approving anything to it."
                 : "Fold it into a topic, or propose it with replaces to update an entry the core already holds.");
+    }
+
+    /// <summary>Git keeps every version of a file for good, so a render that lands in a commit costs
+    /// the room's repository its size permanently.</summary>
+    public static string LargeFiles(string participantId, IReadOnlyList<AddedFile> files, string? artifactsFolder)
+    {
+        var names = string.Join(", ", files.Select(f => $"{f.Path} ({f.Size / 1024d / 1024d:0.0} MB)"));
+        return $"@{participantId}'s commit added {files.Count} file(s) over 5 MB to git history: {names}. Git keeps them for good."
+            + (artifactsFolder is null ? "" : $" Write large generated files to {artifactsFolder} instead.");
     }
 
     /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
