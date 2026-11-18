@@ -26,7 +26,7 @@ dotnet run --project src/ChopItUp.Desktop -- --data .data --hub src/ChopItUp.Hub
 
 Affected checks are the default. Full fallback and reuse: `docs/affected-tests.md`.
 
-Test gate: `.github/workflows/ci.yml` · selector · ci · 10.4 min [V 2026-09-28 82b51ad1]
+Test gate: `.github/workflows/ci.yml` · selector · ci · 4.4 min [V 2026-11-18 bcb7f212]
 
 ## Deploy
 Release = two single-file exes, `ChopItUp.Hub.exe` and `ChopItUp.Desktop.exe`, in `C:\Self Apps\ChopItUp\` with `wwwroot\` and `data\` beside them. Deploy with `tools\Deploy-ChopItUp.ps1`, never by hand. Verify with `tools\Invoke-M4SelfCheck.ps1 -PublishDir <staging> -TargetDir <target>`. Dev runs from the repo with data under a gitignored `.data\`. A change is done once deployed, not when merged.
