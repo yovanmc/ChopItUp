@@ -284,7 +284,7 @@ public sealed partial class SpawnerService
             if (answer is not null && handle.PostedTexts.Count == 0) PublishModeAnswer(exchange, id, answer, "answer");
             leg.Answers[id] = answer;
             TryDeleteDir(handle.WorkDir);
-            if (trail is not null) PostNote(exchange.RoomId, HubNotes.Trail(id, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
+            if (trail is not null) PostTrailNotes(exchange.RoomId, id, trail);
             if (exchange.Status == ExchangeStatus.Open && answer is not null && leg.Settings.Mode == "relay" && id == leg.Settings.First)
                 QueueMode(exchange, leg.Settings.Second!);
             else if (exchange.Status == ExchangeStatus.Open)

@@ -14,7 +14,8 @@ public sealed record ProcessSpec(
     string? RoomId = null,
     string? ParticipantId = null,
     IReadOnlyList<string>? RemoveEnvironmentPrefixes = null,
-    int? OutputLimitBytes = null);
+    int? OutputLimitBytes = null,
+    bool Utf8Output = false);
 
 /// <summary><see cref="ExitCode"/> is null when the process was killed. Exactly one of
 /// <see cref="TimedOut"/>/<see cref="Cancelled"/> is true for a killed run; both false otherwise.</summary>
@@ -48,6 +49,10 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // git writes UTF-8, and the console code page would garble a non-ASCII file name. Other
+            // children, such as a gate script, keep writing in the console code page.
+            StandardOutputEncoding = spec.Utf8Output ? System.Text.Encoding.UTF8 : null,
+            StandardErrorEncoding = spec.Utf8Output ? System.Text.Encoding.UTF8 : null,
             WorkingDirectory = spec.WorkingDirectory,
         };
         foreach (var a in spec.Arguments) psi.ArgumentList.Add(a);

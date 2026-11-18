@@ -45,6 +45,15 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         return r.StandardOutput.Trim();
     }
 
+    private static async Task<string> GitOutput(string dir, params string[] gitArgs)
+    {
+        var r = await new ProcessRunner().RunAsync(
+            new ProcessSpec(CliResolver.Resolve("git").FileName, gitArgs, new Dictionary<string, string>(), dir, "", "test-git"),
+            TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Equal(0, r.ExitCode);
+        return r.StandardOutput.Trim();
+    }
+
     [Fact]
     public async Task M9_A6_A8_A9_A10_a_directory_room_spawn_runs_in_the_room_with_settings_in_scratch_and_the_hub_commits_owner_then_agent()
     {
@@ -71,7 +80,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.StartsWith(Path.Combine(_dir, "spawns"), settingsPath);                         // scratch, not the room
         Assert.StartsWith(Path.Combine(_dir, "spawns"), spec.Arguments[spec.Arguments.ToList().IndexOf("--mcp-config") + 1]);
         Assert.Contains(@"Files: this room's directory is " + tree, spec.StandardInput);
-        Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
+        Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir, RoomArtifacts.FolderFor(dir)), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
 
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("for sonnet: 1 file(s) changed, 2 shell command(s).", note.Body);
@@ -98,6 +107,128 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.False(Directory.Exists(Path.GetDirectoryName(settingsPath)!));                 // the scratch folder does not
         Assert.False(File.Exists(Path.Combine(dir, "settings.json")));
         Assert.False(File.Exists(Path.Combine(dir, "mcp.json")));
+    }
+
+    [Theory]
+    [InlineData("sonnet")]
+    [InlineData("gpt-6-astra")]
+    public async Task A_spawn_writes_to_the_artifacts_folder_and_the_file_outlasts_the_exchange_outside_git(string participant)
+    {
+        var dir = await MakeRoom("lab-art");
+        var folder = dir + ".artifacts";
+        _runner.Handler = async (spec, _, _) =>
+        {
+            File.WriteAllText(Path.Combine(spec.Environment[SpawnCommands.ArtifactsEnvVar], "render.png"), "pixels");
+            await PostAsIn(participant, "lab-art", "Rendered.");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab-art", $"@{participant} render it");
+        var spec = await _runner.NextSpecAsync(Wait);
+        var args = spec.Arguments.ToList();
+        Assert.Equal(folder, args[args.IndexOf("--add-dir") + 1]);
+        Assert.Contains($"One folder outside your working directory is also yours: {folder}.", spec.StandardInput);
+
+        var root = Spawner.Snapshot("lab-art").RootMessageId!.Value;
+        await WaitForMessageIn("lab-art", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
+        Assert.False(Directory.Exists(ExchangeWorktrees.PathFor(dir, root)));
+        Assert.Equal("pixels", File.ReadAllText(Path.Combine(folder, "render.png")));
+        Assert.DoesNotContain("render.png", await GitLog(dir, "%H", 50) + await GitOutput(dir, "log", "--all", "--name-only", "--format="));
+        Assert.Equal("", await GitOutput(dir, "status", "--porcelain"));
+    }
+
+    [Fact]
+    public async Task A_room_whose_artifacts_path_cannot_be_used_still_runs_its_spawns_and_says_so_once()
+    {
+        var dir = await MakeRoom("lab-noart");
+        File.WriteAllText(dir + ".artifacts", "the owner's file");
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAsIn("sonnet", "lab-noart", "Done.");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab-noart", "@sonnet one");
+        var first = await _runner.NextSpecAsync(Wait);
+        await WaitForMessageIn("lab-noart", m => m.Author == "hub" && m.Body.Contains("merged into"));
+        await PostAsOwnerIn("lab-noart", "@sonnet two");
+        var second = await _runner.NextSpecAsync(Wait);
+
+        foreach (var spec in new[] { first, second })
+        {
+            Assert.False(spec.Environment.ContainsKey(SpawnCommands.ArtifactsEnvVar));
+            Assert.DoesNotContain("--add-dir", spec.Arguments);
+            Assert.DoesNotContain("One folder outside your working directory", spec.StandardInput);
+        }
+        Assert.Equal("the owner's file", File.ReadAllText(dir + ".artifacts"));
+        using var doc = JsonDocument.Parse(await _host.Client.GetStringAsync("api/rooms/lab-noart/messages?afterId=0&limit=200"));
+        Assert.Single(doc.RootElement.GetProperty("messages").EnumerateArray(), m => m.GetProperty("body").GetString()!.StartsWith("This room has no artifacts folder"));
+    }
+
+    [Fact]
+    public async Task A_folder_replaced_by_a_file_after_one_spawn_is_left_out_of_the_next_spawn()
+    {
+        var dir = await MakeRoom("lab-swap");
+        var folder = dir + ".artifacts";
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAsIn("sonnet", "lab-swap", "Done.");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab-swap", "@sonnet one");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal(folder, first.Environment[SpawnCommands.ArtifactsEnvVar]);
+        await WaitForMessageIn("lab-swap", m => m.Author == "hub" && m.Body.Contains("merged into"));
+
+        Directory.Delete(folder, recursive: true);
+        File.WriteAllText(folder, "the owner's file");
+        await PostAsOwnerIn("lab-swap", "@sonnet two");
+        var second = await _runner.NextSpecAsync(Wait);
+
+        Assert.False(second.Environment.ContainsKey(SpawnCommands.ArtifactsEnvVar));
+        Assert.DoesNotContain("--add-dir", second.Arguments);
+        Assert.DoesNotContain("One folder outside your working directory", second.StandardInput);
+        Assert.Equal("the owner's file", File.ReadAllText(folder));
+    }
+
+    [Fact]
+    public async Task A_note_names_each_file_over_5_mb_the_spawns_commits_added_and_no_other_file()
+    {
+        const int limit = (int)HubNotes.LargeFileBytes;
+        var dir = await MakeRoom("lab-large");
+        File.WriteAllBytes(Path.Combine(dir, "tracked.bin"), new byte[limit + 10]);
+        File.WriteAllBytes(Path.Combine(dir, "doomed.bin"), new byte[limit + 20]);
+        File.WriteAllBytes(Path.Combine(dir, "moved.bin"), new byte[limit + 30]);
+        _runner.Handler = async (spec, _, _) =>
+        {
+            var tree = spec.WorkingDirectory;
+            File.WriteAllBytes(Path.Combine(tree, "passing.bin"), new byte[limit + 3]);
+            File.WriteAllBytes(Path.Combine(tree, "shrunk.bin"), new byte[limit + 5]);
+            await new GitTrail(tree).CommitAllAsync("mid-spawn", new GitIdentity("Model", "model@example.test"), allowEmpty: false);
+            File.Delete(Path.Combine(tree, "passing.bin"));                                  // gone from the tree, still in history
+            File.Delete(Path.Combine(tree, "shrunk.bin"));
+            await new GitTrail(tree).CommitAllAsync("mid-spawn removal", new GitIdentity("Model", "model@example.test"), allowEmpty: false);
+            File.WriteAllBytes(Path.Combine(tree, "shrunk.bin"), new byte[10]);              // added again, and the large version stays in history
+            File.WriteAllBytes(Path.Combine(tree, "over.bin"), new byte[limit + 1]);
+            File.WriteAllBytes(Path.Combine(tree, "größe.bin"), new byte[limit + 2]);
+            File.WriteAllBytes(Path.Combine(tree, "exact.bin"), new byte[limit]);
+            File.WriteAllBytes(Path.Combine(tree, "tracked.bin"), new byte[limit + 11]);     // modified, not added
+            File.Delete(Path.Combine(tree, "doomed.bin"));
+            File.Move(Path.Combine(tree, "moved.bin"), Path.Combine(tree, "renamed.bin"));   // no new content for git to keep
+            File.WriteAllBytes(Path.Combine(tree, "copy-one.bin"), new byte[limit + 4]);
+            File.WriteAllBytes(Path.Combine(tree, "copy-two.bin"), new byte[limit + 4]);     // one blob under two names
+            await PostAsIn("sonnet", "lab-large", "Done.");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab-large", "@sonnet make files");
+
+        var note = await WaitForMessageIn("lab-large", m => m.Author == "hub" && m.Body.Contains("over 5 MB to git history"));
+        foreach (var name in new[] { "over.bin", "größe.bin", "passing.bin", "shrunk.bin", "copy-one.bin", "copy-two.bin" }) Assert.Contains(name + " (", note.Body);
+        foreach (var name in new[] { "exact.bin", "tracked.bin", "doomed.bin", "moved.bin", "renamed.bin" }) Assert.DoesNotContain(name, note.Body);
+        Assert.Contains("6 file(s)", note.Body);
+        Assert.Contains(dir + ".artifacts", note.Body);
     }
 
     [Fact]

@@ -280,6 +280,35 @@ public sealed class SpawnPromptTests
     }
 
     [Fact]
+    public void A_long_artifact_list_shows_the_newest_entries_and_counts_the_rest()
+    {
+        var start = DateTimeOffset.UnixEpoch;
+        var frames = Enumerable.Range(0, RunArtifactList.MaxShown + 2).Select(i => new RunArtifact($"artifact:f{i:000}.png", "sonnet", start.AddSeconds(i))).ToList();
+
+        var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(artifacts: frames) }, SpawnLimits.Default);
+
+        Assert.DoesNotContain("artifact:f000.png", p);
+        Assert.Contains($"artifact:f{RunArtifactList.MaxShown + 1:000}.png (by @sonnet)", p);
+        Assert.Contains("and 2 older not listed", p);
+    }
+
+    [Fact]
+    public void A_spawn_with_an_artifacts_folder_is_told_how_to_use_it_and_a_spawn_without_one_hears_nothing()
+    {
+        const string folder = @"C:\Rooms\lab.artifacts";
+        var standing = new SpawnPrompt.StandingText("A persona.", null);
+        var run = RunView(selfIsConductor: true) with { ArtifactsAvailable = true };
+
+        var with = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Directory = @"C:\Rooms\lab", ArtifactsDirectory = folder, Standing = standing, Run = run }, SpawnLimits.Default);
+        var without = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Directory = @"C:\Rooms\lab", Standing = standing, Run = RunView(selfIsConductor: true) }, SpawnLimits.Default);
+
+        foreach (var words in new[] { folder, "$CHOPITUP_ARTIFACTS in Bash", "$env:CHOPITUP_ARTIFACTS in PowerShell", "artifact:<path> means <path> inside that folder", "inside your working directory and its artifacts folder", "the line reads artifact: artifact:<path>" })
+            Assert.Contains(words, with);
+        Assert.DoesNotContain("CHOPITUP_ARTIFACTS", without);
+        Assert.DoesNotContain("artifacts folder", without);
+    }
+
+    [Fact]
     public void Run07_no_artifacts_or_gates_is_said_out_loud_rather_than_omitted()
     {
         var p = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView() }, SpawnLimits.Default);

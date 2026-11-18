@@ -16,6 +16,9 @@ public sealed record TrailCommit(string Hash, string Author, DateTimeOffset At, 
 /// the commit that was made (0 for an empty one).</summary>
 public sealed record CommitOutcome(string? Hash, bool Created, int FilesChanged, string? Reason);
 
+/// <summary>A file a commit range added, with the size git stored for it.</summary>
+public sealed record AddedFile(string Path, long Size);
+
 /// <summary>How a <see cref="GitTrail.MergeAsync"/> call ended: a merge commit was made
 /// (<see cref="Merged"/>), it conflicted and was aborted (<see cref="Conflict"/>), or it failed for
 /// some other reason and was also aborted when a merge was left in progress (<see cref="Failed"/>).</summary>
@@ -49,6 +52,7 @@ public class GitTrail
     public const string ClaudeCoAuthor = "Claude <noreply@anthropic.com>";
     private static readonly string[] KnownCoAuthors = [CodexCoAuthor, ClaudeCoAuthor];
     private const char FieldSep = (char)0x1F;
+    private const string GitLinkMode = "160000";   // a submodule entry: no blob to measure
     // LC_ALL=C: the no-op detection reads git's English "nothing to commit".
     private static readonly IReadOnlyDictionary<string, string> Env = new Dictionary<string, string> { ["GIT_TERMINAL_PROMPT"] = "0", ["LC_ALL"] = "C" };
     // No signing and no CRLF rewriting on the commit and merge calls: an owner with commit.gpgsign
@@ -324,6 +328,34 @@ public class GitTrail
         if (r.ExitCode != 0) { Fail("git diff", r); return []; }
         Reason = null;
         return r.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+    }
+
+    /// <summary>Every file the commits in <paramref name="range"/> added, including one a later commit
+    /// in the range deleted, because git keeps it either way. <c>-z</c> keeps non-ASCII names unquoted.
+    /// An exact rename stores no new content, so it does not count as added.</summary>
+    public async Task<IReadOnlyList<AddedFile>> AddedFilesAsync(string range, CancellationToken cancellation = default)
+    {
+        var git = Resolve();
+        if (git is null || !HasGitEntry()) return [];
+        var log = await Run(git, ["log", "--raw", "--no-abbrev", "--find-renames=100%", "--diff-filter=A", "-z", "--pretty=format:", range], "", cancellation);
+        if (log.ExitCode != 0) { Fail("git log", log); return []; }
+        var added = new List<(string Path, string Blob)>();
+        var tokens = log.StandardOutput.Split('\0');
+        for (int i = 0; i + 1 < tokens.Length; i++)
+        {
+            var fields = tokens[i].Trim().Split(' ');
+            if (fields.Length < 5 || !fields[0].StartsWith(':') || fields[1] == GitLinkMode) continue;
+            added.Add((tokens[++i], fields[3]));
+        }
+        if (added.Count == 0) return [];
+        var sizes = await Run(git, ["cat-file", "--batch-check"], string.Join('\n', added.Select(a => a.Blob).Distinct(StringComparer.Ordinal)) + "\n", cancellation);
+        if (sizes.ExitCode != 0) { Fail("git cat-file", sizes); return []; }
+        var bySha = sizes.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(line => line.Split(' ')).Where(f => f.Length == 3 && f[1] == "blob")
+            .ToDictionary(f => f[0], f => long.Parse(f[2], CultureInfo.InvariantCulture), StringComparer.Ordinal);
+        // A path added twice reports its largest version, because git keeps every version.
+        return added.Where(a => bySha.ContainsKey(a.Blob)).Select(a => new AddedFile(a.Path, bySha[a.Blob]))
+            .GroupBy(a => a.Path, StringComparer.Ordinal).Select(g => g.MaxBy(a => a.Size)!).ToList();
     }
 
     /// <summary>The paths touched by exactly one commit, via <c>git show --name-only --pretty=format:</c>.
@@ -682,7 +714,7 @@ public class GitTrail
     {
         // Env and HubIdentityEnv share no key, so Concat cannot throw on a duplicate.
         var env = extraEnv is null ? Env : new Dictionary<string, string>(Env).Concat(extraEnv).ToDictionary(kv => kv.Key, kv => kv.Value);
-        return _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], env, Root, stdin, LogName + "-git"), Timeout, cancellation);
+        return _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], env, Root, stdin, LogName + "-git") { Utf8Output = true }, Timeout, cancellation);
     }
 
     private string Fail(string step, ProcessResult r)

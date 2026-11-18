@@ -11,6 +11,8 @@ public static class SpawnCommands
 {
     public const string McpServerName = "chopitup";
     public const string TokenEnvVar = "CHOPITUP_TOKEN";
+    /// <summary>The absolute path of the room's artifacts folder, set for a directory spawn that has one.</summary>
+    public const string ArtifactsEnvVar = "CHOPITUP_ARTIFACTS";
     /// <summary>Comma-separated in one value (`claude --help`: "Comma or space-separated list"). Read
     /// tools stay off the list: the prompt already carries the transcript.</summary>
     public const string ClaudeToolAllowed = "mcp__" + McpServerName + "__post_message,mcp__" + McpServerName + "__recall,mcp__" + McpServerName + "__propose_memory,mcp__" + McpServerName + "__propose_rewrite";
@@ -182,22 +184,32 @@ public static class SpawnCommands
     /// rides as an appended system prompt so the fence is not only in the transcript channel.
     /// <paramref name="mcpToolTimeoutMs"/> sets both <see cref="ClaudeMcpToolTimeoutEnvVar"/> and
     /// <see cref="ClaudeMcpIdleTimeoutEnvVar"/> in the child's environment, to the same value, when
-    /// given (an in-run Claude spawn only). Null (every non-run caller) sets nothing.</summary>
-    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null) =>
+    /// given (an in-run Claude spawn only). Null (every non-run caller) sets nothing.
+    /// <paramref name="artifactsDir"/> names the room's artifacts folder to the CLI and the spawn's
+    /// shell. `--add-dir` takes several values, so another option must follow it.</summary>
+    public static ProcessSpec ClaudeInDirectory(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string roomDir, string prompt, string label, string? effort = null, string allowedTools = ClaudeDirectoryToolsAllowed, int? mcpToolTimeoutMs = null, string? artifactsDir = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "-p", "--permission-mode", "dontAsk", "--tools", ClaudeBuiltins, "--strict-mcp-config", "--mcp-config", mcpConfigPath,
-             "--allowedTools", allowedTools, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence", "--model", model,
+             "--allowedTools", allowedTools, "--settings", settingsPath, "--append-system-prompt", systemRules, "--no-session-persistence",
+             .. artifactsDir is null ? Array.Empty<string>() : new[] { "--add-dir", artifactsDir },
+             "--model", model,
              "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", "",
              .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
-            mcpToolTimeoutMs is null
+            WithArtifacts(mcpToolTimeoutMs is null
                 ? new Dictionary<string, string>()
                 : new Dictionary<string, string>
                 {
                     [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
                     [ClaudeMcpIdleTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
-                },
+                }, artifactsDir),
             roomDir, prompt, label);
+
+    private static Dictionary<string, string> WithArtifacts(Dictionary<string, string> environment, string? artifactsDir)
+    {
+        if (artifactsDir is not null) environment[ArtifactsEnvVar] = artifactsDir;
+        return environment;
+    }
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is
     /// not skipped), `--json` carries the command_execution items the trail records, and network is on
@@ -206,7 +218,7 @@ public static class SpawnCommands
     /// <paramref name="toolTimeoutSeconds"/>: a 60 s MCP tool-call timeout kills a long
     /// <c>run_gate</c> call well before a gate can finish, so an in-run Codex spawn passes
     /// <c>RunLimits.EffectiveGateTimeout</c> in seconds. Every other caller keeps the 60 s default.</summary>
-    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label, string? effort = null, int toolTimeoutSeconds = 60) =>
+    public static ProcessSpec CodexInDirectory(ResolvedCli cli, string model, string mcpUrl, string token, string roomDir, string lastMessagePath, string prompt, string label, string? effort = null, int toolTimeoutSeconds = 60, string? artifactsDir = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
              "exec", "--ephemeral", "--ignore-user-config", "--json",
@@ -216,8 +228,10 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec={toolTimeoutSeconds}",
              "-c", "sandbox_workspace_write.network_access=true",
              .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
-             "--approve-for-me", "-C", roomDir, "-m", model,
+             "--approve-for-me", "-C", roomDir,
+             .. artifactsDir is null ? Array.Empty<string>() : new[] { "--add-dir", artifactsDir },
+             "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
-            new Dictionary<string, string> { [TokenEnvVar] = token },
+            WithArtifacts(new Dictionary<string, string> { [TokenEnvVar] = token }, artifactsDir),
             roomDir, prompt, label);
 }

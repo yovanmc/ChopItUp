@@ -98,8 +98,21 @@ public sealed class RunsApiTests : IAsyncLifetime
                 "id", "roomId", "conductorId", "skillName", "status", "reason", "capSpent", "phase",
                 "phaseEntries", "phaseEntryCap", "exchanges", "spawnsUsed", "spawnCap", "startedAt",
                 "endedAt", "elapsedMinutes", "wallClockCapMinutes", "artifacts", "gateRuns", "phaseHistory",
+                "artifactsOmitted",
             },
             Names(body));
+    }
+
+    [Fact]
+    public async Task A_run_with_more_artifacts_than_the_list_holds_answers_the_newest_and_the_omitted_count()
+    {
+        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 7, T0);
+        Runs.RecordArtifacts(run.Id, Enumerable.Range(0, RunArtifactList.MaxShown + 3).Select(i => $"artifact:frames/{i:000}.png"), "sonnet", T0);
+
+        var (_, body) = await GetRun();
+
+        Assert.Equal(RunArtifactList.MaxShown, body.GetProperty("artifacts").GetArrayLength());
+        Assert.Equal(3, body.GetProperty("artifactsOmitted").GetInt32());
     }
 
     [Fact]

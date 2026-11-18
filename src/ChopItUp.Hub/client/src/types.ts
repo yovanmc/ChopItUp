@@ -235,6 +235,7 @@ export interface RunSnapshot {
   elapsedMinutes: number;
   wallClockCapMinutes: number;
   artifacts: RunArtifact[];
+  artifactsOmitted: number;
   gateRuns: RunGate[];
   /** Every phase tag the run has entered, with its own entry count. The strip does not draw it; it is
    *  typed because the field is on the wire and a type that omits half the payload invites the next

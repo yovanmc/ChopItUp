@@ -121,4 +121,25 @@ public sealed class ProcessRunnerTests
         Assert.Equal(0, r.ExitCode);
         Assert.Equal(BitConverter.ToString(Encoding.UTF8.GetBytes(prompt)), r.StandardOutput.Trim());
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Output_is_read_as_utf8_only_for_a_spec_that_asks_for_it(bool utf8)
+    {
+        // git writes paths as UTF-8 bytes, and a gate script writes in the console code page. The child
+        // writes exact bytes to both pipes.
+        const string name = "größe–≈.bin";
+        var bytes = Encoding.UTF8.GetBytes(name);
+        var spec = new ProcessSpec("pwsh",
+            ["-NoProfile", "-Command", $"$b=[Convert]::FromHexString('{Convert.ToHexString(bytes)}'); [Console]::OpenStandardOutput().Write($b,0,$b.Length); [Console]::OpenStandardError().Write($b,0,$b.Length)"],
+            new Dictionary<string, string>(), Path.GetTempPath(), "", "test") { Utf8Output = utf8 };
+
+        var r = await new ProcessRunner().RunAsync(spec, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        var expected = utf8 ? name : Console.OutputEncoding.GetString(bytes);
+        Assert.Equal(0, r.ExitCode);
+        Assert.Equal(expected, r.StandardOutput);
+        Assert.Equal(expected, r.StandardError);
+    }
 }
