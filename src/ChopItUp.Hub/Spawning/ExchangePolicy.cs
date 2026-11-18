@@ -408,16 +408,17 @@ public sealed class ExchangePolicy
     private static string? RefuseArtifactLine(ArtifactLine line, Func<string, string?> artifactAuthor, Func<string, bool> artifactExists, Func<string, bool> artifactInFolder)
     {
         var value = line.Value;
-        if (ArtifactRef.IsReference(RunStore.Normalize(value)))
+        var plain = RunStore.Normalize(value);
+        if (ArtifactRef.IsReference(plain))
             return artifactExists(value) ? null : $"artifact '{value}' is not a file in the room's artifacts folder";
         var inRepo = artifactAuthor(value) is not null || artifactExists(value);
         var inFolder = artifactInFolder(value);
         if (!inRepo)
             return inFolder
-                ? $"artifact '{value}' is in the artifacts folder; write the line as: artifact: {ArtifactRef.Prefix}{value}"
+                ? $"artifact '{value}' is in the artifacts folder; write the line as: artifact: {ArtifactRef.Prefix}{plain}"
                 : $"artifact '{value}' is neither recorded nor in the room tree";
         return inFolder && !line.Spaced
-            ? $"artifact '{value}' names a repo path and a file in the artifacts folder; write artifact: {value} for the repo path or artifact: {ArtifactRef.Prefix}{value} for the folder file"
+            ? $"artifact '{value}' names a repo path and a file in the artifacts folder; write artifact: {plain} for the repo path or artifact: {ArtifactRef.Prefix}{plain} for the folder file"
             : null;
     }
 

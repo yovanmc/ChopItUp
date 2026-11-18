@@ -131,12 +131,13 @@ public sealed class RoomArtifactsTests : IDisposable
     }
 
     [Fact]
-    public void A_store_fault_becomes_a_refusal_so_the_spawn_still_runs()
+    public void A_store_fault_refuses_this_launch_only_so_the_spawn_still_runs_and_the_next_launch_checks_again()
     {
         var broken = new MessageStore(new ChopDb(Path.Combine(_dir, "no-such-folder", "missing.db")));
         var lease = new RoomArtifacts(broken, Rules).Ensure(Path.Combine(_dir, "rooms", "lab"));
         Assert.Null(lease.Path);
         Assert.NotNull(lease.Refusal);
+        Assert.True(lease.Transient);
     }
 
     [Fact]
@@ -242,5 +243,9 @@ public sealed class RoomArtifactsTests : IDisposable
         Assert.True(RoomArtifacts.ReferenceExists(folder, "real/y.png"));
         Assert.False(RoomArtifacts.ReferenceExists(folder, "real/missing.png"));
         Assert.False(RoomArtifacts.ReferenceExists(folder, "real"));
+
+        var replaced = Path.Combine(_dir, "replaced-folder");
+        Junction(replaced, folder);
+        Assert.False(RoomArtifacts.ReferenceExists(replaced, "real/y.png"));   // the folder itself became a link
     }
 }

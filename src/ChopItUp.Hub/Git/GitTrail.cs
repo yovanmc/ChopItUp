@@ -331,12 +331,13 @@ public class GitTrail
     }
 
     /// <summary>Every file the commits in <paramref name="range"/> added, including one a later commit
-    /// in the range deleted, because git keeps it either way. <c>-z</c> keeps non-ASCII names unquoted.</summary>
+    /// in the range deleted, because git keeps it either way. <c>-z</c> keeps non-ASCII names unquoted.
+    /// An exact rename stores no new content, so it does not count as added.</summary>
     public async Task<IReadOnlyList<AddedFile>> AddedFilesAsync(string range, CancellationToken cancellation = default)
     {
         var git = Resolve();
         if (git is null || !HasGitEntry()) return [];
-        var log = await Run(git, ["log", "--raw", "--no-abbrev", "--no-renames", "--diff-filter=A", "-z", "--pretty=format:", range], "", cancellation);
+        var log = await Run(git, ["log", "--raw", "--no-abbrev", "--find-renames=100%", "--diff-filter=A", "-z", "--pretty=format:", range], "", cancellation);
         if (log.ExitCode != 0) { Fail("git log", log); return []; }
         var added = new List<(string Path, string Blob)>();
         var tokens = log.StandardOutput.Split('\0');
@@ -347,7 +348,7 @@ public class GitTrail
             added.Add((tokens[++i], fields[3]));
         }
         if (added.Count == 0) return [];
-        var sizes = await Run(git, ["cat-file", "--batch-check"], string.Join('\n', added.Select(a => a.Blob)) + "\n", cancellation);
+        var sizes = await Run(git, ["cat-file", "--batch-check"], string.Join('\n', added.Select(a => a.Blob).Distinct(StringComparer.Ordinal)) + "\n", cancellation);
         if (sizes.ExitCode != 0) { Fail("git cat-file", sizes); return []; }
         var bySha = sizes.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(line => line.Split(' ')).Where(f => f.Length == 3 && f[1] == "blob")

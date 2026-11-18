@@ -172,6 +172,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         var dir = await MakeRoom("lab-large");
         File.WriteAllBytes(Path.Combine(dir, "tracked.bin"), new byte[limit + 10]);
         File.WriteAllBytes(Path.Combine(dir, "doomed.bin"), new byte[limit + 20]);
+        File.WriteAllBytes(Path.Combine(dir, "moved.bin"), new byte[limit + 30]);
         _runner.Handler = async (spec, _, _) =>
         {
             var tree = spec.WorkingDirectory;
@@ -183,6 +184,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
             File.WriteAllBytes(Path.Combine(tree, "exact.bin"), new byte[limit]);
             File.WriteAllBytes(Path.Combine(tree, "tracked.bin"), new byte[limit + 11]);     // modified, not added
             File.Delete(Path.Combine(tree, "doomed.bin"));
+            File.Move(Path.Combine(tree, "moved.bin"), Path.Combine(tree, "renamed.bin"));   // no new content for git to keep
+            File.WriteAllBytes(Path.Combine(tree, "copy-one.bin"), new byte[limit + 4]);
+            File.WriteAllBytes(Path.Combine(tree, "copy-two.bin"), new byte[limit + 4]);     // one blob under two names
             await PostAsIn("sonnet", "lab-large", "Done.");
             return FakeProcessRunner.Ok("""{"result":"done"}""");
         };
@@ -190,9 +194,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await PostAsOwnerIn("lab-large", "@sonnet make files");
 
         var note = await WaitForMessageIn("lab-large", m => m.Author == "hub" && m.Body.Contains("over 5 MB to git history"));
-        foreach (var name in new[] { "over.bin", "größe.bin", "passing.bin" }) Assert.Contains(name + " (", note.Body);
-        foreach (var name in new[] { "exact.bin", "tracked.bin", "doomed.bin" }) Assert.DoesNotContain(name, note.Body);
-        Assert.Contains("3 file(s)", note.Body);
+        foreach (var name in new[] { "over.bin", "größe.bin", "passing.bin", "copy-one.bin", "copy-two.bin" }) Assert.Contains(name + " (", note.Body);
+        foreach (var name in new[] { "exact.bin", "tracked.bin", "doomed.bin", "moved.bin", "renamed.bin" }) Assert.DoesNotContain(name, note.Body);
+        Assert.Contains("5 file(s)", note.Body);
         Assert.Contains(dir + ".artifacts", note.Body);
     }
 

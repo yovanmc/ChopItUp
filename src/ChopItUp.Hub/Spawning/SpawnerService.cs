@@ -364,7 +364,10 @@ public sealed partial class SpawnerService : BackgroundService
     {
         try
         {
-            var changed = RoomArtifacts.Changed(before, RoomArtifacts.Scan(folder));
+            var after = RoomArtifacts.Scan(folder);
+            if (before.Faulted || after.Faulted || before.Unreadable.Count + after.Unreadable.Count > 0)
+                Console.Error.WriteLine($"run {runId}: artifact scan for @{authorId} was incomplete, so unseen files keep no new author (folder unreadable: {before.Faulted || after.Faulted}, unreadable subfolders: {before.Unreadable.Count + after.Unreadable.Count})");
+            var changed = RoomArtifacts.Changed(before, after);
             if (changed.Count > 0) _runs.RecordArtifacts(runId, changed.Select(path => ArtifactRef.Prefix + path), authorId, _clock.GetUtcNow());
         }
         catch (Exception e) when (e is not OperationCanceledException) { Console.Error.WriteLine($"run {runId}: artifact scan error {e.GetType().Name}: {e.Message}"); }
@@ -1350,6 +1353,8 @@ public sealed partial class SpawnerService : BackgroundService
             // WorktreeClosedEvent wakes the loop when it finishes.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             if (x.WaitsForClose) continue;
+            // LaunchDue holds this exchange until the folder check answers, and ArtifactLeaseEvent wakes the loop then.
+            if (exclusive && _artifactLeasing.Contains(x.RoomId)) continue;
             var wake = _policy.NextWake(x, now, _lastStart, InFlightIn(x.RoomId), exclusive, over);
             if (wake is not null && (next is null || wake < next)) next = wake;
         }

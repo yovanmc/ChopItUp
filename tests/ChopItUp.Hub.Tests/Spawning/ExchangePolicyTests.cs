@@ -562,6 +562,7 @@ public sealed class ExchangePolicyTests
     [InlineData("phase: critique @opus look\nartifact: src/Foo.cs", null)]                                              // a plain repo path keeps its rule
     [InlineData("phase: critique @opus look\nartifact: a.png", "write the line as: artifact: artifact:a.png")]
     [InlineData("phase: critique @opus look\nartifact:a.png", "write the line as: artifact: artifact:a.png")]
+    [InlineData("phase: critique @opus look\nartifact: `a.png`", "write the line as: artifact: artifact:a.png")]       // the printed line must be accepted as printed
     [InlineData("phase: critique @opus look\nartifact: both.png", null)]                                                // spaced: the repo path
     [InlineData("phase: critique @opus look\nartifact:both.png", "artifact: artifact:both.png for the folder file")]
     public void A_critique_checks_every_artifact_line_and_needs_one_judge_who_authored_none(string body, string? refusal)
