@@ -48,6 +48,10 @@ public sealed class ProcessRunner(SpawnJobs jobs) : IProcessRunner
             StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Pinned for the same reason: git and both CLIs write UTF-8, and the console code page
+            // would turn a non-ASCII file name into mojibake.
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             WorkingDirectory = spec.WorkingDirectory,
         };
         foreach (var a in spec.Arguments) psi.ArgumentList.Add(a);
