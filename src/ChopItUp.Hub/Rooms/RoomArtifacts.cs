@@ -19,7 +19,7 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
     /// drive must not hold its spawn for longer.</summary>
     public static readonly TimeSpan CheckLimit = TimeSpan.FromSeconds(5);
 
-    /// <summary>Row 85's job output lives here and outlasts the spawn that started it, so a before
+    /// <summary>Background job output lives here and outlasts the spawn that started it, so a before
     /// and after scan cannot name its author.</summary>
     public const string JobsFolder = "jobs";
 

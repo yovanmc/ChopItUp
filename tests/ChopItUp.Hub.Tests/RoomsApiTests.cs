@@ -41,6 +41,17 @@ public sealed class RoomsApiTests : IAsyncLifetime
         return doc.RootElement.Clone();
     }
 
+    private async Task WaitUntilNoSpawnRuns(string roomId)
+    {
+        var spawner = _host.Services.GetRequiredService<SpawnerService>();
+        var deadline = DateTime.UtcNow + Wait;
+        while (spawner.AnySpawnInFlight || spawner.Snapshot(roomId) is not { InFlight.Count: 0, Pending.Count: 0 })
+        {
+            Assert.True(DateTime.UtcNow < deadline, $"a spawn in '{roomId}' was still running after {Wait}");
+            await Task.Delay(20);
+        }
+    }
+
     private static string[] Ids(JsonElement rooms) => rooms.EnumerateArray().Select(r => r.GetProperty("id").GetString()!).ToArray();
 
     private async Task<(HttpStatusCode Status, JsonElement Body)> Post(string path, object? body = null)
@@ -149,6 +160,8 @@ public sealed class RoomsApiTests : IAsyncLifetime
         Assert.Equal(["old", "general"], Ids(await Rooms(archived: true)));
 
         Assert.Equal(HttpStatusCode.Created, (await Post("api/rooms/old/messages", new { body = "still here" })).Status);   // hides, never blocks
+        await _runner.NextSpecAsync(Wait);                                                                                  // that post opened an exchange
+        await WaitUntilNoSpawnRuns("old");                                                                                  // archive and unarchive answer 409 until it ends
         Assert.True(Directory.Exists(Path.Combine(_host.RoomsRoot, "old", ".git")));
         Assert.Equal(HttpStatusCode.OK, (await Post("api/rooms/old/archive")).Status);                                      // idempotent
 
