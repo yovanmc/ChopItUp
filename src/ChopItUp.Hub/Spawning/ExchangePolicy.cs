@@ -410,7 +410,9 @@ public sealed class ExchangePolicy
         var value = line.Value;
         var plain = RunStore.Normalize(value);
         if (ArtifactRef.IsReference(plain))
-            return artifactExists(value) ? null : $"artifact '{value}' is not a file in the room's artifacts folder";
+            return artifactExists(value) ? null
+                : ArtifactRef.TryRelative(plain, out _) ? $"artifact '{value}' is not a file in the room's artifacts folder"
+                : $"artifact '{value}' is not a path the hub can check: use a relative path with no '..', ':', wildcard, trailing dot or space, and rename the file if a '~' comes before a digit";
         var inRepo = artifactAuthor(value) is not null || artifactExists(value);
         var inFolder = artifactInFolder(value);
         if (!inRepo)

@@ -353,8 +353,9 @@ public class GitTrail
         var bySha = sizes.StandardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(line => line.Split(' ')).Where(f => f.Length == 3 && f[1] == "blob")
             .ToDictionary(f => f[0], f => long.Parse(f[2], CultureInfo.InvariantCulture), StringComparer.Ordinal);
+        // A path added twice reports its largest version, because git keeps every version.
         return added.Where(a => bySha.ContainsKey(a.Blob)).Select(a => new AddedFile(a.Path, bySha[a.Blob]))
-            .DistinctBy(a => a.Path, StringComparer.Ordinal).ToList();
+            .GroupBy(a => a.Path, StringComparer.Ordinal).Select(g => g.MaxBy(a => a.Size)!).ToList();
     }
 
     /// <summary>The paths touched by exactly one commit, via <c>git show --name-only --pretty=format:</c>.
@@ -713,7 +714,7 @@ public class GitTrail
     {
         // Env and HubIdentityEnv share no key, so Concat cannot throw on a duplicate.
         var env = extraEnv is null ? Env : new Dictionary<string, string>(Env).Concat(extraEnv).ToDictionary(kv => kv.Key, kv => kv.Value);
-        return _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], env, Root, stdin, LogName + "-git"), Timeout, cancellation);
+        return _runner.RunAsync(new ProcessSpec(git.FileName, [.. git.LeadingArguments, .. args], env, Root, stdin, LogName + "-git") { Utf8Output = true }, Timeout, cancellation);
     }
 
     private string Fail(string step, ProcessResult r)

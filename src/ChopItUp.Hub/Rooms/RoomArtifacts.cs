@@ -26,18 +26,17 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
     private static readonly EnumerationOptions OneLevel = new() { AttributesToSkip = 0, IgnoreInaccessible = false, RecurseSubdirectories = false };
 
     /// <summary><see cref="Path"/> is the usable folder. Otherwise <see cref="Refusal"/> says why the
-    /// room has none. <see cref="Transient"/> marks a refusal that applies to one launch only.</summary>
-    public sealed record Lease(string? Path, string? Refusal, bool Transient = false);
+    /// room has none for this launch.</summary>
+    public sealed record Lease(string? Path, string? Refusal);
 
     public static string FolderFor(string roomDirectory) => RoomPaths.Normalize(roomDirectory) + ".artifacts";
 
     /// <summary>Creates or confirms the room's folder. Never throws: a room whose folder cannot be
-    /// used still runs its spawns, so every fault becomes a refusal. A fault may pass, so it covers
-    /// one launch and the next launch checks again.</summary>
+    /// used still runs its spawns, so every fault becomes a refusal.</summary>
     public Lease Ensure(string roomDirectory)
     {
         try { return EnsureCore(FolderFor(roomDirectory)); }
-        catch (Exception e) when (e is not OperationCanceledException) { return new(null, e.Message, Transient: true); }
+        catch (Exception e) when (e is not OperationCanceledException) { return new(null, e.Message); }
     }
 
     private Lease EnsureCore(string path)
@@ -64,7 +63,7 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
     {
         var check = Task.Run(ensure);
         if (await Task.WhenAny(check, Task.Delay(limit)) == check) return await check;
-        return new(null, $"the folder did not answer within {limit.TotalSeconds:0} s", Transient: true);
+        return new(null, $"the folder did not answer within {limit.TotalSeconds:0} s");
     }
 
     /// <summary>Walks <paramref name="folder"/> without following links and without entering the top

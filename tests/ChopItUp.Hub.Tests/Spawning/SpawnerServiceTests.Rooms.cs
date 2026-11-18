@@ -166,6 +166,33 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
     }
 
     [Fact]
+    public async Task A_folder_replaced_by_a_file_after_one_spawn_is_left_out_of_the_next_spawn()
+    {
+        var dir = await MakeRoom("lab-swap");
+        var folder = dir + ".artifacts";
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAsIn("sonnet", "lab-swap", "Done.");
+            return FakeProcessRunner.Ok("""{"result":"done"}""");
+        };
+
+        await PostAsOwnerIn("lab-swap", "@sonnet one");
+        var first = await _runner.NextSpecAsync(Wait);
+        Assert.Equal(folder, first.Environment[SpawnCommands.ArtifactsEnvVar]);
+        await WaitForMessageIn("lab-swap", m => m.Author == "hub" && m.Body.Contains("merged into"));
+
+        Directory.Delete(folder, recursive: true);
+        File.WriteAllText(folder, "the owner's file");
+        await PostAsOwnerIn("lab-swap", "@sonnet two");
+        var second = await _runner.NextSpecAsync(Wait);
+
+        Assert.False(second.Environment.ContainsKey(SpawnCommands.ArtifactsEnvVar));
+        Assert.DoesNotContain("--add-dir", second.Arguments);
+        Assert.DoesNotContain("One folder outside your working directory", second.StandardInput);
+        Assert.Equal("the owner's file", File.ReadAllText(folder));
+    }
+
+    [Fact]
     public async Task A_note_names_each_file_over_5_mb_the_spawns_commits_added_and_no_other_file()
     {
         const int limit = (int)HubNotes.LargeFileBytes;
@@ -177,8 +204,12 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         {
             var tree = spec.WorkingDirectory;
             File.WriteAllBytes(Path.Combine(tree, "passing.bin"), new byte[limit + 3]);
+            File.WriteAllBytes(Path.Combine(tree, "shrunk.bin"), new byte[limit + 5]);
             await new GitTrail(tree).CommitAllAsync("mid-spawn", new GitIdentity("Model", "model@example.test"), allowEmpty: false);
             File.Delete(Path.Combine(tree, "passing.bin"));                                  // gone from the tree, still in history
+            File.Delete(Path.Combine(tree, "shrunk.bin"));
+            await new GitTrail(tree).CommitAllAsync("mid-spawn removal", new GitIdentity("Model", "model@example.test"), allowEmpty: false);
+            File.WriteAllBytes(Path.Combine(tree, "shrunk.bin"), new byte[10]);              // added again, and the large version stays in history
             File.WriteAllBytes(Path.Combine(tree, "over.bin"), new byte[limit + 1]);
             File.WriteAllBytes(Path.Combine(tree, "größe.bin"), new byte[limit + 2]);
             File.WriteAllBytes(Path.Combine(tree, "exact.bin"), new byte[limit]);
@@ -194,9 +225,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await PostAsOwnerIn("lab-large", "@sonnet make files");
 
         var note = await WaitForMessageIn("lab-large", m => m.Author == "hub" && m.Body.Contains("over 5 MB to git history"));
-        foreach (var name in new[] { "over.bin", "größe.bin", "passing.bin", "copy-one.bin", "copy-two.bin" }) Assert.Contains(name + " (", note.Body);
+        foreach (var name in new[] { "over.bin", "größe.bin", "passing.bin", "shrunk.bin", "copy-one.bin", "copy-two.bin" }) Assert.Contains(name + " (", note.Body);
         foreach (var name in new[] { "exact.bin", "tracked.bin", "doomed.bin", "moved.bin", "renamed.bin" }) Assert.DoesNotContain(name, note.Body);
-        Assert.Contains("5 file(s)", note.Body);
+        Assert.Contains("6 file(s)", note.Body);
         Assert.Contains(dir + ".artifacts", note.Body);
     }
 

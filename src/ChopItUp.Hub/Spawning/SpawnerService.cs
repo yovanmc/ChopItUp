@@ -117,6 +117,7 @@ public sealed partial class SpawnerService : BackgroundService
     // Loop thread only. What the folder check answered per room; a launch waits until its room is here.
     private readonly Dictionary<string, RoomArtifacts.Lease> _artifactLeases = new(StringComparer.Ordinal);
     private readonly HashSet<string> _artifactLeasing = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _artifactLeaseChecked = new(StringComparer.Ordinal);
     private readonly HashSet<string> _artifactRefusalNoted = new(StringComparer.Ordinal);
     private readonly Participant _owner;
     // _roster stays the startup snapshot for identity, peers and tokens, but role and persona text
@@ -330,18 +331,20 @@ public sealed partial class SpawnerService : BackgroundService
             case ArtifactLeaseEvent a:
                 _artifactLeasing.Remove(a.RoomId);
                 _artifactLeases[a.RoomId] = a.Lease;
+                _artifactLeaseChecked.Add(a.RoomId);
                 if (a.Lease.Refusal is not null && _artifactRefusalNoted.Add(a.RoomId))
                     PostNote(a.RoomId, $"This room has no artifacts folder: {a.Lease.Refusal}. Spawns here still run, and generated files stay in the working directory.");
                 break;
         }
     }
 
-    /// <summary>Whether <paramref name="roomId"/>'s artifacts folder check has answered. The check
-    /// touches the room's drive, so it runs off the loop thread: a dead drive must not stall every
-    /// room. <see cref="ArtifactLeaseEvent"/> wakes the loop when it finishes.</summary>
+    /// <summary>Whether <paramref name="roomId"/>'s artifacts folder has been checked for its next
+    /// launch. The folder can be replaced between spawns, so a launch or a finished spawn spends the
+    /// check. The check touches the room's drive, so it runs off the loop thread: a dead drive must not
+    /// stall every room. <see cref="ArtifactLeaseEvent"/> wakes the loop when it finishes.</summary>
     private bool ArtifactLeaseKnown(string roomId, string directory)
     {
-        if (_artifactLeases.ContainsKey(roomId)) return true;
+        if (_artifactLeaseChecked.Contains(roomId)) return true;
         if (_artifactLeasing.Add(roomId))
             _ = Task.Run(async () =>
             {
@@ -351,12 +354,11 @@ public sealed partial class SpawnerService : BackgroundService
         return false;
     }
 
-    /// <summary>The folder a launch may use. A transient refusal covers this launch only.</summary>
+    /// <summary>The folder a launch may use.</summary>
     private string? ArtifactsFolderForLaunch(string roomId)
     {
-        if (!_artifactLeases.TryGetValue(roomId, out var lease)) return null;
-        if (lease.Transient) _artifactLeases.Remove(roomId);
-        return lease.Path;
+        _artifactLeaseChecked.Remove(roomId);
+        return _artifactLeases.TryGetValue(roomId, out var lease) ? lease.Path : null;
     }
 
     /// <summary>Credits the files a spawn wrote to it. Never throws: the spawn's commit comes next.</summary>
@@ -1211,6 +1213,7 @@ public sealed partial class SpawnerService : BackgroundService
         var room = h.Request.RoomId;
         _inFlight.Remove((room, id));
         Interlocked.Decrement(ref _live);
+        _artifactLeaseChecked.Remove(room);
         if (h.Exchange.ModeLeg is not null) { OnModeFinished(h, r, trail); return; }
         // A spawn cancelled or timed out may have left a half-written worktree, so its exchange's
         // close must keep the branch unmerged whatever ExchangeStatus says; a spawn that really ran in

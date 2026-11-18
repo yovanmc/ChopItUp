@@ -558,7 +558,8 @@ public sealed class ExchangePolicyTests
     [InlineData("phase: critique @opus look\nartifact: artifact:a.png\nartifact: artifact:o.png", "(@opus, @sonnet)")]  // the second line counts
     [InlineData("phase: critique @opus look\nartifact: artifact:a.png\nartifact: missing.cs", "'missing.cs' is neither recorded")]
     [InlineData("phase: critique @opus look\nartifact: artifact:gone.png", "'artifact:gone.png' is not a file")]        // recorded, then deleted
-    [InlineData("phase: critique @opus look\nartifact: artifact:../x.png", "is not a file")]
+    [InlineData("phase: critique @opus look\nartifact: artifact:../x.png", "is not a path the hub can check")]
+    [InlineData("phase: critique @opus look\nartifact: artifact:frame~2.png", "rename the file")]                       // reads as an 8.3 short name
     [InlineData("phase: critique @opus look\nartifact: src/Foo.cs", null)]                                              // a plain repo path keeps its rule
     [InlineData("phase: critique @opus look\nartifact: a.png", "write the line as: artifact: artifact:a.png")]
     [InlineData("phase: critique @opus look\nartifact:a.png", "write the line as: artifact: artifact:a.png")]

@@ -131,24 +131,22 @@ public sealed class RoomArtifactsTests : IDisposable
     }
 
     [Fact]
-    public void A_store_fault_refuses_this_launch_only_so_the_spawn_still_runs_and_the_next_launch_checks_again()
+    public void A_store_fault_becomes_a_refusal_so_the_spawn_still_runs()
     {
         var broken = new MessageStore(new ChopDb(Path.Combine(_dir, "no-such-folder", "missing.db")));
         var lease = new RoomArtifacts(broken, Rules).Ensure(Path.Combine(_dir, "rooms", "lab"));
         Assert.Null(lease.Path);
         Assert.NotNull(lease.Refusal);
-        Assert.True(lease.Transient);
     }
 
     [Fact]
-    public async Task A_check_that_hangs_becomes_a_refusal_for_this_launch_only()
+    public async Task A_check_that_hangs_becomes_a_refusal()
     {
         using var release = new ManualResetEventSlim();
         var lease = await RoomArtifacts.WithinAsync(() => { release.Wait(); return new RoomArtifacts.Lease("late", null); }, TimeSpan.FromMilliseconds(50));
         release.Set();
 
         Assert.Null(lease.Path);
-        Assert.True(lease.Transient);
         Assert.Contains("did not answer", lease.Refusal);
     }
 
