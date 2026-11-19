@@ -37,7 +37,20 @@ public static class RoomFilesApi
         finally { gate.Slots.Release(); }
     }
 
+    /// <summary>A file a lock, a dropped drive or a denied read stops midway still gets an answer with
+    /// the guard headers, never a bare 500.</summary>
     private static IResult Serve(string roomId, string? reference, HttpContext context, MessageStore store, RoomPathRules rules)
+    {
+        try { return ServeCore(roomId, reference, context, store, rules); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return (e.HResult & 0xFFFF) is FinalPath.SharingViolation or FinalPath.LockViolation
+                ? Busy(context, "the file is open in another program; retry")
+                : Refuse(404, "Not a readable file.");
+        }
+    }
+
+    private static IResult ServeCore(string roomId, string? reference, HttpContext context, MessageStore store, RoomPathRules rules)
     {
         // The fence reads the final path from a Win32 handle, so there is no fence anywhere else.
         if (!OperatingSystem.IsWindows()) return Refuse(404, "Room files are served on Windows only.");
@@ -50,19 +63,26 @@ public static class RoomFilesApi
         if (!Directory.Exists(root)) return Refuse(404, "The room has no such folder.");
         if (parsed.Root == RoomFileRoot.Artifacts && new DirectoryInfo(root).LinkTarget is not null)
             return Refuse(403, "The room's artifacts folder is a link.");
-        string? rootFinal;
-        using (var rootHandle = FinalPath.OpenDirectory(root, out _)) rootFinal = rootHandle is null ? null : FinalPath.Of(rootHandle);
-        if (rootFinal is null) return Refuse(404, "The room folder is unreachable.");
+        if (FinalPath.OfDirectory(root) is not { } rootFinal) return Refuse(404, "The room folder is unreachable.");
         if (RoomPaths.RefusalOfNormalized(rootFinal, rules) is not null) return Refuse(403, "The room folder leads somewhere the hub does not serve.");
 
-        var handle = FinalPath.OpenFile(Path.Combine(root, parsed.Relative.Replace('/', '\\')), out var error);
+        var path = Path.Combine(root, parsed.Relative.Replace('/', '\\'));
+        var handle = FinalPath.OpenFile(path, followLinks: false, out var error);
+        if (handle is not null && FinalPath.ReparseTag(handle) is var reparse and not 0)
+        {
+            handle.Dispose();
+            if (reparse is null) return Refuse(404, "Not a readable file.");
+            if (FinalPath.IsLink(reparse.Value)) return Refuse(403, "The file is a link.");
+            // A placeholder, compressed or deduplicated file is still the file itself, and only a
+            // normal open lets its file system filter hand over the content.
+            handle = FinalPath.OpenFile(path, followLinks: true, out error);
+        }
         if (handle is null)
             return error == FinalPath.SharingViolation ? Busy(context, "the file is open in another program; retry")
                 : Refuse(404, error is FinalPath.FileNotFound or FinalPath.PathNotFound ? "No such file." : "Not a readable file.");
         SafeFileHandle? owned = handle;
         try
         {
-            if (File.GetAttributes(handle).HasFlag(FileAttributes.ReparsePoint)) return Refuse(403, "The file is a link.");
             if (FinalPath.Of(handle) is not { } final || RoomPaths.Same(final, rootFinal) || !RoomPaths.IsUnderOrEqual(final, rootFinal))
                 return Refuse(403, "The file is not inside the room.");
 

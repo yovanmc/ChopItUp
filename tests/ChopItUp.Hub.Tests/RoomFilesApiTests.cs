@@ -181,8 +181,9 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
     [Fact]
     public async Task A_file_symlink_is_refused_403_when_this_machine_can_create_one()
     {
-        var target = Path.Combine(Files, "target.png");
-        Write(target, Secret);
+        // The target is inside the room, so only the link rule can refuse it.
+        var target = Path.Combine(RoomDir, "target.png");
+        Write(target, Png);
         var link = Path.Combine(RoomDir, "link.png");
         try { File.CreateSymbolicLink(link, target); }
         catch (Exception e) when (e is UnauthorizedAccessException or IOException)
@@ -209,11 +210,11 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_file_under_a_path_longer_than_260_characters_is_served()
+    public async Task A_file_under_a_path_longer_than_the_first_final_path_buffer_is_served()
     {
-        var deep = Path.Combine(RoomDir, string.Join('\\', Enumerable.Repeat(new string('d', 60), 5)));
+        var deep = Path.Combine(RoomDir, string.Join('\\', Enumerable.Repeat(new string('d', 60), 9)));
         var path = Path.Combine(deep, "a.png");
-        Assert.True(path.Length > 300);
+        Assert.True(path.Length > 600);
         Write(path, Png);
 
         var relative = Path.GetRelativePath(RoomDir, path).Replace('\\', '/');
@@ -224,11 +225,13 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_served_png_can_be_replaced_by_rename_right_after()
+    public async Task A_png_can_be_replaced_by_rename_while_its_body_is_still_on_the_way()
     {
         var path = Path.Combine(ArtifactsDir, "a.png");
-        Write(path, Png);
-        var response = await Get("artifact:a.png");
+        var original = Enumerable.Range(0, 8 * 1024 * 1024).Select(i => (byte)(i % 253)).ToArray();
+        Write(path, original);
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"api/rooms/lab/files?ref={Uri.EscapeDataString("artifact:a.png")}");
+        using var response = await _host.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var next = path + ".tmp";
@@ -236,6 +239,40 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         File.Move(next, path, overwrite: true);
 
         Assert.Equal(Secret, File.ReadAllBytes(path));
+        Assert.Equal(original, await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task A_png_under_another_programs_range_lock_answers_503_with_retry_after()
+    {
+        var path = Path.Combine(ArtifactsDir, "locked.png");
+        Write(path, Png);
+        using var held = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete);
+        held.Lock(0, Png.Length);
+
+        var response = await Get("artifact:locked.png");
+
+        await AssertRefused(response, HttpStatusCode.ServiceUnavailable);
+        Assert.NotNull(response.Headers.RetryAfter);
+    }
+
+    [Fact]
+    public async Task A_room_linked_into_a_data_folder_the_hub_reached_through_a_junction_is_refused_403()
+    {
+        var realData = Path.Combine(Files, "real-data");
+        Directory.CreateDirectory(realData);
+        var linkedData = Path.Combine(Files, "linked-data");
+        Junction(linkedData, realData);
+        Write(Path.Combine(realData, "rooms-here", "a.png"), Secret);
+        var room = Path.Combine(Files, "into-real-data");
+        Junction(room, Path.Combine(realData, "rooms-here"));
+
+        await using var host = await HubTestHost.StartAsync(linkedData, deleteOnDispose: false, roomsRoot: Path.Combine(Files, "rooms2"));
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("sneaky", "Sneaky", room);
+        var response = await host.Client.GetAsync($"api/rooms/sneaky/files?ref={Uri.EscapeDataString("a.png")}");
+
+        await AssertRefused(response, HttpStatusCode.Forbidden);
     }
 
     [Fact]

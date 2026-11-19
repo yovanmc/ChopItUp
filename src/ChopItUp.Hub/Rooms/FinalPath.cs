@@ -7,12 +7,12 @@ namespace ChopItUp.Hub.Rooms;
 /// <summary>Opens a file or folder and asks Windows where the open handle really is. A path that
 /// passes through a junction reports the junction's target, so a fence checked against this path
 /// cannot be stepped around by a link on the way.</summary>
-[SupportedOSPlatform("windows")]
 public static partial class FinalPath
 {
     public const int FileNotFound = 2;
     public const int PathNotFound = 3;
     public const int SharingViolation = 32;
+    public const int LockViolation = 33;
 
     private const uint GenericRead = 0x80000000;
     private const uint ShareAll = 0x1 | 0x2 | 0x4;
@@ -26,13 +26,49 @@ public static partial class FinalPath
     [LibraryImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true)]
     private static unsafe partial uint GetFinalPathNameByHandle(SafeFileHandle handle, char* buffer, uint size, uint flags);
 
-    /// <summary>A read handle on the file itself. A link at the last step is opened as the link, not
-    /// followed, so it can be refused before anything reads through it. Null with the Win32 error when
-    /// the open fails.</summary>
-    public static SafeFileHandle? OpenFile(string path, out int error) =>
-        Open(path, GenericRead, OpenReparsePoint, out error);
+    private const int FileAttributeTagInfo = 9;
+    private const uint ReparseAttribute = 0x400;
+    private const uint NameSurrogateBit = 0x20000000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AttributeTagInfo
+    {
+        public uint FileAttributes;
+        public uint ReparseTag;
+    }
+
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool GetFileInformationByHandleEx(SafeFileHandle handle, int infoClass, out AttributeTagInfo info, uint size);
+
+    /// <summary>A read handle on the file itself. With <paramref name="followLinks"/> false, a link at
+    /// the last step is opened as the link, not followed, so it can be refused before anything reads
+    /// through it. Null with the Win32 error when the open fails.</summary>
+    [SupportedOSPlatform("windows")]
+    public static SafeFileHandle? OpenFile(string path, bool followLinks, out int error) =>
+        Open(path, GenericRead, followLinks ? 0 : OpenReparsePoint, out error);
+
+    /// <summary>The reparse tag on the handle's file, 0 when it has none, or null when Windows cannot say.</summary>
+    [SupportedOSPlatform("windows")]
+    public static uint? ReparseTag(SafeFileHandle handle) =>
+        GetFileInformationByHandleEx(handle, FileAttributeTagInfo, out var info, (uint)Marshal.SizeOf<AttributeTagInfo>())
+            ? (info.FileAttributes & ReparseAttribute) == 0 ? 0 : info.ReparseTag
+            : null;
+
+    /// <summary>Whether a reparse tag makes the file stand for another name: a symbolic link or a mount
+    /// point. Other tags (OneDrive placeholders, compressed or deduplicated files) keep the file itself.</summary>
+    public static bool IsLink(uint tag) => (tag & NameSurrogateBit) != 0;
+
+    /// <summary>The final path of an existing folder, or null when it cannot be opened or named.</summary>
+    [SupportedOSPlatform("windows")]
+    public static string? OfDirectory(string path)
+    {
+        using var handle = OpenDirectory(path, out _);
+        return handle is null ? null : Of(handle);
+    }
 
     /// <summary>A handle on a folder that grants no access, only enough to ask where it is.</summary>
+    [SupportedOSPlatform("windows")]
     public static SafeFileHandle? OpenDirectory(string path, out int error) =>
         Open(path, 0, BackupSemantics, out error);
 
@@ -47,6 +83,7 @@ public static partial class FinalPath
 
     /// <summary>The handle's full path with every link resolved and the <c>\\?\</c> prefix removed,
     /// or null when Windows cannot name it (a device, a volume with no drive letter).</summary>
+    [SupportedOSPlatform("windows")]
     public static unsafe string? Of(SafeFileHandle handle)
     {
         var buffer = new char[512];

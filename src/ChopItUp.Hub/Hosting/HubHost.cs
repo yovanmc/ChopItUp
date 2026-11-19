@@ -154,7 +154,10 @@ public static class HubHost
             builder.Services.AddSingleton(sp => new ExchangeWorktrees(
                 sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir)));
             builder.Services.AddSingleton(sp => new RoomArtifacts(sp.GetRequiredService<MessageStore>(), RoomPathRules.ForHub(options.DataDir)));
-            builder.Services.AddSingleton(RoomPathRules.ForHub(options.DataDir));
+            // The room file route compares final paths, so its rules carry resolved spellings too.
+            builder.Services.AddSingleton(OperatingSystem.IsWindows()
+                ? RoomPathRules.ForHub(options.DataDir).WithResolvedSpellings(FinalPath.OfDirectory)
+                : RoomPathRules.ForHub(options.DataDir));
             builder.Services.AddSingleton<RoomFileGate>();
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
