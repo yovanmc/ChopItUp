@@ -616,22 +616,25 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
 
         var psi = new ProcessStartInfo(guardExe) { UseShellExecute = false, CreateNoWindow = true };
         foreach (var a in new[] { "-n", "60", "-w", "1000", "127.0.0.1" }) psi.ArgumentList.Add(a);
-        for (int start = 0; start < 100; start++)
+        try
         {
-            using var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
-            try
+            for (int start = 0; start < 100; start++)
             {
-                var spin = Stopwatch.StartNew();
-                while (spin.Elapsed.TotalMicroseconds < start * 20) { }
-                Assert.Equal(guardExe, WaitForMainModulePath(guard, guardExe, TimeSpan.FromSeconds(10)), ignoreCase: true);
-            }
-            finally
-            {
-                guard.Kill();
-                guard.WaitForExit();
+                using var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
+                try
+                {
+                    var spin = Stopwatch.StartNew();
+                    while (spin.Elapsed.TotalMicroseconds < start * 20) { }
+                    Assert.Equal(guardExe, WaitForMainModulePath(guard, guardExe, TimeSpan.FromSeconds(10)), ignoreCase: true);
+                }
+                finally
+                {
+                    guard.Kill();
+                    guard.WaitForExit();
+                }
             }
         }
-        TestDirs.DeleteTree(target);
+        finally { TestDirs.DeleteTree(target); }
     }
 
     /// <summary>Reads the process's main module path until it names <paramref name="expected"/>, and
