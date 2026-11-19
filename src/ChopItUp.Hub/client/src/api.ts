@@ -18,6 +18,7 @@ import type {
   Skill,
   SkillProposal,
   Trail,
+  RoomFileListing,
 } from './types';
 import { readOwnerToken } from './ownerToken';
 
@@ -216,6 +217,11 @@ export async function markRead(roomId: string, signal?: AbortSignal): Promise<vo
 
 export async function getTrail(roomId: string, signal?: AbortSignal): Promise<Trail> {
   return unwrap<Trail>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/trail`, { signal }));
+}
+
+/** The images and videos in the room's artifacts folder, newest first. */
+export async function listRoomFiles(roomId: string, signal?: AbortSignal): Promise<RoomFileListing> {
+  return unwrap<RoomFileListing>(await fetch(`/api/rooms/${encodeURIComponent(roomId)}/artifacts`, { signal }));
 }
 
 export async function listParticipants(signal?: AbortSignal): Promise<Participant[]> {

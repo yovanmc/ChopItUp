@@ -14,6 +14,7 @@ interface Props {
   onBind: () => void;
   onArchive: () => void;
   onTrail: () => void;
+  onGallery: () => void;
   onRoles: () => void;
   onMemory: () => void;
 }
@@ -31,6 +32,7 @@ function RoomHeader({
   onBind,
   onArchive,
   onTrail,
+  onGallery,
   onRoles,
   onMemory,
   onModeSaved,
@@ -67,6 +69,15 @@ function RoomHeader({
           title={room.directory === null ? 'This room has no directory' : 'Commits the hub made in this room'}
         >
           Trail
+        </button>
+        <button
+          type="button"
+          className="quiet"
+          onClick={onGallery}
+          disabled={room.directory === null}
+          title={room.directory === null ? 'This room has no directory' : "Images and videos in this room's artifacts folder"}
+        >
+          Gallery
         </button>
         <button
           type="button"

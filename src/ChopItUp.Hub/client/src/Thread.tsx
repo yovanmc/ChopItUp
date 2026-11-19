@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, type MouseEvent } from 'react';
 import { renderBody } from './markdown';
 import { accentClass, badgeFor, displayName, isHuman, isSystem } from './participants';
 import { replySnippet } from './reply';
@@ -14,10 +14,34 @@ const PIN_SLACK_PX = 96;
 /** How long a message a quote jumped to stays highlighted. Matches `.row.flash` in styles.css. */
 const FLASH_MS = 1200;
 
+/** How long a failed chat image waits before its one retry. */
+const IMAGE_RETRY_MS = 1000;
+
 interface Props {
   messages: Message[];
   loading: boolean;
   onReply?: (message: Message) => void;
+  onOpenImage?: (ref: string) => void;
+}
+
+/** Chat images live in markup the sanitiser built, not in React's tree, so their failures are caught
+ *  on the thread in the capture phase (an image's error does not bubble). The first failure retries
+ *  once, the second leaves the file name in place of the browser's broken-image glyph. */
+function onImageError(event: Event): void {
+  const image = event.target;
+  if (!(image instanceof HTMLImageElement) || image.dataset['ref'] === undefined) return;
+  if (image.dataset['retried'] === undefined) {
+    image.dataset['retried'] = '1';
+    const src = image.src;
+    window.setTimeout(() => {
+      image.src = `${src}&retry=1`;
+    }, IMAGE_RETRY_MS);
+    return;
+  }
+  const missing = document.createElement('span');
+  missing.className = 'image-missing';
+  missing.textContent = `${image.alt || image.dataset['ref']} · not available`;
+  image.replaceWith(missing);
 }
 
 /** Brings the original of a reply into view and briefly highlights it. The class is toggled on the DOM
@@ -33,10 +57,22 @@ function jumpTo(messageId: number): void {
   window.setTimeout(() => target.classList.remove('flash'), FLASH_MS);
 }
 
-export default function Thread({ messages, loading, onReply }: Props) {
+export default function Thread({ messages, loading, onReply, onOpenImage }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
+
+  useEffect(() => {
+    const element = scroller.current;
+    if (!element) return;
+    element.addEventListener('error', onImageError, true);
+    return () => element.removeEventListener('error', onImageError, true);
+  }, []);
+
+  function onClick(event: MouseEvent) {
+    const target = event.target;
+    if (onOpenImage && target instanceof HTMLImageElement && target.dataset['ref'] !== undefined) onOpenImage(target.dataset['ref']);
+  }
 
   useEffect(() => {
     const element = scroller.current;
@@ -50,7 +86,7 @@ export default function Thread({ messages, loading, onReply }: Props) {
   }
 
   return (
-    <div className="thread" ref={scroller} onScroll={onScroll}>
+    <div className="thread" ref={scroller} onScroll={onScroll} onClick={onClick}>
       <div className="thread-inner">
         {loading && <p className="thread-note">Loading the room…</p>}
         {!loading && messages.length === 0 && (
@@ -116,7 +152,7 @@ const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak, orig
                 {clockTime(message.createdAt)}
               </time>
             </div>
-            <MessageBody body={message.body} />
+            <MessageBody body={message.body} roomId={message.roomId} />
           </div>
         </article>
       ) : (
@@ -158,7 +194,7 @@ const MessageRow = memo(function MessageRow({ message, startsRun, dayBreak, orig
             )}
             {message.replyToId != null && <ReplyQuote replyToId={message.replyToId} original={original} />}
             {message.imported && <span className="imported-tag">imported</span>}
-            <MessageBody body={message.body} />
+            <MessageBody body={message.body} roomId={message.roomId} />
           </div>
         </article>
       )}
@@ -187,8 +223,9 @@ function ReplyQuote({ replyToId, original }: { replyToId: number; original: Mess
   );
 }
 
-/** Markdown is rendered and sanitised once per distinct body (see markdown.ts's cache) and this
- *  component never re-renders for an unchanged body. */
-const MessageBody = memo(function MessageBody({ body }: { body: string }) {
-  return <div className="body" dangerouslySetInnerHTML={{ __html: renderBody(body) }} />;
+/** Markdown is rendered and sanitised once per distinct body and room (see markdown.ts's cache) and
+ *  this component never re-renders for an unchanged body. The room decides which files its images
+ *  may show. */
+const MessageBody = memo(function MessageBody({ body, roomId }: { body: string; roomId: string }) {
+  return <div className="body" dangerouslySetInnerHTML={{ __html: renderBody(body, roomId) }} />;
 });
