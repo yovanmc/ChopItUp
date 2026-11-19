@@ -1473,6 +1473,238 @@ input {
   color: var(--dim);
 }
 
+/* ---------- room images ---------- */
+
+/* At most a comfortable thumbnail in the thread; the viewer is where an image is read. A small image
+   keeps its own size, so a 317-pixel render is 317 pixels. */
+.body img[data-ref] {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 360px;
+  margin: 6px 0;
+  background: var(--raised);
+  /* An outline, not a border, so the image's box is exactly its own pixels. */
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
+  border-radius: var(--radius);
+  cursor: zoom-in;
+}
+
+.video-ref {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.video-ref:hover {
+  border-color: color-mix(in srgb, var(--accent-owner) 60%, var(--line));
+}
+
+.image-missing {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--dim);
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+}
+
+.gallery-dialog {
+  width: min(80vw, 1600px, 100%);
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px 10px;
+  margin: 0;
+  padding: 0 8px 2px 2px;
+  list-style: none;
+  max-height: 68vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+.gallery-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.gallery-thumb {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gallery-thumb .image-missing {
+  margin: 8px;
+  border: 0;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.gallery-tile:hover .gallery-thumb,
+.gallery-tile:focus-visible .gallery-thumb {
+  border-color: color-mix(in srgb, var(--accent-owner) 60%, var(--line));
+}
+
+.gallery-tile:focus-visible {
+  outline: none;
+}
+
+.gallery-play {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding-left: 3px;
+  font-size: 15px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+}
+
+.gallery-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gallery-time {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+/* The viewer is dark in both themes: a photo reads best on a near-black field. */
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(8, 9, 11, 0.94);
+  color: #e7eaf0;
+}
+
+.viewer-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.viewer-image {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: none;
+  cursor: grab;
+  user-select: none;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+.viewer-image:active {
+  cursor: grabbing;
+}
+
+.viewer-video {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  max-width: calc(100% - 96px);
+  max-height: calc(100% - 96px);
+  transform: translate(-50%, -50%);
+}
+
+.viewer-controls {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  background: rgba(22, 26, 32, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius);
+}
+
+.viewer-level {
+  min-width: 72px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #b8bfcc;
+  text-align: center;
+}
+
+.viewer-button {
+  padding: 5px 10px;
+  font-size: 12px;
+  color: #e7eaf0;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.viewer-button:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.viewer-caption {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  max-width: 70vw;
+  margin: 0;
+  padding: 4px 10px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #c6ccd6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: rgba(22, 26, 32, 0.88);
+  border-radius: 6px;
+}
+
+.viewer .image-missing {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: #c6ccd6;
+  border-color: rgba(255, 255, 255, 0.18);
+}
+
 .paste {
   min-height: 200px;
   resize: vertical;

@@ -108,6 +108,21 @@ export interface Trail {
   error: string | null;
 }
 
+/** Mirrors one entry of `GET /api/rooms/{id}/artifacts`. */
+export interface RoomFile {
+  ref: string;
+  name: string;
+  bytes: number;
+  modified: string;
+}
+
+/** `omitted` counts files past the hub's cap; `unreadable` counts folders it could not read. */
+export interface RoomFileListing {
+  files: RoomFile[];
+  omitted: number;
+  unreadable: number;
+}
+
 /** Mirrors `GET /api/participants`. `host` is which program speaks for the row; `model` is null for
  *  the human and for app-backed rows. */
 export interface Participant {

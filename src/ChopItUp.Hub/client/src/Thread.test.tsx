@@ -5,7 +5,9 @@ import { setRoster } from './participants';
 import Thread from './Thread';
 import type { Message } from './types';
 
-vi.mock('./markdown', () => ({ renderBody: (body: string) => `<p>${body}</p>` }));
+vi.mock('./markdown', () => ({
+  renderBody: (body: string, roomId?: string) => `<p data-room="${roomId ?? ''}">${body}</p>`,
+}));
 
 setRoster([
   { id: 'owner', displayName: 'Owner', kind: 'human', host: 'human', model: null },
@@ -22,6 +24,12 @@ describe('imported rows', () => {
     expect(markup.match(/class="imported-tag"/g)?.length).toBe(1);
     const liveRow = markup.slice(markup.indexOf('id="msg-1"'), markup.indexOf('id="msg-2"'));
     expect(liveRow).not.toContain('imported-tag');
+  });
+
+  test("each body renders for its own room, so its images can name only that room's files", () => {
+    const markup = renderToStaticMarkup(<Thread messages={[live, { ...imported, roomId: 'lab' }]} loading={false} />);
+    expect(markup).toContain('<p data-room="general">@opus hi</p>');
+    expect(markup).toContain('<p data-room="lab">Claude: from a paste</p>');
   });
 
   test('the import dialog says imported text is never acted on', () => {

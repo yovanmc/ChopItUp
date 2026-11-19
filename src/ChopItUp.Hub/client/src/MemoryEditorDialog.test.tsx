@@ -370,6 +370,7 @@ describe('the way in', () => {
         onBind={NOOP}
         onArchive={NOOP}
         onTrail={NOOP}
+        onGallery={NOOP}
         onRoles={NOOP}
         onMemory={NOOP}
       />,

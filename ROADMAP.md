@@ -7,7 +7,6 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 81 | Chat images and gallery | [ ] | READY | — | Rewrite `artifact:` images to the route, drop remote images, CSP, zoom view, room gallery. Showcase vs Open WebUI. Needs 80. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 82 | Judge rows and image viewing | [ ] | READY | — | `opus-judge` row (conductor cannot self-mention, ExchangePolicy.cs:371 [V 2026-11-17 eadc59c8]), Sol judge, Astra visible, migration with backup; image probes for both CLIs. Risk lane. Needs 79. |
 | 83 | Web research for Claude in directory rooms | [ ] | READY | — | Add WebSearch and WebFetch; trail records them (only Bash today, SpawnOutput.cs:37 [V 2026-11-17 eadc59c8]). Risk lane. |
 | 84 | Run budgets and job waits | [ ] | READY | — | `hours:` 1-8 (default 4), `/continue` revives cap-spent runs, ping passes caps, job wait neither stalls nor counts, `JobFinished`. Caps hard-coded (RunLimits.cs:30) [V 2026-11-17 eadc59c8]. Risk lane. Spec: `.scratch/goal-runs/spec.md` in the main clone. |

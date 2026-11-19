@@ -1,27 +1,81 @@
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { escapeHtml, fileName, isVideo, refFromHref, routeFor } from './images';
 import { hostOf, mentionPattern } from './participants';
 
-/** Rendering is pure in the body text, so the result is cached: an incoming message must not make
- *  the whole thread re-parse its markdown. Cleared wholesale rather than evicted one at a time —
- *  this is a chat client, not a cache benchmark. */
+/** Rendering is pure in the body text and the room, so the result is cached: an incoming message must
+ *  not make the whole thread re-parse its markdown. Cleared wholesale rather than evicted one at a
+ *  time — this is a chat client, not a cache benchmark. */
 const cache = new Map<string, string>();
 const CACHE_LIMIT = 1000;
 
+/** Markup a body never needs, each a way to load something from another host or to fake the app's
+ *  own controls. The shell's CSP blocks the loads too; this keeps them out of the DOM at all. */
+const FORBID_TAGS = [
+  'style', 'form', 'input', 'button', 'textarea', 'select', 'svg', 'math', 'picture', 'source',
+  'video', 'audio', 'track', 'iframe', 'object', 'embed', 'link', 'meta', 'base',
+];
+const FORBID_ATTR = ['style', 'background', 'srcset', 'poster', 'action', 'formaction'];
+
+/** The room whose files the body being sanitised may show. Set only for one `sanitize` call. */
+let sanitizingFor: string | undefined;
+
+/** The one place an image gets a `src`: from its `data-ref`, through `routeFor`, for the room being
+ *  rendered. An image with no ref, or one `routeFor` refuses, becomes its alt text. */
+DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+  if (node.nodeName !== 'IMG') return;
+  const image = node as HTMLImageElement;
+  const ref = image.getAttribute('data-ref');
+  const url = ref !== null && sanitizingFor !== undefined ? routeFor(ref, sanitizingFor) : null;
+  image.removeAttribute('src');
+  if (url === null) {
+    image.replaceWith(document.createTextNode(image.getAttribute('alt') ?? ''));
+    return;
+  }
+  image.setAttribute('src', url);
+  image.setAttribute('loading', 'lazy');
+  image.setAttribute('decoding', 'async');
+});
+
+/** An image becomes `<img data-ref alt>` with no `src`, so the sanitiser hook above is the only thing
+ *  that can point it anywhere. An href that is not a room file stays as its alt text. */
+const markdown = new Marked({
+  async: false,
+  gfm: true,
+  breaks: true,
+  renderer: {
+    image({ href, text }) {
+      const ref = refFromHref(href);
+      if (sanitizingFor === undefined || ref === null) return escapeHtml(text);
+      // A video loads nothing in the thread: a chip opens it in the viewer.
+      if (isVideo(ref)) return `<span class="video-ref" data-video-ref="${escapeHtml(ref)}">▶ ${escapeHtml(text || fileName(ref))}</span>`;
+      return `<img data-ref="${escapeHtml(ref)}" alt="${escapeHtml(text)}">`;
+    },
+  },
+});
+
 /** Markdown to sanitised HTML, with @mentions decorated. Bodies are written by models and by pasted
- *  transcripts, so the output goes through DOMPurify before it ever reaches innerHTML. */
-export function renderBody(body: string): string {
-  const cached = cache.get(body);
+ *  transcripts, so the output goes through DOMPurify before it ever reaches innerHTML. With a
+ *  `roomId`, images naming that room's files are shown; without one, no image is. */
+export function renderBody(body: string, roomId?: string): string {
+  const key = `${roomId ?? ''}\u0000${body}`;
+  const cached = cache.get(key);
   if (cached !== undefined) return cached;
 
-  const raw = marked.parse(body, { async: false, gfm: true, breaks: true });
-  const fragment = DOMPurify.sanitize(raw, { RETURN_DOM_FRAGMENT: true });
+  let fragment: DocumentFragment;
+  sanitizingFor = roomId;
+  try {
+    const raw = markdown.parse(body) as string;
+    fragment = DOMPurify.sanitize(raw, { RETURN_DOM_FRAGMENT: true, FORBID_TAGS, FORBID_ATTR });
+  } finally {
+    sanitizingFor = undefined;
+  }
   decorateMentions(fragment);
   const host = document.createElement('div');
   host.appendChild(fragment);
 
   if (cache.size >= CACHE_LIMIT) cache.clear();
-  cache.set(body, host.innerHTML);
+  cache.set(key, host.innerHTML);
   return host.innerHTML;
 }
 

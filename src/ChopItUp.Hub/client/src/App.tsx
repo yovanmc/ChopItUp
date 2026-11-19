@@ -16,6 +16,8 @@ import RunBar from './RunBar';
 import SkillPanel from './SkillPanel';
 import Thread from './Thread';
 import TrailDialog from './TrailDialog';
+import GalleryDialog from './GalleryDialog';
+import ImageViewer from './ImageViewer';
 import { readOwnerToken, writeOwnerToken } from './ownerToken';
 import ChromeBar from './shell/ChromeBar';
 import { isHosted } from './shell/hostBridge';
@@ -227,6 +229,11 @@ export default function App() {
   const [showArchived, setShowArchived] = useState(false);
   const [roomDialog, setRoomDialog] = useState<null | { mode: 'create' } | { mode: 'bind'; room: Room }>(null);
   const [trailOpen, setTrailOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  /** The room file the viewer shows, over the thread or the gallery. */
+  const [viewing, setViewing] = useState<string | null>(null);
+  const closeViewer = useCallback(() => setViewing(null), []);
+  const closeGallery = useCallback(() => setGalleryOpen(false), []);
   const [rolesOpen, setRolesOpen] = useState(false);
   const [memoryOpen, setMemoryOpen] = useState(false);
   const [roomBusy, setRoomBusy] = useState(false);
@@ -839,6 +846,7 @@ export default function App() {
               onBind={() => setRoomDialog({ mode: 'bind', room: activeRoom })}
               onArchive={() => void toggleArchive()}
               onTrail={() => setTrailOpen(true)}
+              onGallery={() => setGalleryOpen(true)}
               onRoles={() => setRolesOpen(true)}
               onMemory={() => setMemoryOpen(true)}
             />
@@ -850,7 +858,7 @@ export default function App() {
             {tokenNotice !== null && (
               <TokenGate notice={tokenNotice} onToken={takeOwnerToken} onDismiss={() => setTokenNotice(null)} />
             )}
-            <Thread messages={messages} loading={loading} onReply={replyToMessage} />
+            <Thread messages={messages} loading={loading} onReply={replyToMessage} onOpenImage={setViewing} />
             <MemoryPanel
               proposals={proposals}
               busyId={deciding}
@@ -919,6 +927,8 @@ export default function App() {
         />
       )}
       {trailOpen && activeRoom && <TrailDialog room={activeRoom} onClose={() => setTrailOpen(false)} />}
+      {galleryOpen && activeRoom && <GalleryDialog room={activeRoom} onClose={closeGallery} onOpen={setViewing} />}
+      {viewing !== null && activeRoom && <ImageViewer roomId={activeRoom.id} fileRef={viewing} onClose={closeViewer} />}
       {rolesOpen && activeRoom && <RolesDialog room={activeRoom} onClose={() => setRolesOpen(false)} />}
       {memoryOpen && activeRoom && (
         <MemoryEditorDialog

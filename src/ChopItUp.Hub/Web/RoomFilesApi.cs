@@ -1,3 +1,4 @@
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Rooms;
 using Microsoft.AspNetCore.Mvc;
@@ -12,6 +13,13 @@ public sealed class RoomFileGate
 {
     public const int Permits = 16;
     public SemaphoreSlim Slots { get; } = new(Permits, Permits);
+
+    /// <summary>How long a listing waits on the folder walk before answering 503. A walk that outlives
+    /// it keeps its permit until it ends, so hung walks stay within <see cref="Permits"/>.</summary>
+    public TimeSpan ListLimit { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Replaces the directory listing the walk reads, for tests that stall it.</summary>
+    public Func<string, IEnumerable<FileSystemInfo>>? ListOverride { get; set; }
 }
 
 /// <summary><c>GET /api/rooms/{roomId}/files?ref=</c>: an image or video from the room's directory or
@@ -22,19 +30,79 @@ public static class RoomFilesApi
 {
     public const long MaxImageBytes = 32L * 1024 * 1024;
 
-    public static void MapRoomFilesApi(this WebApplication app) =>
-        app.MapGroup("/api").MapGet("/rooms/{roomId}/files", Get);
+    public const int MaxListed = 500;
+
+    public static void MapRoomFilesApi(this WebApplication app)
+    {
+        var api = app.MapGroup("/api");
+        api.MapGet("/rooms/{roomId}/files", Get);
+        api.MapGet("/rooms/{roomId}/artifacts", List);
+    }
+
+    /// <summary>On every answer, refusals included, so a page on another origin learns nothing from
+    /// which answer it got.</summary>
+    private static void Guard(HttpContext context)
+    {
+        context.Response.Headers.XContentTypeOptions = "nosniff";
+        context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+    }
 
     private static IResult Get(string roomId, [FromQuery(Name = "ref")] string? reference, HttpContext context,
         MessageStore store, RoomPathRules rules, RoomFileGate gate)
     {
-        // On every answer, refusals included, so a page on another origin learns nothing from which
-        // answer it got.
-        context.Response.Headers.XContentTypeOptions = "nosniff";
-        context.Response.Headers["Cross-Origin-Resource-Policy"] = "same-origin";
+        Guard(context);
         if (!gate.Slots.Wait(0)) return Busy(context, "too many room file requests at once; retry");
         try { return Serve(roomId, reference, context, store, rules); }
         finally { gate.Slots.Release(); }
+    }
+
+    public sealed record ListedFile(string Ref, string Name, long Bytes, DateTime Modified);
+
+    /// <summary><c>GET /api/rooms/{roomId}/artifacts</c>: every file the file route would serve from
+    /// the room's artifacts folder, newest first, for the room gallery.</summary>
+    private static async Task<IResult> List(string roomId, HttpContext context, MessageStore store, RoomPathRules rules, RoomFileGate gate)
+    {
+        Guard(context);
+        if (!gate.Slots.Wait(0)) return Busy(context, "too many room file requests at once; retry");
+        var releaseOnReturn = true;
+        try
+        {
+            if (!OperatingSystem.IsWindows()) return Refuse(404, "Room files are served on Windows only.");
+            if (store.GetRoom(roomId) is not { } room) return Refuse(404, $"Unknown room '{roomId}'.");
+            if (room.Directory is null) return Refuse(404, $"Room '{roomId}' has no directory.");
+            string root;
+            switch (RoomFileRoots.Resolve(room.Directory, RoomFileRoot.Artifacts, rules))
+            {
+                case RootOutcome.Ok ok: root = ok.Path; break;
+                case RootOutcome.Refused refused: return Refuse(refused.Status, refused.Error);
+                default: return Results.Json(new { files = Array.Empty<ListedFile>(), omitted = 0, unreadable = 0 });
+            }
+
+            var walk = Task.Run(() => RoomArtifacts.Scan(root, gate.ListOverride, keepReparse: f => OperatingSystem.IsWindows() && RoomFileRoots.IsPlainFile(f)));
+            if (await Task.WhenAny(walk, Task.Delay(gate.ListLimit)) != walk)
+            {
+                // The walk cannot be cancelled, so it keeps the permit until it ends.
+                releaseOnReturn = false;
+                _ = walk.ContinueWith(_ => gate.Slots.Release(), TaskScheduler.Default);
+                return Busy(context, $"the artifacts folder did not answer within {gate.ListLimit.TotalSeconds:0.#} s; retry");
+            }
+            var scan = await walk;
+            if (scan.Faulted) return Busy(context, "the artifacts folder could not be read; retry");
+
+            var served = scan.Files
+                .Where(f => RoomFileRef.Parse(ArtifactRef.Prefix + f.Key) is { Error: null } parsed && (parsed.IsVideo || f.Value.Length <= MaxImageBytes))
+                .OrderByDescending(f => f.Value.WrittenUtc).ThenBy(f => f.Key, StringComparer.Ordinal)
+                .ToList();
+            var files = served.Take(MaxListed)
+                .Select(f => new ListedFile(ArtifactRef.Prefix + f.Key, f.Key[(f.Key.LastIndexOf('/') + 1)..], f.Value.Length, f.Value.WrittenUtc))
+                .ToList();
+            return Results.Json(new { files, omitted = served.Count - files.Count, unreadable = scan.Unreadable.Count });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Busy(context, "the artifacts folder could not be read; retry");
+        }
+        finally { if (releaseOnReturn) gate.Slots.Release(); }
     }
 
     /// <summary>A file a lock, a dropped drive or a denied read stops midway still gets an answer with
@@ -59,12 +127,13 @@ public static class RoomFilesApi
         var parsed = RoomFileRef.Parse(reference);
         if (parsed.Error is not null) return Refuse(parsed.Status, parsed.Error);
 
-        var root = parsed.Root == RoomFileRoot.Artifacts ? RoomArtifacts.FolderFor(room.Directory) : RoomPaths.Normalize(room.Directory);
-        if (!Directory.Exists(root)) return Refuse(404, "The room has no such folder.");
-        if (parsed.Root == RoomFileRoot.Artifacts && new DirectoryInfo(root).LinkTarget is not null)
-            return Refuse(403, "The room's artifacts folder is a link.");
-        if (FinalPath.OfDirectory(root) is not { } rootFinal) return Refuse(404, "The room folder is unreachable.");
-        if (RoomPaths.RefusalOfNormalized(rootFinal, rules) is not null) return Refuse(403, "The room folder leads somewhere the hub does not serve.");
+        string root, rootFinal;
+        switch (RoomFileRoots.Resolve(room.Directory, parsed.Root, rules))
+        {
+            case RootOutcome.Ok ok: (root, rootFinal) = (ok.Path, ok.Final); break;
+            case RootOutcome.Refused refused: return Refuse(refused.Status, refused.Error);
+            default: return Refuse(404, "The room has no such folder.");
+        }
 
         var path = Path.Combine(root, parsed.Relative.Replace('/', '\\'));
         var handle = FinalPath.OpenFile(path, followLinks: false, out var error);

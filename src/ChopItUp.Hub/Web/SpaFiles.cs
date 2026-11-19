@@ -15,6 +15,11 @@ namespace ChopItUp.Hub.Web;
 /// turns a client typo into a mystery instead of a 404.</summary>
 public static class SpaFiles
 {
+    /// <summary>The shell loads only its own files. A message body is model or pasted text, so this
+    /// stops any markup the sanitizer missed from reaching another host through a style, font, form,
+    /// plugin or base URL.</summary>
+    public const string ShellPolicy = "default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'";
+
     public static string ResolveWebRoot(string? configured) =>
         string.IsNullOrWhiteSpace(configured) ? Path.Combine(AppContext.BaseDirectory, "wwwroot") : configured;
 
@@ -27,7 +32,15 @@ public static class SpaFiles
         {
             files = new PhysicalFileProvider(webRoot);
             app.Lifetime.ApplicationStopped.Register(files.Dispose);
-            app.UseStaticFiles(new StaticFileOptions { FileProvider = files });
+            app.UseStaticFiles(new StaticFileOptions
+            {
+                FileProvider = files,
+                OnPrepareResponse = served =>
+                {
+                    if (served.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase))
+                        served.Context.Response.Headers.ContentSecurityPolicy = ShellPolicy;
+                },
+            });
         }
         app.MapFallback(context => Fallback(context, files));
     }
@@ -44,6 +57,7 @@ public static class SpaFiles
             // The shell names hash-stamped asset files, so a cached copy of it points at assets that
             // no longer exist after a rebuild. Assets themselves stay cacheable.
             context.Response.Headers.CacheControl = "no-cache, no-store, must-revalidate";
+            context.Response.Headers.ContentSecurityPolicy = ShellPolicy;
             return context.Response.SendFileAsync(index, context.RequestAborted);
         }
 
