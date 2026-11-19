@@ -24,10 +24,15 @@ public static partial class ArtifactRef
         relative = "";
         if (!IsReference(value)) return false;
         var path = value[Prefix.Length..].Replace('\\', '/');
-        if (!path.Split('/').All(IsCanonicalSegment)) return false;
+        if (!IsCanonicalRelative(path)) return false;
         relative = path;
         return true;
     }
+
+    /// <summary>Whether <paramref name="path"/> is a relative path with one canonical spelling. A
+    /// backslash counts as a separator, so <c>a\..\x</c> holds a <c>..</c> segment.</summary>
+    public static bool IsCanonicalRelative(string path) =>
+        path.Replace('\\', '/').Split('/').All(IsCanonicalSegment);
 
     private static bool IsCanonicalSegment(string segment) =>
         segment.Length > 0 && segment is not ("." or "..")
