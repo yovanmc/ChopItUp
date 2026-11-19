@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 15;
+    public const int LatestSchemaVersion = 16;
 
     /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
     /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
@@ -37,15 +37,31 @@ public sealed class ChopDb
         new("opus",          "Opus",          "model", "claude", "opus",          null, "visible,judge"),
         new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null, "plumbing"),
         new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits.", "judge"),
-        new("gpt-6-astra",   "GPT-6 Astra",   "model", "codex",  "gpt-6-astra",   null),
-        new("gpt-5.6-sol",   "GPT-5.6 Sol",   "model", "codex",  "gpt-5.6-sol",   null),
+        new("gpt-6-astra",   "GPT-6 Astra",   "model", "codex",  "gpt-6-astra",   null, "visible"),
+        new("gpt-5.6-sol",   "GPT-5.6 Sol",   "model", "codex",  "gpt-5.6-sol",   null, "judge"),
         new("gpt-5.6-terra", "GPT-5.6 Terra", "model", "codex",  "gpt-5.6-terra", null),
         new("gpt-5.6-luna",  "GPT-5.6 Luna",  "model", "codex",  "gpt-5.6-luna",  null),
         new("gpt-5.5",       "GPT-5.5",       "model", "codex",  "gpt-5.5",       null),
         new("gpt-5.4-mini",  "GPT-5.4 Mini",  "model", "codex",  "gpt-5.4-mini",  null),
         new(HubParticipantId, "Hub",           "system", "hub",    null,            "The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned."),
-        new(OwnerRemoteParticipantId, "Owner (remote)", "human", "human", null,   "The owner, posting from a session on another device. Same authority as owner; the hub stamps which hand typed. Last in the roster because rowid order is seed order and this row is newer than every other."),
+        new(OwnerRemoteParticipantId, "Owner (remote)", "human", "human", null,   OwnerRemoteNote),
+        // New rows go last: rowid order is seed order, and a migration appends them after every existing row.
+        new(OpusJudgeParticipantId, "Opus Judge", "model", "claude", "opus",  "A second Opus row, so an Opus conductor can ask Opus for a critique (a conductor cannot mention itself).", "judge"),
     ];
+
+    /// <summary>The Opus row that judges. Its own id, because a run's conductor may not mention itself,
+    /// so a run conducted by <c>opus</c> needs a different id to get an Opus critique.</summary>
+    public const string OpusJudgeParticipantId = "opus-judge";
+
+    private const string OwnerRemoteNote = "The owner, posting from a session on another device. Same authority as owner; the hub stamps which hand typed.";
+
+    /// <summary>The owner-remote note as seeded before v16, when that row was the last one. V16 replaces
+    /// exactly this text; a note the owner edited is kept.</summary>
+    private const string OwnerRemoteNoteBeforeV16 = OwnerRemoteNote + " Last in the roster because rowid order is seed order and this row is newer than every other.";
+
+    /// <summary>The rows whose seed classes v16 introduced. V16 fills NULL classes on these only: every
+    /// other classed row was filled by V7, so a NULL there is an owner's clear and stays.</summary>
+    private static readonly string[] ClassedInV16 = ["gpt-6-astra", "gpt-5.6-sol", OpusJudgeParticipantId];
 
     /// <summary>Path of the backup written by the most recent migration on this instance, or null
     /// when nothing needed migrating. Test seam; not part of the hub's runtime contract.</summary>
@@ -124,6 +140,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 13) ApplyV13(conn);
             if (GetUserVersion(conn) < 14) ApplyV14(conn);
             if (GetUserVersion(conn) < 15) ApplyV15(conn);
+            if (GetUserVersion(conn) < 16) ApplyV16(conn);
             return 0;
         });
     }
@@ -739,22 +756,43 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>Only NULL is filled: an owner-set class is never replaced.</summary>
-    private static void BackfillClasses(SqliteConnection conn, SqliteTransaction tx)
+    /// <summary>Add the opus-judge row and the judge and visible classes for Sol and Astra. Row data
+    /// only, one transaction with the stamp. Existing rows keep every column except a NULL class on
+    /// the rows v16 classed and the owner-remote note while it is still the old seed text.</summary>
+    private static void ApplyV16(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        SeedParticipants(conn, tx, [OpusJudgeParticipantId]);   // a seed row the owner removed stays removed
+        BackfillClasses(conn, tx, ClassedInV16);
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "UPDATE participants SET note = $note WHERE id = $id AND note = $old; PRAGMA user_version = 16;";
+        cmd.Parameters.AddWithValue("$note", OwnerRemoteNote);
+        cmd.Parameters.AddWithValue("$id", OwnerRemoteParticipantId);
+        cmd.Parameters.AddWithValue("$old", OwnerRemoteNoteBeforeV16);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Only NULL is filled: an owner-set class is never replaced. <paramref name="only"/>
+    /// limits the fill to those ids.</summary>
+    private static void BackfillClasses(SqliteConnection conn, SqliteTransaction tx, IReadOnlyCollection<string>? only = null)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = "UPDATE participants SET classes = $classes WHERE id = $id AND classes IS NULL";
         var id = cmd.Parameters.Add("$id", SqliteType.Text);
         var cls = cmd.Parameters.Add("$classes", SqliteType.Text);
-        foreach (var p in SeedRoster.Where(p => p.Classes is not null))
+        foreach (var p in SeedRoster.Where(p => p.Classes is not null && (only is null || only.Contains(p.Id))))
         {
             id.Value = p.Id; cls.Value = p.Classes;
             cmd.ExecuteNonQuery();
         }
     }
 
-    private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx)
+    /// <summary>INSERT OR IGNORE of the seed rows (existing rows keep every column). <paramref name="only"/>
+    /// limits the insert to those ids.</summary>
+    private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx, IReadOnlyCollection<string>? only = null)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -765,7 +803,7 @@ public sealed class ChopDb
         var host = cmd.Parameters.Add("$host", SqliteType.Text);
         var model = cmd.Parameters.Add("$model", SqliteType.Text);
         var note = cmd.Parameters.Add("$note", SqliteType.Text);
-        foreach (var p in SeedRoster)
+        foreach (var p in SeedRoster.Where(p => only is null || only.Contains(p.Id)))
         {
             id.Value = p.Id; name.Value = p.DisplayName; kind.Value = p.Kind; host.Value = p.Host;
             model.Value = (object?)p.Model ?? DBNull.Value; note.Value = (object?)p.Note ?? DBNull.Value;

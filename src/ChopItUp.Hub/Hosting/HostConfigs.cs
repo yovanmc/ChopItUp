@@ -320,8 +320,11 @@ public static class HostConfigs
 
         `classes` is a set drawn from `plumbing`, `visible` and `judge`, stored comma-separated. A
         row can hold more than one — `opus` ships as `visible,judge`, because it is both the model
-        you want on anything you will look at and one of the two you want judging. The hub reads the
-        set and validates it but does not yet act on it; that is the runs milestone. Set one by hand
+        you want on anything you will look at and one you want judging. `gpt-5.6-sol` ships
+        as `judge` and `gpt-6-astra` as `visible`. `opus-judge` is a second Opus row with `judge`
+        only: a run's conductor cannot mention itself, so an Opus conductor asks `@opus-judge` for an
+        Opus critique. A judge row runs at high effort inside a run. The hub validates the set at
+        startup, and a run's phase rules read it. Set one by hand
         with the hub stopped: `UPDATE participants SET classes='visible,judge' WHERE id='gpt-6-astra';`
         - it takes effect at the next start, and anything outside the vocabulary is dropped with a
         warning in the hub's log at startup.

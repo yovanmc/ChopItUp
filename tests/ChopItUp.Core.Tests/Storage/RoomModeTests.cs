@@ -47,7 +47,7 @@ public sealed class RoomModeTests : IDisposable
             command.ExecuteNonQuery();
         }
         new ChopDb(path).EnsureDatabase();
-        Assert.Equal(15, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(new RoomModeSettings(), store.GetRoom("general")!.EffectiveMode);
         Assert.Contains(store.Read("general", 0, 100).Messages, m => m.Id == imported.Id && m.Imported);
         Assert.Equal(objective.Id, store.ReadSpawnContext("general", 60).Governing.Objective!.Source.Id);

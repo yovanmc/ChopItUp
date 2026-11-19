@@ -701,6 +701,52 @@ public sealed class SchemaMigrationTests : IDisposable
         SqliteConnection.ClearAllPools();
     }
 
+    private void RawExec(string sql)
+    {
+        using var conn = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = DbPath, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.ExecuteNonQuery();
+        SqliteConnection.ClearAllPools();
+    }
+
+    /// <summary>v12 shape plus exactly what ApplyV13 adds: messages.imported, stamped 13.</summary>
+    private void WriteRawV13()
+    {
+        WriteRawV12();
+        RawExec("ALTER TABLE messages ADD COLUMN imported INTEGER NOT NULL DEFAULT 0; PRAGMA user_version = 13;");
+    }
+
+    /// <summary>v13 shape plus exactly what ApplyV14 adds: governing_updates, stamped 14.</summary>
+    private void WriteRawV14()
+    {
+        WriteRawV13();
+        RawExec("""
+            CREATE TABLE governing_updates (
+                message_id INTEGER PRIMARY KEY REFERENCES messages(id),
+                slot TEXT NOT NULL CHECK(slot IN ('objective', 'correction'))
+            );
+            PRAGMA user_version = 14;
+            """);
+    }
+
+    /// <summary>v14 shape plus exactly what ApplyV15 adds: the room mode columns and the author/client
+    /// key index, stamped 15. Raw SQL on purpose: this must keep describing v15 after ChopDb can no
+    /// longer produce one.</summary>
+    private void WriteRawV15()
+    {
+        WriteRawV14();
+        RawExec("""
+            ALTER TABLE rooms ADD COLUMN mode TEXT NOT NULL DEFAULT 'relay' CHECK(mode IN ('primary','relay','panel'));
+            ALTER TABLE rooms ADD COLUMN mode_first TEXT NOT NULL DEFAULT 'gpt-6-astra';
+            ALTER TABLE rooms ADD COLUMN mode_second TEXT DEFAULT 'opus';
+            ALTER TABLE rooms ADD COLUMN mode_revision INTEGER NOT NULL DEFAULT 0;
+            CREATE INDEX idx_messages_author_key ON messages(author_id, client_key) WHERE client_key IS NOT NULL;
+            PRAGMA user_version = 15;
+            """);
+    }
+
     private static long ReplyColumnCount(SqliteConnection conn)
     {
         using var probe = conn.CreateCommand();
@@ -858,7 +904,18 @@ public sealed class SchemaMigrationTests : IDisposable
             Assert.Equal(0L, (long)roomRoles.ExecuteScalar()!);
         }
 
-        Assert.Equal(participantsBefore, ReadParticipantsV11Shape(conn));
+        // Every row is unchanged except the cells v16 owns: the Sol and Astra classes, the old
+        // owner-remote seed note, and the appended opus-judge row.
+        var judge = ChopDb.SeedRoster.Single(p => p.Id == ChopDb.OpusJudgeParticipantId);
+        var expected = participantsBefore.Select(p => p switch
+        {
+            { Id: "gpt-6-astra", Classes: null } => p with { Classes = "visible" },
+            { Id: "gpt-5.6-sol", Classes: null } => p with { Classes = "judge" },
+            { Id: ChopDb.OwnerRemoteParticipantId } when p.Note!.Contains("Last in the roster") =>
+                p with { Note = ChopDb.SeedRoster.Single(s => s.Id == ChopDb.OwnerRemoteParticipantId).Note },
+            _ => p,
+        }).Append((judge.Id, judge.DisplayName, judge.Kind, (string?)judge.Host, judge.Model, judge.Note, judge.Classes)).ToList();
+        Assert.Equal(expected, ReadParticipantsV11Shape(conn));
         Assert.Equal(roomsBefore, ReadRoomsV11Shape(conn));
         Assert.Equal(messagesBefore, ReadMessagesV11Shape(conn));
     }
@@ -1762,6 +1819,68 @@ public sealed class SchemaMigrationTests : IDisposable
         using var cmd = conn.CreateCommand();
         cmd.CommandText = sql;
         return Convert.ToInt64(cmd.ExecuteScalar());
+    }
+
+    [Fact]
+    public void A_v15_database_is_backed_up_then_gets_opus_judge_and_the_sol_and_astra_classes()
+    {
+        WriteRawV15();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Contains(".v15.", Path.GetFileName(db.LastBackupPath!));
+        Assert.Equal(15L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(2L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM participants WHERE id = 'opus-judge'"));
+
+        var roster = new ParticipantStore(db).List();
+        var judge = roster.Single(p => p.Id == "opus-judge");
+        Assert.Equal(("model", "claude", "opus", "judge"), (judge.Kind, judge.Host, judge.Model, judge.Classes));
+        Assert.Equal("judge", roster.Single(p => p.Id == "gpt-5.6-sol").Classes);
+        Assert.Equal("visible", roster.Single(p => p.Id == "gpt-6-astra").Classes);
+        Assert.Equal(ChopDb.SeedRoster, roster);   // order, classes and notes: a migrated roster reads like a fresh one
+        Assert.Equal(2, new MessageStore(db).Read("general", 0, 50).Messages.Count);
+    }
+
+    [Fact]
+    public void Owner_set_classes_notes_and_removals_survive_the_v16_migration()
+    {
+        WriteRawV15();
+        RawExec("""
+            UPDATE participants SET classes = 'visible' WHERE id = 'gpt-5.6-sol';
+            UPDATE participants SET classes = 'judge' WHERE id = 'gpt-6-astra';
+            UPDATE participants SET classes = NULL WHERE id = 'sonnet';
+            UPDATE participants SET note = 'Mine.' WHERE id = 'owner-remote';
+            DELETE FROM participants WHERE id = 'gpt-5.4-mini';
+            """);
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        var roster = new ParticipantStore(db).List();
+        Assert.DoesNotContain(roster, p => p.Id == "gpt-5.4-mini");   // a seed row the owner removed is not re-added
+        Assert.Equal("visible", roster.Single(p => p.Id == "gpt-5.6-sol").Classes);
+        Assert.Equal("judge", roster.Single(p => p.Id == "gpt-6-astra").Classes);
+        Assert.Null(roster.Single(p => p.Id == "sonnet").Classes);   // a seed class the owner cleared stays cleared
+        Assert.Equal("Mine.", roster.Single(p => p.Id == ChopDb.OwnerRemoteParticipantId).Note);
+        Assert.Equal("judge", roster.Single(p => p.Id == "opus-judge").Classes);
+    }
+
+    [Fact]
+    public void A_torn_v16_with_opus_judge_inserted_but_stamp_15_is_finished_without_a_duplicate()
+    {
+        WriteRawV15();
+        RawExec("INSERT INTO participants (id, display_name, kind, host, model, note, classes) VALUES ('opus-judge','Opus Judge','model','claude','opus',NULL,NULL);");
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM participants WHERE id = 'opus-judge'"));
+        Assert.Equal((long)ChopDb.SeedRoster.Count, ScalarLong("SELECT COUNT(*) FROM participants"));
+        Assert.Equal("judge", new ParticipantStore(db).List().Single(p => p.Id == "opus-judge").Classes);
     }
 
     private static long BackupScalar(string backupPath, string sql)

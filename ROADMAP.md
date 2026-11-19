@@ -7,7 +7,6 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 82 | Judge rows and image viewing | [ ] | READY | — | `opus-judge` row (conductor cannot self-mention, ExchangePolicy.cs:371 [V 2026-11-17 eadc59c8]), Sol judge, Astra visible, migration with backup; image probes for both CLIs. Risk lane. Needs 79. |
 | 83 | Web research for Claude in directory rooms | [ ] | READY | — | Add WebSearch and WebFetch; trail records them (only Bash today, SpawnOutput.cs:37 [V 2026-11-17 eadc59c8]). Risk lane. |
 | 84 | Run budgets and job waits | [ ] | READY | — | `hours:` 1-8 (default 4), `/continue` revives cap-spent runs, ping passes caps, job wait neither stalls nor counts, `JobFinished`. Caps hard-coded (RunLimits.cs:30) [V 2026-11-17 eadc59c8]. Risk lane. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 85 | Background jobs and the GPU lock | [ ] | READY | — | `start_job`/`job_status`/`cancel_job` for in-flight directory spawns, job objects, token stripped, machine-wide GPU semaphore, service cancel. Risk lane. Needs 79, 84. Spec: `.scratch/goal-runs/spec.md` in the main clone. |

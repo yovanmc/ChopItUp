@@ -596,7 +596,8 @@ public sealed class ExchangePolicyTests
     [InlineData("critique without an artifact line", "phase: critique @opus have a look", "fable", null, "artifact:")]
     [InlineData("critique naming an artifact neither recorded nor in the room tree", "phase: critique @opus have a look\nartifact: src/Foo.cs", "fable", null, "neither recorded")]
     // The qualifying judge rows other than the recorded author "sonnet" are named.
-    [InlineData("critique with no judge mentioned", "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", "fable", "sonnet", "a judge mentioned other than the artifact's recorded author", "@opus, @fable")]
+    [InlineData("critique with no judge mentioned", "phase: critique @gpt-6-astra have a look\nartifact: src/Foo.cs", "fable", "sonnet", "a judge mentioned other than the artifact's recorded author", "@opus, @fable, @gpt-5.6-sol, @opus-judge")]
+    [InlineData("the Opus judge row conducting and mentioning itself", "phase: critique @opus-judge have a look\nartifact: src/Foo.cs", "opus-judge", "opus", "itself")]
     // opus (judge) IS the recorded author.
     [InlineData("critique whose only judge is the artifact's own recorded author", "phase: critique @opus have a look\nartifact: src/Foo.cs", "fable", "opus", "other than")]
     public void A_conductor_post_breaking_a_phase_rule_is_refused(string @case, string body, string conductor, string? recordedAuthor, params string[] expected)
@@ -614,6 +615,8 @@ public sealed class ExchangePolicyTests
     [InlineData("build mentioning a visible row (opus)", "phase: build @opus go", "fable", null, false)]
     [InlineData("critique naming a recorded artifact and a different judge", "phase: critique @opus review this\nartifact: src/Foo.cs", "fable", "sonnet", false)]
     [InlineData("critique naming an artifact in the room tree that was never recorded", "phase: critique @opus review this\nartifact: src/Foo.cs", "fable", null, true)]
+    // An Opus conductor gets an Opus critique through the second row, even of its own artifact.
+    [InlineData("an opus conductor asking opus-judge to critique what opus wrote", "phase: critique @opus-judge review this\nartifact: src/Foo.cs", "opus", "opus", false)]
     public void A_conductor_post_meeting_the_phase_rules_is_accepted(string @case, string body, string conductor, string? recordedAuthor, bool inRoomTree)
     {
         _ = @case;
@@ -625,9 +628,9 @@ public sealed class ExchangePolicyTests
     [Fact]
     public void A_refused_build_post_names_the_qualifying_rows()
     {
-        // fable is judge-only; gpt-6-astra carries no classes at all.
-        var refusal = Refuse(Policy(), "phase: build @gpt-6-astra go", conductor: "fable");
-        Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: @opus, @sonnet", refusal);
+        // fable is judge-only; gpt-5.6-terra carries no classes at all.
+        var refusal = Refuse(Policy(), "phase: build @gpt-5.6-terra go", conductor: "fable");
+        Assert.Equal("phase build needs a mention of a plumbing- or visible-class row: @opus, @sonnet, @gpt-6-astra", refusal);
 
         var noneClassed = ChopDb.SeedRoster.Select(p => p with { Classes = null }).ToList();
         var noneRefusal = Refuse(new ExchangePolicy(noneClassed, Limits), "phase: build @gpt-6-astra go", conductor: "fable");

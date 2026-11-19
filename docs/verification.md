@@ -15,7 +15,12 @@ Consolidation dry run (no model calls, scratch hub, fabricated 12-topic corpus, 
 `propose_rewrite` and the approve path itself): `pwsh tools\Invoke-M23DryRun.ps1`.
 Memory editor dry run (no model calls, scratch hub, fabricated corpus, drives the editor routes, the
 trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.ps1`.
-Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v15, CLI PATH
+Judge rows migration dry run (no model calls, scratch hub, a v15 state with fabricated messages,
+an owner-set class and an owner clear, migrated to v16 through the real exe):
+`pwsh tools\Invoke-Row82DryRun.ps1 [-HubExe <exe>]`.
+Image probe (real Opus and gpt-5.6-sol, one call each, spends): a directory room spawn reads random
+text from a fixture image: `pwsh tools\Invoke-Row82ImageProbe.ps1`.
+Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v16, CLI PATH
 stripped so an accidental spawn fails loudly, drives the import route and a live control post):
 `pwsh tools\Invoke-Row42ImportCheck.ps1`.
 Continue, the turns token and the synthesis turn (stub Codex, no model calls): `pwsh tools\Invoke-Row44ContinueCheck.ps1`.

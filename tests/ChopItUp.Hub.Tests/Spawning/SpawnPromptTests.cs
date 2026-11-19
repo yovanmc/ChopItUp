@@ -51,10 +51,12 @@ public sealed class SpawnPromptTests
         Assert.Contains("@sonnet", line);
         Assert.Contains("@gpt-6-astra", line);
         Assert.Contains("@owner", line);            // handing back to the human is always allowed
-        Assert.DoesNotContain("@opus", line);
-        Assert.DoesNotContain("@hub", line);
-        Assert.DoesNotContain("@claude", line);     // app-backed: a window, not a spawn
-        Assert.DoesNotContain("@codex", line);
+        var ids = line["Participants you can hand the turn to:".Length..].Split(',', StringSplitOptions.TrimEntries);
+        Assert.DoesNotContain("@opus", ids);        // self; the second Opus row is a peer
+        Assert.Contains("@opus-judge", ids);
+        Assert.DoesNotContain("@hub", ids);
+        Assert.DoesNotContain("@claude", ids);      // app-backed: a window, not a spawn
+        Assert.DoesNotContain("@codex", ids);
     }
 
     [Fact]
@@ -376,7 +378,10 @@ public sealed class SpawnPromptTests
         var inLine = inRun.Split('\n').Single(l => l.StartsWith("Participants you can hand the turn to:", StringComparison.Ordinal));
         Assert.Contains("@sonnet (plumbing)", inLine);
         Assert.Contains("@fable (judge)", inLine);
-        Assert.Contains("@gpt-6-astra (no class)", inLine);
+        Assert.Contains("@gpt-6-astra (visible)", inLine);
+        Assert.Contains("@gpt-5.6-sol (judge)", inLine);
+        Assert.Contains("@opus-judge (judge)", inLine);
+        Assert.Contains("@gpt-5.6-terra (no class)", inLine);
     }
 
     // The hub owner's standing text: the room's persona and this spawn's role
@@ -545,14 +550,36 @@ public sealed class SpawnPromptTests
     /// instrument that says "byte-for-byte what the build produced without standing text", and it is
     /// populated rather than bare because the section boundary the standing block sits in is where a
     /// change can break something. Nothing per-run reaches the string (<see cref="Msg"/> hardcodes its
-    /// stamps, the client key is a literal and the roster is <see cref="ChopDb.SeedRoster"/>), so
+    /// stamps, the client key is a literal and the roster is <see cref="GoldenRoster"/>), so
     /// byte equality holds with no normalisation, and none should ever be written here.</summary>
     private static readonly DateTimeOffset GoldenStamp = new(2026, 9, 5, 20, 0, 30, TimeSpan.Zero);
+
+    /// <summary>The seed roster as it stood when the capture was taken, frozen here so a later seed
+    /// change never moves the capture. Roster rendering is pinned by the class tests above.</summary>
+    private static readonly IReadOnlyList<Participant> GoldenRoster =
+    [
+        new("owner",         "Owner",         "human", "human",  null,            null),
+        new("claude",        "Claude",        "model", "claude", null,            "App-backed: Claude Desktop or Claude Code, whatever model the app has selected."),
+        new("codex",         "Codex",         "model", "codex",  null,            "App-backed: the Codex app or CLI, whatever model the app has selected."),
+        new("opus",          "Opus",          "model", "claude", "opus",          null, "visible,judge"),
+        new("sonnet",        "Sonnet",        "model", "claude", "sonnet",        null, "plumbing"),
+        new("fable",         "Fable",         "model", "claude", "fable",         "May bill to usage credits instead of the plan's included limits.", "judge"),
+        new("gpt-6-astra",   "GPT-6 Astra",   "model", "codex",  "gpt-6-astra",   null),
+        new("gpt-5.6-sol",   "GPT-5.6 Sol",   "model", "codex",  "gpt-5.6-sol",   null),
+        new("gpt-5.6-terra", "GPT-5.6 Terra", "model", "codex",  "gpt-5.6-terra", null),
+        new("gpt-5.6-luna",  "GPT-5.6 Luna",  "model", "codex",  "gpt-5.6-luna",  null),
+        new("gpt-5.5",       "GPT-5.5",       "model", "codex",  "gpt-5.5",       null),
+        new("gpt-5.4-mini",  "GPT-5.4 Mini",  "model", "codex",  "gpt-5.4-mini",  null),
+        new("hub",           "Hub",           "system", "hub",   null,            "The hub itself. Posts exchange notes: timeouts, budget, conclusions. Cannot be mentioned or spawned."),
+        new("owner-remote",  "Owner (remote)", "human", "human", null,            "The owner, posting from a session on another device. Same authority as owner; the hub stamps which hand typed. Last in the roster because rowid order is seed order and this row is newer than every other."),
+    ];
 
     internal static SpawnPromptInput GoldenInput() =>
         Input(1, 3, Msg(1, "owner", "/demo @opus start the thing."), Msg(2, "codex", "Handing it to you."))
         with
         {
+            Self = GoldenRoster.Single(p => p.Id == "opus"),
+            Roster = GoldenRoster,
             MemoryCore = "# Memory\n\nOwner is Yovan.\n",
             MemoryTopics = ["career", "user"],
             Directory = @"C:\Rooms\lab",
