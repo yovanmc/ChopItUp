@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import fixture from '../../../../tests/mention-cases.json';
-import { recipientsOf, setRoster } from './participants';
+import { badgeFor, recipientsOf, setRoster } from './participants';
 import type { Participant } from './types';
 
 /** `recipientsOf` is the client twin of `Mentions.Leading` (Core). The fixture at the repo
@@ -22,6 +22,7 @@ const SEED: Participant[] = [
   { id: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', kind: 'model', host: 'codex', model: 'gpt-5.6-sol' },
   { id: 'gpt-5.5', displayName: 'GPT-5.5', kind: 'model', host: 'codex', model: 'gpt-5.5' },
   { id: 'owner-remote', displayName: 'Owner (remote)', kind: 'human', host: 'human', model: null },
+  { id: 'opus-judge', displayName: 'Opus Judge', kind: 'model', host: 'claude', model: 'opus' },
 ];
 
 setRoster(
@@ -52,5 +53,12 @@ describe('recipientsOf', () => {
     else if (turns.token === 'out-of-range') expect(read.turns).toEqual({ turns: turns.value ?? 0, valid: false });
     else if (turns.token === 'valid') expect(read.turns).toEqual({ turns: turns.value, valid: true });
     else throw new Error(`Unknown turns token '${turns.token}' in case '${c.name}'`);
+  });
+});
+
+describe('badgeFor', () => {
+  // Two Opus rows share a host accent, so the initials are what tell them apart.
+  test('the judge row reads OJ beside OP', () => {
+    expect([badgeFor('opus'), badgeFor('opus-judge')]).toEqual(['OP', 'OJ']);
   });
 });

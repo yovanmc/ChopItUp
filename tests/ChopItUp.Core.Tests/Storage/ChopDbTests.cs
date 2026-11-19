@@ -25,6 +25,17 @@ public sealed class ChopDbTests : IDisposable
     }
 
     [Fact]
+    public void A_fresh_database_holds_the_judge_rows_and_classes()
+    {
+        new ChopDb(DbPath).EnsureDatabase();
+
+        Assert.Equal("model|claude|opus|judge", Scalar<string>("SELECT kind || '|' || host || '|' || model || '|' || classes FROM participants WHERE id = 'opus-judge'"));
+        Assert.Equal("judge", Scalar<string>("SELECT classes FROM participants WHERE id = 'gpt-5.6-sol'"));
+        Assert.Equal("visible", Scalar<string>("SELECT classes FROM participants WHERE id = 'gpt-6-astra'"));
+        Assert.Equal("opus-judge", Scalar<string>("SELECT id FROM participants ORDER BY rowid DESC LIMIT 1"));   // last, like a migrated roster
+    }
+
+    [Fact]
     public void EnsureDatabase_is_idempotent()
     {
         var db = new ChopDb(DbPath);

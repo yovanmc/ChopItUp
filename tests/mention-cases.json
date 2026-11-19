@@ -1,5 +1,5 @@
 {
-  "roster": ["owner", "claude", "codex", "opus", "sonnet", "fable", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "owner-remote"],
+  "roster": ["owner", "claude", "codex", "opus", "sonnet", "fable", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.5", "owner-remote", "opus-judge"],
   "cases": [
     { "name": "single leading",            "body": "@opus what next?",                                   "recipients": ["opus"],                 "unknown": [],           "references": [] },
     { "name": "several, commas, newline",  "body": "@opus, @sonnet\n@gpt-5.6-sol: please weigh in",     "recipients": ["opus", "sonnet", "gpt-5.6-sol"], "unknown": [], "references": [] },
@@ -26,6 +26,9 @@
     { "name": "parenthesised",             "body": "(@opus) please",                                      "recipients": [],                       "unknown": [],           "references": ["opus"] },
     { "name": "quoted",                    "body": "\"@opus\" said so",                                   "recipients": [],                       "unknown": [],           "references": ["opus"] },
     { "name": "dashed suffix is unknown",  "body": "@opus-1 go",                                          "recipients": [],                       "unknown": ["opus-1"],   "references": [] },
+    { "name": "dashed id is its own row",  "body": "@opus-judge have a look",                             "recipients": ["opus-judge"],           "unknown": [],           "references": [] },
+    { "name": "prefix id beside dashed",   "body": "@opus @opus-judge go",                                "recipients": ["opus", "opus-judge"],   "unknown": [],           "references": [] },
+    { "name": "inline dashed id",          "body": "hi @opus-judge, and @opus too",                       "recipients": [],                       "unknown": [],           "references": ["opus-judge", "opus"] },
     { "name": "phase then newline",        "body": "phase: build/x\n@sonnet do it",                       "recipients": ["sonnet"],               "unknown": [],           "references": [] },
     { "name": "slash stop then newline",   "body": "/stop\n@opus take it",                                "recipients": ["opus"],                 "unknown": [],           "references": [] },
     { "name": "hub is unknown here",       "body": "@hub hi",                                             "recipients": [],                       "unknown": ["hub"],      "references": [] },
