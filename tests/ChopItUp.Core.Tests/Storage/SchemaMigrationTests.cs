@@ -904,11 +904,18 @@ public sealed class SchemaMigrationTests : IDisposable
             Assert.Equal(0L, (long)roomRoles.ExecuteScalar()!);
         }
 
-        // Later steps append rows and fill classes and seed notes (v16), so V12's own guarantee is
-        // checked on the identity columns of every row that was already there.
-        static object Identity((string Id, string DisplayName, string Kind, string? Host, string? Model, string? Note, string? Classes) p) =>
-            (p.Id, p.DisplayName, p.Kind, p.Host, p.Model);
-        Assert.Equal(participantsBefore.Select(Identity), ReadParticipantsV11Shape(conn).Take(participantsBefore.Count).Select(Identity));
+        // Every row is unchanged except the cells v16 owns: the Sol and Astra classes, the old
+        // owner-remote seed note, and the appended opus-judge row.
+        var judge = ChopDb.SeedRoster.Single(p => p.Id == ChopDb.OpusJudgeParticipantId);
+        var expected = participantsBefore.Select(p => p switch
+        {
+            { Id: "gpt-6-astra", Classes: null } => p with { Classes = "visible" },
+            { Id: "gpt-5.6-sol", Classes: null } => p with { Classes = "judge" },
+            { Id: ChopDb.OwnerRemoteParticipantId } when p.Note!.Contains("Last in the roster") =>
+                p with { Note = ChopDb.SeedRoster.Single(s => s.Id == ChopDb.OwnerRemoteParticipantId).Note },
+            _ => p,
+        }).Append((judge.Id, judge.DisplayName, judge.Kind, (string?)judge.Host, judge.Model, judge.Note, judge.Classes)).ToList();
+        Assert.Equal(expected, ReadParticipantsV11Shape(conn));
         Assert.Equal(roomsBefore, ReadRoomsV11Shape(conn));
         Assert.Equal(messagesBefore, ReadMessagesV11Shape(conn));
     }
@@ -1815,7 +1822,7 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Row82_A2_a_v15_database_is_backed_up_then_gets_opus_judge_and_the_sol_and_astra_classes()
+    public void A_v15_database_is_backed_up_then_gets_opus_judge_and_the_sol_and_astra_classes()
     {
         WriteRawV15();
 
@@ -1838,7 +1845,7 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Row82_A2_owner_set_classes_and_notes_survive_the_v16_backfill()
+    public void Owner_set_classes_notes_and_removals_survive_the_v16_migration()
     {
         WriteRawV15();
         RawExec("""
@@ -1846,12 +1853,14 @@ public sealed class SchemaMigrationTests : IDisposable
             UPDATE participants SET classes = 'judge' WHERE id = 'gpt-6-astra';
             UPDATE participants SET classes = NULL WHERE id = 'sonnet';
             UPDATE participants SET note = 'Mine.' WHERE id = 'owner-remote';
+            DELETE FROM participants WHERE id = 'gpt-5.4-mini';
             """);
 
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
         var roster = new ParticipantStore(db).List();
+        Assert.DoesNotContain(roster, p => p.Id == "gpt-5.4-mini");   // a seed row the owner removed is not re-added
         Assert.Equal("visible", roster.Single(p => p.Id == "gpt-5.6-sol").Classes);
         Assert.Equal("judge", roster.Single(p => p.Id == "gpt-6-astra").Classes);
         Assert.Null(roster.Single(p => p.Id == "sonnet").Classes);   // a seed class the owner cleared stays cleared
@@ -1860,7 +1869,7 @@ public sealed class SchemaMigrationTests : IDisposable
     }
 
     [Fact]
-    public void Row82_T1_a_torn_v16_with_opus_judge_inserted_but_stamp_15_is_finished_without_a_duplicate()
+    public void A_torn_v16_with_opus_judge_inserted_but_stamp_15_is_finished_without_a_duplicate()
     {
         WriteRawV15();
         RawExec("INSERT INTO participants (id, display_name, kind, host, model, note, classes) VALUES ('opus-judge','Opus Judge','model','claude','opus',NULL,NULL);");

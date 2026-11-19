@@ -320,7 +320,7 @@ public static class HostConfigs
 
         `classes` is a set drawn from `plumbing`, `visible` and `judge`, stored comma-separated. A
         row can hold more than one — `opus` ships as `visible,judge`, because it is both the model
-        you want on anything you will look at and one of the two you want judging. `gpt-5.6-sol` ships
+        you want on anything you will look at and one you want judging. `gpt-5.6-sol` ships
         as `judge` and `gpt-6-astra` as `visible`. `opus-judge` is a second Opus row with `judge`
         only: a run's conductor cannot mention itself, so an Opus conductor asks `@opus-judge` for an
         Opus critique. A judge row runs at high effort inside a run. The hub validates the set at

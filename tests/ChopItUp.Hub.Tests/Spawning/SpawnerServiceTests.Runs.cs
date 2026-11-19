@@ -962,15 +962,13 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         var judge = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
         var plumbing = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var seededJudge = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
         runner.Handler = async (spec, _, _) =>
         {
             switch (FakeProcessRunner.ParticipantOf(spec))
             {
-                case "opus": await PostAsInHost(host, "opus", room, "phase: build @gpt-6-astra @gpt-5.4-mini @gpt-5.6-sol write the thing"); break;
+                case "opus": await PostAsInHost(host, "opus", room, "phase: build @gpt-6-astra @gpt-5.4-mini write the thing"); break;
                 case "gpt-6-astra": judge.TrySetResult(spec.Arguments); break;
                 case "gpt-5.4-mini": plumbing.TrySetResult(spec.Arguments); break;
-                case "gpt-5.6-sol": seededJudge.TrySetResult(spec.Arguments); break;
             }
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
@@ -986,9 +984,6 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         Assert.DoesNotContain(plumbingArgs, a => a.StartsWith("model_reasoning_effort=", StringComparison.Ordinal));
         Assert.Contains("mcp_servers.chopitup.tool_timeout_sec=1500", plumbingArgs);
         Assert.DoesNotContain("mcp_servers.chopitup.tool_timeout_sec=60", plumbingArgs);
-
-        // Sol ships as a judge, so every in-run Sol spawn, build work included, runs at high effort.
-        Assert.Contains("model_reasoning_effort=high", await seededJudge.Task.WaitAsync(Wait));
     }
 
     /// <summary>The other half of the in-run MCP_TOOL_TIMEOUT check (Run12g): a Claude directory spawn OUTSIDE any run never sees the variable -

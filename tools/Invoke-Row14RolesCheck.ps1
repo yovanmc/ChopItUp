@@ -307,7 +307,8 @@ PRAGMA user_version = 11;
     $after = Get-Counts -Path $dbPath
     Add-Check -Name 'migrated.stamped-v14' -Passed ($after['user_version'] -eq 14) -Detail "user_version=$($after['user_version'])"
     foreach ($t in 'participants', 'rooms', 'messages') {
-        Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t]) -Detail "before=$($before[$t]) after=$($after[$t])"
+        $added = if ($t -eq 'participants') { 1 } else { 0 }   # v16 appends opus-judge
+        Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t] + $added) -Detail "before=$($before[$t]) after=$($after[$t])"
     }
     Add-Check -Name 'migrated.room-names-preserved' -Passed ($after['room_names'] -eq $before['room_names']) -Detail "before=$($before['room_names']) after=$($after['room_names'])"
 

@@ -52,6 +52,7 @@ function Start-Hub {
         if ($p.HasExited) { throw "hub exited early (code $($p.ExitCode))" }
         try { return @{ Process = $p; Health = Invoke-RestMethod "$base/health" -TimeoutSec 2 } } catch { Start-Sleep -Milliseconds 500 }
     }
+    Stop-Hub $p
     throw 'scratch hub never answered /health'
 }
 

@@ -464,7 +464,8 @@ PRAGMA user_version = 9;
     Add-Check -Name 'migrated.stamped-v14' -Passed ($after['user_version'] -eq 14) -Detail "user_version=$($after['user_version'])"
     Add-Check -Name 'migrated.messages-have-reply-to-id' -Passed ([bool]$after['has_reply_to_id']) -Detail "has_reply_to_id=$($after['has_reply_to_id'])"
     foreach ($t in 'participants', 'rooms', 'messages', 'read_cursors', 'memory_proposals', 'skills', 'skill_files', 'runs', 'run_phases', 'run_artifacts', 'run_gate_runs') {
-        Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t]) -Detail "before=$($before[$t]) after=$($after[$t])"
+        $added = if ($t -eq 'participants') { 1 } else { 0 }   # v16 appends opus-judge
+        Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t] + $added) -Detail "before=$($before[$t]) after=$($after[$t])"
     }
     Add-Check -Name 'migrated.messages-body-bytes-preserved' -Passed ($after['messages_body_len_sum'] -eq $before['messages_body_len_sum']) `
         -Detail "before=$($before['messages_body_len_sum']) after=$($after['messages_body_len_sum'])"

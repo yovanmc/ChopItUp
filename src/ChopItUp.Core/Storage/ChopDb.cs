@@ -762,7 +762,7 @@ public sealed class ChopDb
     private static void ApplyV16(SqliteConnection conn)
     {
         using var tx = conn.BeginTransaction();
-        SeedParticipants(conn, tx);   // OR IGNORE: adds opus-judge only
+        SeedParticipants(conn, tx, [OpusJudgeParticipantId]);   // a seed row the owner removed stays removed
         BackfillClasses(conn, tx, ClassedInV16);
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -790,7 +790,9 @@ public sealed class ChopDb
         }
     }
 
-    private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx)
+    /// <summary>INSERT OR IGNORE of the seed rows (existing rows keep every column). <paramref name="only"/>
+    /// limits the insert to those ids.</summary>
+    private static void SeedParticipants(SqliteConnection conn, SqliteTransaction tx, IReadOnlyCollection<string>? only = null)
     {
         using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -801,7 +803,7 @@ public sealed class ChopDb
         var host = cmd.Parameters.Add("$host", SqliteType.Text);
         var model = cmd.Parameters.Add("$model", SqliteType.Text);
         var note = cmd.Parameters.Add("$note", SqliteType.Text);
-        foreach (var p in SeedRoster)
+        foreach (var p in SeedRoster.Where(p => only is null || only.Contains(p.Id)))
         {
             id.Value = p.Id; name.Value = p.DisplayName; kind.Value = p.Kind; host.Value = p.Host;
             model.Value = (object?)p.Model ?? DBNull.Value; note.Value = (object?)p.Note ?? DBNull.Value;
