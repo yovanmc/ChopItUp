@@ -64,6 +64,22 @@ public sealed class Mentions
     /// class here.</summary>
     private static readonly Regex Turns = new(@"\G[ \t\r\n\f\v,:;]*[Tt][Uu][Rr][Nn][Ss]:[ \t]*(?<n>[0-9]*)(?<junk>[A-Za-z0-9_.\-]*)", RegexOptions.CultureInvariant);
 
+    /// <summary>Where <see cref="Leading"/>'s walk of `@word` and `turns:` tokens stops in
+    /// <paramref name="text"/> (already "\r\n"-normalized), starting at <paramref name="start"/>. The
+    /// walk accepts any `@word`, known or not, so the end does not depend on the roster.</summary>
+    public static int LeadingEnd(string text, int start)
+    {
+        var at = start;
+        while (true)
+        {
+            var t = Turns.Match(text, at);
+            if (t.Success) { at = t.Index + t.Length; continue; }
+            var m = Token.Match(text, at);
+            if (!m.Success) return at;
+            at = m.Index + m.Length;
+        }
+    }
+
     public LeadingMentions Leading(string body)
     {
         if (string.IsNullOrEmpty(body)) return LeadingMentions.None;

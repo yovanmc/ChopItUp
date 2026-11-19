@@ -9,8 +9,12 @@ namespace ChopItUp.Hub.Tests.Spawning;
 public sealed class RunPolicyTests
 {
     private static readonly RunLimits Limits = new(
-        Spawns: 5, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(5), PhaseEntries: 3,
+        SpawnsPerHour: 5, Hour: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(5), PhaseEntries: 3,
         GateTimeout: TimeSpan.FromMinutes(4));
+
+    // The run's own caps, as a one-hour budget at these limits.
+    private const int SpawnBudget = 5;
+    private static readonly TimeSpan WallClock = TimeSpan.FromHours(1);
 
     private readonly RunPolicy _policy = new(Limits);
 
@@ -19,13 +23,14 @@ public sealed class RunPolicyTests
         Phase: "(start)", PhaseEntries: new Dictionary<string, int>(),
         SpawnsUsed: 0, Exchanges: 0, Elapsed: TimeSpan.Zero,
         RefusalsThisPhase: 0, SilencesThisPhase: 0,
-        ExchangeOpen: false, AnythingInFlight: false, RootMessageId: 100);
+        ExchangeOpen: false, AnythingInFlight: false, RootMessageId: 100,
+        SpawnBudget: SpawnBudget, WallClockBudget: WallClock, JobsInFlight: 0);
 
     // Any event but StopRequested, spawn cap spent -> hard Park, regardless of what else is true.
     [Fact]
     public void Row1_spawn_cap_parks_hard_ahead_of_everything_else()
     {
-        var s = Base() with { SpawnsUsed = Limits.Spawns };
+        var s = Base() with { SpawnsUsed = SpawnBudget };
         var decision = _policy.Decide(s, new RunEvent.Tick(), []);
 
         var park = Assert.IsType<RunDecision.Park>(decision);
@@ -37,7 +42,7 @@ public sealed class RunPolicyTests
     [Fact]
     public void Row2_wall_clock_cap_parks_hard()
     {
-        var s = Base() with { Elapsed = Limits.WallClock };
+        var s = Base() with { Elapsed = WallClock };
         var decision = _policy.Decide(s, new RunEvent.Tick(), []);
 
         var park = Assert.IsType<RunDecision.Park>(decision);
@@ -223,11 +228,11 @@ public sealed class RunPolicyTests
     {
         var s = Base() with { Status = RunStatus.Parked, CapSpent = true };
         if (spawnAndWallClockCapsStillOverTheirLimits)
-            s = s with { SpawnsUsed = Limits.Spawns + 1, Elapsed = Limits.WallClock + TimeSpan.FromHours(1) };
+            s = s with { SpawnsUsed = SpawnBudget + 1, Elapsed = WallClock + TimeSpan.FromHours(1) };
         var decision = _policy.Decide(s, new RunEvent.HumanPosted(16), []);
 
         var refuse = Assert.IsType<RunDecision.Refuse>(decision);
-        Assert.Equal("this run is parked because a cap is spent; /stop and start a new one", refuse.Note);
+        Assert.Equal("this run is parked because a cap is spent; /continue hours: N adds budget, or /stop it", refuse.Note);
         Assert.Equal(RunPolicy.CapSpentRefusal, refuse.Note);
     }
 
@@ -236,7 +241,7 @@ public sealed class RunPolicyTests
     [Fact]
     public void Row17_stop_ends_the_run_even_when_a_hard_cap_is_already_spent()
     {
-        var s = Base() with { SpawnsUsed = Limits.Spawns, Elapsed = Limits.WallClock };
+        var s = Base() with { SpawnsUsed = SpawnBudget, Elapsed = WallClock };
         var decision = _policy.Decide(s, new RunEvent.StopRequested(), []);
 
         var end = Assert.IsType<RunDecision.End>(decision);
@@ -283,20 +288,165 @@ public sealed class RunPolicyTests
         Assert.IsType<RunDecision.Nothing>(decision);
     }
 
+    // An accepted ping presents at and over every cap: spawns, wall clock, and the ping key's own
+    // phase entries. A refused ping is still checked against the caps.
+    [Theory]
+    [InlineData(5, 0, 0)]
+    [InlineData(9, 0, 0)]
+    [InlineData(0, 60, 0)]
+    [InlineData(0, 300, 0)]
+    [InlineData(0, 0, 3)]
+    [InlineData(9, 300, 7)]
+    public void An_accepted_ping_ends_the_run_at_and_over_every_cap(int spawnsUsed, int elapsedMinutes, int pingEntries)
+    {
+        var s = Base() with
+        {
+            SpawnsUsed = spawnsUsed, Elapsed = TimeSpan.FromMinutes(elapsedMinutes),
+            PhaseEntries = new Dictionary<string, int> { ["ping"] = pingEntries },
+        };
+        var ping = new RunEvent.ConductorPosted(MessageId: 60, Tag: new PhaseTag("ping", null), Mentioned: [], Refusal: null);
+
+        var end = Assert.IsType<RunDecision.End>(_policy.Decide(s, ping, []));
+        Assert.Equal(("the conductor pinged", ExchangeStopCause.Run), (end.Reason, end.Cause));
+
+        var refused = ping with { Refusal = "no phase tag" };
+        if (spawnsUsed >= SpawnBudget || elapsedMinutes >= 60)
+            Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s, refused, [])).CapSpent);
+    }
+
+    // `/continue` on a park: a cap-spent park of each kind gets the named hours or the default 4, a
+    // soft park gets hours only when named, a bad value is refused with the range, and an active run
+    // is refused. The caps never fire against Continue.
+    [Theory]
+    [InlineData("spawns", 3, 3, 4, 20)]
+    [InlineData("wall clock", 0, 4, 5, 25)]
+    [InlineData("phase", 8, 8, 9, 45)]
+    public void Continue_extends_a_cap_spent_park_by_the_named_hours_or_the_default(string cap, int named, int expectedHours, int budgetHours, int spawnBudget)
+    {
+        var s = Base() with { Status = RunStatus.Parked, CapSpent = true };
+        s = cap switch
+        {
+            "spawns" => s with { SpawnsUsed = SpawnBudget },
+            "wall clock" => s with { Elapsed = WallClock },
+            _ => s with { Phase = "build", PhaseEntries = new Dictionary<string, int> { ["build"] = Limits.PhaseEntries } },
+        };
+        var hours = named == 0 ? new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.None, 0)
+            : new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.Valid, named);
+
+        var extend = Assert.IsType<RunDecision.Extend>(_policy.Decide(s, new RunEvent.Continue(61, hours), []));
+
+        Assert.Equal((expectedHours, budgetHours, spawnBudget, s.RootMessageId), (extend.Hours, extend.BudgetHours, extend.SpawnBudget, extend.RootMessageId));
+        Assert.Equal([61L], extend.TriggerIds);
+    }
+
+    // A restart park can hold a soft-parked run whose active time already passed its budget (the
+    // hub was down while it was busy). A plain resume is refused, and /continue counts the added
+    // hours from what the run used, so the extended run does not re-park at once.
+    [Fact]
+    public void A_soft_park_already_over_budget_is_not_resumed_and_continue_counts_from_what_it_used()
+    {
+        var s = Base() with { Status = RunStatus.Parked, CapSpent = false, Elapsed = TimeSpan.FromHours(12.5), SpawnsUsed = 2 };
+
+        Assert.Equal(RunPolicy.CapSpentRefusal, Assert.IsType<RunDecision.Refuse>(_policy.Decide(s, new RunEvent.HumanPosted(90), [])).Note);
+        var extend = Assert.IsType<RunDecision.Extend>(_policy.Decide(s, new RunEvent.Continue(91, default), []));
+        Assert.Equal((4, 17, 25), (extend.Hours, extend.BudgetHours, extend.SpawnBudget));   // ceil(12.5 h) + 4, max(5, 2) + 4 * 5
+    }
+
+    // A steer or job note left pending rides the resume.
+    [Fact]
+    public void A_resume_or_an_extension_carries_the_pending_triggers()
+    {
+        var soft = Base() with { Status = RunStatus.Parked };
+        Assert.Equal([92L, 7L], Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(soft, new RunEvent.HumanPosted(92), [7])).TriggerIds);
+        Assert.Equal([93L, 7L], Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(soft, new RunEvent.Continue(93, default), [7])).TriggerIds);
+        Assert.Equal([94L, 7L], Assert.IsType<RunDecision.Extend>(_policy.Decide(soft with { CapSpent = true }, new RunEvent.Continue(94, default), [7])).TriggerIds);
+    }
+
+    // The wall-clock wake while the conductor is still running lets its turn finish, so it can still
+    // present. Its end or a non-ping post is checked against the caps.
+    [Fact]
+    public void A_tick_past_the_budget_lets_a_running_conductor_finish_and_anything_else_parks()
+    {
+        var s = Base() with { Elapsed = WallClock + TimeSpan.FromMinutes(5), AnythingInFlight = true, ConductorInFlight = true };
+
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(s, new RunEvent.Tick(), []));
+        var build = new RunEvent.ConductorPosted(95, new PhaseTag("build", null), ["sonnet"], null);
+        Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s, build, [])).CapSpent);
+        Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s with { ConductorInFlight = false }, new RunEvent.Tick(), [])).CapSpent);
+    }
+
+    [Fact]
+    public void Continue_on_a_soft_park_resumes_without_budget_unless_hours_are_named()
+    {
+        var s = Base() with { Status = RunStatus.Parked, CapSpent = false };
+        var none = new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.None, 0);
+        var two = new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.Valid, 2);
+
+        var resume = Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(s, new RunEvent.Continue(62, none), []));
+        Assert.Equal([62L], resume.TriggerIds);
+        Assert.Equal(2, Assert.IsType<RunDecision.Extend>(_policy.Decide(s, new RunEvent.Continue(63, two), [])).Hours);
+    }
+
+    [Theory]
+    [InlineData(RunStatus.Parked, true)]
+    [InlineData(RunStatus.Parked, false)]
+    public void Continue_with_a_bad_hours_value_is_refused_with_the_range(string status, bool capSpent)
+    {
+        var s = Base() with { Status = status, CapSpent = capSpent };
+        var bad = new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.Invalid, 0);
+
+        var refuse = Assert.IsType<RunDecision.Refuse>(_policy.Decide(s, new RunEvent.Continue(64, bad), []));
+        Assert.Equal("hours: must be a whole number from 1 to 8 (default 4).", refuse.Note);
+    }
+
+    [Fact]
+    public void Continue_on_an_active_run_is_refused_even_over_its_caps()
+    {
+        var s = Base() with { SpawnsUsed = SpawnBudget + 1 };
+        var refuse = Assert.IsType<RunDecision.Refuse>(_policy.Decide(s, new RunEvent.Continue(65, default), []));
+        Assert.Equal("A run is active in this room (#1); /continue hours: N extends a parked run.", refuse.Note);
+    }
+
+    // Jobs in flight: waiting is neither a stall nor a silence, and a steer still wakes the conductor.
+    [Fact]
+    public void With_a_job_in_flight_a_tick_and_a_conductor_silence_do_nothing_but_a_steer_still_wakes_it()
+    {
+        var s = Base() with { JobsInFlight = 1, SilencesThisPhase = 1, Phase = "build", PhaseEntries = new Dictionary<string, int> { ["build"] = Limits.PhaseEntries } };
+
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(s, new RunEvent.Tick(), []));
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(s, new RunEvent.SpawnSilent(s.ConductorId, [70]), []));
+        Assert.Equal([71L], Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(s, new RunEvent.Tick(), [71])).TriggerIds);
+        Assert.Equal([72L], Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(s, new RunEvent.SpawnSilent(s.ConductorId, [70]), [72])).TriggerIds);
+        Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s with { SpawnsUsed = SpawnBudget }, new RunEvent.Tick(), [])).CapSpent);   // a budget still binds
+    }
+
+    [Fact]
+    public void JobFinished_opens_an_idle_conductor_with_the_note_first_and_waits_while_busy_or_parked()
+    {
+        var open = Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(Base(), new RunEvent.JobFinished(80), [81]));
+        Assert.Equal(100L, open.RootMessageId);
+        Assert.Equal([80L, 81L], open.TriggerIds);
+
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(Base() with { ExchangeOpen = true }, new RunEvent.JobFinished(82), []));
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(Base() with { AnythingInFlight = true }, new RunEvent.JobFinished(83), []));
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(Base() with { Status = RunStatus.Parked }, new RunEvent.JobFinished(84), []));
+    }
+
     /// <summary>The termination property: for every RunState with Status == active, !ExchangeOpen and
-    /// !AnythingInFlight, Decide(s, Tick, steers) is always OpenConductor, Park or End, never Nothing.
+    /// !AnythingInFlight and no job in flight, Decide(s, Tick, steers) is always OpenConductor, Park
+    /// or End, never Nothing. With a job in flight the job's own end (JobFinished) drives the run.
     /// This makes a silent stall impossible rather than unlikely. It is necessary but not
     /// sufficient: the counters it reads are hand-built here, not pinned end-to-end.</summary>
     [Fact]
     public void An_in_progress_run_always_has_something_driving_it_on_a_tick()
     {
-        var spawnsUsed = new[] { 0, Limits.Spawns - 1, Limits.Spawns, Limits.Spawns + 1 };
+        var spawnsUsed = new[] { 0, SpawnBudget - 1, SpawnBudget, SpawnBudget + 1 };
         var elapsed = new[]
         {
             TimeSpan.Zero,
-            Limits.WallClock - TimeSpan.FromMinutes(1),
-            Limits.WallClock,
-            Limits.WallClock + TimeSpan.FromMinutes(1),
+            WallClock - TimeSpan.FromMinutes(1),
+            WallClock,
+            WallClock + TimeSpan.FromMinutes(1),
         };
         var phases = new[] { "(start)", "build", "critique/pass-1" };
         var entryCounts = new[] { 0, Limits.PhaseEntries - 1, Limits.PhaseEntries, Limits.PhaseEntries + 1 };
@@ -318,7 +468,8 @@ public sealed class RunPolicyTests
                 Phase: phase, PhaseEntries: new Dictionary<string, int> { [phase] = count },
                 SpawnsUsed: used, Exchanges: 0, Elapsed: el,
                 RefusalsThisPhase: refusalCount, SilencesThisPhase: silenceCount,
-                ExchangeOpen: false, AnythingInFlight: false, RootMessageId: 100);
+                ExchangeOpen: false, AnythingInFlight: false, RootMessageId: 100,
+        SpawnBudget: SpawnBudget, WallClockBudget: WallClock, JobsInFlight: 0);
 
             var decision = _policy.Decide(s, new RunEvent.Tick(), steers);
             examined++;

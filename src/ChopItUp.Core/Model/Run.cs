@@ -12,12 +12,17 @@ public static class RunStatus
 /// one directory room, persisted so it survives a restart. <see cref="CapSpent"/> is true only when
 /// the run is parked because a hard cap (spawns, wall clock, phase re-entry) is spent: the property
 /// that decides whether a park can be resumed. <see cref="Phase"/> is the phase tag last entered,
-/// defaulting to <c>(start)</c> before the conductor has announced one.</summary>
+/// defaulting to <c>(start)</c> before the conductor has announced one. <see cref="BudgetHours"/> and
+/// <see cref="SpawnBudget"/> are the run's caps (schema v17), set at start and raised by
+/// <c>/continue</c>. <see cref="WaitingSince"/> is set while the run waits on a job with nothing else
+/// driving it, and <see cref="WaitedSeconds"/> holds every finished wait: neither counts as active
+/// time.</summary>
 public sealed record Run(
     long Id, string RoomId, string ConductorId, string SkillName, string Arguments,
     string Status, string? Reason, bool CapSpent, string Phase, long RootMessageId,
     DateTimeOffset StartedAt, DateTimeOffset? ParkedAt, long ParkedSeconds, DateTimeOffset? EndedAt,
-    int SpawnsUsed, int Exchanges);
+    int SpawnsUsed, int Exchanges,
+    int BudgetHours, int SpawnBudget, DateTimeOffset? WaitingSince, long WaitedSeconds);
 
 /// <summary>Who wrote which file path, read out of a spawn's own git diff rather than a
 /// self-report.</summary>

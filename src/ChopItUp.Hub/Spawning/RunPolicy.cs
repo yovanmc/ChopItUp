@@ -1,4 +1,5 @@
 using ChopItUp.Core.Model;
+using ChopItUp.Core.Skills;
 
 namespace ChopItUp.Hub.Spawning;
 
@@ -10,14 +11,25 @@ namespace ChopItUp.Hub.Spawning;
 ///
 /// <see cref="RootMessageId"/> is the run's own <see cref="Run.RootMessageId"/> (the message that
 /// started the run): every OpenConductor decision re-spawns the same run's conductor, and none of
-/// the events that lead to one carries a root of its own.</summary>
+/// the events that lead to one carries a root of its own.
+///
+/// <see cref="SpawnBudget"/> and <see cref="WallClockBudget"/> are this run's caps, read from its
+/// row. Elapsed also excludes time spent waiting on a job. <see cref="JobsInFlight"/> counts the
+/// background jobs this run has running. <see cref="ConductorInFlight"/> is true while the run's
+/// conductor spawn is running in its room.</summary>
 public sealed record RunState(
     long RunId, string RoomId, string ConductorId, string Status, bool CapSpent,
     string Phase, IReadOnlyDictionary<string, int> PhaseEntries,
     int SpawnsUsed, int Exchanges, TimeSpan Elapsed,
     int RefusalsThisPhase, int SilencesThisPhase,
     bool ExchangeOpen, bool AnythingInFlight,
-    long RootMessageId);
+    long RootMessageId,
+    int SpawnBudget, TimeSpan WallClockBudget, int JobsInFlight, bool ConductorInFlight = false)
+{
+    /// <summary>A cap is reached by the numbers, whatever the cap-spent flag says: a restart park
+    /// can hold a run whose active time already passed its budget.</summary>
+    public bool OverBudget => SpawnsUsed >= SpawnBudget || Elapsed >= WallClockBudget;
+}
 
 /// <summary>The one thing that just happened to a run. The service raises exactly one of these per
 /// call to <see cref="RunPolicy.Decide"/>.</summary>
@@ -39,6 +51,13 @@ public abstract record RunEvent
     public sealed record StopRequested : RunEvent;
 
     public sealed record Tick : RunEvent;
+
+    /// <summary>A human `/continue` in a room whose run is active or parked, with the `hours:` it
+    /// carried.</summary>
+    public sealed record Continue(long MessageId, HoursToken Hours) : RunEvent;
+
+    /// <summary>One of the run's background jobs ended. The hub already posted its note.</summary>
+    public sealed record JobFinished(long NoteMessageId) : RunEvent;
 }
 
 /// <summary>What the hub should do about a run, and nothing else - no database write, no post, no
@@ -60,6 +79,12 @@ public abstract record RunDecision
 
     public sealed record Park(string Reason, bool CapSpent) : RunDecision;
 
+    /// <summary>A parked run gets <paramref name="Hours"/> more budget hours: its budget becomes
+    /// <paramref name="BudgetHours"/> and <paramref name="SpawnBudget"/>, counted from what it already
+    /// used when that passed the old budget. Its phase-entry counts reset, it resumes and its conductor
+    /// opens.</summary>
+    public sealed record Extend(int Hours, int BudgetHours, int SpawnBudget, long RootMessageId, IReadOnlyList<long> TriggerIds) : RunDecision;
+
     /// <summary><paramref name="Cause"/> says who ended the run, decided here rather than inferred by
     /// <c>SpawnerService</c> from <paramref name="Reason"/>'s text.</summary>
     public sealed record End(string Reason, ExchangeStopCause Cause) : RunDecision;
@@ -71,41 +96,54 @@ public abstract record RunDecision
 /// those lives in <c>SpawnerService</c>, which raises the events, assembles the state and carries the
 /// decision out.
 ///
-/// The hard caps (spawns, wall clock) are checked first for every event except
-/// <see cref="RunEvent.StopRequested"/>: an owner stopping a cap-exhausted run must get
+/// The hard caps (the run's spawn and wall-clock budget) are checked first for every event except
+/// three. <see cref="RunEvent.StopRequested"/>: an owner stopping a cap-exhausted run must get
 /// <see cref="RunDecision.End"/>, not <see cref="RunDecision.Park"/>, or the stop could not end the
-/// run without resuming it first.
+/// run without resuming it first. <see cref="RunEvent.Continue"/>: it exists to add budget to a run
+/// whose caps are spent. An accepted <c>phase: ping</c>: a run that is out of budget still presents.
 ///
 /// The cap checks also require <see cref="RunState.Status"/> to be <see cref="RunStatus.Active"/>.
 /// A parked or ended run's <c>SpawnsUsed</c>/<c>Elapsed</c> stay at or over a spent cap forever, so
 /// without this guard a <see cref="RunEvent.HumanPosted"/> resume against any parked run would
 /// re-Park here: a hard-capped park would re-Park instead of the one-line
 /// <see cref="RunDecision.Refuse"/>, and a soft park would re-Park as a spent wall-clock cap purely
-/// from having sat parked. A run that is not running cannot trip a cap again.</summary>
+/// from having sat parked. A run that is not running cannot trip a cap again.
+///
+/// While the run has a job in flight, waiting is not a stall and not a silence: the stall park and
+/// the conductor-silence re-ask do not fire, and <see cref="RunEvent.JobFinished"/> opens the
+/// conductor. A job ends by itself or by its timeout, so the wait always ends.</summary>
 public sealed class RunPolicy(RunLimits limits)
 {
     /// <summary>The cap-spent refusal text, public so the service posts the identical line rather
     /// than duplicating the string.</summary>
-    public const string CapSpentRefusal = "this run is parked because a cap is spent; /stop and start a new one";
+    public const string CapSpentRefusal = "this run is parked because a cap is spent; /continue hours: N adds budget, or /stop it";
 
     public RunDecision Decide(RunState s, RunEvent e, IReadOnlyList<long> pendingSteers)
     {
-        if (e is not RunEvent.StopRequested && s.Status == RunStatus.Active)
+        // A wake while the conductor is still running lets its turn finish, so a run out of budget
+        // still presents. The turn is bounded by the spawn timeout, and its post or its end is
+        // checked against the caps like any other event.
+        var passesCaps = e is RunEvent.StopRequested or RunEvent.Continue
+            || e is RunEvent.ConductorPosted { Refusal: null, Tag.Kind: "ping" }
+            || (e is RunEvent.Tick && s.ConductorInFlight);
+        if (!passesCaps && s.Status == RunStatus.Active)
         {
-            if (s.SpawnsUsed >= limits.Spawns)
-                return new RunDecision.Park($"the run used its {limits.Spawns} spawns", true);
-            if (s.Elapsed >= limits.WallClock)
-                return new RunDecision.Park($"the run passed {limits.WallClock} of active time", true);
+            if (s.SpawnsUsed >= s.SpawnBudget)
+                return new RunDecision.Park($"the run used its {s.SpawnBudget} spawns", true);
+            if (s.Elapsed >= s.WallClockBudget)
+                return new RunDecision.Park($"the run passed {s.WallClockBudget} of active time", true);
         }
 
         return e switch
         {
             RunEvent.ConductorPosted p => DecideConductorPosted(s, p),
             RunEvent.ExchangeConcluded x => DecideExchangeConcluded(s, x, pendingSteers),
-            RunEvent.SpawnSilent sp => DecideSpawnSilent(s, sp),
-            RunEvent.HumanPosted h => DecideHumanPosted(s, h),
+            RunEvent.SpawnSilent sp => DecideSpawnSilent(s, sp, pendingSteers),
+            RunEvent.HumanPosted h => DecideHumanPosted(s, h, pendingSteers),
             RunEvent.StopRequested => new RunDecision.End("stopped by the owner", ExchangeStopCause.Owner),
             RunEvent.Tick => DecideTick(s, pendingSteers),
+            RunEvent.Continue c => DecideContinue(s, c, pendingSteers),
+            RunEvent.JobFinished j => DecideJobFinished(s, j, pendingSteers),
             _ => throw new ArgumentOutOfRangeException(nameof(e), e, "unknown RunEvent"),
         };
     }
@@ -141,9 +179,14 @@ public sealed class RunPolicy(RunLimits limits)
         return new RunDecision.OpenConductor(s.RootMessageId, triggers);
     }
 
-    private RunDecision DecideSpawnSilent(RunState s, RunEvent.SpawnSilent sp)
+    private RunDecision DecideSpawnSilent(RunState s, RunEvent.SpawnSilent sp, IReadOnlyList<long> pendingSteers)
     {
         if (sp.ParticipantId != s.ConductorId) return new RunDecision.Nothing();
+
+        // The conductor ended its turn to wait on a job: JobFinished opens it again. A steer that
+        // came in while it ran does not wait for the job.
+        if (s.JobsInFlight > 0)
+            return pendingSteers.Count > 0 ? new RunDecision.OpenConductor(s.RootMessageId, pendingSteers) : new RunDecision.Nothing();
 
         if (s.SilencesThisPhase == 0) return new RunDecision.OpenConductor(s.RootMessageId, sp.TriggerIds);
 
@@ -154,16 +197,16 @@ public sealed class RunPolicy(RunLimits limits)
         return new RunDecision.OpenConductor(s.RootMessageId, sp.TriggerIds);
     }
 
-    private static RunDecision DecideHumanPosted(RunState s, RunEvent.HumanPosted h)
+    private static RunDecision DecideHumanPosted(RunState s, RunEvent.HumanPosted h, IReadOnlyList<long> pendingSteers)
     {
         // The service records the steer.
         if (s.Status == RunStatus.Active) return new RunDecision.Nothing();
 
         if (s.Status == RunStatus.Parked)
         {
-            if (s.CapSpent)
+            if (s.CapSpent || s.OverBudget)
                 return new RunDecision.Refuse(CapSpentRefusal);
-            return new RunDecision.OpenConductor(s.RootMessageId, [h.MessageId]);
+            return new RunDecision.OpenConductor(s.RootMessageId, [h.MessageId, .. pendingSteers]);
         }
 
         // Ended, or any other status: nothing left to steer.
@@ -174,8 +217,40 @@ public sealed class RunPolicy(RunLimits limits)
     {
         if (s.Status != RunStatus.Active || s.ExchangeOpen || s.AnythingInFlight) return new RunDecision.Nothing();
 
-        return pendingSteers.Count > 0
-            ? new RunDecision.OpenConductor(s.RootMessageId, pendingSteers)
-            : new RunDecision.Park("the run stalled", false);
+        if (pendingSteers.Count > 0) return new RunDecision.OpenConductor(s.RootMessageId, pendingSteers);
+        // Waiting on a job is not a stall.
+        return s.JobsInFlight > 0 ? new RunDecision.Nothing() : new RunDecision.Park("the run stalled", false);
+    }
+
+    /// <summary>A bare `/continue` on a soft park within budget resumes like any human post. Budget is
+    /// added to a park that is cap-spent or over budget by its numbers, or when the post names
+    /// `hours:`, with the default when it names none. The added hours count from whatever the run
+    /// already used, when that passed the old budget, so the extended run never re-parks at once.</summary>
+    private RunDecision DecideContinue(RunState s, RunEvent.Continue c, IReadOnlyList<long> pendingSteers)
+    {
+        if (s.Status == RunStatus.Active)
+            return new RunDecision.Refuse($"A run is active in this room (#{s.RunId}); /continue hours: N extends a parked run.");
+        if (s.Status != RunStatus.Parked) return new RunDecision.Nothing();
+        if (c.Hours.Kind == HoursKind.Invalid) return new RunDecision.Refuse(RunBudget.RangeNote);
+        IReadOnlyList<long> triggers = [c.MessageId, .. pendingSteers];
+        if (!s.CapSpent && !s.OverBudget && c.Hours.Kind == HoursKind.None) return new RunDecision.OpenConductor(s.RootMessageId, triggers);
+
+        var hours = c.Hours.Kind == HoursKind.Valid ? c.Hours.Value : limits.DefaultHours;
+        var usedHours = (int)Math.Ceiling(Max(s.WallClockBudget, s.Elapsed) / limits.Hour);
+        var usedSpawns = Math.Max(s.SpawnBudget, s.SpawnsUsed);
+        return new RunDecision.Extend(hours, usedHours + hours, usedSpawns + hours * limits.SpawnsPerHour, s.RootMessageId, triggers);
+    }
+
+    private static TimeSpan Max(TimeSpan a, TimeSpan b) => a >= b ? a : b;
+
+    /// <summary>An idle active run wakes its conductor with the job's note first. A busy one does
+    /// nothing now: the service keeps the note id with the pending steers, so the next conductor
+    /// spawn still gets it.</summary>
+    private static RunDecision DecideJobFinished(RunState s, RunEvent.JobFinished j, IReadOnlyList<long> pendingSteers)
+    {
+        if (s.Status != RunStatus.Active || s.ExchangeOpen || s.AnythingInFlight) return new RunDecision.Nothing();
+        var triggers = new List<long> { j.NoteMessageId };
+        triggers.AddRange(pendingSteers);
+        return new RunDecision.OpenConductor(s.RootMessageId, triggers);
     }
 }

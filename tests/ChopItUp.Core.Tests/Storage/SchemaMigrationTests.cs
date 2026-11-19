@@ -1219,7 +1219,7 @@ public sealed class SchemaMigrationTests : IDisposable
         }
 
         // A run can now be started and read back through RunStore against this migrated database.
-        var run = new RunStore(db).Start("general", "opus", "roadmap", "", 1, DateTimeOffset.UtcNow);
+        var run = new RunStore(db).Start("general", "opus", "roadmap", "", 1, 4, 40, DateTimeOffset.UtcNow);
         Assert.Equal(RunStatus.Active, run.Status);
 
         db.EnsureDatabase();
@@ -1881,6 +1881,57 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM participants WHERE id = 'opus-judge'"));
         Assert.Equal((long)ChopDb.SeedRoster.Count, ScalarLong("SELECT COUNT(*) FROM participants"));
         Assert.Equal("judge", new ParticipantStore(db).List().Single(p => p.Id == "opus-judge").Classes);
+    }
+
+    /// <summary>v15 shape plus exactly what ApplyV16 does to row data, stamped 16, and one parked
+    /// cap-spent run in the general room. Raw SQL on purpose, like <see cref="WriteRawV15"/>.</summary>
+    private void WriteRawV16WithAParkedRun()
+    {
+        WriteRawV15();
+        RawExec("""
+            INSERT INTO participants (id, display_name, kind, host, model, note, classes)
+            VALUES ('opus-judge','Opus Judge','model','claude','opus',NULL,'judge');
+            UPDATE participants SET classes = 'judge' WHERE id = 'gpt-5.6-sol' AND classes IS NULL;
+            UPDATE participants SET classes = 'visible' WHERE id = 'gpt-6-astra' AND classes IS NULL;
+            INSERT INTO runs (room_id, conductor_id, skill_name, arguments, status, reason, cap_spent, phase,
+                              root_message_id, started_at, parked_at, parked_seconds, spawns_used, exchanges)
+            VALUES ('general', 'opus', 'goal', '', 'parked', 'the run used its 80 spawns', 1, 'build/1',
+                    1, '2026-11-01T10:00:00.0000000+00:00', '2026-11-01T12:00:00.0000000+00:00', 0, 80, 12);
+            PRAGMA user_version = 16;
+            """);
+    }
+
+    [Fact]
+    public void A_v16_database_is_backed_up_then_its_runs_keep_the_old_caps_as_their_budget()
+    {
+        WriteRawV16WithAParkedRun();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(17, db.GetSchemaVersion());
+        Assert.Contains(".v16.", Path.GetFileName(db.LastBackupPath!));
+        Assert.Equal(16L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(1L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM runs"));
+        Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'budget_hours'"));
+
+        var run = new RunStore(db).Latest("general")!;
+        Assert.Equal((8, 80, (DateTimeOffset?)null, 0L), (run.BudgetHours, run.SpawnBudget, run.WaitingSince, run.WaitedSeconds));
+        Assert.Equal((RunStatus.Parked, true, 80, "build/1"), (run.Status, run.CapSpent, run.SpawnsUsed, run.Phase));
+    }
+
+    [Fact]
+    public void A_torn_v17_with_two_columns_added_but_stamp_16_is_finished_without_a_duplicate_column()
+    {
+        WriteRawV16WithAParkedRun();
+        RawExec("ALTER TABLE runs ADD COLUMN budget_hours INTEGER NOT NULL DEFAULT 8; ALTER TABLE runs ADD COLUMN waiting_since TEXT;");
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(17, db.GetSchemaVersion());
+        Assert.Equal(4L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name IN ('budget_hours','spawn_budget','waiting_since','waited_seconds')"));
+        Assert.Equal(80, new RunStore(db).Latest("general")!.SpawnBudget);
     }
 
     private static long BackupScalar(string backupPath, string sql)

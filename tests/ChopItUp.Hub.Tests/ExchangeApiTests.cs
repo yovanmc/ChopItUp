@@ -110,7 +110,7 @@ public sealed class ExchangeApiTests : IAsyncLifetime
     [Fact]
     public async Task A7_row27_a_run_driven_stop_marks_stoppedBy_run_on_the_wire()
     {
-        var runLimits = new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var runLimits = new RunLimits(SpawnsPerHour: 1, Hour: TimeSpan.FromHours(1), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
         var (host, runner, room) = await StartRunHostAsync(Fast, runLimits);
         await using var _ = host;
 

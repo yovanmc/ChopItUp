@@ -423,6 +423,7 @@ public sealed partial class SpawnerService : BackgroundService
     /// run, the stall park and the wall-clock park while idle would be unreachable.</summary>
     private void OnTick()
     {
+        ExpireJobs();
         foreach (var run in _runs.ListActive()) DriveRun(run, new RunEvent.Tick());
     }
 
@@ -515,7 +516,34 @@ public sealed partial class SpawnerService : BackgroundService
             var latest = _runs.Latest(m.RoomId);
             if (latest is { Status: RunStatus.Parked })
             {
-                PostNote(m.RoomId, $"A run is parked in this room (#{latest.Id}); resume it with a message or /stop it before starting another.");
+                PostNote(m.RoomId, $"A run is parked in this room (#{latest.Id}); resume it with a message, add budget with /continue hours: N, or /stop it before starting another.");
+                return;
+            }
+        }
+        // Only a human run-start post sets a run's hours (startsRun needs a human author). Refused
+        // before the policy opens anything, so no exchange and no run row exist for a bad value.
+        var startHours = startsRun ? RunBudget.Read(m.Body) : default;
+        if (startHours.Kind == HoursKind.Invalid)
+        {
+            PostNote(m.RoomId, $"Run not started: {RunBudget.RangeNote}");
+            return;
+        }
+
+        // A human /continue in a room with an active or parked run is the run's, never an exchange's:
+        // decided through RunPolicy, ahead of the parked-resume branch below that would otherwise
+        // read it as a plain resume.
+        if (ExchangeCommands.IsContinue(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
+        {
+            var continued = activeRun ?? (_runs.Latest(m.RoomId) is { Status: RunStatus.Parked } parkedForContinue ? parkedForContinue : null);
+            if (continued is not null)
+            {
+                DriveRun(continued, new RunEvent.Continue(m.Id, RunBudget.Read(m.Body)));
+                return;
+            }
+            // `hours:` only means something to a run; without one it must not reopen a plain exchange.
+            if (RunBudget.Read(m.Body).Kind != HoursKind.None)
+            {
+                PostNote(m.RoomId, "No run is parked in this room; hours: applies to a parked run, so nothing was continued.");
                 return;
             }
         }
@@ -539,17 +567,12 @@ public sealed partial class SpawnerService : BackgroundService
         }
 
         // A /continue post never reaches the policy's message path (it would resolve as an unknown
-        // skill). Decided here, after the run branches above: a parked run resumes on it like on any
-        // human post, an active run refuses it, and outside runs it targets the exchange the message
-        // replies to, else the last owner-rooted one in room order (the room list is what Reopen
-        // moves a reopened exchange to the end of; the remembered list only knows the opening order).
+        // skill). A room with a run took the run branch above. Outside runs it targets the exchange
+        // the message replies to, else the last owner-rooted one in room order (the room list is what
+        // Reopen moves a reopened exchange to the end of; the remembered list only knows the opening
+        // order).
         if (ExchangeCommands.IsContinue(m.Body) && _roster.FirstOrDefault(p => p.Id == m.AuthorId)?.Kind == "human")
         {
-            if (activeRun is not null)
-            {
-                PostNote(m.RoomId, $"A run is active in this room (#{activeRun.Id}); /continue applies to plain exchanges.");
-                return;
-            }
             Exchange? continued;
             if (m.ReplyToId is { } continueOf)
             {
@@ -595,10 +618,12 @@ public sealed partial class SpawnerService : BackgroundService
             // exactly one mention). Persist the run itself.
             var conductorId = opened.Pending.Keys.Single();
             var skillFound = (SkillResolution.Found)skill!;
-            var runRow = _runs.Start(m.RoomId, conductorId, skillFound.Skill.Name, skillFound.Arguments, m.Id, now);
+            var hours = startHours.Kind == HoursKind.Valid ? startHours.Value : _runLimits.DefaultHours;
+            var runRow = _runs.Start(m.RoomId, conductorId, skillFound.Skill.Name, skillFound.Arguments, m.Id,
+                hours, hours * _runLimits.SpawnsPerHour, now);
             _runs.CountExchange(runRow.Id);
-            PostNote(m.RoomId, $"Run #{runRow.Id} started: @{conductorId} conducts; caps {_runLimits.Spawns} spawns, "
-                + $"{_runLimits.WallClock.TotalHours:0}h active time, phase re-entry {_runLimits.PhaseEntries}.");
+            PostNote(m.RoomId, $"Run #{runRow.Id} started: @{conductorId} conducts; budget {hours} h of active time and "
+                + $"{runRow.SpawnBudget} spawns, phase re-entry {_runLimits.PhaseEntries}.");
             return;
         }
 
@@ -631,15 +656,18 @@ public sealed partial class SpawnerService : BackgroundService
         RefusalsThisPhase: _refusalsThisPhase.GetValueOrDefault(run.Id), SilencesThisPhase: _silencesThisPhase.GetValueOrDefault(run.Id),
         ExchangeOpen: Newest(run.RoomId) is { Status: ExchangeStatus.Open },
         AnythingInFlight: InFlightIn(run.RoomId).Count > 0,
-        RootMessageId: run.RootMessageId);
+        RootMessageId: run.RootMessageId,
+        SpawnBudget: run.SpawnBudget, WallClockBudget: _runLimits.WallClockFor(run.BudgetHours),
+        JobsInFlight: _jobs.TryGetValue(run.Id, out var jobs) ? jobs.Count : 0,
+        ConductorInFlight: _inFlight.ContainsKey((run.RoomId, run.ConductorId)));
 
     /// <summary>What the prompt shows about the run a spawn is launched inside. Read fresh at every
     /// launch, never cached, so a re-spawned conductor sees the counters as they stand now.</summary>
     private RunView BuildRunView(Run run, string participantId, DateTimeOffset now) => new(
         run.Id, run.ConductorId, participantId == run.ConductorId, run.SkillName, run.Arguments,
         run.Phase, _runs.PhaseEntries(run.Id).GetValueOrDefault(run.Phase), _runLimits.PhaseEntries,
-        run.Exchanges, run.SpawnsUsed, _runLimits.Spawns,
-        RunStore.ActiveElapsed(run, now), _runLimits.WallClock,
+        run.Exchanges, run.SpawnsUsed, run.SpawnBudget,
+        RunStore.ActiveElapsed(run, now), _runLimits.WallClockFor(run.BudgetHours),
         _runs.Artifacts(run.Id), _runs.GateRuns(run.Id));
 
     /// <summary>Assembles the state, asks <see cref="RunPolicy"/>, carries the decision out (never
@@ -649,7 +677,7 @@ public sealed partial class SpawnerService : BackgroundService
         var pending = _steers.TryGetValue(run.RoomId, out var list) ? list : new List<long>();
         var decision = _runPolicy.Decide(AssembleRunState(run), ev, pending);
         CarryOut(run, decision);
-        if (decision is RunDecision.OpenConductor) pending.Clear();
+        if (decision is RunDecision.OpenConductor or RunDecision.Extend) pending.Clear();
     }
 
     /// <summary>What <see cref="RunPolicy"/> decided, carried out.
@@ -683,6 +711,14 @@ public sealed partial class SpawnerService : BackgroundService
                 break;
             case RunDecision.Park park:
                 ParkRun(run, park.Reason, park.CapSpent);
+                break;
+            case RunDecision.Extend ext:
+                var extended = _runs.Extend(run.Id, ext.BudgetHours, ext.SpawnBudget, _clock.GetUtcNow());
+                _refusalsThisPhase[run.Id] = 0;
+                _silencesThisPhase[run.Id] = 0;
+                PostNote(run.RoomId, $"Run #{run.Id} extended by {ext.Hours} h and {ext.Hours * _runLimits.SpawnsPerHour} spawns: budget now {extended.BudgetHours} h "
+                    + $"and {extended.SpawnBudget} spawns, phase entry counts reset.");
+                OpenConductorExchange(extended, ext.RootMessageId, ext.TriggerIds);
                 break;
             case RunDecision.End end:
                 EndRun(run, end.Reason, end.Cause);
@@ -742,11 +778,17 @@ public sealed partial class SpawnerService : BackgroundService
 
         // Count a phase entry only past the first silence, and only when the run is actually being
         // asked again (the hard caps still win first, and a Park needs no phase entry).
-        if (state.SilencesThisPhase >= 1 && decision is RunDecision.OpenConductor)
-            _runs.EnterPhase(run.Id, run.Phase, _clock.GetUtcNow());
-        _silencesThisPhase[run.Id] = state.SilencesThisPhase + 1;
+        // A conductor that ended its turn to wait on a job was not silent; it is opened again only
+        // for a steer, which the decision consumed.
+        if (state.JobsInFlight == 0)
+        {
+            if (state.SilencesThisPhase >= 1 && decision is RunDecision.OpenConductor)
+                _runs.EnterPhase(run.Id, run.Phase, _clock.GetUtcNow());
+            _silencesThisPhase[run.Id] = state.SilencesThisPhase + 1;
+        }
 
         CarryOut(run, decision);
+        if (state.JobsInFlight > 0 && decision is RunDecision.OpenConductor) pending.Clear();
     }
 
     /// <summary>The conductor's post passed every class rule and asks for work: rooted at that post
@@ -794,11 +836,12 @@ public sealed partial class SpawnerService : BackgroundService
             PostNote(run.RoomId, ExchangePolicy.Stop(x, cause));
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
+        KillJobs(run.Id);
         _steers.Remove(run.RoomId);
         var elapsed = RunStore.ActiveElapsed(ended, now);
         var phaseEntries = _runs.PhaseEntries(ended.Id).GetValueOrDefault(ended.Phase);
-        PostNote(run.RoomId, $"Run #{run.Id} ended: {reason}. Used {ended.SpawnsUsed}/{_runLimits.Spawns} spawns, "
-            + $"{elapsed.TotalHours:0.0}/{_runLimits.WallClock.TotalHours:0.0}h active time, phase '{ended.Phase}' entered {phaseEntries}/{_runLimits.PhaseEntries} time(s).");
+        PostNote(run.RoomId, $"Run #{run.Id} ended: {reason}. Used {ended.SpawnsUsed}/{ended.SpawnBudget} spawns, "
+            + $"{elapsed.TotalHours:0.0}/{_runLimits.WallClockFor(ended.BudgetHours).TotalHours:0.0}h active time, phase '{ended.Phase}' entered {phaseEntries}/{_runLimits.PhaseEntries} time(s).");
         Publish(run.RoomId);
     }
 
@@ -909,8 +952,19 @@ public sealed partial class SpawnerService : BackgroundService
             // touches its own worktree and the gated owner commit.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             if (x.WaitsForClose) continue;
+            // A run that has used its spawn budget launches nothing more. With nothing left running
+            // in the room, a tick lets the policy park it; otherwise that spawn's end drives it.
+            if (_runs.Active(x.RoomId) is { } run && run.SpawnsUsed >= run.SpawnBudget)
+            {
+                if (inRoom.Count == 0) _events.Writer.TryWrite(new TickEvent());
+                continue;
+            }
             var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
-            foreach (var request in due) Launch(x, request, now);
+            foreach (var request in due)
+            {
+                if (_runs.Active(x.RoomId) is { } r && r.SpawnsUsed >= r.SpawnBudget) break;
+                Launch(x, request, now);
+            }
             if (due.Count > 0) Publish(x.RoomId);
         }
     }
@@ -1374,20 +1428,48 @@ public sealed partial class SpawnerService : BackgroundService
         // SpawnTimeout after the last instant the run was known busy, never "SpawnTimeout from now":
         // another room's activity reruns this method on every pass and would push a stalled run's
         // deadline forward forever.
+        //
+        // This pass also stamps job waits, since it runs after every batch of loop events: a run with
+        // a job in flight and nothing open or in flight starts waiting, and anything else ends an open
+        // wait. A waiting run's wall clock is frozen (RunStore.ActiveElapsed), so it gets no wall-clock
+        // wake, and the deadline of a running one is the exact inverse of ActiveElapsed.
         var activeIds = new HashSet<long>();
-        foreach (var run in _runs.ListActive())
+        foreach (var listed in _runs.ListActive())
         {
-            activeIds.Add(run.Id);
-            var wallClockDeadline = run.StartedAt + TimeSpan.FromSeconds(run.ParkedSeconds) + _runLimits.WallClock;
-            if (next is null || wallClockDeadline < next) next = wallClockDeadline;
+            activeIds.Add(listed.Id);
+            var busy = Newest(listed.RoomId) is { Status: ExchangeStatus.Open } || InFlightIn(listed.RoomId).Count > 0;
+            var hasJobs = _jobs.TryGetValue(listed.Id, out var runJobs) && runJobs.Count > 0;
+            var run = listed;
+            // One run's failed wait write must not leave every room without a wake.
+            try
+            {
+                run = hasJobs && !busy
+                    ? (listed.WaitingSince is null ? _runs.StartWait(listed.Id, now) : listed)
+                    : (listed.WaitingSince is not null ? _runs.EndWait(listed.Id, now) : listed);
+            }
+            catch (Exception e) when (e is not OperationCanceledException)
+            {
+                Console.Error.WriteLine($"spawner: run #{listed.Id} wait stamp failed: {e.GetType().Name}: {e.Message}");
+            }
+            if (run.WaitingSince is null)
+            {
+                var wallClockDeadline = run.StartedAt + TimeSpan.FromSeconds(run.ParkedSeconds + run.WaitedSeconds) + _runLimits.WallClockFor(run.BudgetHours);
+                // Past the deadline with the conductor still running, the policy lets that turn
+                // finish (bounded by the spawn timeout), and its end drives the run: no wake, or the
+                // 10 ms floor below would spin.
+                var conductorFinishing = wallClockDeadline <= now && _inFlight.ContainsKey((run.RoomId, run.ConductorId));
+                if (!conductorFinishing && (next is null || wallClockDeadline < next)) next = wallClockDeadline;
+            }
 
-            var busy = Newest(run.RoomId) is { Status: ExchangeStatus.Open } || InFlightIn(run.RoomId).Count > 0;
-            if (busy) { _lastRunActivity.Remove(run.Id); continue; }
+            if (busy || hasJobs) { _lastRunActivity.Remove(run.Id); continue; }
             if (!_lastRunActivity.TryGetValue(run.Id, out var idleSince)) _lastRunActivity[run.Id] = idleSince = now;
             var stallDeadline = idleSince + _runLimits.SpawnTimeout;
             if (next is null || stallDeadline < next) next = stallDeadline;
         }
         foreach (var staleId in _lastRunActivity.Keys.Where(id => !activeIds.Contains(id)).ToList()) _lastRunActivity.Remove(staleId);
+        // A job's own deadline, for a parked run's jobs too: OnTick expires a job that never reported.
+        foreach (var job in _jobs.Values.SelectMany(jobs => jobs.Values))
+            if (next is null || job.Deadline < next) next = job.Deadline;
 
         _wake?.Cancel();
         _wake?.Dispose();
@@ -1445,17 +1527,20 @@ public sealed partial class SpawnerService : BackgroundService
         catch (Exception e) { Console.Error.WriteLine($"SignalR {ChangedEvent} to room '{roomId}' failed: {e.Message}"); }
     }
 
-    private void PostNote(string roomId, string text)
+    /// <summary>Returns the note's message id, or null when it could not be posted.</summary>
+    private long? PostNote(string roomId, string text)
     {
         try
         {
             var message = _store.Post(roomId, ChopDb.HubParticipantId, text);
             _signal.Publish(roomId, message);   // re-enters this loop as a PostedEvent; system authors are ignored by the policy
+            return message.Id;
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
             // A note is the trail, not the mechanism: losing one must not lose the exchange or the loop.
             Console.Error.WriteLine($"spawner: note to '{roomId}' not posted ({e.GetType().Name}: {e.Message}): {text.Split('\n')[0]}");
+            return null;
         }
     }
 
