@@ -154,6 +154,8 @@ public static class HubHost
             builder.Services.AddSingleton(sp => new ExchangeWorktrees(
                 sp.GetRequiredService<MessageStore>(), sp.GetRequiredService<RoomTrails>(), RoomPathRules.ForHub(options.DataDir)));
             builder.Services.AddSingleton(sp => new RoomArtifacts(sp.GetRequiredService<MessageStore>(), RoomPathRules.ForHub(options.DataDir)));
+            builder.Services.AddSingleton(RoomPathRules.ForHub(options.DataDir));
+            builder.Services.AddSingleton<RoomFileGate>();
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
                 .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>().WithTools<SkillTools>();
@@ -199,6 +201,7 @@ public static class HubHost
             app.MapHub<RoomHub>("/hub/rooms");
             app.MapChatApi();
             app.MapRoomsApi();
+            app.MapRoomFilesApi();
             app.MapRolesApi();
             app.MapExchangeApi();
             app.MapRunsApi();
