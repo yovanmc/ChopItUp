@@ -120,12 +120,13 @@ public sealed class RunPolicy(RunLimits limits)
 
     public RunDecision Decide(RunState s, RunEvent e, IReadOnlyList<long> pendingSteers)
     {
-        // A wake while the conductor is still running lets its turn finish, so a run out of budget
-        // still presents. The turn is bounded by the spawn timeout, and its post or its end is
-        // checked against the caps like any other event.
+        // A wake, a steer or a job finish while the conductor is still running lets its turn finish,
+        // so a run out of budget still presents (each decides Nothing while the conductor runs). The
+        // turn is bounded by the spawn timeout, and its post or its end is checked against the caps
+        // like any other event.
         var passesCaps = e is RunEvent.StopRequested or RunEvent.Continue
             || e is RunEvent.ConductorPosted { Refusal: null, Tag.Kind: "ping" }
-            || (e is RunEvent.Tick && s.ConductorInFlight);
+            || (e is RunEvent.Tick or RunEvent.HumanPosted or RunEvent.JobFinished && s.ConductorInFlight);
         if (!passesCaps && s.Status == RunStatus.Active)
         {
             if (s.SpawnsUsed >= s.SpawnBudget)
@@ -224,8 +225,8 @@ public sealed class RunPolicy(RunLimits limits)
 
     /// <summary>A bare `/continue` on a soft park within budget resumes like any human post. Budget is
     /// added to a park that is cap-spent or over budget by its numbers, or when the post names
-    /// `hours:`, with the default when it names none. The added hours count from whatever the run
-    /// already used, when that passed the old budget, so the extended run never re-parks at once.</summary>
+    /// `hours:`, with the default when it names none. The added hours count from the whole hours the
+    /// run already used, when that passed the old budget, so the extended run never re-parks at once.</summary>
     private RunDecision DecideContinue(RunState s, RunEvent.Continue c, IReadOnlyList<long> pendingSteers)
     {
         if (s.Status == RunStatus.Active)
@@ -236,7 +237,9 @@ public sealed class RunPolicy(RunLimits limits)
         if (!s.CapSpent && !s.OverBudget && c.Hours.Kind == HoursKind.None) return new RunDecision.OpenConductor(s.RootMessageId, triggers);
 
         var hours = c.Hours.Kind == HoursKind.Valid ? c.Hours.Value : limits.DefaultHours;
-        var usedHours = (int)Math.Ceiling(Max(s.WallClockBudget, s.Elapsed) / limits.Hour);
+        // Floor: a wall-clock park always lands a moment past the deadline, and rounding that up would
+        // grant an hour nobody asked for. Floor plus N (N >= 1) is still past what the run used.
+        var usedHours = (int)Math.Floor(Max(s.WallClockBudget, s.Elapsed) / limits.Hour);
         var usedSpawns = Math.Max(s.SpawnBudget, s.SpawnsUsed);
         return new RunDecision.Extend(hours, usedHours + hours, usedSpawns + hours * limits.SpawnsPerHour, s.RootMessageId, triggers);
     }

@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
@@ -11,7 +11,7 @@ namespace ChopItUp.Hub.Tests;
 /// straight through <see cref="RunStore"/> rather than driven through a spawn: the endpoint is a
 /// projection of the store, and the three states it has to answer for include two
 /// (<c>parked</c>, <c>ended</c>) that a real hub cannot be walked into inside a test: the caps are
-/// hard code, so parking one for real costs 8 hours or 80 spawns.</summary>
+/// hard code, so parking one for real costs its default 4 hours or 40 spawns.</summary>
 public sealed class RunsApiTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.Parse("2026-03-01T09:00:00Z");

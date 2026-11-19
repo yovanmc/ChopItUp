@@ -18,9 +18,10 @@ public sealed partial class SpawnerService
 
     private sealed record TrackedJob(string RoomId, Action Kill, DateTimeOffset Deadline);
 
-    // Loop thread only. Run id -> job id -> job, and every job id that already finished.
+    // Loop thread only. Run id -> job id -> job, and run id -> every job id that already finished in
+    // that run (dropped when the run ends, so a later run may reuse a job id).
     private readonly Dictionary<long, Dictionary<string, TrackedJob>> _jobs = new();
-    private readonly HashSet<string> _finishedJobs = new(StringComparer.Ordinal);
+    private readonly Dictionary<long, HashSet<string>> _finishedJobs = new();
 
     /// <summary>Counts <paramref name="jobId"/> against the room's active or parked run until
     /// <see cref="FinishJob"/>, or until <paramref name="timeout"/> plus <see cref="JobGrace"/> passes.
@@ -41,14 +42,14 @@ public sealed partial class SpawnerService
 
     private void OnJobStarted(string roomId, string jobId, TimeSpan timeout, Action kill)
     {
-        if (_finishedJobs.Contains(jobId)) return;   // its finish report already came in: nothing to track
         if (RunOwning(roomId) is not { } run)
         {
             KillOffLoop(roomId, jobId, kill);
-            _finishedJobs.Add(jobId);
             PostNote(roomId, $"Job {jobId} was stopped: this room has no active or parked run to wait for it.");
             return;
         }
+        // Its finish report already came in: nothing to track.
+        if (_finishedJobs.TryGetValue(run.Id, out var finished) && finished.Contains(jobId)) return;
         if (!_jobs.TryGetValue(run.Id, out var jobs)) _jobs[run.Id] = jobs = new Dictionary<string, TrackedJob>(StringComparer.Ordinal);
         jobs[jobId] = new TrackedJob(roomId, kill, _clock.GetUtcNow() + timeout + JobGrace);
     }
@@ -57,9 +58,10 @@ public sealed partial class SpawnerService
     /// an ended run already killed, or one the hub never tracked, posts its note and nothing else.</summary>
     private void OnJobFinished(string roomId, string jobId, string note)
     {
-        _finishedJobs.Add(jobId);
         var noteId = PostNote(roomId, note);
         if (RunOwning(roomId) is not { } run) return;
+        if (!_finishedJobs.TryGetValue(run.Id, out var finished)) _finishedJobs[run.Id] = finished = new HashSet<string>(StringComparer.Ordinal);
+        finished.Add(jobId);
         if (!_jobs.TryGetValue(run.Id, out var jobs) || !jobs.Remove(jobId)) return;
         if (jobs.Count == 0) _jobs.Remove(run.Id);
         if (noteId is not { } id) return;
@@ -85,15 +87,12 @@ public sealed partial class SpawnerService
         }
     }
 
-    /// <summary>Kills every job of the run and forgets them.</summary>
+    /// <summary>Run end: kills every job of the run and forgets them and its finished ids.</summary>
     private void KillJobs(long runId)
     {
+        _finishedJobs.Remove(runId);
         if (!_jobs.Remove(runId, out var jobs)) return;
-        foreach (var (jobId, job) in jobs)
-        {
-            _finishedJobs.Add(jobId);
-            KillOffLoop(job.RoomId, jobId, job.Kill);
-        }
+        foreach (var (jobId, job) in jobs) KillOffLoop(job.RoomId, jobId, job.Kill);
     }
 
     /// <summary>Off the loop: a kill may wait on a service interrupt. One kill that throws does not

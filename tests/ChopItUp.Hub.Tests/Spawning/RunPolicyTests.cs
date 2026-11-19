@@ -349,7 +349,19 @@ public sealed class RunPolicyTests
 
         Assert.Equal(RunPolicy.CapSpentRefusal, Assert.IsType<RunDecision.Refuse>(_policy.Decide(s, new RunEvent.HumanPosted(90), [])).Note);
         var extend = Assert.IsType<RunDecision.Extend>(_policy.Decide(s, new RunEvent.Continue(91, default), []));
-        Assert.Equal((4, 17, 25), (extend.Hours, extend.BudgetHours, extend.SpawnBudget));   // ceil(12.5 h) + 4, max(5, 2) + 4 * 5
+        Assert.Equal((4, 16, 25), (extend.Hours, extend.BudgetHours, extend.SpawnBudget));   // floor(12.5 h) + 4, max(5, 2) + 4 * 5
+    }
+
+    // A real wall-clock park lands a moment past the deadline: /continue hours: 2 adds two hours,
+    // not three.
+    [Fact]
+    public void Continue_after_a_wall_clock_park_just_past_the_deadline_adds_exactly_the_named_hours()
+    {
+        var s = Base() with { Status = RunStatus.Parked, CapSpent = true, Elapsed = WallClock + TimeSpan.FromSeconds(1) };
+        var two = new ChopItUp.Core.Skills.HoursToken(ChopItUp.Core.Skills.HoursKind.Valid, 2);
+
+        var extend = Assert.IsType<RunDecision.Extend>(_policy.Decide(s, new RunEvent.Continue(96, two), []));
+        Assert.Equal((2, 3), (extend.Hours, extend.BudgetHours));
     }
 
     // A steer or job note left pending rides the resume.
@@ -362,14 +374,16 @@ public sealed class RunPolicyTests
         Assert.Equal([94L, 7L], Assert.IsType<RunDecision.Extend>(_policy.Decide(soft with { CapSpent = true }, new RunEvent.Continue(94, default), [7])).TriggerIds);
     }
 
-    // The wall-clock wake while the conductor is still running lets its turn finish, so it can still
-    // present. Its end or a non-ping post is checked against the caps.
+    // The wall-clock wake, a steer or a job finish while the conductor is still running lets its turn
+    // finish, so it can still present. Its end or a non-ping post is checked against the caps.
     [Fact]
     public void A_tick_past_the_budget_lets_a_running_conductor_finish_and_anything_else_parks()
     {
         var s = Base() with { Elapsed = WallClock + TimeSpan.FromMinutes(5), AnythingInFlight = true, ConductorInFlight = true };
 
         Assert.IsType<RunDecision.Nothing>(_policy.Decide(s, new RunEvent.Tick(), []));
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(s, new RunEvent.HumanPosted(96), []));
+        Assert.IsType<RunDecision.Nothing>(_policy.Decide(s with { JobsInFlight = 1 }, new RunEvent.JobFinished(97), []));
         var build = new RunEvent.ConductorPosted(95, new PhaseTag("build", null), ["sonnet"], null);
         Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s, build, [])).CapSpent);
         Assert.True(Assert.IsType<RunDecision.Park>(_policy.Decide(s with { ConductorInFlight = false }, new RunEvent.Tick(), [])).CapSpent);

@@ -6,7 +6,7 @@ import { setRoster } from './participants';
 import type { RunSnapshot } from './types';
 
 /** `parked` and `ended` cannot be reached against a real hub inside a build: the caps are hard
- *  code, so parking one for real costs 8 hours, 80 spawns or three phase re-entries. The browser leg
+ *  code, so parking one for real costs its default 4 hours or 40 spawns, or three phase re-entries. The browser leg
  *  proves `active` and the no-run case; these hand-written rows are what prove the other two
  *  renders.
  *

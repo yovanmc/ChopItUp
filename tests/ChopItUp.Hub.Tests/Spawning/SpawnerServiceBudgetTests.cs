@@ -90,12 +90,11 @@ public sealed class SpawnerServiceBudgetTests
         runs.EnterPhase(parked.Id, "build/1", DateTimeOffset.UtcNow);   // a count the extension must clear
 
         await PostAsInHost(host, "opus", room, "/continue hours: 3");   // only a human post sets hours
-        await Task.Delay(300);
-        Assert.Equal((RunStatus.Parked, 1, 1), (runs.Latest(room)!.Status, runs.Latest(room)!.BudgetHours, runs.Latest(room)!.SpawnBudget));
 
+        // The loop handles posts in order, so this note proves the model's post was already decided.
         await Post(host, room, "/continue hours: 0");
         Assert.Equal("hours: must be a whole number from 1 to 8 (default 4).", (await WaitForNoteContaining(host, room, "whole number")).Body);
-        Assert.Equal(RunStatus.Parked, runs.Latest(room)!.Status);
+        Assert.Equal((RunStatus.Parked, 1, 1), (runs.Latest(room)!.Status, runs.Latest(room)!.BudgetHours, runs.Latest(room)!.SpawnBudget));
 
         // Held in flight, so no later silence counts a phase entry before the asserts below.
         var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -150,7 +149,8 @@ public sealed class SpawnerServiceBudgetTests
         var launches = 0;
         runner.Handler = async (spec, _, _) =>
         {
-            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet" && Interlocked.Increment(ref launches) == 1)
+            // The second run's first turn starts a job with the same id: a finished id belongs to its run.
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet" && Interlocked.Increment(ref launches) is 1 or 3)
                 spawner.TrackJob(room, "render-1", TimeSpan.FromHours(2), () => { });
             else
                 await PostAsInHost(host, "sonnet", room, "phase: ping rendered");
@@ -173,6 +173,10 @@ public sealed class SpawnerServiceBudgetTests
         Assert.True(ended.WaitedSeconds >= 30 * 60);
         Assert.True(RunStore.ActiveElapsed(ended, clock.GetUtcNow()) < limits.Hour);
         await WaitForNoteContaining(host, room, "Job render-1 exited with code 0.");
+
+        await Post(host, room, "/build-thing @sonnet again");
+        await runner.NextSpecAsync(Wait);
+        await WaitForRun(host, room, r => r.Id != ended.Id && r.WaitingSince is not null);
     }
 
     private static async Task WaitForCount(Func<int> read, int expected)
@@ -200,7 +204,9 @@ public sealed class SpawnerServiceBudgetTests
         await Post(host, room, "/build-thing @sonnet begin");
         await runner.NextSpecAsync(Wait);
         await WaitForRun(host, room, r => r.Status == RunStatus.Parked);   // the spawn budget is spent
-        await Task.Delay(300);
+        // A later loop round trip: the refusal proves the park was fully carried out before the kill count is read.
+        await Post(host, room, "keep going");
+        await WaitForNoteContaining(host, room, "a cap is spent");
         Assert.Equal(0, Volatile.Read(ref kills));
 
         if (how == "text") await Post(host, room, "/stop");
@@ -289,7 +295,9 @@ public sealed class SpawnerServiceBudgetTests
         await Post(host, room, "/build-thing @sonnet begin");
         await runner.NextSpecAsync(Wait);
         clock.Advance(TimeSpan.FromMinutes(15));   // past the 10-minute budget, conductor still running
-        await Task.Delay(500);
+        // A steer past the budget is checked against the caps too, and its note is a loop round trip.
+        await Post(host, room, "also cover the edge cases");
+        await WaitForNoteContaining(host, room, "Steer noted");
         Assert.Equal(RunStatus.Active, host.Services.GetRequiredService<RunStore>().Latest(room)!.Status);
 
         finish.SetResult();
@@ -304,10 +312,8 @@ public sealed class SpawnerServiceBudgetTests
         var limits = new RunLimits(SpawnsPerHour: 3, Hour: TimeSpan.FromHours(1), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
         var (host, runner, room) = await StartRunHostAsync(Instant, limits);
         await using var _ = host;
-        var launches = 0;
         runner.Handler = async (spec, _, _) =>
         {
-            Interlocked.Increment(ref launches);
             switch (FakeProcessRunner.ParticipantOf(spec))
             {
                 case "sonnet": await PostAsInHost(host, "sonnet", room, "phase: build @opus @gpt-6-astra build it"); break;
@@ -320,9 +326,7 @@ public sealed class SpawnerServiceBudgetTests
         await Post(host, room, "/build-thing @sonnet begin");
         var parked = await WaitForRun(host, room, r => r.Status == RunStatus.Parked);
         Assert.True(parked.CapSpent);
-        Assert.Equal(3, parked.SpawnsUsed);
-        await Task.Delay(500);
-        Assert.Equal(3, Volatile.Read(ref launches));   // nothing launched past the budget
+        Assert.Equal(3, parked.SpawnsUsed);   // a launch past the budget would have counted a fourth spawn
     }
 
     /// <summary>A hub that dies while a run waits on a job: the restart park folds the open wait, so
@@ -331,19 +335,26 @@ public sealed class SpawnerServiceBudgetTests
     public async Task A_restart_parks_a_waiting_run_and_keeps_its_wait_out_of_the_active_time()
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_restart_" + Guid.NewGuid().ToString("N"));
-        TemplateDatabase.SeedInto(dir);
-        var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
-        db.EnsureDatabase();
-        var now = DateTimeOffset.UtcNow;
-        var seeded = new RunStore(db).Start("general", "opus", "build-thing", "", 1, 4, 40, now.AddHours(-3));
-        new RunStore(db).StartWait(seeded.Id, now.AddHours(-2));
+        try
+        {
+            TemplateDatabase.SeedInto(dir);
+            var db = new ChopDb(Path.Combine(dir, "chopitup.db"));
+            db.EnsureDatabase();
+            var now = DateTimeOffset.UtcNow;
+            var seeded = new RunStore(db).Start("general", "opus", "build-thing", "", 1, 4, 40, now.AddHours(-3));
+            new RunStore(db).StartWait(seeded.Id, now.AddHours(-2));
 
-        await using var host = await HubTestHost.StartAsync(dir, processRunner: new FakeProcessRunner());
+            await using var host = await HubTestHost.StartAsync(dir, processRunner: new FakeProcessRunner());
 
-        var run = host.Services.GetRequiredService<RunStore>().ById(seeded.Id)!;
-        Assert.Equal((RunStatus.Parked, (DateTimeOffset?)null), (run.Status, run.WaitingSince));
-        Assert.InRange(run.WaitedSeconds, 7190, 7300);
-        Assert.InRange(RunStore.ActiveElapsed(run, DateTimeOffset.UtcNow), TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(62));
+            var run = host.Services.GetRequiredService<RunStore>().ById(seeded.Id)!;
+            Assert.Equal((RunStatus.Parked, (DateTimeOffset?)null), (run.Status, run.WaitingSince));
+            Assert.InRange(run.WaitedSeconds, 7190, 7300);
+            Assert.InRange(RunStore.ActiveElapsed(run, DateTimeOffset.UtcNow), TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(62));
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
     }
 
     [Fact]

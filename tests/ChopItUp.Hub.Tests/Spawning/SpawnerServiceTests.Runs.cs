@@ -750,29 +750,34 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
     }
 
     [Fact]
-    public async Task Run09_the_wall_clock_cap_parks_a_run_even_while_its_conductor_is_still_in_flight()
+    public async Task Run09_the_wall_clock_cap_parks_a_run_even_while_a_worker_is_still_in_flight()
     {
         var fakeClock = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UtcNow);
         var runLimits = new RunLimits(SpawnsPerHour: 100, Hour: TimeSpan.FromMinutes(1), DefaultHours: 1, SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
         var (host, runner, room) = await StartRunHostAsync(Instant, runLimits, fakeClock);
         await using var _ = host;
 
-        var holdConductor = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        CancellationToken conductorCt = default;
+        var holdWorker = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken workerCt = default;
         runner.Handler = async (spec, _, ct) =>
         {
-            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            switch (FakeProcessRunner.ParticipantOf(spec))
             {
-                conductorCt = ct;
-                try { await holdConductor.Task.WaitAsync(ct); } catch (OperationCanceledException) { }
+                case "sonnet": await PostAsInHost(host, "sonnet", room, "phase: build @opus write the thing"); break;
+                case "opus":
+                    workerCt = ct;
+                    try { await holdWorker.Task.WaitAsync(ct); } catch (OperationCanceledException) { }
+                    break;
             }
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
 
         await host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body = "/build-thing @sonnet begin" });
-        await runner.NextSpecAsync(Wait);   // sonnet launched, held in flight - never idle
+        await runner.NextSpecAsync(Wait);   // sonnet: hands the build to opus and exits
+        await runner.NextSpecAsync(Wait);   // opus launched, held in flight - never idle
 
-        fakeClock.Advance(TimeSpan.FromMinutes(2));   // past the 1-minute wall clock, while sonnet is STILL in flight
+        fakeClock.Advance(TimeSpan.FromMinutes(2));   // past the 1-minute wall clock, while opus is STILL in flight
+        // (a running CONDUCTOR is let finish instead, so it can still present: SpawnerServiceBudgetTests)
 
         var parkedNote = await WaitForNoteContaining(host, room, "parked");
         Assert.Contains("active time", parkedNote.Body);
@@ -780,8 +785,8 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
         var run = host.Services.GetRequiredService<RunStore>().Latest(room);
         Assert.Equal(RunStatus.Parked, run!.Status);
         Assert.True(run.CapSpent);                       // the wall clock is a hard cap
-        Assert.True(conductorCt.IsCancellationRequested);   // a park stops in-flight spawns, even mid-turn
-        holdConductor.TrySetResult();
+        Assert.True(workerCt.IsCancellationRequested);   // a park stops in-flight spawns, even mid-turn
+        holdWorker.TrySetResult();
     }
 
     /// <summary>A soft park (a refusal park, never a hard cap) that sits parked past the wall clock

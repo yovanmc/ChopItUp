@@ -414,13 +414,13 @@ public sealed partial class SpawnerService : BackgroundService
         }));
     }
 
-    /// <summary>The periodic wake ArmWake arms (the wall-clock deadline, or the bounded stall wake)
+    /// <summary>The wake ArmWake arms (a wall-clock deadline, a stall deadline or a job deadline)
     /// fires as a bare <see cref="TickEvent"/> with no room of its own, so unlike the steer branch's
-    /// single-run <c>DriveRun(runRow, Tick)</c> this checks every active run: one shared timer can be
-    /// the earliest deadline for any of them. <see cref="RunPolicy"/>'s hard-cap checks (first, for
-    /// every event) make this useful: a busy run gets <see cref="RunDecision.Nothing"/> unless it has
-    /// spent a hard cap, in which case this is what parks it. Without a Tick reaching a busy capped
-    /// run, the stall park and the wall-clock park while idle would be unreachable.</summary>
+    /// single-run <c>DriveRun(runRow, Tick)</c> this expires overdue jobs and then checks every active
+    /// run: one shared timer can be the earliest deadline for any of them. <see cref="RunPolicy"/>'s
+    /// hard-cap checks make this what parks a run past its wall clock while workers run or nothing
+    /// runs. A run whose conductor is still running past it gets <see cref="RunDecision.Nothing"/>,
+    /// so that turn can finish and present.</summary>
     private void OnTick()
     {
         ExpireJobs();
@@ -1423,8 +1423,9 @@ public sealed partial class SpawnerService : BackgroundService
 
         // Every active run gets two wakes of its own, which the exchange loop above cannot see (a run
         // with nothing open or in flight has no Open exchange in _rooms for _policy.NextWake). The
-        // wall-clock wake is unconditional (the hard cap must trip even while the run is busy, and
-        // parking stops its open exchange and in-flight spawns). The stall wake arms only while idle,
+        // wall-clock wake arms while the run is busy too (the hard cap must trip while workers run,
+        // and parking stops its open exchange and in-flight spawns), except while it waits on a job or
+        // its conductor is finishing past the deadline (both below). The stall wake arms only while idle,
         // SpawnTimeout after the last instant the run was known busy, never "SpawnTimeout from now":
         // another room's activity reruns this method on every pass and would push a stalled run's
         // deadline forward forever.

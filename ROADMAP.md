@@ -8,8 +8,8 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
 | 85 | Background jobs and the GPU lock | [ ] | READY | — | `start_job`/`job_status`/`cancel_job` for in-flight directory spawns, job objects, token stripped, machine-wide GPU semaphore, service cancel. Job seam contract: `SpawnerService.Jobs.cs`. Risk lane. Needs 79. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
-| 87 | Usage limits hold and resume | [ ] | READY | — | Keep raw failed-spawn output, detect limits from cited strings, refund, hold, resume after reset. No handling today (SpawnerService.cs:1158) [V 2026-11-17 eadc59c8]. Risk lane. Needs 84. |
-| 88 | Windows toast for run events | [ ] | READY | — | Shell listens while hidden; toast on present, park, usage hold; click opens the room. Needs 84. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
+| 87 | Usage limits hold and resume | [ ] | READY | — | Keep raw failed-spawn output, detect limits from cited strings, refund, hold, resume after reset. No handling today (SpawnerService.cs:1158) [V 2026-11-17 eadc59c8]. Risk lane. |
+| 88 | Windows toast for run events | [ ] | READY | — | Shell listens while hidden; toast on present, park, usage hold; click opens the room. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 86 | Goal skill | [ ] | READY | — | `tools/skills/goal/` `run: true` skill: GOAL.md ledger, rounds, two judges, jobs, presentation with images. Owner imports it. Needs 79 to 85. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 89 | Goal pilot | [ ] | BLOCKED: rows 79 to 88 | — | Scratch hub, real CLIs, fake GPU service: flow steps 1 to 5 within budget, images inline, one toast. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 66 | CI never runs everything on main | [ ] | LEAD: `ci.yml` triggers only on `pull_request` and `workflow_dispatch` | — | The PR run is the affected selector, so no run covers the whole suite after merges. Verify read-only, then add a full run on push to `main` or on a schedule. |

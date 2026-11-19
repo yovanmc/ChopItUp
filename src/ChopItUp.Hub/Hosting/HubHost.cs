@@ -115,7 +115,7 @@ public static class HubHost
             // The runs table and its satellites (schema v8), and the hard-coded caps, exactly as
             // unreachable from inside a room as SpawnLimits.Default above. runLimits is an override for
             // the same reason `limits` (SpawnLimits) is one: tests need a small ceiling and a
-            // controllable clock to prove a cap parks a run without waiting out 80 spawns or 8 hours.
+            // controllable clock to prove a cap parks a run without waiting out its default 4 hours or 40 spawns.
             var runs = new RunStore(db);
             builder.Services.AddSingleton(runs);
             builder.Services.AddSingleton(runLimits ?? RunLimits.Default);
