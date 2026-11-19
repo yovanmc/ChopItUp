@@ -377,6 +377,57 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Assert.Equal(["artifact:placeholder.png"], Refs(body));
     }
 
+    /// <summary>Denies this user listing <paramref name="folder"/> until the returned scope ends.</summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static IDisposable DenyListing(string folder)
+    {
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+        static void Icacls(string arguments)
+        {
+            using var icacls = Process.Start(new ProcessStartInfo("icacls.exe", arguments)
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+            icacls.WaitForExit();
+            Assert.Equal(0, icacls.ExitCode);
+        }
+        Icacls($"\"{folder}\" /deny \"{user}:(RD)\"");
+        return new Undo(() => Icacls($"\"{folder}\" /remove:d \"{user}\""));
+    }
+
+    private sealed class Undo(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task A_folder_the_walk_cannot_read_is_counted_and_its_siblings_still_listed()
+    {
+        WriteAt("a.png", Png, 1);
+        WriteAt("locked/b.png", Png, 2);
+        using (DenyListing(Path.Combine(ArtifactsDir, "locked")))
+        {
+            var (response, body) = await List();
+
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(["artifact:a.png"], Refs(body));
+            Assert.Equal(1, body.GetProperty("unreadable").GetInt32());
+        }
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task An_artifacts_folder_the_walk_cannot_read_answers_503_with_retry_after()
+    {
+        WriteAt("a.png", Png, 1);
+        using (DenyListing(ArtifactsDir))
+        {
+            var (response, _) = await List();
+
+            await AssertRefused(response, HttpStatusCode.ServiceUnavailable);
+            Assert.NotNull(response.Headers.RetryAfter);
+        }
+    }
+
     [Fact]
     public async Task The_listing_stops_at_its_cap_and_counts_the_rest()
     {

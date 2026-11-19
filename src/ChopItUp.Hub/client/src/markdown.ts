@@ -1,6 +1,6 @@
 import { Marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { escapeHtml, routeFor } from './images';
+import { escapeHtml, fileName, isVideo, refFromHref, routeFor } from './images';
 import { hostOf, mentionPattern } from './participants';
 
 /** Rendering is pure in the body text and the room, so the result is cached: an incoming message must
@@ -45,8 +45,11 @@ const markdown = new Marked({
   breaks: true,
   renderer: {
     image({ href, text }) {
-      if (sanitizingFor === undefined || routeFor(href, sanitizingFor) === null) return escapeHtml(text);
-      return `<img data-ref="${escapeHtml(href)}" alt="${escapeHtml(text)}">`;
+      const ref = refFromHref(href);
+      if (sanitizingFor === undefined || ref === null) return escapeHtml(text);
+      // A video loads nothing in the thread: a chip opens it in the viewer.
+      if (isVideo(ref)) return `<span class="video-ref" data-video-ref="${escapeHtml(ref)}">▶ ${escapeHtml(text || fileName(ref))}</span>`;
+      return `<img data-ref="${escapeHtml(ref)}" alt="${escapeHtml(text)}">`;
     },
   },
 });

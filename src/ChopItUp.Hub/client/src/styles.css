@@ -1483,9 +1483,27 @@ input {
   max-height: 360px;
   margin: 6px 0;
   background: var(--raised);
-  border: 1px solid var(--line);
+  /* An outline, not a border, so the image's box is exactly its own pixels. */
+  outline: 1px solid var(--line);
+  outline-offset: -1px;
   border-radius: var(--radius);
   cursor: zoom-in;
+}
+
+.video-ref {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.video-ref:hover {
+  border-color: color-mix(in srgb, var(--accent-owner) 60%, var(--line));
 }
 
 .image-missing {

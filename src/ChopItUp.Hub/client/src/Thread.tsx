@@ -62,16 +62,28 @@ export default function Thread({ messages, loading, onReply, onOpenImage }: Prop
   const pinned = useRef(true);
   const byId = useMemo(() => new Map(messages.map((message) => [message.id, message])), [messages]);
 
+  // An image that finishes loading after the newest post grows the thread, so a reader following the
+  // conversation is kept at the bottom. Neither event bubbles, so both listen in the capture phase.
   useEffect(() => {
     const element = scroller.current;
     if (!element) return;
+    function onImageLoad(event: Event) {
+      if (event.target instanceof HTMLImageElement && pinned.current && element) element.scrollTop = element.scrollHeight;
+    }
     element.addEventListener('error', onImageError, true);
-    return () => element.removeEventListener('error', onImageError, true);
+    element.addEventListener('load', onImageLoad, true);
+    return () => {
+      element.removeEventListener('error', onImageError, true);
+      element.removeEventListener('load', onImageLoad, true);
+    };
   }, []);
 
   function onClick(event: MouseEvent) {
     const target = event.target;
-    if (onOpenImage && target instanceof HTMLImageElement && target.dataset['ref'] !== undefined) onOpenImage(target.dataset['ref']);
+    if (!onOpenImage || !(target instanceof HTMLElement)) return;
+    if (target instanceof HTMLImageElement && target.dataset['ref'] !== undefined) onOpenImage(target.dataset['ref']);
+    const video = target.closest<HTMLElement>('[data-video-ref]');
+    if (video?.dataset['videoRef'] !== undefined) onOpenImage(video.dataset['videoRef']);
   }
 
   useEffect(() => {

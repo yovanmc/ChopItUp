@@ -7,21 +7,31 @@ const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 const ARTIFACT = /^artifact:/i;
 const DRIVE = /^[a-z]:/i;
 
-/** The room file route URL for `href`, or null when the href is not a room file. A percent-encoded
- *  href (`my%20file.png`) is decoded first, so the hub sees the name on disk. */
-export function routeFor(href: string, roomId: string): string | null {
+/** Whether `ref`, a name as it is on disk, can name a file in the room: an `artifact:` ref or a
+ *  relative path. Never a URL, a rooted path or a drive path. */
+function isRoomRef(ref: string): boolean {
+  if (ref.trim() === '') return false;
+  if (ARTIFACT.test(ref)) return true;
+  return !SCHEME.test(ref) && !DRIVE.test(ref) && !ref.startsWith('/') && !ref.startsWith('\\');
+}
+
+/** The ref a markdown image href names, or null when it names no room file. A percent-encoded href
+ *  (`my%20file.png`) is decoded, so the ref is the name on disk. */
+export function refFromHref(href: string): string | null {
   let decoded: string;
   try {
     decoded = decodeURI(href.trim());
   } catch {
     return null;
   }
-  if (decoded === '' || roomId === '') return null;
-  if (!ARTIFACT.test(decoded)) {
-    if (SCHEME.test(decoded) || DRIVE.test(decoded)) return null;
-    if (decoded.startsWith('/') || decoded.startsWith('\\')) return null;
-  }
-  return `/api/rooms/${encodeURIComponent(roomId)}/files?ref=${encodeURIComponent(decoded)}`;
+  return isRoomRef(decoded) ? decoded : null;
+}
+
+/** The room file route URL for `ref`, a name as it is on disk (never decoded again, so a file named
+ *  `50%.png` stays that name), or null when it names no room file. */
+export function routeFor(ref: string, roomId: string): string | null {
+  if (roomId === '' || !isRoomRef(ref)) return null;
+  return `/api/rooms/${encodeURIComponent(roomId)}/files?ref=${encodeURIComponent(ref)}`;
 }
 
 /** The last path segment of a ref, for captions and labels. */
