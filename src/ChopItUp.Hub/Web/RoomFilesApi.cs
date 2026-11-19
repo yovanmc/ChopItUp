@@ -39,6 +39,8 @@ public static class RoomFilesApi
 
     private static IResult Serve(string roomId, string? reference, HttpContext context, MessageStore store, RoomPathRules rules)
     {
+        // The fence reads the final path from a Win32 handle, so there is no fence anywhere else.
+        if (!OperatingSystem.IsWindows()) return Refuse(404, "Room files are served on Windows only.");
         if (store.GetRoom(roomId) is not { } room) return Refuse(404, $"Unknown room '{roomId}'.");
         if (room.Directory is null) return Refuse(404, $"Room '{roomId}' has no directory.");
         var parsed = RoomFileRef.Parse(reference);
