@@ -29,6 +29,18 @@ public sealed record RoomPathRules(string UserProfile, IReadOnlyList<RefusedSubt
             subtrees.Add(new(Path.Combine(profile, folder), $"a credential folder ({folder})"));
         return new(profile, subtrees);
     }
+
+    /// <summary>These rules for comparing against a path with every link resolved and long names:
+    /// each folder that exists is also refused under its own resolved spelling, so a data folder reached
+    /// through a junction or an 8.3 name still matches. <paramref name="resolve"/> returns null for a
+    /// folder it cannot resolve, which keeps the typed spelling only.</summary>
+    public RoomPathRules WithResolvedSpellings(Func<string, string?> resolve)
+    {
+        var resolved = Subtrees
+            .Select(s => resolve(s.Path) is { } path && !RoomPaths.Same(path, s.Path) ? s with { Path = path } : null)
+            .OfType<RefusedSubtree>();
+        return new(resolve(UserProfile) ?? UserProfile, [.. Subtrees, .. resolved]);
+    }
 }
 
 /// <summary>Path shape, normalisation and the refusal sentence. Comparisons are case-insensitive on
