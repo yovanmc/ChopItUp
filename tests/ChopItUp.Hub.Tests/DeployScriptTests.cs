@@ -173,7 +173,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         {
             // Poll: Windows populates the module list asynchronously, so a single read here
             // returns null on a loaded machine and fails an assertion about the wrong thing.
-            string? actualPath = WaitForMainModulePath(guard, TimeSpan.FromSeconds(10));
+            string? actualPath = WaitForMainModulePath(guard, guardExe, TimeSpan.FromSeconds(10));
             Assert.Equal(guardExe, actualPath, ignoreCase: true);
 
             string[] before = SnapshotRecursive(target);
@@ -603,6 +603,9 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
         Assert.Null(Process.GetProcesses().FirstOrDefault(x => x.Id == guardPid && !x.HasExited));
     }
 
+    /// <summary>Early in a start, the first module Windows lists can be ntdll.dll. A read about 500 µs
+    /// after the start saw it in 216 of 300 starts on the desk, and a read right away in 2 of 300. The
+    /// window moves with machine speed, so the hundred starts sweep the read delay from 0 to 2 ms.</summary>
     [Fact]
     public void The_main_module_path_of_a_just_started_process_is_resolved_by_waiting_for_it()
     {
@@ -613,35 +616,46 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
 
         var psi = new ProcessStartInfo(guardExe) { UseShellExecute = false, CreateNoWindow = true };
         foreach (var a in new[] { "-n", "60", "-w", "1000", "127.0.0.1" }) psi.ArgumentList.Add(a);
-        using var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
         try
         {
-            Assert.Equal(guardExe, WaitForMainModulePath(guard, TimeSpan.FromSeconds(10)), ignoreCase: true);
+            for (int start = 0; start < 100; start++)
+            {
+                using var guard = Process.Start(psi) ?? throw new InvalidOperationException("guard fixture failed to start");
+                try
+                {
+                    var spin = Stopwatch.StartNew();
+                    while (spin.Elapsed.TotalMicroseconds < start * 20) { }
+                    Assert.Equal(guardExe, WaitForMainModulePath(guard, guardExe, TimeSpan.FromSeconds(10)), ignoreCase: true);
+                }
+                finally
+                {
+                    guard.Kill();
+                    guard.WaitForExit();
+                }
+            }
         }
-        finally
-        {
-            StopGuardAndCleanup(guard, target);
-        }
+        finally { TestDirs.DeleteTree(target); }
     }
 
-    /// <summary>Reads the process's main module path, retrying until it is available. Windows
-    /// populates a new process's module list asynchronously, so the first read can return null (or
-    /// throw) for a process that has only just started - more often on a loaded machine, which is
-    /// why this only ever failed on CI.</summary>
-    private static string? WaitForMainModulePath(Process process, TimeSpan timeout)
+    /// <summary>Reads the process's main module path until it names <paramref name="expected"/>, and
+    /// returns the last path read when the time runs out. Windows fills a new process's module list
+    /// while it starts, so an early read can be null, can throw, or can name ntdll.dll.</summary>
+    private static string? WaitForMainModulePath(Process process, string expected, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
+        string? last = null;
         while (true)
         {
             try
             {
                 process.Refresh();
-                if (process.MainModule?.FileName is { } path) return path;
+                last = process.MainModule?.FileName ?? last;
+                if (string.Equals(last, expected, StringComparison.OrdinalIgnoreCase)) return last;
             }
             catch (InvalidOperationException) { /* not ready, or already gone */ }
             catch (System.ComponentModel.Win32Exception) { /* module list not yet readable */ }
 
-            if (DateTime.UtcNow >= deadline || process.HasExited) return null;
+            if (DateTime.UtcNow >= deadline || process.HasExited) return last;
             Thread.Sleep(20);
         }
     }
