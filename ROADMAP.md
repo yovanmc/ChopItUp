@@ -7,7 +7,7 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 84 | Run budgets and job waits | [ ] | READY | — | `hours:` 1-8 (default 4), `/continue` revives cap-spent runs, ping passes caps, job wait neither stalls nor counts, `JobFinished`. Caps hard-coded (RunLimits.cs:30) [V 2026-11-17 eadc59c8]. Risk lane. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
+| 84 | Run budgets and job waits | [ ] | BLOCKED: parked - reviewer failed twice (READ below FILES); OWNER: rule on a third review · branch row-84-run-budgets | — | `hours:` 1-8 (default 4), `/continue` revives cap-spent runs, ping passes caps, job wait neither stalls nor counts, `JobFinished`. Caps hard-coded (RunLimits.cs:30) [V 2026-11-17 eadc59c8]. Risk lane. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 85 | Background jobs and the GPU lock | [ ] | READY | — | `start_job`/`job_status`/`cancel_job` for in-flight directory spawns, job objects, token stripped, machine-wide GPU semaphore, service cancel. Risk lane. Needs 79, 84. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 87 | Usage limits hold and resume | [ ] | READY | — | Keep raw failed-spawn output, detect limits from cited strings, refund, hold, resume after reset. No handling today (SpawnerService.cs:1158) [V 2026-11-17 eadc59c8]. Risk lane. Needs 84. |
 | 88 | Windows toast for run events | [ ] | READY | — | Shell listens while hidden; toast on present, park, usage hold; click opens the room. Needs 84. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
