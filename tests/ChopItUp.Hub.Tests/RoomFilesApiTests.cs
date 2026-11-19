@@ -12,7 +12,7 @@ namespace ChopItUp.Hub.Tests;
 public sealed class RoomFilesApiTests : IAsyncLifetime
 {
     private static readonly byte[] Png = [137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4];
-    private static readonly byte[] Secret = "SECRET-BYTES"u8.ToArray();
+    private static readonly byte[] Foreign = "FOREIGN-BYTES"u8.ToArray();
 
     private readonly string _data = Path.Combine(Path.GetTempPath(), "chopitup_roomfiles_" + Guid.NewGuid().ToString("N"));
     private readonly List<string> _links = [];
@@ -73,7 +73,7 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
         var body = await response.Content.ReadAsByteArrayAsync();
         Assert.Contains("\"error\"", System.Text.Encoding.UTF8.GetString(body));
-        Assert.False(body.AsSpan().IndexOf(Secret) >= 0 || body.AsSpan().IndexOf(Png) >= 0, "a refusal carried file bytes");
+        Assert.False(body.AsSpan().IndexOf(Foreign) >= 0 || body.AsSpan().IndexOf(Png) >= 0, "a refusal carried file bytes");
     }
 
     [Fact]
@@ -117,7 +117,7 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
     [Fact]
     public async Task A_ref_that_escapes_by_shape_is_refused_400_even_when_its_target_exists()
     {
-        Write(Path.Combine(Files, "outside.png"), Secret);
+        Write(Path.Combine(Files, "outside.png"), Foreign);
         Write(Path.Combine(RoomDir, "x.txt"), "text"u8.ToArray());
         File.WriteAllBytes(Path.Combine(RoomDir, "x.txt:y.png"), Png);       // a real alternate stream
         Assert.Equal(Png, File.ReadAllBytes(Path.Combine(RoomDir, "x.txt:y.png")));
@@ -138,23 +138,23 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
     public async Task A_junction_out_of_the_room_or_the_artifacts_folder_is_refused_403()
     {
         var outside = Path.Combine(Files, "outside");
-        Write(Path.Combine(outside, "secret.png"), Secret);
+        Write(Path.Combine(outside, "foreign.png"), Foreign);
         Junction(Path.Combine(RoomDir, "escape"), outside);
         Directory.CreateDirectory(ArtifactsDir);
         Junction(Path.Combine(ArtifactsDir, "escape"), outside);
 
-        await AssertRefused(await Get("escape/secret.png"), HttpStatusCode.Forbidden);
-        await AssertRefused(await Get("artifact:escape/secret.png"), HttpStatusCode.Forbidden);
+        await AssertRefused(await Get("escape/foreign.png"), HttpStatusCode.Forbidden);
+        await AssertRefused(await Get("artifact:escape/foreign.png"), HttpStatusCode.Forbidden);
     }
 
     [Fact]
     public async Task An_artifacts_folder_that_is_itself_a_junction_is_refused_403()
     {
         var elsewhere = Path.Combine(Files, "pictures");
-        Write(Path.Combine(elsewhere, "secret.png"), Secret);
+        Write(Path.Combine(elsewhere, "foreign.png"), Foreign);
         Junction(ArtifactsDir, elsewhere);
 
-        await AssertRefused(await Get("artifact:secret.png"), HttpStatusCode.Forbidden);
+        await AssertRefused(await Get("artifact:foreign.png"), HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -167,7 +167,7 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Store.CreateRoom("viaLink", "Via link", linked);
 
         var hubData = Path.Combine(_data, "room-in-data");
-        Write(Path.Combine(hubData, "a.png"), Secret);
+        Write(Path.Combine(hubData, "a.png"), Foreign);
         var intoData = Path.Combine(Files, "into-data");
         Junction(intoData, hubData);
         Store.CreateRoom("intoData", "Into data", intoData);
@@ -235,10 +235,10 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         var next = path + ".tmp";
-        File.WriteAllBytes(next, Secret);
+        File.WriteAllBytes(next, Foreign);
         File.Move(next, path, overwrite: true);
 
-        Assert.Equal(Secret, File.ReadAllBytes(path));
+        Assert.Equal(Foreign, File.ReadAllBytes(path));
         Assert.Equal(original, await response.Content.ReadAsByteArrayAsync());
     }
 
@@ -264,7 +264,7 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Directory.CreateDirectory(realData);
         var linkedData = Path.Combine(Files, "linked-data");
         Junction(linkedData, realData);
-        Write(Path.Combine(realData, "rooms-here", "a.png"), Secret);
+        Write(Path.Combine(realData, "rooms-here", "a.png"), Foreign);
         var room = Path.Combine(Files, "into-real-data");
         Junction(room, Path.Combine(realData, "rooms-here"));
 
