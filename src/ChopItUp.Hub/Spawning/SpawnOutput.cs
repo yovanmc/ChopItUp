@@ -4,8 +4,11 @@ namespace ChopItUp.Hub.Spawning;
 
 public sealed record ShellCommand(string Command, bool Denied);
 
-/// <summary>Reads the two CLIs' structured stdout for the one thing the trail needs: which shell
-/// commands the model ran. Shapes measured: Claude
+/// <summary>One web call a Claude spawn made: <c>WebSearch</c> with its query or <c>WebFetch</c> with its URL.</summary>
+public sealed record WebRequest(string Tool, string Target, bool Denied);
+
+/// <summary>Reads the two CLIs' structured stdout for what the trail records: which shell commands
+/// the model ran and, for Claude, which web searches and fetches it made. Shapes measured: Claude
 /// `--output-format stream-json` emits one JSON object per line, Bash calls as
 /// <c>{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_…","name":"Bash","input":{"command":"…"}}]}}</c>
 /// and a final <c>{"type":"result",…,"result":"…","permission_denials":[{"tool_use_id":"…",…}]}</c>;
@@ -19,9 +22,22 @@ public static class SpawnOutput
 
     /// <summary>Claude: every Bash tool_use in assistant messages, in order; one the final result lists
     /// under permission_denials (by tool_use_id) is marked denied — it never ran.</summary>
-    public static IReadOnlyList<ShellCommand> ClaudeShellCommands(string stdout)
+    public static IReadOnlyList<ShellCommand> ClaudeShellCommands(string stdout) =>
+        ClaudeToolCalls(stdout, new Dictionary<string, string> { ["Bash"] = "command" })
+            .Select(c => new ShellCommand(Flatten(c.Target), c.Denied)).Take(MaxCommands).ToList();
+
+    /// <summary>Claude: every WebSearch (its query) and WebFetch (its URL) tool_use, in order, under the
+    /// same denial rule and caps as <see cref="ClaudeShellCommands"/>.</summary>
+    public static IReadOnlyList<WebRequest> ClaudeWebRequests(string stdout) =>
+        ClaudeToolCalls(stdout, new Dictionary<string, string> { ["WebSearch"] = "query", ["WebFetch"] = "url" })
+            .Select(c => new WebRequest(c.Tool, Flatten(c.Target), c.Denied)).Take(MaxCommands).ToList();
+
+    /// <summary>The tool_use blocks whose name is a key of <paramref name="inputField"/>, with that
+    /// input field's string value, in order; a call the final result lists under permission_denials
+    /// (by tool_use_id) is marked denied, since it never ran.</summary>
+    private static List<(string Tool, string Target, bool Denied)> ClaudeToolCalls(string stdout, IReadOnlyDictionary<string, string> inputField)
     {
-        var found = new List<(string Id, string Command)>();
+        var found = new List<(string Id, string Tool, string Target)>();
         var denied = new HashSet<string>(StringComparer.Ordinal);
         foreach (var root in Lines(stdout))
         {
@@ -34,9 +50,9 @@ public static class SpawnOutput
             {
                 foreach (var block in content.EnumerateArray())
                 {
-                    if (Str(block, "type") != "tool_use" || Str(block, "name") != "Bash") continue;
-                    if (!block.TryGetProperty("input", out var input) || Str(input, "command") is not { } command) continue;
-                    found.Add((Str(block, "id") ?? "", command));
+                    if (Str(block, "type") != "tool_use" || Str(block, "name") is not { } name || !inputField.TryGetValue(name, out var field)) continue;
+                    if (!block.TryGetProperty("input", out var input) || Str(input, field) is not { } target) continue;
+                    found.Add((Str(block, "id") ?? "", name, target));
                 }
             }
             else if (type == "result"
@@ -47,10 +63,7 @@ public static class SpawnOutput
                     if (Str(d, "tool_use_id") is { Length: > 0 } id) denied.Add(id);
             }
         }
-        return found
-            .Select(f => new ShellCommand(Flatten(f.Command), f.Id.Length > 0 && denied.Contains(f.Id)))
-            .Take(MaxCommands)
-            .ToList();
+        return found.Select(f => (f.Tool, f.Target, f.Id.Length > 0 && denied.Contains(f.Id))).ToList();
     }
 
     /// <summary>Codex: every command_execution item in first-seen order, the completed form replacing

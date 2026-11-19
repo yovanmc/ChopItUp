@@ -32,7 +32,11 @@ public static class RoomCommits
     public static string AgentSubject(Participant agent, string roomId, int turn, int budget) =>
         $"{agent.Id}: turn {turn}/{budget} in room {roomId}";
 
-    public static string AgentMessage(Participant agent, string roomId, int turn, int budget, IReadOnlyList<ShellCommand> commands, bool headMoved)
+    public const string WebHeader = "Web requests";
+
+    /// <summary>The agent commit's message. <paramref name="web"/> adds a block after the shell log only
+    /// when it holds a call, so a spawn that made none reads exactly as before.</summary>
+    public static string AgentMessage(Participant agent, string roomId, int turn, int budget, IReadOnlyList<ShellCommand> commands, bool headMoved, IReadOnlyList<WebRequest>? web = null)
     {
         var sb = new StringBuilder(AgentSubject(agent, roomId, turn, budget)).Append("\n\n");
         if (commands.Count == 0) sb.Append(ShellHeader).Append(": none.\n");
@@ -41,6 +45,12 @@ public static class RoomCommits
             sb.Append(ShellHeader).Append(" (").Append(commands.Count).Append("):\n");
             for (int i = 0; i < commands.Count; i++)
                 sb.Append("  ").Append(i + 1).Append(". ").Append(commands[i].Command).Append(commands[i].Denied ? " [denied]" : "").Append('\n');
+        }
+        if (web is { Count: > 0 })
+        {
+            sb.Append('\n').Append(WebHeader).Append(" (").Append(web.Count).Append("):\n");
+            for (int i = 0; i < web.Count; i++)
+                sb.Append("  ").Append(i + 1).Append(". ").Append(web[i].Tool).Append(": ").Append(web[i].Target).Append(web[i].Denied ? " [denied]" : "").Append('\n');
         }
         if (headMoved) sb.Append("\nHEAD moved during this spawn: the model committed on its own; its commit(s) sit below this one in the log.\n");
         return sb.ToString();

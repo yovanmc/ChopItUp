@@ -95,11 +95,12 @@ public static class HubNotes
 
     /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
     /// is the detail.</summary>
-    public static string Trail(string participantId, CommitOutcome? owner, CommitOutcome agent, int commands, bool headMoved)
+    public static string Trail(string participantId, CommitOutcome? owner, CommitOutcome agent, int commands, bool headMoved, int webRequests = 0)
     {
         if (agent.Hash is null || !agent.Created)
             return $"{TrailFailedPrefix}{participantId}: {agent.Reason ?? "git made no commit"}.";
-        var text = $"{TrailPrefix}{agent.Hash} for {participantId}: {agent.FilesChanged} file(s) changed, {commands} shell command(s).";
+        var web = webRequests > 0 ? $", {webRequests} web request(s)" : "";
+        var text = $"{TrailPrefix}{agent.Hash} for {participantId}: {agent.FilesChanged} file(s) changed, {commands} shell command(s){web}.";
         if (owner is { Created: true }) text += $" Your edits were committed first as {owner.Hash}.";
         if (headMoved) text += $" HEAD moved during the spawn: {participantId} committed on its own.";
         return text;

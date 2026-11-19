@@ -15,7 +15,10 @@ public sealed class SpawnOutputTests
         {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01B","is_error":true,"content":"Permission to use Bash with command git -c user.name=x commit --allow-empty -m probe has been denied."}]}}
         {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01C","name":"Write","input":{"file_path":"C:\\room\\probe.txt","content":"PROBE"}}]}}
         {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01D","name":"Bash","input":{"command":"dir\r\ntype probe.txt"}}]}}
-        {"type":"result","subtype":"success","is_error":false,"num_turns":6,"result":"STEP 1: OK\nSTEP 2: DENIED","permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_01B","tool_input":{"command":"git -c user.name=x commit --allow-empty -m probe"}}],"total_cost_usd":0.01}
+        {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01E","name":"WebSearch","input":{"query":"IANA example domain","mode":"standard"}}]}}
+        {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01F","name":"WebFetch","input":{"url":"https://example.com/","prompt":"What is the page title?"}}]}}
+        {"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_01G","name":"WebFetch","input":{"url":"http://127.0.0.1:8790/api/rooms","prompt":"List it."}}]}}
+        {"type":"result","subtype":"success","is_error":false,"num_turns":6,"result":"STEP 1: OK\nSTEP 2: DENIED","permission_denials":[{"tool_name":"Bash","tool_use_id":"toolu_01B","tool_input":{"command":"git -c user.name=x commit --allow-empty -m probe"}},{"tool_name":"WebFetch","tool_use_id":"toolu_01G","tool_input":{"url":"http://127.0.0.1:8790/api/rooms"}}],"total_cost_usd":0.01}
         """;
 
     private const string CodexStream = """
@@ -35,6 +38,15 @@ public sealed class SpawnOutputTests
         Assert.Equal(
             [new ShellCommand("echo hello", false), new ShellCommand("git -c user.name=x commit --allow-empty -m probe", true), new ShellCommand("dir ⏎ type probe.txt", false)],
             commands);
+    }
+
+    [Fact]
+    public void Claude_stream_yields_web_searches_and_fetches_in_order_with_denials_marked()
+    {
+        Assert.Equal(
+            [new WebRequest("WebSearch", "IANA example domain", false), new WebRequest("WebFetch", "https://example.com/", false),
+             new WebRequest("WebFetch", "http://127.0.0.1:8790/api/rooms", true)],
+            SpawnOutput.ClaudeWebRequests(ClaudeStream));
     }
 
     [Fact]
@@ -63,6 +75,7 @@ public sealed class SpawnOutputTests
     {
         const string junk = "not json\n{\"type\":\"assistant\"}\n{\"item\":5}\n{\"type\":\"assistant\",\"message\":{\"content\":\"text\"}}\n[1,2]\n{\"item\":{\"type\":\"command_execution\"}}\n";
         Assert.Empty(SpawnOutput.ClaudeShellCommands(junk));
+        Assert.Empty(SpawnOutput.ClaudeWebRequests(junk + "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"WebFetch\",\"input\":{\"prompt\":\"no url\"}}]}}\n"));
         Assert.Empty(SpawnOutput.CodexShellCommands(junk));
         Assert.Empty(SpawnOutput.ClaudeShellCommands(""));
         Assert.Empty(SpawnOutput.CodexShellCommands(""));
@@ -113,5 +126,11 @@ public sealed class SpawnOutputTests
             $$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t{{{i}}}","name":"Bash","input":{"command":"echo {{{i}}}"}}]}}"""));
         Assert.Equal(50, SpawnOutput.ClaudeShellCommands(many).Count);
         Assert.Equal("echo 0", SpawnOutput.ClaudeShellCommands(many)[0].Command);
+
+        var fetches = string.Join('\n', Enumerable.Range(0, 60).Select(i =>
+            $$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"w{{{i}}}","name":"WebFetch","input":{"url":"https://example.com/{{{i}}}"}}]}}"""));
+        Assert.Equal(50, SpawnOutput.ClaudeWebRequests(fetches).Count);
+        Assert.Equal(401, SpawnOutput.ClaudeWebRequests(
+            $$$$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"w","name":"WebSearch","input":{"query":"{{{{{new string('q', 500)}}}}}"}}]}}""")[0].Target.Length);
     }
 }
