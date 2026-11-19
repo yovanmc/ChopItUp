@@ -1517,18 +1517,20 @@ input {
 }
 
 .gallery-dialog {
-  width: min(960px, 100%);
+  width: min(80vw, 1600px, 100%);
 }
 
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 12px 10px;
   margin: 0;
-  padding: 0 2px 2px;
+  padding: 0 8px 2px 2px;
   list-style: none;
-  max-height: 62vh;
+  max-height: 68vh;
   overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .gallery-tile {
@@ -1654,11 +1656,11 @@ input {
 }
 
 .viewer-level {
-  min-width: 64px;
+  min-width: 72px;
   padding: 0 8px;
-  font-family: var(--mono);
-  font-size: 11px;
-  color: #8d95a5;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: #b8bfcc;
   text-align: center;
 }
 
