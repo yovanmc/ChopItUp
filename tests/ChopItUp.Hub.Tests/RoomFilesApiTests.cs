@@ -313,4 +313,105 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
 
         Assert.Equal(HttpStatusCode.OK, (await Get("artifact:a.png")).StatusCode);
     }
+
+    private async Task<(HttpResponseMessage Response, System.Text.Json.JsonElement Body)> List(string room = "lab")
+    {
+        var response = await _host.Client.GetAsync($"api/rooms/{room}/artifacts");
+        var body = System.Text.Json.JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        return (response, body);
+    }
+
+    private static string[] Refs(System.Text.Json.JsonElement body) =>
+        body.GetProperty("files").EnumerateArray().Select(f => f.GetProperty("ref").GetString()!).ToArray();
+
+    private void WriteAt(string relative, byte[] bytes, int minutesAgo)
+    {
+        var path = Path.Combine(ArtifactsDir, relative.Replace('/', '\\'));
+        Write(path, bytes);
+        File.SetLastWriteTimeUtc(path, DateTime.UtcNow.AddMinutes(-minutesAgo));
+    }
+
+    [Fact]
+    public async Task The_listing_names_every_file_the_route_serves_newest_first()
+    {
+        WriteAt("old.png", Png, 30);
+        WriteAt("renders/mid.webp", Png, 20);
+        WriteAt("clip.mp4", Png, 10);
+        WriteAt("notes.txt", Png, 5);            // a type the route does not serve
+        WriteAt("jobs/job.png", Png, 1);         // background job output
+        var outside = Path.Combine(Files, "outside");
+        Write(Path.Combine(outside, "foreign.png"), Foreign);
+        Junction(Path.Combine(ArtifactsDir, "escape"), outside);
+
+        var (response, body) = await List();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertGuarded(response);
+        Assert.Equal(["artifact:clip.mp4", "artifact:renders/mid.webp", "artifact:old.png"], Refs(body));
+        var mid = body.GetProperty("files")[1];
+        Assert.Equal("mid.webp", mid.GetProperty("name").GetString());
+        Assert.Equal(Png.Length, mid.GetProperty("bytes").GetInt64());
+        Assert.Equal(File.GetLastWriteTimeUtc(Path.Combine(ArtifactsDir, "renders", "mid.webp")),
+            mid.GetProperty("modified").GetDateTime().ToUniversalTime(), TimeSpan.FromSeconds(1));
+        Assert.Equal(0, body.GetProperty("omitted").GetInt32());
+        Assert.Equal(0, body.GetProperty("unreadable").GetInt32());
+
+        // Each listed ref is one the file route serves.
+        foreach (var reference in Refs(body)) Assert.Equal(HttpStatusCode.OK, (await Get(reference)).StatusCode);
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task The_listing_keeps_a_reparse_file_that_is_not_a_link_and_skips_one_that_is()
+    {
+        // A cloud placeholder or deduplicated file carries a reparse tag without the name-surrogate
+        // bit, a link carries one with it. Third-party tags stand in, since no filter is needed to
+        // list them. Windows 11 hides a WOF-compressed file's tag, so compact.exe cannot make one.
+        WriteAt("placeholder.png", Png, 2);
+        WriteAt("surrogate.png", Png, 1);
+        ReparseFixture.Set(Path.Combine(ArtifactsDir, "placeholder.png"), 0x0000_0099);
+        ReparseFixture.Set(Path.Combine(ArtifactsDir, "surrogate.png"), 0x2000_0099);
+
+        var (_, body) = await List();
+
+        Assert.Equal(["artifact:placeholder.png"], Refs(body));
+    }
+
+    [Fact]
+    public async Task The_listing_stops_at_its_cap_and_counts_the_rest()
+    {
+        for (var i = 0; i <= RoomFilesApi.MaxListed; i++) WriteAt($"f{i:D3}.png", Png, i);
+
+        var (_, body) = await List();
+
+        Assert.Equal(RoomFilesApi.MaxListed, body.GetProperty("files").GetArrayLength());
+        Assert.Equal("artifact:f000.png", Refs(body)[0]);
+        Assert.Equal(1, body.GetProperty("omitted").GetInt32());
+    }
+
+    [Fact]
+    public async Task A_room_with_no_artifacts_folder_lists_nothing()
+    {
+        var (response, body) = await List();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertGuarded(response);
+        Assert.Empty(Refs(body));
+    }
+
+    [Fact]
+    public async Task The_listing_refuses_what_the_route_refuses()
+    {
+        var elsewhere = Path.Combine(Files, "pictures");
+        Write(Path.Combine(elsewhere, "foreign.png"), Foreign);
+        Junction(ArtifactsDir, elsewhere);
+        var inData = Path.Combine(_data, "room-in-data");
+        Write(Path.Combine(inData + ".artifacts", "a.png"), Foreign);
+        Store.CreateRoom("inData", "In data", inData);
+
+        await AssertRefused((await List()).Response, HttpStatusCode.Forbidden);              // linked artifacts folder
+        await AssertRefused((await List("inData")).Response, HttpStatusCode.Forbidden);      // a refused subtree
+        await AssertRefused((await List("no-such-room")).Response, HttpStatusCode.NotFound);
+        await AssertRefused((await List("general")).Response, HttpStatusCode.NotFound);      // no directory
+    }
 }

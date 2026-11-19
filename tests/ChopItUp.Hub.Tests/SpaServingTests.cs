@@ -35,6 +35,19 @@ public sealed class SpaServingTests : IAsyncLifetime
         Assert.Contains("id=\"root\"", await response.Content.ReadAsStringAsync());
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("rooms/general")]
+    [InlineData("index.html")]   // served by the static files, not the fallback
+    public async Task The_shell_loads_only_its_own_files(string path)
+    {
+        var response = await _host.Client.GetAsync(path);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'",
+            Assert.Single(response.Headers.GetValues("Content-Security-Policy")));
+    }
+
     [Fact]
     public async Task Hashed_assets_are_served_from_the_web_root()
     {
