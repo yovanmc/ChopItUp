@@ -18,6 +18,9 @@ trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.
 Judge rows migration dry run (no model calls, scratch hub, a v15 state with fabricated messages,
 an owner-set class and an owner clear, migrated to v16 through the real exe):
 `pwsh tools\Invoke-Row82DryRun.ps1 [-HubExe <exe>]`.
+Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
+example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
+`pwsh tools\Invoke-Row83WebCheck.ps1`.
 Image probe (real Opus and gpt-5.6-sol, one call each, spends): a directory room spawn reads random
 text from a fixture image: `pwsh tools\Invoke-Row82ImageProbe.ps1`.
 Inert-import dry run (no model calls, scratch hub, fabricated v2 corpus migrated to v16, CLI PATH

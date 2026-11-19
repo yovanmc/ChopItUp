@@ -67,7 +67,7 @@ public sealed partial class SpawnerService : BackgroundService
     /// <summary>What the trail did around one spawn in a directory room; null when the room has no
     /// directory. <see cref="Leased"/> is true when the spawn body ran in a leased worktree.</summary>
     private sealed record TrailReport(CommitOutcome? Owner, CommitOutcome Agent, int Commands, bool HeadMoved, bool Leased = false,
-        IReadOnlyList<AddedFile>? LargeFiles = null, string? ArtifactsFolder = null);
+        IReadOnlyList<AddedFile>? LargeFiles = null, string? ArtifactsFolder = null, int WebRequests = 0);
 
     private sealed class SpawnHandle
     {
@@ -377,7 +377,7 @@ public sealed partial class SpawnerService : BackgroundService
 
     private void PostTrailNotes(string roomId, string participantId, TrailReport trail)
     {
-        PostNote(roomId, HubNotes.Trail(participantId, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved));
+        PostNote(roomId, HubNotes.Trail(participantId, trail.Owner, trail.Agent, trail.Commands, trail.HeadMoved, trail.WebRequests));
         if (trail.LargeFiles is { Count: > 0 } large) PostNote(roomId, HubNotes.LargeFiles(participantId, large, trail.ArtifactsFolder));
     }
 
@@ -1088,7 +1088,7 @@ public sealed partial class SpawnerService : BackgroundService
                         // run_gate joins the allowlist only for an in-run spawn. The built-in tool set
                         // (--tools) is untouched either way.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;
-                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null, artifactsFolder), tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs, artifactsFolder);
+                        spec = SpawnCommands.ClaudeInDirectory(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.DirectoryRules(tree!, inWorktree ? directory : null, artifactsFolder) + " " + SpawnPrompt.WebRule, tree!, prompt, label, effort, allowedTools, mcpToolTimeoutMs, artifactsFolder);
                     }
                     break;
                 }
@@ -1163,19 +1163,24 @@ public sealed partial class SpawnerService : BackgroundService
                     if (git is not null)
                     {
                         // After: always a commit, empty or not, timed out or not — the trail says the spawn happened.
-                        var commands = (host == "codex" ? SpawnOutput.CodexShellCommands(result.StandardOutput) : SpawnOutput.ClaudeShellCommands(result.StandardOutput))
+                        // Scrubbed whole, before the lists cap each entry at 400 characters: a token the
+                        // cut splits would no longer match and would reach git in part.
+                        var stdout = Scrub(result.StandardOutput, token);
+                        var commands = (host == "codex" ? SpawnOutput.CodexShellCommands(stdout) : SpawnOutput.ClaudeShellCommands(stdout))
                             .Select(c => c with { Command = Scrub(StripAnsi(c.Command), token) }).ToList();
+                        var web = (host == "codex" ? [] : SpawnOutput.ClaudeWebRequests(stdout))
+                            .Select(w => w with { Target = Scrub(StripAnsi(w.Target), token) }).ToList();
                         var headMoved = await git.HeadAsync(CancellationToken.None) != headBefore;
                         // The repository's own identity is the author; the host is credited by
                         // trailer only when its process actually launched and the turn changed
                         // something (CommitAllAsync decides that part).
                         var trailer = launched ? RoomCommits.CoAuthorTrailer(host) : null;
-                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved), author: null, allowEmpty: true,
+                        var agent = await git.CommitAllAsync(RoomCommits.AgentMessage(participant, roomId, turn, budget, commands, headMoved, web), author: null, allowEmpty: true,
                             trailers: trailer is null ? null : [trailer], cancellation: CancellationToken.None);
                         IReadOnlyList<AddedFile> added = agent.Hash is null ? []
                             : await git.AddedFilesAsync(headBefore is null ? agent.Hash : $"{headBefore}..{agent.Hash}", CancellationToken.None);
                         trail = new TrailReport(owner, agent, commands.Count, headMoved, leased,
-                            added.Where(f => f.Size > HubNotes.LargeFileBytes).ToList(), artifactsFolder);
+                            added.Where(f => f.Size > HubNotes.LargeFileBytes).ToList(), artifactsFolder, web.Count);
 
                         // Artifact authorship comes from the spawn's whole diff, not one commit, so a
                         // host that commits its own work mid-spawn (Codex, or a rogue Claude Bash call)

@@ -86,8 +86,10 @@ public static class SpawnCommands
     }
 
     /// <summary>The built-in tools a spawn in a directory room gets, and the allow list that
-    /// pre-approves them beside the three MCP tools. `dontAsk` denies anything not on the list.</summary>
-    public const string ClaudeBuiltins = "Read,Edit,Write,Glob,Grep,Bash";
+    /// pre-approves them beside the MCP tools. `dontAsk` denies anything not on the list. The two web
+    /// tools ran under `dontAsk` once listed (measured on 2.1.328); the trail records each call
+    /// (<see cref="SpawnOutput.ClaudeWebRequests"/>).</summary>
+    public const string ClaudeBuiltins = "Read,Edit,Write,Glob,Grep,Bash,WebSearch,WebFetch";
     public const string ClaudeDirectoryToolsAllowed = ClaudeBuiltins + "," + ClaudeToolAllowed;
 
     /// <summary>Profile folders that hold credentials: refused as room directories (RoomPathRules) and
@@ -107,7 +109,7 @@ public static class SpawnCommands
         "submodule", "switch", "symbolic-ref", "tag", "update-index", "update-ref", "worktree", "write-tree",
     ];
 
-    /// <summary>The second Claude allowlist: the ordinary six-builtin-plus-three-MCP list, plus
+    /// <summary>The second Claude allowlist: the ordinary built-in-plus-MCP list, plus
     /// `run_gate`, for an in-run Claude spawn's directory room only. The built-in tool set
     /// (`--tools`, <see cref="ClaudeBuiltins"/>) is untouched: MCP tools stay directly callable
     /// regardless of the built-in list, so widening only the allowlist is enough, and an out-of-run
@@ -147,6 +149,11 @@ public static class SpawnCommands
             rules.Add($"Write(~/{folder}/**)");
             rules.Add($"Edit(~/{folder}/**)");
         }
+        // The hub answers unauthenticated GETs on loopback, so WebFetch must not be a path to it.
+        // Measured on 2.1.328 with a loopback canary: without these WebFetch connected to 127.0.0.1;
+        // with them both calls were denied before any connection. Bash can still reach it.
+        rules.Add("WebFetch(domain:127.0.0.1)");
+        rules.Add("WebFetch(domain:localhost)");
         if (dataDir is not null)
         {
             var forward = dataDir.Replace('\\', '/');
@@ -176,7 +183,7 @@ public static class SpawnCommands
     public const string ClaudeMcpIdleTimeoutEnvVar = "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT";
 
     /// <summary>A spawn in a directory room: cwd is the room's tree; `dontAsk` plus the allow list
-    /// runs the six built-ins and the three MCP tools without a prompt and auto-denies everything
+    /// runs the listed built-ins and MCP tools without a prompt and auto-denies everything
     /// else (protected-path writes included; under `bypassPermissions` they would be auto-approved);
     /// the deny list rides in <paramref name="settingsPath"/>, which sits in the scratch folder
     /// beside <paramref name="mcpConfigPath"/>, never in the room; `stream-json` + `--verbose` is

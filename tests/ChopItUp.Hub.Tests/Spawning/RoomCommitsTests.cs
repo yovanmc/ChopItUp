@@ -30,6 +30,18 @@ public sealed class RoomCommitsTests
     }
 
     [Fact]
+    public void Web_requests_follow_the_shell_block_and_precede_the_head_moved_line()
+    {
+        var m = RoomCommits.AgentMessage(Sonnet, "lab", 1, 4, [new("echo hi", false)], true,
+            [new("WebSearch", "dotnet 10 release", false), new("WebFetch", "https://evil.example/", true)]);
+        Assert.Equal("sonnet: turn 1/4 in room lab\n\nShell commands run (1):\n  1. echo hi\n"
+            + "\nWeb requests (2):\n  1. WebSearch: dotnet 10 release\n  2. WebFetch: https://evil.example/ [denied]\n"
+            + "\nHEAD moved during this spawn: the model committed on its own; its commit(s) sit below this one in the log.\n", m);
+        Assert.Equal(RoomCommits.AgentMessage(Sonnet, "lab", 1, 4, [new("echo hi", false)], false),
+            RoomCommits.AgentMessage(Sonnet, "lab", 1, 4, [new("echo hi", false)], false, []));   // no web call: no block
+    }
+
+    [Fact]
     public void M9_A9_the_trail_note_reports_the_commit_the_owner_precommit_and_failures()
     {
         var agent = new CommitOutcome("abc1234", true, 2, null);
@@ -39,5 +51,6 @@ public sealed class RoomCommitsTests
         Assert.Equal("Committed abc1234 for sonnet: 0 file(s) changed, 0 shell command(s). HEAD moved during the spawn: sonnet committed on its own.",
             HubNotes.Trail("sonnet", new CommitOutcome("9999999", false, 0, null), agent with { FilesChanged = 0 }, 0, true));
         Assert.Equal("Not committed for sonnet: git commit exited 128: boom.", HubNotes.Trail("sonnet", null, new CommitOutcome(null, false, 0, "git commit exited 128: boom"), 0, false));
+        Assert.Equal("Committed abc1234 for sonnet: 2 file(s) changed, 3 shell command(s), 2 web request(s).", HubNotes.Trail("sonnet", null, agent, 3, false, webRequests: 2));
     }
 }

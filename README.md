@@ -181,7 +181,9 @@ another room's directory. A junction or symbolic link is resolved and both the l
 must pass.
 
 Inside a directory room a spawned participant can read, create, edit, search and run shell commands
-with network access, cwd set to the room; git is read-only for it by rule. Only one spawn runs at a
+with network access, cwd set to the room; git is read-only for it by rule. A Claude spawn there can
+also search the web and fetch pages (WebSearch and WebFetch); its system prompt marks their results
+as untrusted data, and a fetch of the hub's own loopback address is denied. Only one spawn runs at a
 time within one exchange, so two models never edit the same tree at once.
 
 Each directory room also has an artifacts folder beside it, `<room dir>.artifacts`. A spawn finds its
@@ -203,8 +205,8 @@ each with its own note. A run's own spawns still work in the room directory itse
 across the whole room, exactly as before.
 
 The trail: before a spawn, if the tree is dirty, the hub commits any owner edits; when the spawn ends
-the hub always commits the tree for that participant, with the shell commands it ran listed in the
-commit body. Every room commit carries the repository's own configured git identity as author and
+the hub always commits the tree for that participant, with the shell commands it ran, and each web
+search query and fetched URL, listed in the commit body. Every room commit carries the repository's own configured git identity as author and
 committer (the hub's `ChopItUp hub <hub@chopitup.local>` only when none is configured), the participant
 is named in the subject, and a turn that changed something is credited with
 `Co-authored-by: Codex <noreply@openai.com>` or `Co-authored-by: Claude <noreply@anthropic.com>` as its

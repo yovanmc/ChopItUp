@@ -80,7 +80,9 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.StartsWith(Path.Combine(_dir, "spawns"), settingsPath);                         // scratch, not the room
         Assert.StartsWith(Path.Combine(_dir, "spawns"), spec.Arguments[spec.Arguments.ToList().IndexOf("--mcp-config") + 1]);
         Assert.Contains(@"Files: this room's directory is " + tree, spec.StandardInput);
-        Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir, RoomArtifacts.FolderFor(dir)), spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
+        Assert.Equal(SpawnPrompt.DirectoryRules(tree, dir, RoomArtifacts.FolderFor(dir)) + " " + SpawnPrompt.WebRule, spec.Arguments[spec.Arguments.ToList().IndexOf("--append-system-prompt") + 1]);   // the fence in the system channel
+        Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);              // web tools out of a run too
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed, spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1]);
 
         var note = await WaitForMessageIn("lab", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
         Assert.Contains("for sonnet: 1 file(s) changed, 2 shell command(s).", note.Body);
@@ -107,6 +109,42 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.False(Directory.Exists(Path.GetDirectoryName(settingsPath)!));                 // the scratch folder does not
         Assert.False(File.Exists(Path.Combine(dir, "settings.json")));
         Assert.False(File.Exists(Path.Combine(dir, "mcp.json")));
+    }
+
+    /// <summary>The spawn's own token is scrubbed from the whole stream before either list is cut, so a
+    /// token the 400-character cap would split cannot reach git in part.</summary>
+    [Fact]
+    public async Task Web_requests_reach_the_room_commit_stripped_and_scrubbed_and_the_note_counts_them()
+    {
+        var dir = await MakeRoom("lab-web");
+        string token = "";
+        _runner.Handler = async (spec, _, _) =>
+        {
+            var args = spec.Arguments.ToList();
+            using (var doc = JsonDocument.Parse(File.ReadAllText(args[args.IndexOf("--mcp-config") + 1])))
+                token = doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("headers").GetProperty("Authorization").GetString()!["Bearer ".Length..];
+            await PostAsIn("sonnet", "lab-web", "Looked it up.");
+            var pad = new string('x', 380);
+            return FakeProcessRunner.Ok($$$$$"""
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"echo {{{{{pad}}}}}{{{{{token}}}}}"}}]}}
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w1","name":"WebSearch","input":{"query":"\u001b[31mred\u001b[0m query"}}]}}
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w2","name":"WebFetch","input":{"url":"https://example.com/?k={{{{{token}}}}}"}}]}}
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w3","name":"WebFetch","input":{"url":"http://127.0.0.1:8790/api/rooms"}}]}}
+                {"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[{"tool_name":"WebFetch","tool_use_id":"w3"}]}
+                """);
+        };
+
+        await PostAsOwnerIn("lab-web", "@sonnet look it up");
+        await _runner.NextSpecAsync(Wait);
+        var root = Spawner.Snapshot("lab-web").RootMessageId!.Value;
+        var note = await WaitForMessageIn("lab-web", m => m.Author == "hub" && m.Body.StartsWith(HubNotes.TrailPrefix));
+        Assert.EndsWith("1 shell command(s), 3 web request(s).", note.Body);
+
+        await WaitForMessageIn("lab-web", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
+        var body = (await GitLog(dir, "%B", 1, skip: 1)).Replace("\r\n", "\n");
+        Assert.Contains("\nWeb requests (3):\n  1. WebSearch: red query\n  2. WebFetch: https://example.com/?k=<token>\n  3. WebFetch: http://127.0.0.1:8790/api/rooms [denied]", body);
+        Assert.Contains("echo " + new string('x', 380) + "<token>", body);
+        Assert.DoesNotContain(token[..12], body);
     }
 
     [Theory]
