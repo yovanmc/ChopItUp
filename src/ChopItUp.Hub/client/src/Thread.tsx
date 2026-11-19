@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef, type MouseEvent } from 'react';
+import { IMAGE_RETRY_MS } from './images';
 import { renderBody } from './markdown';
 import { accentClass, badgeFor, displayName, isHuman, isSystem } from './participants';
 import { replySnippet } from './reply';
@@ -13,9 +14,6 @@ const RUN_GAP_MINUTES = 8;
 const PIN_SLACK_PX = 96;
 /** How long a message a quote jumped to stays highlighted. Matches `.row.flash` in styles.css. */
 const FLASH_MS = 1200;
-
-/** How long a failed chat image waits before its one retry. */
-const IMAGE_RETRY_MS = 1000;
 
 interface Props {
   messages: Message[];
@@ -81,9 +79,13 @@ export default function Thread({ messages, loading, onReply, onOpenImage }: Prop
   function onClick(event: MouseEvent) {
     const target = event.target;
     if (!onOpenImage || !(target instanceof HTMLElement)) return;
-    if (target instanceof HTMLImageElement && target.dataset['ref'] !== undefined) onOpenImage(target.dataset['ref']);
-    const video = target.closest<HTMLElement>('[data-video-ref]');
-    if (video?.dataset['videoRef'] !== undefined) onOpenImage(video.dataset['videoRef']);
+    const ref = target instanceof HTMLImageElement && target.dataset['ref'] !== undefined
+      ? target.dataset['ref']
+      : target.closest<HTMLElement>('[data-video-ref]')?.dataset['videoRef'];
+    if (ref === undefined) return;
+    // An image inside a link opens the viewer, never the link as well.
+    event.preventDefault();
+    onOpenImage(ref);
   }
 
   useEffect(() => {

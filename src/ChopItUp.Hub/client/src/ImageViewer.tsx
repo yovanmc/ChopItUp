@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { fileName, isVideo, routeFor } from './images';
+import { fileName, IMAGE_RETRY_MS, isVideo, routeFor } from './images';
 
 interface Props {
   roomId: string;
@@ -11,7 +11,6 @@ const MARGIN = 48;
 const MIN_SCALE = 0.05;
 const MAX_SCALE = 16;
 const WHEEL_STEP = 1.25;
-const RETRY_MS = 1000;
 
 interface View {
   /** null is "fitted to the window". */
@@ -128,7 +127,7 @@ export default function ImageViewer({ roomId, fileRef, onClose }: Props) {
   }
 
   function onError() {
-    if (attempt === 0) window.setTimeout(() => setAttempt(1), RETRY_MS);
+    if (attempt === 0) window.setTimeout(() => setAttempt(1), IMAGE_RETRY_MS);
     else setFailed(true);
   }
 

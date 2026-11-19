@@ -1,4 +1,3 @@
-// REWRITE_OK: the module split routeFor into refFromHref and routeFor.
 import { describe, expect, test } from 'vitest';
 import { escapeHtml, fileName, refFromHref, routeFor } from './images';
 
@@ -29,11 +28,12 @@ describe('refFromHref', () => {
     ['my%20file.png', 'my file.png'],
     ['artifact:my%20file.png', 'artifact:my file.png'],
     ['my file.png', 'my file.png'],               // marked's angle-bracket form hands the space through
+    ['artifact:progress 50%.png', 'artifact:progress 50%.png'],   // not valid percent encoding: taken as written
   ])('%s names %s', (href, ref) => {
     expect(refFromHref(href)).toBe(ref);
   });
 
-  test.each([...notRoomFiles, '%E0%A4%A'])('%s names no room file', (href) => {
+  test.each(notRoomFiles)('%s names no room file', (href) => {
     expect(refFromHref(href)).toBeNull();
   });
 });

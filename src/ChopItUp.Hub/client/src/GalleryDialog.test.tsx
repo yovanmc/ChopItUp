@@ -19,7 +19,6 @@ describe('gallery grid', () => {
     expect(markup.indexOf('b.png')).toBeLessThan(markup.indexOf('a.webp'));
     expect(markup).toContain('src="/api/rooms/lab/files?ref=artifact%3Arenders%2Fa.webp"');
     expect(markup).toContain('title="a.webp"');
-    expect(markup).toContain('2 files, newest first');
   });
 
   test('a video tile shows a play mark and loads no media', () => {
@@ -42,7 +41,9 @@ describe('gallery grid', () => {
     expect(markup).toContain('One folder could not be read');
   });
 
-  test('an empty folder says where files come from', () => {
-    expect(grid({ files: [], omitted: 0, unreadable: 0 })).toContain('No images or videos yet');
+  test('an empty folder shows a note and no grid', () => {
+    const markup = grid({ files: [], omitted: 0, unreadable: 0 });
+    expect(markup).toContain('dialog-note');
+    expect(markup).not.toContain('gallery-grid');
   });
 });

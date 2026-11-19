@@ -16,16 +16,21 @@ function isRoomRef(ref: string): boolean {
 }
 
 /** The ref a markdown image href names, or null when it names no room file. A percent-encoded href
- *  (`my%20file.png`) is decoded, so the ref is the name on disk. */
+ *  (`my%20file.png`) is decoded, so the ref is the name on disk. An href that is not valid percent
+ *  encoding (`progress 50%.png`) is taken as written. */
 export function refFromHref(href: string): string | null {
+  const trimmed = href.trim();
   let decoded: string;
   try {
-    decoded = decodeURI(href.trim());
+    decoded = decodeURI(trimmed);
   } catch {
-    return null;
+    decoded = trimmed;
   }
   return isRoomRef(decoded) ? decoded : null;
 }
+
+/** How long a failed room image waits before its one retry; a spawn may be mid-write. */
+export const IMAGE_RETRY_MS = 1000;
 
 /** The room file route URL for `ref`, a name as it is on disk (never decoded again, so a file named
  *  `50%.png` stays that name), or null when it names no room file. */

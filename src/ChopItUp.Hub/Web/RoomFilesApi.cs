@@ -13,6 +13,13 @@ public sealed class RoomFileGate
 {
     public const int Permits = 16;
     public SemaphoreSlim Slots { get; } = new(Permits, Permits);
+
+    /// <summary>How long a listing waits on the folder walk before answering 503. A walk that outlives
+    /// it keeps its permit until it ends, so hung walks stay within <see cref="Permits"/>.</summary>
+    public TimeSpan ListLimit { get; set; } = TimeSpan.FromSeconds(5);
+
+    /// <summary>Replaces the directory listing the walk reads, for tests that stall it.</summary>
+    public Func<string, IEnumerable<FileSystemInfo>>? ListOverride { get; set; }
 }
 
 /// <summary><c>GET /api/rooms/{roomId}/files?ref=</c>: an image or video from the room's directory or
@@ -24,10 +31,6 @@ public static class RoomFilesApi
     public const long MaxImageBytes = 32L * 1024 * 1024;
 
     public const int MaxListed = 500;
-
-    /// <summary>How long a listing waits on the folder walk. A room on a sleeping drive must not hold
-    /// a gate permit for longer.</summary>
-    public static readonly TimeSpan ListLimit = TimeSpan.FromSeconds(5);
 
     public static void MapRoomFilesApi(this WebApplication app)
     {
@@ -61,6 +64,7 @@ public static class RoomFilesApi
     {
         Guard(context);
         if (!gate.Slots.Wait(0)) return Busy(context, "too many room file requests at once; retry");
+        var releaseOnReturn = true;
         try
         {
             if (!OperatingSystem.IsWindows()) return Refuse(404, "Room files are served on Windows only.");
@@ -74,14 +78,19 @@ public static class RoomFilesApi
                 default: return Results.Json(new { files = Array.Empty<ListedFile>(), omitted = 0, unreadable = 0 });
             }
 
-            var walk = Task.Run(() => RoomArtifacts.Scan(root, keepReparse: f => OperatingSystem.IsWindows() && RoomFileRoots.IsPlainFile(f)));
-            if (await Task.WhenAny(walk, Task.Delay(ListLimit)) != walk)
-                return Busy(context, $"the artifacts folder did not answer within {ListLimit.TotalSeconds:0} s; retry");
+            var walk = Task.Run(() => RoomArtifacts.Scan(root, gate.ListOverride, keepReparse: f => OperatingSystem.IsWindows() && RoomFileRoots.IsPlainFile(f)));
+            if (await Task.WhenAny(walk, Task.Delay(gate.ListLimit)) != walk)
+            {
+                // The walk cannot be cancelled, so it keeps the permit until it ends.
+                releaseOnReturn = false;
+                _ = walk.ContinueWith(_ => gate.Slots.Release(), TaskScheduler.Default);
+                return Busy(context, $"the artifacts folder did not answer within {gate.ListLimit.TotalSeconds:0.#} s; retry");
+            }
             var scan = await walk;
             if (scan.Faulted) return Busy(context, "the artifacts folder could not be read; retry");
 
             var served = scan.Files
-                .Where(f => RoomFileRef.Parse(ArtifactRef.Prefix + f.Key).Error is null)
+                .Where(f => RoomFileRef.Parse(ArtifactRef.Prefix + f.Key) is { Error: null } parsed && (parsed.IsVideo || f.Value.Length <= MaxImageBytes))
                 .OrderByDescending(f => f.Value.WrittenUtc).ThenBy(f => f.Key, StringComparer.Ordinal)
                 .ToList();
             var files = served.Take(MaxListed)
@@ -93,7 +102,7 @@ public static class RoomFilesApi
         {
             return Busy(context, "the artifacts folder could not be read; retry");
         }
-        finally { gate.Slots.Release(); }
+        finally { if (releaseOnReturn) gate.Slots.Release(); }
     }
 
     /// <summary>A file a lock, a dropped drive or a denied read stops midway still gets an answer with

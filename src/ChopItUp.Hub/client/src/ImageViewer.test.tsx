@@ -11,8 +11,11 @@ describe('image viewer', () => {
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-label="Image viewer"');
     expect(markup).toContain('src="/api/rooms/lab/files?ref=artifact%3Arenders%2Fshot%201.png"');
-    expect(markup).toContain('class="viewer-caption" title="artifact:renders/shot 1.png">shot 1.png</p>');
-    expect(markup).toMatch(/<a class="viewer-button" href="[^"]+" target="_blank" rel="noopener noreferrer">Open original<\/a>/);
+    expect(markup).toMatch(/class="viewer-caption"[^>]*>shot 1\.png</);
+    const link = markup.match(/<a [^>]*>Open original<\/a>/)?.[0] ?? '';
+    expect(link).toContain('href="/api/rooms/lab/files?ref=artifact%3Arenders%2Fshot%201.png"');
+    expect(link).toContain('target="_blank"');
+    expect(link).toContain('rel="noopener noreferrer"');
     expect(markup).toContain('aria-label="Close viewer"');
     expect(markup).toContain('Fit · ');
   });

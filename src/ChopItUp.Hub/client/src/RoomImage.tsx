@@ -1,6 +1,5 @@
 import { useState } from 'react';
-
-const RETRY_MS = 1000;
+import { IMAGE_RETRY_MS } from './images';
 
 /** A room file image that tries once more a second after a failed load (a spawn may be mid-write),
  *  then says the file is not available instead of showing the browser's broken-image glyph. */
@@ -15,7 +14,7 @@ export default function RoomImage({ src, name }: { src: string; name: string }) 
       loading="lazy"
       decoding="async"
       onError={() => {
-        if (attempt === 0) window.setTimeout(() => setAttempt(1), RETRY_MS);
+        if (attempt === 0) window.setTimeout(() => setAttempt(1), IMAGE_RETRY_MS);
         else setFailed(true);
       }}
     />

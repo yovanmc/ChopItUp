@@ -339,6 +339,9 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         WriteAt("clip.mp4", Png, 10);
         WriteAt("notes.txt", Png, 5);            // a type the route does not serve
         WriteAt("jobs/job.png", Png, 1);         // background job output
+        WriteAt("huge.png", Png, 2);             // over the route's image cap
+        using (var huge = File.OpenWrite(Path.Combine(ArtifactsDir, "huge.png"))) huge.SetLength(RoomFilesApi.MaxImageBytes + 1);
+        File.SetLastWriteTimeUtc(Path.Combine(ArtifactsDir, "huge.png"), DateTime.UtcNow.AddMinutes(-2));
         var outside = Path.Combine(Files, "outside");
         Write(Path.Combine(outside, "foreign.png"), Foreign);
         Junction(Path.Combine(ArtifactsDir, "escape"), outside);
@@ -425,6 +428,35 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
 
             await AssertRefused(response, HttpStatusCode.ServiceUnavailable);
             Assert.NotNull(response.Headers.RetryAfter);
+        }
+    }
+
+    [Fact]
+    public async Task A_walk_past_the_limit_answers_503_and_keeps_its_permit_until_it_ends()
+    {
+        WriteAt("a.png", Png, 1);
+        var gate = _host.Services.GetRequiredService<RoomFileGate>();
+        using var stalled = new ManualResetEventSlim();
+        gate.ListLimit = TimeSpan.FromMilliseconds(200);
+        gate.ListOverride = directory => { stalled.Wait(TimeSpan.FromSeconds(30)); return new DirectoryInfo(directory).EnumerateFileSystemInfos(); };
+        try
+        {
+            var (response, _) = await List();
+
+            await AssertRefused(response, HttpStatusCode.ServiceUnavailable);
+            Assert.NotNull(response.Headers.RetryAfter);
+            Assert.Equal(RoomFileGate.Permits - 1, gate.Slots.CurrentCount);
+
+            stalled.Set();
+            var released = false;
+            for (var i = 0; i < 50 && !released; i++) { released = gate.Slots.CurrentCount == RoomFileGate.Permits; if (!released) await Task.Delay(100); }
+            Assert.True(released, "the walk's permit came back when it ended");
+        }
+        finally
+        {
+            stalled.Set();
+            gate.ListOverride = null;
+            gate.ListLimit = TimeSpan.FromSeconds(5);
         }
     }
 
