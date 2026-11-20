@@ -123,6 +123,55 @@ public sealed class RunStoreTests : IDisposable
     }
 
     [Fact]
+    public void Hold_refunds_the_spawn_parks_softly_and_sets_the_resume_instant()
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
+        _store.CountSpawn(run.Id);
+        _store.CountSpawn(run.Id);
+
+        var held = _store.Hold(run.Id, "usage limit", T0.AddHours(3), T0.AddMinutes(5));
+
+        Assert.Equal((RunStatus.Parked, false, 1, (DateTimeOffset?)T0.AddHours(3), (DateTimeOffset?)T0.AddMinutes(5)), (held.Status, held.CapSpent, held.SpawnsUsed, held.ResumeAt, held.ParkedAt));
+        Assert.Equal(run.Id, _store.NextResume()!.Id);
+        Assert.Throws<InvalidOperationException>(() => _store.Hold(run.Id, "again", null, T0.AddMinutes(6)));   // only an active run is held
+    }
+
+    [Fact]
+    public void Hold_never_refunds_below_zero_and_with_no_reset_sets_no_resume()
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
+
+        var held = _store.Hold(run.Id, "usage limit, no reset given", null, T0.AddMinutes(5));
+
+        Assert.Equal((0, (DateTimeOffset?)null), (held.SpawnsUsed, held.ResumeAt));
+        Assert.Null(_store.NextResume());
+    }
+
+    /// <summary>Every other status write clears a held run's resume instant, so a later park that
+    /// waits for the owner never reopens by itself.</summary>
+    [Theory]
+    [InlineData("park")]
+    [InlineData("resume")]
+    [InlineData("extend")]
+    [InlineData("end")]
+    public void Every_other_status_write_clears_the_resume_instant(string write)
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
+        _store.Hold(run.Id, "usage limit", T0.AddHours(3), T0.AddMinutes(5));
+
+        var after = write switch
+        {
+            "park" => _store.Park(run.Id, "two refused posts", capSpent: false, T0.AddMinutes(6)),
+            "resume" => _store.Resume(run.Id, T0.AddMinutes(6)),
+            "extend" => _store.Extend(run.Id, 6, 60, T0.AddMinutes(6)),
+            _ => _store.End(run.Id, "stopped", T0.AddMinutes(6)),
+        };
+
+        Assert.Null(after.ResumeAt);
+        Assert.Null(_store.NextResume());
+    }
+
+    [Fact]
     public void Resume_on_a_cap_spent_park_throws_and_leaves_the_run_parked()
     {
         var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
