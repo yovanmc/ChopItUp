@@ -63,6 +63,14 @@ internal static class RunHostFixture
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
     }
 
+    /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>
+    internal static string WhyHere(string prompt)
+    {
+        var start = prompt.IndexOf("Why you are here:", StringComparison.Ordinal);
+        Assert.True(start >= 0, "the prompt has no why-line");
+        return prompt[start..prompt.IndexOf("This exchange started", start, StringComparison.Ordinal)];
+    }
+
     internal static async Task<List<(string Author, string Body)>> AllMessagesFrom(HubTestHost host, string room)
     {
         using var doc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));

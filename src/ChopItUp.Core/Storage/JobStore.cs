@@ -58,22 +58,14 @@ public sealed class JobStore(ChopDb db)
 
     public Job? Get(long id) => Query("WHERE id = $id", ("$id", id)).SingleOrDefault();
 
-    /// <summary>Who started the ended job whose folder is named <paramref name="folderName"/>, or null
-    /// while it runs or when no job has that folder. Folder names carry a random suffix, so a name
-    /// names one job across every run and every hub that shares the database.</summary>
-    public string? EndedAuthorOfFolder(string folderName)
-    {
-        using var conn = db.Open();
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT author_id FROM jobs
+    /// <summary>The ended job whose folder is named <paramref name="folderName"/>, or null while it
+    /// runs or when no job has that folder. Folder names carry a random suffix, so a name names one
+    /// job across every run and every hub that shares the database.</summary>
+    public Job? EndedOfFolder(string folderName) =>
+        Query("""
             WHERE status <> $running AND length(folder) > length($name)
               AND substr(folder, -length($name) - 1) IN ('\' || $name, '/' || $name)
-            """;
-        cmd.Parameters.AddWithValue("$running", JobStatus.Running);
-        cmd.Parameters.AddWithValue("$name", folderName);
-        return cmd.ExecuteScalar() as string;
-    }
+            """, ("$running", JobStatus.Running), ("$name", folderName)).SingleOrDefault();
 
     /// <summary>Every job still running, plus every ended job whose end note never reached its room:
     /// what a starting hub must report.</summary>

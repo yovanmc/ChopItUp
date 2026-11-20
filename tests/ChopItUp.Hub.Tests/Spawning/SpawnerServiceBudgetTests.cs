@@ -396,14 +396,6 @@ public sealed class SpawnerServiceBudgetTests
         throw new TimeoutException($"no message '{body}' in '{room}'");
     }
 
-    /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>
-    private static string WhyHere(string prompt)
-    {
-        var start = prompt.IndexOf("Why you are here:", StringComparison.Ordinal);
-        Assert.True(start >= 0, "the prompt has no why-line");
-        return prompt[start..prompt.IndexOf("This exchange started", start, StringComparison.Ordinal)];
-    }
-
     /// <summary>A job ends while a worker spends the last spawn: the run parks, and the job's note
     /// still reaches the conductor that the extension opens.</summary>
     [Fact]

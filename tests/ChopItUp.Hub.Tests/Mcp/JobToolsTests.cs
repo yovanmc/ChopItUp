@@ -321,6 +321,39 @@ public sealed class JobToolsTests
         }
     }
 
+    /// <summary>A job or cancel process the hub cannot confine is killed and the failure surfaces.</summary>
+    [Fact]
+    public async Task A_process_the_hub_cannot_confine_is_killed()
+    {
+        using var process = new Process { StartInfo = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), "/c ping -n 30 127.0.0.1 >nul") { UseShellExecute = false, CreateNoWindow = true } };
+
+        Assert.Throws<InvalidOperationException>(() => JobRunner.StartConfined(process, _ => throw new InvalidOperationException("not inside the job")));
+        Assert.True(await Task.Run(() => process.WaitForExit(10_000)));
+    }
+
+    /// <summary>Job output stays its starter's work in a later run, but only the files its end
+    /// credited: a file another spawn adds to the folder after the job ended has no author, and no
+    /// running job's output has one yet.</summary>
+    [Fact]
+    public async Task Job_output_reads_as_its_starters_only_for_the_files_its_end_credited()
+    {
+        var (host, _, room) = await StartRunHostAsync(Instant, Limits);
+        await using var _ = host;
+        var runs = host.Services.GetRequiredService<RunStore>();
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+        var run = runs.Start(room, "sonnet", "build-thing", "", 1, 4, 40, DateTimeOffset.UtcNow);
+        var ended = Jobs(host).Start(room, run.Id, "sonnet", "render", null, gpu: false, 120, id => $@"C:\r.artifacts\jobs\j{id}-ab12cd34", DateTimeOffset.UtcNow);
+        runs.RecordArtifacts(run.Id, [$"artifact:jobs/j{ended.Id}-ab12cd34/frame.png"], "sonnet", DateTimeOffset.UtcNow);
+        Jobs(host).End(ended.Id, JobStatus.Exited, 0, DateTimeOffset.UtcNow);
+        var running = Jobs(host).Start(room, run.Id, "sonnet", "render", null, gpu: false, 120, id => $@"C:\r.artifacts\jobs\j{id}-ef56ab78", DateTimeOffset.UtcNow);
+        runs.RecordArtifacts(run.Id, [$"artifact:jobs/j{running.Id}-ef56ab78/frame.png"], "sonnet", DateTimeOffset.UtcNow);
+
+        Assert.Equal("sonnet", spawner.JobOutputAuthor($"artifact:jobs/j{ended.Id}-ab12cd34/frame.png"));
+        Assert.Null(spawner.JobOutputAuthor($"artifact:jobs/j{ended.Id}-ab12cd34/review.png"));
+        Assert.Null(spawner.JobOutputAuthor($"artifact:jobs/j{running.Id}-ef56ab78/frame.png"));
+        Assert.Null(spawner.JobOutputAuthor("artifact:jobs/readme.png"));
+    }
+
     /// <summary>Recovery reads the lost jobs while the runner starts, before any request can start a
     /// job: a job this hub starts right after its start is never ended as lost. Each round starts a
     /// fresh runner and writes a running row the moment its start returns.</summary>
@@ -345,7 +378,7 @@ public sealed class JobToolsTests
 
     /// <summary>A row a dead hub left running, whose process had started, is
     /// ended as lost at the next start, its cancel command runs once, and the note reaches the run
-    /// it belonged to (parked by the restart).</summary>
+    /// it belonged to (parked by the restart): the conductor the owner's resume opens is there for it.</summary>
     [Fact]
     public async Task A_running_row_left_by_a_crashed_hub_runs_its_cancel_command_and_is_reported_to_its_parked_run()
     {
@@ -354,6 +387,8 @@ public sealed class JobToolsTests
         {
             var (host, _, room) = await StartRunHostAsync(Instant, Limits, dir: dir, deleteOnDispose: false);
             Job job;
+            // A restarted fixture cannot mint the owner's bearer again: keep the first host's.
+            var ownerBearer = host.TokenFor(ChopDb.OwnerParticipantId);
             await using (host)
             {
                 var run = host.Services.GetRequiredService<RunStore>().Start(room, "sonnet", "build-thing", "", 1, 4, 40, DateTimeOffset.UtcNow);
@@ -366,14 +401,23 @@ public sealed class JobToolsTests
             }
             SqliteConnection.ClearAllPools();
 
-            var (again, _, _) = await StartRunHostAsync(Instant, Limits, dir: dir, deleteOnDispose: false);
+            var (again, againRunner, _) = await StartRunHostAsync(Instant, Limits, dir: dir, deleteOnDispose: false);
             await using (again)
             {
-                await WaitForNoteContaining(again, room, $"Job j{job.Id} by @sonnet was lost: the hub stopped while it ran.");
+                againRunner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"working"}"""));
+                var lostNote = $"Job j{job.Id} by @sonnet was lost: the hub stopped while it ran.";
+                await WaitForNoteContaining(again, room, lostNote);
                 var row = await Until(() => Jobs(again).Get(job.Id) is { NotedAt: not null } j ? j : null, "the note mark");
                 Assert.Equal(JobStatus.Lost, row.Status);
                 Assert.Equal("sonnet", again.Services.GetRequiredService<RunStore>().ArtifactAuthor(job.RunId, "artifact:jobs/j1-crashed/frame.png"));
                 Assert.Single(File.ReadAllLines(Path.Combine(job.Folder, "cancel-ran.txt")));
+
+                var noteId = again.Services.GetRequiredService<MessageStore>().ReadLast(room, 50).Single(m => m.Body.StartsWith(lostNote, StringComparison.Ordinal)).Id;
+                again.Client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ownerBearer);
+                await Post(again, room, "carry on");
+                var conductor = await againRunner.NextSpecAsync(Wait);
+                Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductor));
+                Assert.Contains($"#{noteId}", WhyHere(conductor.StandardInput));
             }
         }
         finally

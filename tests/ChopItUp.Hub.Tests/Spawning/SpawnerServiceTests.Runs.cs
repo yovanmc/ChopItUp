@@ -938,7 +938,7 @@ public sealed class SpawnerServiceRunsTests : SpawnerServiceTestBase
 
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(spec));
         var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
-        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate,mcp__chopitup__start_job,mcp__chopitup__job_status,mcp__chopitup__cancel_job", allowed);
         Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
 
         var mcpJson = runner.McpJsonOf(spec) ?? throw new InvalidOperationException("the fake captured no mcp.json for this spec");

@@ -68,16 +68,16 @@ public sealed class JobStoreTests : IDisposable
     }
 
     [Fact]
-    public void EndedAuthorOfFolder_names_the_starter_only_once_its_job_ended()
+    public void EndedOfFolder_finds_a_job_only_once_it_ended()
     {
         var running = _store.Start("general", 7, "sonnet", "a", null, false, 120, id => $@"C:\r.artifacts\jobs\j{id}-aaaa1111", T0);
         var ended = _store.Start("general", 7, "opus", "b", null, false, 120, id => $"C:/r.artifacts/jobs/j{id}-bbbb2222", T0);
         _store.End(ended.Id, JobStatus.Exited, 0, T0);
 
-        Assert.Null(_store.EndedAuthorOfFolder($"j{running.Id}-aaaa1111"));
-        Assert.Equal("opus", _store.EndedAuthorOfFolder($"j{ended.Id}-bbbb2222"));
-        Assert.Null(_store.EndedAuthorOfFolder("bbbb2222"));   // a name is matched whole, never as a suffix
-        Assert.Null(_store.EndedAuthorOfFolder("j9-none"));
+        Assert.Null(_store.EndedOfFolder($"j{running.Id}-aaaa1111"));
+        Assert.Equal(ended.Id, _store.EndedOfFolder($"j{ended.Id}-bbbb2222")!.Id);
+        Assert.Null(_store.EndedOfFolder("bbbb2222"));   // a name is matched whole, never as a suffix
+        Assert.Null(_store.EndedOfFolder("j9-none"));
     }
 
     [Theory]

@@ -199,8 +199,9 @@ Background jobs. A spawn in flight in a run can start a long command with `start
 `job_status` and `cancel_job` look at and stop it. A job runs with the hub's full rights, git writes and
 network included, outside both CLI sandboxes and outside Claude's deny list: it is a PowerShell script
 the hub runs in its own folder, `<room dir>.artifacts\jobs\j<id>-<hex>\`, logging to `job.log` there.
-Its environment carries no hub credential, and a credential presented from inside it is refused, unless
-the hub runs with `--owner-peer-check off`. The hub posts the command when the job starts, and its exit code and last log lines when it ends, which
+Its environment carries no hub credential, and while a job is live a credential presented from inside
+it, or from a peer the hub cannot place, is refused, unless the hub runs with `--owner-peer-check off`.
+The hub posts the command when the job starts, and its exit code and last log lines when it ends, which
 wakes the run's conductor. The hub stops a job on `cancel_job`, at its time limit (default 2 h, at most
 8 h), when its run ends or is stopped, and when the hub stops, running its `cancel_command` first when
 the job gave one. A job started with `gpu: true` holds one GPU slot shared by every hub on the machine

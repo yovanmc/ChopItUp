@@ -362,14 +362,16 @@ public sealed partial class SpawnerService : BackgroundService
     private readonly JobStore _jobStore;
 
     /// <summary>Job output is credited to its starter in the run that started the job, and it stays
-    /// that starter's work in every later run: the author of the ended job whose folder holds
-    /// <paramref name="path"/>, or null.</summary>
-    private string? JobOutputAuthor(string path)
+    /// that starter's work in every later run: the credit that run recorded for
+    /// <paramref name="path"/> once the job whose folder holds it ended, or null. A file added to the
+    /// folder after the end was never credited, so it has no author.</summary>
+    internal string? JobOutputAuthor(string path)
     {
         if (!ArtifactRef.TryRelative(RunStore.Normalize(path), out var relative)) return null;
         var parts = relative.Split('/');
         return parts.Length >= 3 && parts[0].Equals(RoomArtifacts.JobsFolder, StringComparison.OrdinalIgnoreCase)
-            ? _jobStore.EndedAuthorOfFolder(parts[1])
+            && _jobStore.EndedOfFolder(parts[1]) is { } job
+            ? _runs.ArtifactAuthor(job.RunId, path)
             : null;
     }
 

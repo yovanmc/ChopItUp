@@ -183,13 +183,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         lock (live.Gate)
         {
             if (live.StopStatus is { } early) return (early, null, null);
-            process.Start();
-            try { jobObject = tracker.Track(process, new ProcessSpec(psi.FileName, [], new Dictionary<string, string>(), job.Folder, "", "job/" + job.Name, job.RoomId, job.AuthorId), SpawnJobKind.BackgroundJob); }
-            catch
-            {
-                KillTree(process);
-                throw;
-            }
+            jobObject = StartConfined(process, p => tracker.Track(p, new ProcessSpec(psi.FileName, [], new Dictionary<string, string>(), job.Folder, "", "job/" + job.Name, job.RoomId, job.AuthorId), SpawnJobKind.BackgroundJob));
             live.Phase = Phase.Running;
         }
         var gate = new SemaphoreSlim(1, 1);
@@ -271,8 +265,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
             var psi = ShellStart(settings.ResolveShell(), workingDirectory, script);
             psi.Environment["CHOPITUP_JOB_DIR"] = job.Folder;
             using var process = new Process { StartInfo = psi };
-            process.Start();
-            using var jobObject = tracker.Track(process, new ProcessSpec(psi.FileName, [], new Dictionary<string, string>(), workingDirectory, "", "job-cancel/" + job.Name, job.RoomId, job.AuthorId), SpawnJobKind.BackgroundJob);
+            using var jobObject = StartConfined(process, p => tracker.Track(p, new ProcessSpec(psi.FileName, [], new Dictionary<string, string>(), workingDirectory, "", "job-cancel/" + job.Name, job.RoomId, job.AuthorId), SpawnJobKind.BackgroundJob));
             var drain = Task.WhenAll(process.StandardOutput.ReadToEndAsync(), process.StandardError.ReadToEndAsync());
             using var limit = new CancellationTokenSource(JobSettings.CancelLimit);
             try { await process.WaitForExitAsync(limit.Token); }
@@ -302,6 +295,20 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         foreach (var key in psi.Environment.Keys.Where(k => RemovedPrefixes.Any(p => k.StartsWith(p, StringComparison.OrdinalIgnoreCase))).ToArray())
             psi.Environment.Remove(key);
         return psi;
+    }
+
+    /// <summary>Starts <paramref name="process"/> and confines it with <paramref name="track"/>. A
+    /// live child the hub cannot confine is killed, never left running outside a job object, and the
+    /// failure is rethrown.</summary>
+    internal static IDisposable StartConfined(Process process, Func<Process, IDisposable> track)
+    {
+        process.Start();
+        try { return track(process); }
+        catch
+        {
+            KillTree(process);
+            throw;
+        }
     }
 
     private static void KillTree(Process process)
