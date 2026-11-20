@@ -22,6 +22,8 @@ public sealed partial class SpawnerService
     // that run (dropped when the run ends, so a later run may reuse a job id).
     private readonly Dictionary<long, Dictionary<string, TrackedJob>> _jobs = new();
     private readonly Dictionary<long, HashSet<string>> _finishedJobs = new();
+    // Room id -> job ids a run end killed whose finish report has not come in yet.
+    private readonly Dictionary<string, HashSet<string>> _killedJobs = new(StringComparer.Ordinal);
 
     /// <summary>Counts <paramref name="jobId"/> against the room's active or parked run until
     /// <see cref="FinishJob"/>, or until <paramref name="timeout"/> plus <see cref="JobGrace"/> passes.
@@ -59,6 +61,12 @@ public sealed partial class SpawnerService
     private void OnJobFinished(string roomId, string jobId, string note)
     {
         var noteId = PostNote(roomId, note);
+        // A report for a job an ended run killed is that run's, never the room's current run's.
+        if (_killedJobs.TryGetValue(roomId, out var killed) && killed.Remove(jobId))
+        {
+            if (killed.Count == 0) _killedJobs.Remove(roomId);
+            return;
+        }
         if (RunOwning(roomId) is not { } run) return;
         if (!_finishedJobs.TryGetValue(run.Id, out var finished)) _finishedJobs[run.Id] = finished = new HashSet<string>(StringComparer.Ordinal);
         finished.Add(jobId);
@@ -70,8 +78,9 @@ public sealed partial class SpawnerService
         var decision = _runPolicy.Decide(AssembleRunState(run), new RunEvent.JobFinished(id), pending);
         CarryOut(run, decision);
         if (decision is RunDecision.OpenConductor) pending.Clear();
-        // Busy or parked now: the note rides the next conductor spawn, a resume included.
-        else if (decision is RunDecision.Nothing) pending.Add(id);
+        // Busy or parked now: the note rides the next conductor spawn, a resume or an extension
+        // included. A run end drops the room's pending list, so this list is detached then.
+        else pending.Add(id);
         Publish(roomId);
     }
 
@@ -92,7 +101,12 @@ public sealed partial class SpawnerService
     {
         _finishedJobs.Remove(runId);
         if (!_jobs.Remove(runId, out var jobs)) return;
-        foreach (var (jobId, job) in jobs) KillOffLoop(job.RoomId, jobId, job.Kill);
+        foreach (var (jobId, job) in jobs)
+        {
+            if (!_killedJobs.TryGetValue(job.RoomId, out var killed)) _killedJobs[job.RoomId] = killed = new HashSet<string>(StringComparer.Ordinal);
+            killed.Add(jobId);
+            KillOffLoop(job.RoomId, jobId, job.Kill);
+        }
     }
 
     /// <summary>Off the loop: a kill may wait on a service interrupt. One kill that throws does not

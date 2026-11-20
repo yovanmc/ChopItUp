@@ -148,6 +148,8 @@ public sealed class RunPolicyTests
         var open = Assert.IsType<RunDecision.OpenConductor>(decision);
         Assert.Equal(s.RootMessageId, open.RootMessageId);
         Assert.Equal([9, 10], open.TriggerIds);
+        // A job note or steer that came in while the conductor ran rides the re-ask.
+        Assert.Equal([9L, 10L, 14L], Assert.IsType<RunDecision.OpenConductor>(_policy.Decide(s, new RunEvent.SpawnSilent(s.ConductorId, [9, 10]), [14])).TriggerIds);
     }
 
     // A second silence, with the current phase already at its entry cap, parks (soft).
@@ -176,9 +178,9 @@ public sealed class RunPolicyTests
             Phase = "build",
             PhaseEntries = new Dictionary<string, int> { ["build"] = Limits.PhaseEntries - 1 },
         };
-        var decision = _policy.Decide(s, new RunEvent.SpawnSilent(s.ConductorId, [12]), []);
+        var decision = _policy.Decide(s, new RunEvent.SpawnSilent(s.ConductorId, [12]), [15]);
 
-        Assert.IsType<RunDecision.OpenConductor>(decision);
+        Assert.Equal([12L, 15L], Assert.IsType<RunDecision.OpenConductor>(decision).TriggerIds);
     }
 
     // A non-conductor spawn going silent is not this policy's business.

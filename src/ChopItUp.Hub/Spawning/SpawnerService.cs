@@ -792,7 +792,7 @@ public sealed partial class SpawnerService : BackgroundService
         }
 
         CarryOut(run, decision);
-        if (state.JobsInFlight > 0 && decision is RunDecision.OpenConductor) pending.Clear();
+        if (decision is RunDecision.OpenConductor) pending.Clear();   // every arm passed the pending ids as triggers
     }
 
     /// <summary>The conductor's post passed every class rule and asks for work: rooted at that post
@@ -956,9 +956,10 @@ public sealed partial class SpawnerService : BackgroundService
             // touches its own worktree and the gated owner commit.
             if (exclusive && over is null && _closingRooms.Contains(x.RoomId)) continue;
             if (x.WaitsForClose) continue;
-            // A run that has used its spawn budget launches nothing more. With nothing left running
-            // in the room, a tick lets the policy park it; otherwise that spawn's end drives it.
-            if (_runs.Active(x.RoomId) is { } run && run.SpawnsUsed >= run.SpawnBudget)
+            // A run that has used its spawn budget or its active time launches nothing more. With
+            // nothing left running in the room, a tick lets the policy park it; otherwise that
+            // spawn's end drives it.
+            if (_runs.Active(x.RoomId) is { } run && BudgetSpent(run))
             {
                 if (inRoom.Count == 0) _events.Writer.TryWrite(new TickEvent());
                 continue;
@@ -966,12 +967,15 @@ public sealed partial class SpawnerService : BackgroundService
             var due = _policy.Due(x, now, _lastStart, inRoom, exclusive, over);
             foreach (var request in due)
             {
-                if (_runs.Active(x.RoomId) is { } r && r.SpawnsUsed >= r.SpawnBudget) break;
+                if (_runs.Active(x.RoomId) is { } r && BudgetSpent(r)) break;
                 Launch(x, request, now);
             }
             if (due.Count > 0) Publish(x.RoomId);
         }
     }
+
+    private bool BudgetSpent(Run run) => run.SpawnsUsed >= run.SpawnBudget
+        || RunStore.ActiveElapsed(run, _clock.GetUtcNow()) >= _runLimits.WallClockFor(run.BudgetHours);
 
     private HashSet<string> InFlightIn(string roomId) =>
         _inFlight.Keys.Where(k => k.Room == roomId).Select(k => k.Participant).ToHashSet(StringComparer.Ordinal);

@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Spawning;
@@ -371,5 +372,163 @@ public sealed class SpawnerServiceBudgetTests
 
         await WaitForNoteContaining(host, room, "No run is parked in this room; hours: applies to a parked run, so nothing was continued.");
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(500)));
+    }
+
+    private static async Task<long> NoteId(HubTestHost host, string room, string body)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            using var doc = JsonDocument.Parse(await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
+            foreach (var m in doc.RootElement.GetProperty("messages").EnumerateArray())
+                if (m.GetProperty("body").GetString() == body) return m.GetProperty("id").GetInt64();
+            await Task.Delay(50);
+        }
+        throw new TimeoutException($"no message '{body}' in '{room}'");
+    }
+
+    /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>
+    private static string WhyHere(string prompt)
+    {
+        var start = prompt.IndexOf("Why you are here:", StringComparison.Ordinal);
+        Assert.True(start >= 0, "the prompt has no why-line");
+        return prompt[start..prompt.IndexOf("This exchange started", start, StringComparison.Ordinal)];
+    }
+
+    /// <summary>A job ends while a worker spends the last spawn: the run parks, and the job's note
+    /// still reaches the conductor that the extension opens.</summary>
+    [Fact]
+    public async Task A_job_note_that_parks_a_spent_run_rides_the_extension()
+    {
+        var limits = new RunLimits(SpawnsPerHour: 2, Hour: TimeSpan.FromHours(1), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(Instant, limits);
+        await using var _ = host;
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+        var hold = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sonnetLaunches = 0;
+        runner.Handler = async (spec, _, ct) =>
+        {
+            switch (FakeProcessRunner.ParticipantOf(spec))
+            {
+                case "sonnet" when Interlocked.Increment(ref sonnetLaunches) == 1:
+                    spawner.TrackJob(room, "train-1", TimeSpan.FromHours(2), () => { });
+                    await PostAsInHost(host, "sonnet", room, "phase: build @opus write the thing");
+                    break;
+                case "opus":
+                    try { await hold.Task.WaitAsync(ct); } catch (OperationCanceledException) { }
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await Post(host, room, "/build-thing @sonnet begin");
+        await runner.NextSpecAsync(Wait);   // sonnet
+        await runner.NextSpecAsync(Wait);   // opus, the second and last budgeted spawn, held running
+        Assert.Equal(RunStatus.Active, host.Services.GetRequiredService<RunStore>().Latest(room)!.Status);
+        spawner.FinishJob(room, "train-1", "Job train-1 exited with code 0.");
+        var noteId = await NoteId(host, room, "Job train-1 exited with code 0.");
+        await WaitForRun(host, room, r => r.Status == RunStatus.Parked);
+
+        await Post(host, room, "/continue hours: 1");
+
+        var conductor = await runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductor));
+        Assert.Contains($"#{noteId}", WhyHere(conductor.StandardInput));
+        hold.TrySetResult();
+    }
+
+    /// <summary>A job ends while the conductor runs, and the conductor then exits without a post:
+    /// the re-ask carries the job's note.</summary>
+    [Fact]
+    public async Task A_job_note_that_lands_while_the_conductor_runs_rides_its_silent_re_ask()
+    {
+        var (host, runner, room) = await StartRunHostAsync(Instant, RunLimits.Default);
+        await using var _ = host;
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+        var launches = 0;
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet" && Interlocked.Increment(ref launches) == 1)
+            {
+                spawner.TrackJob(room, "render-2", TimeSpan.FromHours(2), () => { });
+                spawner.FinishJob(room, "render-2", "Job render-2 exited with code 0.");
+                await WaitForNoteContaining(host, room, "Job render-2 exited with code 0.");
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await Post(host, room, "/build-thing @sonnet begin");
+        await runner.NextSpecAsync(Wait);
+        var noteId = await NoteId(host, room, "Job render-2 exited with code 0.");
+
+        var reAsk = await runner.NextSpecAsync(Wait);
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(reAsk));
+        Assert.Contains($"#{noteId}", WhyHere(reAsk.StandardInput));
+    }
+
+    /// <summary>The conductor hands work to a worker and is still finishing when the wall clock
+    /// passes: the worker never launches, and the run parks on its active time.</summary>
+    [Fact]
+    public async Task A_worker_due_after_the_wall_clock_passed_is_held_and_the_run_parks()
+    {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var limits = new RunLimits(SpawnsPerHour: 100, Hour: TimeSpan.FromMinutes(10), DefaultHours: 1, SpawnTimeout: TimeSpan.FromHours(1), PhaseEntries: 100);
+        var (host, runner, room) = await StartRunHostAsync(Instant, limits, clock);
+        await using var _ = host;
+        var runs = host.Services.GetRequiredService<RunStore>();
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
+            {
+                await PostAsInHost(host, "sonnet", room, "phase: build @opus write the thing");
+                await WaitForRun(host, room, r => r.Exchanges == 2);   // the workers exchange is open
+                clock.Advance(TimeSpan.FromMinutes(15));               // past the 10-minute budget
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await Post(host, room, "/build-thing @sonnet begin");
+        Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await runner.NextSpecAsync(Wait)));
+
+        var parked = await WaitForRun(host, room, r => r.Status == RunStatus.Parked);
+        Assert.True(parked.CapSpent);
+        Assert.Equal(1, parked.SpawnsUsed);   // opus never launched
+    }
+
+    /// <summary>A finish report for a job the ended run killed arrives after the next run started:
+    /// the next run still tracks a job with the same id.</summary>
+    [Fact]
+    public async Task A_late_finish_from_an_ended_runs_job_does_not_stop_the_next_run_tracking_that_id()
+    {
+        var (host, runner, room) = await StartRunHostAsync(Instant, RunLimits.Default);
+        await using var _ = host;
+        var spawner = host.Services.GetRequiredService<SpawnerService>();
+        var launches = 0;
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) != "sonnet") return FakeProcessRunner.Ok("""{"result":"working"}""");
+            switch (Interlocked.Increment(ref launches))
+            {
+                case 1:
+                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), () => { });
+                    break;
+                case 2:
+                    spawner.FinishJob(room, "render-3", "Job render-3 exited with code 0.");
+                    await WaitForNoteContaining(host, room, "Job render-3 exited with code 0.");
+                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), () => { });
+                    break;
+            }
+            return FakeProcessRunner.Ok("""{"result":"working"}""");
+        };
+
+        await Post(host, room, "/build-thing @sonnet begin");
+        await runner.NextSpecAsync(Wait);
+        var first = await WaitForRun(host, room, r => r.WaitingSince is not null);
+        await Post(host, room, "/stop");
+        await WaitForRun(host, room, r => r.Status == RunStatus.Ended);
+
+        await Post(host, room, "/build-thing @sonnet again");
+        await runner.NextSpecAsync(Wait);
+        await WaitForRun(host, room, r => r.Id != first.Id && r.WaitingSince is not null);
     }
 }

@@ -189,13 +189,15 @@ public sealed class RunPolicy(RunLimits limits)
         if (s.JobsInFlight > 0)
             return pendingSteers.Count > 0 ? new RunDecision.OpenConductor(s.RootMessageId, pendingSteers) : new RunDecision.Nothing();
 
-        if (s.SilencesThisPhase == 0) return new RunDecision.OpenConductor(s.RootMessageId, sp.TriggerIds);
+        // A job note or steer that came in while the conductor ran rides the re-ask.
+        IReadOnlyList<long> triggers = [.. sp.TriggerIds, .. pendingSteers];
+        if (s.SilencesThisPhase == 0) return new RunDecision.OpenConductor(s.RootMessageId, triggers);
 
         var entries = s.PhaseEntries.GetValueOrDefault(s.Phase);
         if (entries >= limits.PhaseEntries) return new RunDecision.Park("the conductor did not post", false);
 
         // The service counts a phase entry for this ask.
-        return new RunDecision.OpenConductor(s.RootMessageId, sp.TriggerIds);
+        return new RunDecision.OpenConductor(s.RootMessageId, triggers);
     }
 
     private static RunDecision DecideHumanPosted(RunState s, RunEvent.HumanPosted h, IReadOnlyList<long> pendingSteers)

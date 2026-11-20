@@ -94,6 +94,9 @@ public sealed partial class SpawnerService
         var mentions = new Mentions(_roster.Select(p => p.Id)).Leading(message.Body);
         var continued = ExchangeCommands.IsContinue(message.Body);
         if (body.StartsWith('/') && !continued) return false;
+        // `hours:` only means something to a run: OnMessage refuses it, so it never reopens a mode leg.
+        if (continued && ChopItUp.Core.Skills.RunBudget.Read(message.Body).Kind != ChopItUp.Core.Skills.HoursKind.None
+            && _roster.Any(p => p.Id == message.AuthorId && p.Kind == "human")) return false;
         var target = message.ReplyToId is { } reply ? JoinableFor(message.RoomId, reply)
             : continued ? ExchangesIn(message.RoomId).LastOrDefault(x => x.Joinable) ?? (_joinable.TryGetValue(message.RoomId, out var remembered) ? remembered.LastOrDefault() : null) : null;
         if (mentions.Recipients.Count != 0 || mentions.Unknown.Count != 0)
