@@ -158,8 +158,9 @@ public sealed partial class SpawnerService : BackgroundService
     private readonly ConcurrentDictionary<string, ExchangeSnapshot> _snapshots = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ResolvedCli> _clis = new(StringComparer.Ordinal);
     private CancellationTokenSource? _wake;
-    // Worktree closes running off the loop thread, swept lazily in CloseIdleWorktrees and waited on
-    // briefly at shutdown.
+    // Work running off the loop thread (worktree closes, mode preparation and cleanup, artifacts folder
+    // checks), swept lazily as tasks are added and waited on briefly at shutdown, so none of it reads
+    // or writes the store after the host stops.
     private readonly List<Task> _closing = new();
     /// <summary>Every exchange that launched in a worktree and has not been handed to a close yet,
     /// whether or not it is still in its room's <see cref="_rooms"/> list (a run's <c>replaceAll</c>
@@ -248,8 +249,8 @@ public sealed partial class SpawnerService : BackgroundService
         // not leave a CLI posting into a room after the hub is gone.
         try { await Task.WhenAll(_inFlight.Values.Select(h => h.Run)).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
         catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some spawns did not stop within 10 s of shutdown"); }
-        // Worktree closes run off this loop entirely (Task.Run, not an _inFlight spawn), so they need
-        // their own short wait here or a Ctrl+C could leave one mid-merge.
+        // Worktree closes and folder checks run off this loop entirely (Task.Run, not an _inFlight
+        // spawn), so they need their own short wait here or a Ctrl+C could leave one mid-merge.
         try { await Task.WhenAll(_closing.ToList()).WaitAsync(TimeSpan.FromSeconds(10), cancellationToken); }
         catch (Exception e) when (e is TimeoutException or OperationCanceledException) { Console.Error.WriteLine("spawner: some worktree closes did not finish within 10 s of shutdown"); }
     }
@@ -346,11 +347,14 @@ public sealed partial class SpawnerService : BackgroundService
     {
         if (_artifactLeaseChecked.Contains(roomId)) return true;
         if (_artifactLeasing.Add(roomId))
-            _ = Task.Run(async () =>
+        {
+            _closing.RemoveAll(task => task.IsCompleted);
+            _closing.Add(Task.Run(async () =>
             {
                 var lease = await RoomArtifacts.WithinAsync(() => _artifacts.Ensure(directory), RoomArtifacts.CheckLimit);
                 _events.Writer.TryWrite(new ArtifactLeaseEvent(roomId, lease));
-            });
+            }));
+        }
         return false;
     }
 
