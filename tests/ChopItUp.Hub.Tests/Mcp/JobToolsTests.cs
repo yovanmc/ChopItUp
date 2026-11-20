@@ -372,7 +372,7 @@ public sealed class JobToolsTests
         var mcp = new Uri(host.BaseAddress, "mcp");
         var command = $$"""
             $PID | Set-Content pid.txt
-            foreach ($t in @(@{ Name = 'owner'; Url = '{{url}}'; Token = '{{owner}}' }, @{ Name = 'model'; Url = '{{mcp}}'; Token = '{{model}}' })) {
+            foreach ($t in @(@{ Name = 'owner'; Url = '{{url}}'; Token = '{{owner}}' }, @{ Name = 'model'; Url = '{{mcp}}'; Token = '{{model}}' })) { # public-ok: placeholders the test fills at run time with scratch-hub bearers
                 try {
                     Invoke-WebRequest -Method Post -Uri $t.Url -Headers @{ Authorization = "Bearer $($t.Token)"; Accept = 'application/json, text/event-stream' } -ContentType 'application/json' -Body '{"body":"forged","jsonrpc":"2.0","id":1,"method":"ping"}' -UseBasicParsing | Out-Null
                     "$($t.Name): allowed"
