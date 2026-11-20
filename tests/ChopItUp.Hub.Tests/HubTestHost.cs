@@ -56,7 +56,7 @@ public sealed class HubTestHost : IAsyncDisposable
                 _mintedHostFile[p.Id] = Tokens.MintFor(p.Id);
     }
 
-    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null, bool seedDatabase = true)
+    public static async Task<HubTestHost> StartAsync(string dir, bool deleteOnDispose = true, string? webRoot = null, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, string? roomsRoot = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, bool ownerPeerCheckEnabled = true, int port = 0, string? shellToken = null, bool seedDatabase = true, JobSettings? jobSettings = null)
     {
         using var timing = FixtureTiming.Measure("HubTestHost.start");
         var freshDataDir = !File.Exists(Path.Combine(dir, TokenStore.FileName));
@@ -66,7 +66,10 @@ public sealed class HubTestHost : IAsyncDisposable
         // Port 0 (the default) never gets the [::1] listener (see HubHost), so a caller that needs
         // to prove anything over IPv6 passes a fixed free port instead.
         var options = new HubOptions(dir, Port: port, WebRoot: webRoot, RoomsRoot: roomsRoot ?? dir + "_rooms", OwnerPeerCheck: ownerPeerCheckEnabled, ShellToken: shellToken);
-        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits, ownerPeerCheck);
+        // The GPU lock defaults to a file under the test's own folder: a test never waits on, or
+        // takes, the live hub's GPU slot.
+        jobSettings ??= new JobSettings(Path.Combine(dir, "gpu.lock"), TimeSpan.FromMilliseconds(50));
+        var app = HubHost.Build(options, processRunner ?? new RefusingProcessRunner(), limits, cliLocator ?? FakeCli.Locate, memoryGit, roomGit, clock, runLimits, ownerPeerCheck, jobSettings);
         await app.StartAsync();
         // With a fixed port and an IPv6 stack, HubHost binds BOTH 127.0.0.1 and [::1], so Addresses
         // can hold two entries here and Single() would throw. BaseAddress stays the IPv4 one,

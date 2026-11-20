@@ -110,11 +110,12 @@ public static class SpawnCommands
     ];
 
     /// <summary>The second Claude allowlist: the ordinary built-in-plus-MCP list, plus
-    /// `run_gate`, for an in-run Claude spawn's directory room only. The built-in tool set
+    /// `run_gate` and the three job tools, for an in-run Claude spawn's directory room only. The built-in tool set
     /// (`--tools`, <see cref="ClaudeBuiltins"/>) is untouched: MCP tools stay directly callable
     /// regardless of the built-in list, so widening only the allowlist is enough, and an out-of-run
     /// spawn never sees this constant at all.</summary>
-    public const string ClaudeRunToolsAllowed = ClaudeDirectoryToolsAllowed + ",mcp__" + McpServerName + "__run_gate";
+    public const string ClaudeRunToolsAllowed = ClaudeDirectoryToolsAllowed + ",mcp__" + McpServerName + "__run_gate"
+        + ",mcp__" + McpServerName + "__start_job,mcp__" + McpServerName + "__job_status,mcp__" + McpServerName + "__cancel_job";
 
     /// <summary>The deny list of the per-spawn settings file: measured on 2.1.220 to block `git commit`,
     /// `git -c … commit` and `git.exe commit` while `echo`, `git log` and in-room writes ran, and to block

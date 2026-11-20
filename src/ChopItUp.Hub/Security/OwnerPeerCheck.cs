@@ -16,10 +16,21 @@ public abstract record OwnerPeerVerdict
 public interface IOwnerPeerCheck
 {
     OwnerPeerVerdict Check(ConnectionInfo connection);
+
+    /// <summary>Asked about every bearer while a background job is live, because a job may not act
+    /// as anyone, even with a bearer its starter pasted into its command:
+    /// <see cref="OwnerPeerVerdict.InsideSpawn"/> when the peer runs inside a background job,
+    /// <see cref="OwnerPeerVerdict.Unresolvable"/> when its job membership cannot be read (a job can
+    /// hide its own process from the query, or its connection row cannot be found after a short
+    /// retry), null otherwise.</summary>
+    OwnerPeerVerdict? InsideBackgroundJob(ConnectionInfo connection) => null;
 }
 
 public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
 {
+    private const int LookupAttempts = 3;
+    private static readonly TimeSpan LookupRetry = TimeSpan.FromMilliseconds(25);
+
     public OwnerPeerVerdict Check(ConnectionInfo connection)
     {
         if (!OperatingSystem.IsWindows()) return new OwnerPeerVerdict.Unresolvable("not windows");
@@ -36,6 +47,26 @@ public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
             JobMembership.Inside => new OwnerPeerVerdict.InsideSpawn(pid.Value, entry!, jobs.TryMarkNoted(entry!)),
             JobMembership.Unknown => new OwnerPeerVerdict.Unresolvable($"job membership unreadable for pid {pid.Value}"),
             _ => new OwnerPeerVerdict.Allowed(),
+        };
+    }
+
+    public OwnerPeerVerdict? InsideBackgroundJob(ConnectionInfo connection)
+    {
+        if (!OperatingSystem.IsWindows() || jobs.LiveBackgroundJobs == 0) return null;
+        if (connection.RemoteIpAddress is null || connection.LocalIpAddress is null) return new OwnerPeerVerdict.Unresolvable("no peer address");
+        var endpoints = new PeerProcess.Endpoints(connection.RemoteIpAddress, connection.RemotePort, connection.LocalIpAddress, connection.LocalPort);
+        var pid = PeerProcess.OwningPid(endpoints);
+        for (var attempt = 1; pid is null && attempt < LookupAttempts; attempt++)
+        {
+            Thread.Sleep(LookupRetry);
+            pid = PeerProcess.OwningPid(endpoints);
+        }
+        if (pid is null) return new OwnerPeerVerdict.Unresolvable($"no established row for {connection.RemoteIpAddress}:{connection.RemotePort} -> {connection.LocalIpAddress}:{connection.LocalPort}");
+        return jobs.Membership(pid.Value, out var entry) switch
+        {
+            JobMembership.Inside when entry!.Kind == SpawnJobKind.BackgroundJob => new OwnerPeerVerdict.InsideSpawn(pid.Value, entry, jobs.TryMarkNoted(entry)),
+            JobMembership.Unknown => new OwnerPeerVerdict.Unresolvable($"job membership unreadable for pid {pid.Value}"),
+            _ => null,
         };
     }
 }

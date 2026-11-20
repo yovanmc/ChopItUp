@@ -152,7 +152,7 @@ public sealed class SpawnerServiceBudgetTests
         {
             // The second run's first turn starts a job with the same id: a finished id belongs to its run.
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet" && Interlocked.Increment(ref launches) is 1 or 3)
-                spawner.TrackJob(room, "render-1", TimeSpan.FromHours(2), () => { });
+                spawner.TrackJob(room, "render-1", TimeSpan.FromHours(2), _ => { });
             else
                 await PostAsInHost(host, "sonnet", room, "phase: ping rendered");
             return FakeProcessRunner.Ok("""{"result":"waiting on render-1"}""");
@@ -198,7 +198,7 @@ public sealed class SpawnerServiceBudgetTests
         var kills = 0;
         runner.Handler = (_, _, _) =>
         {
-            spawner.TrackJob(room, "train-1", TimeSpan.FromHours(2), () => Interlocked.Increment(ref kills));
+            spawner.TrackJob(room, "train-1", TimeSpan.FromHours(2), _ => Interlocked.Increment(ref kills));
             return Task.FromResult(FakeProcessRunner.Ok("""{"result":"started train-1"}"""));
         };
 
@@ -225,7 +225,7 @@ public sealed class SpawnerServiceBudgetTests
         var kills = 0;
         runner.Handler = async (_, _, _) =>
         {
-            spawner.TrackJob(room, "train-2", TimeSpan.FromHours(2), () => Interlocked.Increment(ref kills));
+            spawner.TrackJob(room, "train-2", TimeSpan.FromHours(2), _ => Interlocked.Increment(ref kills));
             await PostAsInHost(host, "sonnet", room, "phase: ping done, the job is no longer needed");
             return FakeProcessRunner.Ok("""{"result":"working"}""");
         };
@@ -246,10 +246,12 @@ public sealed class SpawnerServiceBudgetTests
         await using var _ = host;
         var spawner = host.Services.GetRequiredService<SpawnerService>();
         var kills = 0;
+        var reason = -1;
         var launches = 0;
         runner.Handler = async (_, _, _) =>
         {
-            if (Interlocked.Increment(ref launches) == 1) spawner.TrackJob(room, "hung-1", TimeSpan.FromMinutes(10), () => Interlocked.Increment(ref kills));
+            if (Interlocked.Increment(ref launches) == 1)
+                spawner.TrackJob(room, "hung-1", TimeSpan.FromMinutes(10), r => { Volatile.Write(ref reason, (int)r); Interlocked.Increment(ref kills); });
             else await PostAsInHost(host, "sonnet", room, "phase: ping the job hung");
             return FakeProcessRunner.Ok("""{"result":"waiting"}""");
         };
@@ -262,6 +264,13 @@ public sealed class SpawnerServiceBudgetTests
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await runner.NextSpecAsync(Wait)));
         await WaitForNoteContaining(host, room, "Job hung-1 passed its time limit with no finish report; the hub stopped it.");
         await WaitForCount(() => Volatile.Read(ref kills), 1);
+        Assert.Equal((int)JobStopReason.TimedOut, Volatile.Read(ref reason));
+
+        // The job's own late report was already noted by the hub's stop: it posts nothing more.
+        var acknowledged = new TaskCompletionSource();
+        spawner.FinishJob(room, "hung-1", "Job hung-1 exited late.", () => acknowledged.TrySetResult());
+        await acknowledged.Task.WaitAsync(Wait);
+        Assert.DoesNotContain("Job hung-1 exited late.", await host.Client.GetStringAsync($"api/rooms/{room}/messages?afterId=0&limit=200"));
     }
 
     [Fact]
@@ -270,7 +279,7 @@ public sealed class SpawnerServiceBudgetTests
         var (host, _, room) = await StartRunHostAsync(Instant, RunLimits.Default);
         await using var _h = host;
         var kills = 0;
-        host.Services.GetRequiredService<SpawnerService>().TrackJob(room, "orphan-1", TimeSpan.FromHours(1), () => Interlocked.Increment(ref kills));
+        host.Services.GetRequiredService<SpawnerService>().TrackJob(room, "orphan-1", TimeSpan.FromHours(1), _ => Interlocked.Increment(ref kills));
 
         await WaitForNoteContaining(host, room, "Job orphan-1 was stopped: this room has no active or parked run to wait for it.");
         await WaitForCount(() => Volatile.Read(ref kills), 1);
@@ -387,14 +396,6 @@ public sealed class SpawnerServiceBudgetTests
         throw new TimeoutException($"no message '{body}' in '{room}'");
     }
 
-    /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>
-    private static string WhyHere(string prompt)
-    {
-        var start = prompt.IndexOf("Why you are here:", StringComparison.Ordinal);
-        Assert.True(start >= 0, "the prompt has no why-line");
-        return prompt[start..prompt.IndexOf("This exchange started", start, StringComparison.Ordinal)];
-    }
-
     /// <summary>A job ends while a worker spends the last spawn: the run parks, and the job's note
     /// still reaches the conductor that the extension opens.</summary>
     [Fact]
@@ -411,7 +412,7 @@ public sealed class SpawnerServiceBudgetTests
             switch (FakeProcessRunner.ParticipantOf(spec))
             {
                 case "sonnet" when Interlocked.Increment(ref sonnetLaunches) == 1:
-                    spawner.TrackJob(room, "train-1", TimeSpan.FromHours(2), () => { });
+                    spawner.TrackJob(room, "train-1", TimeSpan.FromHours(2), _ => { });
                     await PostAsInHost(host, "sonnet", room, "phase: build @opus write the thing");
                     break;
                 case "opus":
@@ -450,7 +451,7 @@ public sealed class SpawnerServiceBudgetTests
         {
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet" && Interlocked.Increment(ref launches) == 1)
             {
-                spawner.TrackJob(room, "render-2", TimeSpan.FromHours(2), () => { });
+                spawner.TrackJob(room, "render-2", TimeSpan.FromHours(2), _ => { });
                 spawner.FinishJob(room, "render-2", "Job render-2 exited with code 0.");
                 await WaitForNoteContaining(host, room, "Job render-2 exited with code 0.");
             }
@@ -510,12 +511,12 @@ public sealed class SpawnerServiceBudgetTests
             switch (Interlocked.Increment(ref launches))
             {
                 case 1:
-                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), () => { });
+                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), _ => { });
                     break;
                 case 2:
                     spawner.FinishJob(room, "render-3", "Job render-3 exited with code 0.");
                     await WaitForNoteContaining(host, room, "Job render-3 exited with code 0.");
-                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), () => { });
+                    spawner.TrackJob(room, "render-3", TimeSpan.FromHours(2), _ => { });
                     break;
             }
             return FakeProcessRunner.Ok("""{"result":"working"}""");

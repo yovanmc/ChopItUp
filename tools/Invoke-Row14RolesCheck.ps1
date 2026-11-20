@@ -32,7 +32,7 @@
     LEGS:
       fixture.*      -- build and stamp the v11 database.
       hub.*          -- launch the real exe, wait for /health.
-      migrated.*     -- schema 17, every pre-migration table's row count and room name preserved,
+      migrated.*     -- schema 18, every pre-migration table's row count and room name preserved,
                         the two new columns present and NULL, room_roles present and empty.
       api.*          -- a persona and a role set over the API and read back.
       auth.*         -- each of the three write routes refused with no credential, storage unchanged.
@@ -301,7 +301,7 @@ PRAGMA user_version = 11;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-17' -Passed ($health.schema -eq 17) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-18' -Passed ($health.schema -eq 18) -Detail "schema=$($health.schema)"
 
     # --- Step 5: the migrated database preserved everything ---------------------------------------------
     $after = Get-Counts -Path $dbPath

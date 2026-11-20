@@ -19,6 +19,8 @@ public sealed class OwnerPeerCheckMiddlewareTests
     {
         public OwnerPeerVerdict Verdict { get; set; } = new OwnerPeerVerdict.Allowed();
         public OwnerPeerVerdict Check(ConnectionInfo connection) => Verdict;
+        public OwnerPeerVerdict? Job { get; set; }
+        public OwnerPeerVerdict? InsideBackgroundJob(ConnectionInfo connection) => Job;
     }
 
     private static async Task<(HubTestHost Host, FakeOwnerPeerCheck Fake)> StartAsync(bool ownerPeerCheckEnabled = true)
@@ -94,6 +96,42 @@ public sealed class OwnerPeerCheckMiddlewareTests
         var http = Assert.IsType<System.Net.Http.HttpRequestException>(ex);
         Assert.Equal(HttpStatusCode.Forbidden, http.StatusCode);
         Assert.Contains(BearerTokenMiddleware.InsideSpawnError, http.Message);
+    }
+
+    /// <summary>A background job acts as nobody: a model bearer its starter pasted into it is refused
+    /// on /mcp, and the room gets one note naming the job.</summary>
+    [Fact]
+    public async Task A_model_bearer_from_inside_a_background_job_is_403_on_mcp_with_one_note()
+    {
+        var (host, fake) = await StartAsync();
+        await using var _ = host;
+        fake.Job = new OwnerPeerVerdict.InsideSpawn(5150, new SpawnJobEntry(5150, "job/j3", "general", "sonnet", SpawnJobKind.BackgroundJob), NoteDue: true);
+
+        var ex = await Record.ExceptionAsync(() => host.ClientFor("sonnet"));
+        var http = Assert.IsType<System.Net.Http.HttpRequestException>(ex);
+        Assert.Equal(HttpStatusCode.Forbidden, http.StatusCode);
+        Assert.Contains(BearerTokenMiddleware.InsideJobError, http.Message);
+        Assert.Contains("Refused a credential presented from inside background job job/j3 (pid 5150).", await MessageBodiesAsync(host));
+
+        fake.Job = null;
+        await using var allowed = await host.ClientFor("sonnet");   // outside every job the same bearer works
+    }
+
+    /// <summary>While a background job is live, a peer whose job membership cannot be read is
+    /// refused too, owner or not: a job could hide its own process from the query.</summary>
+    [Theory]
+    [InlineData("sonnet")]
+    [InlineData(ChopDb.OwnerRemoteParticipantId)]
+    public async Task A_bearer_whose_job_membership_is_unreadable_while_a_job_is_live_is_403(string participant)
+    {
+        var (host, fake) = await StartAsync();
+        await using var _ = host;
+        fake.Job = new OwnerPeerVerdict.Unresolvable("job membership unreadable for pid 77");
+
+        var ex = await Record.ExceptionAsync(() => host.ClientFor(participant));
+        var http = Assert.IsType<System.Net.Http.HttpRequestException>(ex);
+        Assert.Equal(HttpStatusCode.Forbidden, http.StatusCode);
+        Assert.Contains(BearerTokenMiddleware.InsideJobError + " (job membership unreadable for pid 77)", http.Message);
     }
 
     [Fact]

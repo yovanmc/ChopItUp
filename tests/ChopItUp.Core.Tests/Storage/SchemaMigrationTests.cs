@@ -1909,7 +1909,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(17, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v16.", Path.GetFileName(db.LastBackupPath!));
         Assert.Equal(16L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
         Assert.Equal(1L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM runs"));
@@ -1929,9 +1929,50 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(17, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(4L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name IN ('budget_hours','spawn_budget','waiting_since','waited_seconds')"));
         Assert.Equal(80, new RunStore(db).Latest("general")!.SpawnBudget);
+    }
+
+    /// <summary>A fresh database turned back into the exact v17 shape: v18 only adds the jobs table
+    /// and its index.</summary>
+    private void WriteV17()
+    {
+        new ChopDb(DbPath).EnsureDatabase();
+        RawExec("DROP INDEX ix_jobs_status; DROP TABLE jobs; PRAGMA user_version = 17;");
+        RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'owner', 'fabricated', '2026-11-20T10:00:00.000+00:00');");
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public void A_v17_database_is_backed_up_then_gains_an_empty_jobs_table()
+    {
+        WriteV17();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(18, db.GetSchemaVersion());
+        Assert.Contains(".v17.", Path.GetFileName(db.LastBackupPath!));
+        Assert.Equal(17L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'jobs'"));
+        Assert.Equal(1L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
+        Assert.Equal(0L, ScalarLong("SELECT COUNT(*) FROM jobs"));
+        Assert.Equal(16L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name IN ('id','room_id','run_id','author_id','command','cancel_command','gpu','timeout_minutes','folder','status','exit_code','pid','process_started_at','started_at','ended_at','noted_at')"));
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM messages"));
+    }
+
+    [Fact]
+    public void A_torn_v18_with_the_table_but_stamp_17_is_finished()
+    {
+        WriteV17();
+        RawExec("CREATE TABLE jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, room_id TEXT NOT NULL, run_id INTEGER NOT NULL, author_id TEXT NOT NULL, command TEXT NOT NULL, cancel_command TEXT, gpu INTEGER NOT NULL, timeout_minutes INTEGER NOT NULL, folder TEXT NOT NULL, status TEXT NOT NULL, exit_code INTEGER, pid INTEGER, process_started_at TEXT, started_at TEXT NOT NULL, ended_at TEXT, noted_at TEXT);");
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(18, db.GetSchemaVersion());
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ix_jobs_status'"));
     }
 
     private static long BackupScalar(string backupPath, string sql)

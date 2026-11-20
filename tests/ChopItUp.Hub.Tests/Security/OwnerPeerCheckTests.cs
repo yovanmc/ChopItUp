@@ -91,4 +91,27 @@ public sealed class OwnerPeerCheckTests
             await Task.Run(() => process.WaitForExit(5000));
         }
     }
+
+    /// <summary>A job may not act as anyone: while one is live, a peer whose connection row cannot be
+    /// found is refused for every bearer, so a job cannot retry until a lookup misses. With no live
+    /// job the question is not asked at all.</summary>
+    [Fact]
+    public async Task With_a_live_background_job_an_unresolvable_peer_is_refused_for_every_bearer()
+    {
+        var jobs = new SpawnJobs();
+        var check = new OwnerPeerCheck(jobs);
+        Assert.Null(check.InsideBackgroundJob(UnresolvableConnection()));
+
+        var process = StartPing();
+        var tracker = jobs.Track(process, Spec("job/j1"), SpawnJobKind.BackgroundJob);
+        try
+        {
+            Assert.IsType<OwnerPeerVerdict.Unresolvable>(check.InsideBackgroundJob(UnresolvableConnection()));
+        }
+        finally
+        {
+            tracker.Dispose();
+            await Task.Run(() => process.WaitForExit(5000));
+        }
+    }
 }

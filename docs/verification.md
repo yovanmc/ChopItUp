@@ -21,6 +21,10 @@ an owner-set class and an owner clear, migrated to v16 through the real exe):
 Run budget migration dry run (no model calls, scratch hub, a v16 state with fabricated messages and a
 parked cap-spent run, migrated to v17 through the real exe; an installed single-file exe needs
 `-SqliteBin` pointed at a build output): `pwsh tools\Invoke-Row84DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Background jobs migration and lost-job dry run (no model calls, scratch hub, a v17 state with fabricated
+messages migrated to v18 through the real exe, then a fabricated job row left running with a parked run
+and a marker cancel command; the next start ends it as lost, runs the cancel command once and posts the
+note): `pwsh tools\Invoke-Row85DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.

@@ -66,11 +66,12 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
         return new(null, $"the folder did not answer within {limit.TotalSeconds:0} s");
     }
 
-    /// <summary>Walks <paramref name="folder"/> without following links and without entering the top
-    /// level <see cref="JobsFolder"/>. <paramref name="list"/> replaces the directory listing in tests.
+    /// <summary>Walks <paramref name="folder"/> without following links and, with
+    /// <paramref name="skipJobs"/>, without entering the top level <see cref="JobsFolder"/> (a job's own
+    /// folder is walked whole). <paramref name="list"/> replaces the directory listing in tests.
     /// <paramref name="keepReparse"/> keeps a reparse-point file it accepts; without it every reparse
     /// point is skipped.</summary>
-    public static ArtifactScan Scan(string folder, Func<string, IEnumerable<FileSystemInfo>>? list = null, Func<FileInfo, bool>? keepReparse = null)
+    public static ArtifactScan Scan(string folder, Func<string, IEnumerable<FileSystemInfo>>? list = null, Func<FileInfo, bool>? keepReparse = null, bool skipJobs = true)
     {
         list ??= directory => new DirectoryInfo(directory).EnumerateFileSystemInfos("*", OneLevel);
         var files = new Dictionary<string, ArtifactFile>(StringComparer.OrdinalIgnoreCase);
@@ -92,7 +93,7 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
                 if (entry.Attributes.HasFlag(FileAttributes.ReparsePoint) && !(entry is FileInfo kept && keepReparse?.Invoke(kept) == true)) continue;
                 var relative = current.Relative.Length == 0 ? entry.Name : current.Relative + "/" + entry.Name;
                 if (entry is FileInfo file) files[relative] = new ArtifactFile(file.Length, file.LastWriteTimeUtc);
-                else if (!relative.Equals(JobsFolder, StringComparison.OrdinalIgnoreCase)) pending.Push((entry.FullName, relative));
+                else if (!skipJobs || !relative.Equals(JobsFolder, StringComparison.OrdinalIgnoreCase)) pending.Push((entry.FullName, relative));
             }
         }
         return new(files, unreadable, Faulted: false);

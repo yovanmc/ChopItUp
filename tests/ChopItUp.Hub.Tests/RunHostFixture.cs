@@ -23,9 +23,12 @@ internal static class RunHostFixture
     /// <see cref="ParticipantStore.SetClasses"/> here, the host-command write path, not through the API
     /// once the hub is already running.</summary>
     internal static async Task<(HubTestHost Host, FakeProcessRunner Runner, string Room)> StartRunHostAsync(
-        SpawnLimits spawnLimits, RunLimits runLimits, TimeProvider? clock = null, Action<ParticipantStore>? seedClasses = null)
+        SpawnLimits spawnLimits, RunLimits runLimits, TimeProvider? clock = null, Action<ParticipantStore>? seedClasses = null,
+        string? dir = null, bool deleteOnDispose = true, JobSettings? jobSettings = null)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "chopitup_run_" + Guid.NewGuid().ToString("N"));
+        // A caller that passes its own dir may start a second hub on it (a restart), so the room and
+        // the skill are only made when they are missing.
+        dir ??= Path.Combine(Path.GetTempPath(), "chopitup_run_" + Guid.NewGuid().ToString("N"));
         var roomsRoot = dir + "_rooms";
         var runner = new FakeProcessRunner();
         if (seedClasses is not null)
@@ -35,10 +38,13 @@ internal static class RunHostFixture
             seedDb.EnsureDatabase();
             seedClasses(new ParticipantStore(seedDb));
         }
-        var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: spawnLimits, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits);
-        host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call this fixture's callers make needs a credential
+        var reused = File.Exists(Path.Combine(dir, ChopItUp.Hub.Security.TokenStore.FileName));
+        var host = await HubTestHost.StartAsync(dir, deleteOnDispose: deleteOnDispose, processRunner: runner, limits: spawnLimits, roomsRoot: roomsRoot, clock: clock, runLimits: runLimits, jobSettings: jobSettings);
+        // A restarted hub cannot learn the owner's host-file bearer again; its callers only read.
+        if (!reused) host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call this fixture's callers make needs a credential
         const string room = "lab";
         var roomDir = Path.Combine(roomsRoot, room);
+        if (host.Services.GetRequiredService<MessageStore>().RoomExists(room)) return (host, runner, room);
         Assert.True(await new GitTrail(roomDir).InitAsync());
         host.Services.GetRequiredService<MessageStore>().CreateRoom(room, "LAB", roomDir);
 
@@ -55,6 +61,14 @@ internal static class RunHostFixture
     {
         await using var client = await host.ClientFor(participant);
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
+    }
+
+    /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>
+    internal static string WhyHere(string prompt)
+    {
+        var start = prompt.IndexOf("Why you are here:", StringComparison.Ordinal);
+        Assert.True(start >= 0, "the prompt has no why-line");
+        return prompt[start..prompt.IndexOf("This exchange started", start, StringComparison.Ordinal)];
     }
 
     internal static async Task<List<(string Author, string Body)>> AllMessagesFrom(HubTestHost host, string room)
