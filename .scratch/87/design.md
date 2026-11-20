@@ -61,3 +61,24 @@ Risk lane: unattended spend, a schema migration (v18 to v19), and a new persiste
 - A false hit holds a run for hours: mitigated by scanning only the failure channel and a test row per non-limit failure text.
 - Time zone parsing errors move the resume: tests pin the zone; a reset in the past or over 8 days counts as unparseable.
 - Unattended relaunch of a plain exchange spends after the reset, once.
+
+## Pass 1 dispositions (dissect-critic, FIX-THEN-SHIP; no second pass)
+
+These override the sections above where they differ.
+
+- B1 (hold kept launching): a run hold is `ParkRun` plus `resume_at`. It stops the open exchange with `ExchangeStopCause.Run` and cancels the room's in-flight spawns like any park; run rooms are exclusive, so nothing else is in flight there.
+- M1 (criterion 4 unreachable for runs): criterion 4 now reads: a plain exchange in a room without a directory, whose spawn hits a limit while another participant's spawn runs, leaves that spawn running and its post lands; a run hold cancels nothing in another room.
+- B2 (IANA lookup fails under InvariantGlobalization): no time zone lookup at all. Reset times are read in `TimeProvider.LocalTimeZone` (the CLI is a child on the same machine, so its displayed zone is the hub's zone); the IANA id in parentheses is matched and ignored. Parsing uses only `CultureInfo.InvariantCulture` with explicit formats, which behaves the same in invariant mode. Tests pin the zone with a FakeTimeProvider (N4).
+- M2 (UTF-8): Claude, Codex and panel specs set `Utf8Output = true` (both CLIs write UTF-8; this resolves BUGS line 92). A ProcessRunner test drives a child that writes raw UTF-8 bytes for U+2019 and U+00B7 and asserts the decoded text. Regexes anchor on ASCII words (`hit your`, `usage limit`, `resets`, `Try again`), with the apostrophe and separator as classes.
+- M3 (Claude channel unverified): the raw output of every spawn that ended without posting and was not cancelled is kept, classified hits and the replied-without-posting branch included. Claude has two shapes: `--output-format json` (one object, plain rooms) and stream-json `result` events (runs); both are read through `ClaudeFinalText`. The `is_error` value is a LEAD: a hit needs the final result text to start with the CLI's phrase and be at most 400 characters, whatever `is_error` says, with a test row for each value. A long model reply that quotes the phrase is not a hit (criterion 7).
+- M4 (owner-only GET had no seam): no HTTP route. Each record is a file `spawn-failures\<n>.txt` under the hub's data folder, which holds the room's other private state already; the folder keeps the newest 200 files. Criterion 3 now reads: an unclassified failure's raw output is kept, bounded, in a file under the hub's data folder that the failed-spawn note names. The migration therefore adds only `runs.resume_at`.
+- D1 (stale resume_at): every status-changing run UPDATE writes `resume_at`: `Park` takes it (default NULL), and `Resume`, `Extend` and `End` set NULL.
+- D2 (ResumeDue spin): every ResumeDue outcome clears `resume_at`; a run over budget by its numbers posts the cap-spent line instead of reopening.
+- D3 (InFlight left set): the plain-exchange hold removes the participant from `x.InFlight` before it re-queues it.
+- D4 (plain Codex stderr is a transcript): Codex is matched only in its own error channel: `error` and `turn.failed` JSON events, and in human mode only stderr lines that start with `ERROR: ` (a LEAD until a real hit is captured; the raw file captures it).
+- D5 (time-only in the past): a time-only reset up to 60 minutes in the past means the limit has not cleared yet: hold 15 minutes. At most three holds in a row on the same stated reset; the fourth parks for the owner.
+- D6 (Codex version): the strings come from openai/codex `main` as read on 2026-11-20; the installed CLI is codex-cli 0.169.1. Added no-reset rows: `Your workspace is out of credits`, `You hit your spend cap`, and the named-limit form `You’ve hit your usage limit for <name>`.
+- N1: a resume posts `Run #N resumed after the usage-limit reset.` and passes its id as the trigger.
+- N2: the whole stream is scrubbed before it is cut to its last 64 KB.
+- N3: `RunStore.Hold` refunds one spawn, parks and writes `resume_at` in one UPDATE.
+- N5: rollback: a v18 build refuses a v19 database, so the only rollback is restoring the pre-migration backup, which loses messages written after it.
