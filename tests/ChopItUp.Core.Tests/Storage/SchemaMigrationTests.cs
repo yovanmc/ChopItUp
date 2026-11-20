@@ -1958,7 +1958,7 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'jobs'"));
         Assert.Equal(1L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
         Assert.Equal(0L, ScalarLong("SELECT COUNT(*) FROM jobs"));
-        Assert.Equal(16L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('jobs')"));
+        Assert.Equal(16L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('jobs') WHERE name IN ('id','room_id','run_id','author_id','command','cancel_command','gpu','timeout_minutes','folder','status','exit_code','pid','process_started_at','started_at','ended_at','noted_at')"));
         Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM messages"));
     }
 

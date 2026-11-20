@@ -173,8 +173,9 @@ public sealed partial class SpawnerService : BackgroundService
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
         CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, RoomArtifacts artifacts, ParticipantStore participants, SkillStore skills, TimeProvider clock,
-        RunStore runs, RunLimits runLimits)
+        RunStore runs, RunLimits runLimits, JobStore jobStore)
     {
+        _jobStore = jobStore;
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
         _trails = trails; _worktrees = worktrees; _artifacts = artifacts; _owner = roster.First(p => p.Id == participants.OwnerId());
@@ -356,6 +357,20 @@ public sealed partial class SpawnerService : BackgroundService
             }));
         }
         return false;
+    }
+
+    private readonly JobStore _jobStore;
+
+    /// <summary>Job output is credited to its starter in the run that started the job, and it stays
+    /// that starter's work in every later run: the author of the ended job whose folder holds
+    /// <paramref name="path"/>, or null.</summary>
+    private string? JobOutputAuthor(string path)
+    {
+        if (!ArtifactRef.TryRelative(RunStore.Normalize(path), out var relative)) return null;
+        var parts = relative.Split('/');
+        return parts.Length >= 3 && parts[0].Equals(RoomArtifacts.JobsFolder, StringComparison.OrdinalIgnoreCase)
+            ? _jobStore.EndedAuthorOfFolder(parts[1])
+            : null;
     }
 
     /// <summary>The folder a launch may use.</summary>
@@ -744,7 +759,7 @@ public sealed partial class SpawnerService : BackgroundService
         var mentioned = _policy.MentionedSpawnable(m);
         var runContext = new RunContext(run.Id, run.ConductorId, run.Phase);
         var refusal = _policy.RefuseConductorPost(m, runContext, mentioned,
-            path => _runs.ArtifactAuthor(run.Id, path), path => ArtifactExists(run, path),
+            path => _runs.ArtifactAuthor(run.Id, path) ?? JobOutputAuthor(path), path => ArtifactExists(run, path),
             path => ArtifactExists(run, ArtifactRef.Prefix + RunStore.Normalize(path)));
         PhaseTag.TryParse(m.Body, out var tag);
         var ev = new RunEvent.ConductorPosted(m.Id, tag, mentioned, refusal);

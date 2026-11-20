@@ -111,7 +111,7 @@ public sealed class JobToolsTests
     private const string SleepingJob = "$PID | Set-Content pid.txt\nStart-Sleep -Seconds 120\n";
     private const string CancelMarker = "Add-Content cancel-ran.txt 'x'\n";
 
-    /// <summary>Done-when 1, 6 and 7: the job outlives its spawn, carries no hub credential, logs in
+    /// <summary>The job outlives its spawn, carries no hub credential, logs in
     /// its own folder, and its end posts the exit code with the log tail, credits its files to the
     /// starter and opens the conductor again.</summary>
     [Fact]
@@ -119,7 +119,8 @@ public sealed class JobToolsTests
     {
         var probe = "CHOPITUP_PROBE_" + Guid.NewGuid().ToString("N");
         Environment.SetEnvironmentVariable(probe, "secret");
-        Environment.SetEnvironmentVariable("OPENAI_API_KEY_PROBE_85", "secret");
+        var vendorProbe = "OPENAI_API_KEY_PROBE_" + Guid.NewGuid().ToString("N");
+        Environment.SetEnvironmentVariable(vendorProbe, "secret");
         try
         {
             var (host, runner, room) = await StartRunHostAsync(Instant, Limits);
@@ -161,11 +162,11 @@ public sealed class JobToolsTests
         finally
         {
             Environment.SetEnvironmentVariable(probe, null);
-            Environment.SetEnvironmentVariable("OPENAI_API_KEY_PROBE_85", null);
+            Environment.SetEnvironmentVariable(vendorProbe, null);
         }
     }
 
-    /// <summary>Done-when 4: every caller and argument the tools refuse, each with a note, and no job.</summary>
+    /// <summary>Every caller and argument the tools refuse, each with a note, and no job.</summary>
     [Fact]
     public async Task The_job_tools_refuse_hosts_spawns_not_in_flight_bad_limits_and_other_rooms_jobs()
     {
@@ -209,8 +210,8 @@ public sealed class JobToolsTests
         Assert.Contains("has no directory", ErrorText(await Call(host, "sonnet", "start_job", StartArgs("other", "'x'"))));
     }
 
-    /// <summary>Done-when 3, cancel leg: cancel_job runs the cancel command, kills the process and
-    /// posts how the job ended.</summary>
+    /// <summary>cancel_job runs the cancel command, kills the process and posts how the job ended.
+    /// While the job runs its scripts are held read-only, so nothing can swap the code it runs.</summary>
     [Fact]
     public async Task Cancel_runs_the_cancel_command_kills_the_job_and_posts_a_note()
     {
@@ -220,7 +221,10 @@ public sealed class JobToolsTests
         JsonElement cancelled = default;
         var started = ConductorStartsAJob(host, runner, room, StartArgs(room, SleepingJob, cancel: CancelMarker), async reply =>
         {
-            pid = await PidOf(Jobs(host).Get(Job.IdFrom(reply.GetProperty("id").GetString()!)!.Value)!);
+            var running = Jobs(host).Get(Job.IdFrom(reply.GetProperty("id").GetString()!)!.Value)!;
+            pid = await PidOf(running);
+            Assert.ThrowsAny<IOException>(() => File.WriteAllText(Path.Combine(running.Folder, JobRunner.ScriptFile), "'swapped'"));
+            Assert.ThrowsAny<IOException>(() => File.WriteAllText(Path.Combine(running.Folder, "cancel.ps1"), "'swapped'"));
             cancelled = HubTestHost.Json(await Call(host, "sonnet", "cancel_job", new() { ["room_id"] = room, ["id"] = reply.GetProperty("id").GetString() }));
         });
         await Post(host, room, "/build-thing @sonnet begin");
@@ -234,7 +238,7 @@ public sealed class JobToolsTests
         await WaitForNoteContaining(host, room, $"Job j{id} by @sonnet was cancelled.");
     }
 
-    /// <summary>Done-when 3, timeout leg, on a fake clock.</summary>
+    /// <summary>The time limit, on a fake clock.</summary>
     [Fact]
     public async Task A_job_past_its_limit_runs_the_cancel_command_is_killed_and_noted()
     {
@@ -255,7 +259,7 @@ public sealed class JobToolsTests
         await WaitForNoteContaining(host, room, $"Job j{id} by @sonnet passed its 1 min limit and was stopped.");
     }
 
-    /// <summary>Done-when 3, /stop leg: the run's end stops its jobs.</summary>
+    /// <summary>/stop: the run's end stops its jobs.</summary>
     [Fact]
     public async Task Stopping_the_run_stops_its_job_with_the_cancel_command_and_a_note()
     {
@@ -275,7 +279,7 @@ public sealed class JobToolsTests
         await WaitForNoteContaining(host, room, $"Job j{id} by @sonnet was stopped because its run ended or was stopped.");
     }
 
-    /// <summary>Done-when 3, restart leg: the hub stops with a live job (the job is killed after its
+    /// <summary>The hub stops with a live job (the job is killed after its
     /// cancel command, and no note wakes anything during shutdown), and the next hub on the same
     /// data reports it.</summary>
     [Fact]
@@ -317,7 +321,29 @@ public sealed class JobToolsTests
         }
     }
 
-    /// <summary>Done-when 3, crash leg: a row a dead hub left running, whose process had started, is
+    /// <summary>Recovery reads the lost jobs while the runner starts, before any request can start a
+    /// job: a job this hub starts right after its start is never ended as lost. Each round starts a
+    /// fresh runner and writes a running row the moment its start returns.</summary>
+    [Fact]
+    public async Task A_job_started_just_after_the_runner_starts_is_never_recovered_as_lost()
+    {
+        var (host, _, room) = await StartRunHostAsync(Instant, Limits);
+        await using var _ = host;
+        var run = host.Services.GetRequiredService<RunStore>().Start(room, "sonnet", "build-thing", "", 1, 4, 40, DateTimeOffset.UtcNow);
+        for (var round = 0; round < 20; round++)
+        {
+            using var runner = ActivatorUtilities.CreateInstance<JobRunner>(host.Services);
+            await runner.StartAsync(CancellationToken.None);
+            var job = Jobs(host).Start(room, run.Id, "sonnet", "render", null, gpu: false, 120, id => Path.Combine(Path.GetTempPath(), $"chopitup_nojob_{id}"), DateTimeOffset.UtcNow);
+            await runner.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal((JobStatus.Running, (DateTimeOffset?)null), (Jobs(host).Get(job.Id)!.Status, Jobs(host).Get(job.Id)!.NotedAt));
+            Jobs(host).End(job.Id, JobStatus.Exited, 0, DateTimeOffset.UtcNow);
+            Jobs(host).MarkNoted(job.Id, DateTimeOffset.UtcNow);
+        }
+    }
+
+    /// <summary>A row a dead hub left running, whose process had started, is
     /// ended as lost at the next start, its cancel command runs once, and the note reaches the run
     /// it belonged to (parked by the restart).</summary>
     [Fact]
@@ -358,7 +384,7 @@ public sealed class JobToolsTests
         }
     }
 
-    /// <summary>Done-when 5 and 10, against the real owner-peer check: from inside a job, the owner's
+    /// <summary>Against the real owner-peer check: from inside a job, the owner's
     /// bearer and the starter's own bearer are both refused, and the job's process is inside a
     /// background-job entry for its room.</summary>
     [Fact]
@@ -393,12 +419,100 @@ public sealed class JobToolsTests
         var text = await Until(() => ReadShared(log) is var t && t.Contains("model:") ? t : null, "both attempts in the log");
         Assert.Contains("owner: 403", text);
         Assert.Contains("model: 403", text);
-        Assert.Contains("presented from inside a background job", text);
+        Assert.Equal(2, text.Split("presented from inside a background job").Length - 1);
         Assert.DoesNotContain(await AllMessagesFrom(host, room), m => m.Body == "forged");
         await host.Services.GetRequiredService<JobRunner>().CancelAsync(id);
     }
 
-    /// <summary>Done-when 2 and 11: two hubs on one GPU lock run their GPU jobs one after the other
+    /// <summary>A spawn in flight in another room cannot read or stop this room's job, even with
+    /// its real id: both tools refuse, note it, and the job keeps running.</summary>
+    [Fact]
+    public async Task A_spawn_in_another_room_cannot_see_or_cancel_this_rooms_job()
+    {
+        var (host, runner, room) = await StartRunHostAsync(Instant, Limits);
+        await using var _ = host;
+        var started = ConductorStartsAJob(host, runner, room, StartArgs(room, SleepingJob));
+        await Post(host, room, "/build-thing @sonnet begin");
+        var name = (await started.Task.WaitAsync(Wait)).GetProperty("id").GetString()!;
+        var job = Jobs(host).Get(Job.IdFrom(name)!.Value)!;
+        var pid = await PidOf(job);
+
+        var otherDir = Path.Combine(Path.GetDirectoryName(host.Services.GetRequiredService<MessageStore>().GetRoom(room)!.Directory!)!, "lab2");
+        Assert.True(await new ChopItUp.Hub.Git.GitTrail(otherDir).InitAsync());
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("lab2", "LAB2", otherDir);
+        var errors = new TaskCompletionSource<(string Status, string Cancel)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) == "opus")
+            {
+                try
+                {
+                    errors.TrySetResult((
+                        ErrorText(await Call(host, "opus", "job_status", new() { ["room_id"] = "lab2", ["id"] = name })),
+                        ErrorText(await Call(host, "opus", "cancel_job", new() { ["room_id"] = "lab2", ["id"] = name }))));
+                }
+                catch (Exception e) { errors.TrySetException(e); }
+            }
+            return FakeProcessRunner.Ok("""{"result":"ok"}""");
+        };
+        await Post(host, "lab2", "@opus look at the other room's job");
+
+        var (status, cancel) = await errors.Task.WaitAsync(Wait);
+        Assert.Contains($"No job '{name}' in room 'lab2'", status);
+        Assert.Contains($"No job '{name}' in room 'lab2'", cancel);
+        await WaitForNoteContaining(host, "lab2", "job_status by @opus: refused (unknown-job)");
+        await WaitForNoteContaining(host, "lab2", "cancel_job by @opus: refused (unknown-job)");
+        Assert.Equal(JobStatus.Running, Jobs(host).Get(job.Id)!.Status);
+        Assert.True(IsAlive(pid));
+        await host.Services.GetRequiredService<JobRunner>().CancelAsync(job.Id);
+    }
+
+    /// <summary>A GPU job a crashed hub left running: the next start finds the dead holder's record
+    /// in the free lock file and runs that record's cancel command once, so the service's render
+    /// stops even when no other GPU job ever comes.</summary>
+    [Fact]
+    public async Task A_start_after_a_crash_interrupts_the_dead_gpu_holders_render()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_jobgpucrash_" + Guid.NewGuid().ToString("N"));
+        var lockPath = Path.Combine(dir + "_lock", "gpu.lock");
+        var marker = Path.Combine(dir + "_lock", "interrupted.txt");
+        var settings = new JobSettings(lockPath, TimeSpan.FromMilliseconds(50));
+        try
+        {
+            var (host, _, room) = await StartRunHostAsync(Instant, Limits, dir: dir, deleteOnDispose: false, jobSettings: settings);
+            Job job;
+            await using (host)
+            {
+                var run = host.Services.GetRequiredService<RunStore>().Start(room, "sonnet", "build-thing", "", 1, 4, 40, DateTimeOffset.UtcNow);
+                var roomDir = host.Services.GetRequiredService<MessageStore>().GetRoom(room)!.Directory!;
+                var folder = Path.Combine(RoomArtifacts.FolderFor(roomDir), "jobs", "j1-gpucrash");
+                Directory.CreateDirectory(folder);
+                var interrupt = $"Add-Content -LiteralPath '{marker}' 'x'";
+                job = Jobs(host).Start(room, run.Id, "sonnet", "render", interrupt, gpu: true, 120, _ => folder, DateTimeOffset.UtcNow);
+                Jobs(host).MarkProcessStarted(job.Id, 999_999, DateTimeOffset.UtcNow);
+                Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+                File.WriteAllText(lockPath, JsonSerializer.Serialize(new GpuHolder(4242, job.Name, folder, interrupt)));
+            }
+            SqliteConnection.ClearAllPools();
+
+            var (again, _, _) = await StartRunHostAsync(Instant, Limits, dir: dir, deleteOnDispose: false, jobSettings: settings);
+            await using (again)
+            {
+                await WaitForNoteContaining(again, room, $"Job j{job.Id} by @sonnet was lost: the hub stopped while it ran.");
+                Assert.Single(await Until(() => File.Exists(marker) ? File.ReadAllLines(marker) : null, "the dead holder's interrupt"));
+                Assert.Equal(0, new FileInfo(lockPath).Length);   // the record is cleared once handled
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            TestDirs.DeleteTree(dir);
+            TestDirs.DeleteTree(dir + "_rooms");
+            TestDirs.DeleteTree(dir + "_lock");
+        }
+    }
+
+    /// <summary>Two hubs on one GPU lock run their GPU jobs one after the other
     /// against a fake GPU service that records overlap, and a holder that died mid-render has its
     /// render interrupted before the next one starts.</summary>
     [Fact]

@@ -59,6 +59,23 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
             // The hub's owner-peer check runs right after a bearer resolves and before the /api-only branch
             // below, on /mcp as well as /api: the phone session's owner-remote bearer posts through
             // /mcp, so the check must run there too.
+            // A background job acts as nobody: any bearer from inside one, the owner's or its
+            // starter's own pasted into its command, is refused, and so is one whose job membership
+            // cannot be read while a job is live.
+            switch (peers.InsideBackgroundJob(context.Connection))
+            {
+                case OwnerPeerVerdict.InsideSpawn job:
+                    Console.Error.WriteLine($"auth: refused '{participant}' from pid {job.Pid} inside background job '{job.Entry.Label}'");
+                    if (job.NoteDue && job.Entry.RoomId is { } jobRoom)
+                        PostNote(jobRoom, $"Refused a credential presented from inside background job {job.Entry.Label} (pid {job.Pid}).");
+                    await Refuse(context, InsideJobError);
+                    return;
+                case OwnerPeerVerdict.Unresolvable u:
+                    Console.Error.WriteLine($"auth: refused '{participant}': peer unresolvable while a background job is live ({u.Reason})");
+                    await Refuse(context, $"{InsideJobError} ({u.Reason})");
+                    return;
+            }
+
             if (IsOwnerClass(participant))
             {
                 switch (peers.Check(context.Connection))
@@ -74,17 +91,6 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
                         await Refuse(context, $"{UnresolvableErrorPrefix} ({u.Reason})");
                         return;
                 }
-            }
-
-            // A background job acts as nobody: its starter's bearer, pasted into its command, is
-            // refused like an owner bearer would be.
-            if (peers.InsideBackgroundJob(context.Connection) is { } job)
-            {
-                Console.Error.WriteLine($"auth: refused '{participant}' from pid {job.Pid} inside background job '{job.Entry.Label}'");
-                if (job.NoteDue && job.Entry.RoomId is { } jobRoom)
-                    PostNote(jobRoom, $"Refused a credential presented from inside background job {job.Entry.Label} (pid {job.Pid}).");
-                await Refuse(context, InsideJobError);
-                return;
             }
 
             // /mcp lets any resolved participant through (a model authenticates its own tool calls);

@@ -17,7 +17,7 @@
     scratch. The fabricated job is not a GPU job, so the machine's GPU lock file is never touched.
     Needs pwsh on PATH (the hub runs the cancel command with it) and no model CLI.
 
-    Ends with `Row 85 dry run: n FAIL`. Exit 0 when every check passes, 1 otherwise.
+    The last line is "Results: n/m PASS". Exit 0 only when every check passes.
 #>
 [CmdletBinding()]
 param(
@@ -37,16 +37,18 @@ foreach ($dll in 'SQLitePCLRaw.core.dll', 'SQLitePCLRaw.provider.e_sqlite3.dll',
 }
 [SQLitePCL.Batteries_V2]::Init()
 
-$scratch = Join-Path $env:TEMP ('chopitup_row85dry_' + [guid]::NewGuid().ToString('N'))
+$scratch = Join-Path $env:TEMP ('chopitup_jobsdry_' + [guid]::NewGuid().ToString('N'))
 $dataDir = "$scratch\data"; $roomsRoot = "$scratch\rooms"; $dbPath = "$dataDir\chopitup.db"
 New-Item -ItemType Directory -Force $roomsRoot | Out-Null
 $l = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, 0); $l.Start(); $port = $l.LocalEndpoint.Port; $l.Stop()
 $base = "http://127.0.0.1:$port"
 $null = Initialize-ChopScratchTokens -DataDir $dataDir -ParticipantIds @('owner')
 $fails = 0
+$checks = 0
 $first = $null; $second = $null; $third = $null
 
 function Add-Check([string]$Name, [bool]$Passed, [string]$Detail = '') {
+    $script:checks++
     if (-not $Passed) { $script:fails++ }
     Write-Host ("{0,-5} {1}  {2}" -f $(if ($Passed) { 'PASS' } else { 'FAIL' }), $Name, $Detail).TrimEnd()
 }
@@ -147,5 +149,5 @@ finally {
     Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "Row 85 dry run: $fails FAIL"
+Write-Host "Results: $($checks - $fails)/$checks PASS"
 exit ($(if ($fails -gt 0) { 1 } else { 0 }))

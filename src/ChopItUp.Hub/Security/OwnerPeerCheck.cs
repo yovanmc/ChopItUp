@@ -17,11 +17,13 @@ public interface IOwnerPeerCheck
 {
     OwnerPeerVerdict Check(ConnectionInfo connection);
 
-    /// <summary>The background job the peer of <paramref name="connection"/> runs inside, or null.
-    /// Asked about every bearer while a background job is live: a job may not act as anyone, even
-    /// with a bearer its starter pasted into its command. A peer that cannot be resolved answers
-    /// null, so a lookup failure never locks the models out.</summary>
-    OwnerPeerVerdict.InsideSpawn? InsideBackgroundJob(ConnectionInfo connection) => null;
+    /// <summary>Asked about every bearer while a background job is live, because a job may not act
+    /// as anyone, even with a bearer its starter pasted into its command:
+    /// <see cref="OwnerPeerVerdict.InsideSpawn"/> when the peer runs inside a background job,
+    /// <see cref="OwnerPeerVerdict.Unresolvable"/> when its job membership cannot be read (a job can
+    /// hide its own process from the query), null otherwise. A peer whose connection row cannot be
+    /// found answers null, so a TCP table miss never locks the models out.</summary>
+    OwnerPeerVerdict? InsideBackgroundJob(ConnectionInfo connection) => null;
 }
 
 public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
@@ -45,15 +47,18 @@ public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
         };
     }
 
-    public OwnerPeerVerdict.InsideSpawn? InsideBackgroundJob(ConnectionInfo connection)
+    public OwnerPeerVerdict? InsideBackgroundJob(ConnectionInfo connection)
     {
         if (!OperatingSystem.IsWindows() || jobs.LiveBackgroundJobs == 0) return null;
         if (connection.RemoteIpAddress is null || connection.LocalIpAddress is null) return null;
         var pid = PeerProcess.OwningPid(new PeerProcess.Endpoints(connection.RemoteIpAddress, connection.RemotePort, connection.LocalIpAddress, connection.LocalPort));
         if (pid is null) return null;
-        return jobs.Membership(pid.Value, out var entry) == JobMembership.Inside && entry!.Kind == SpawnJobKind.BackgroundJob
-            ? new OwnerPeerVerdict.InsideSpawn(pid.Value, entry, jobs.TryMarkNoted(entry))
-            : null;
+        return jobs.Membership(pid.Value, out var entry) switch
+        {
+            JobMembership.Inside when entry!.Kind == SpawnJobKind.BackgroundJob => new OwnerPeerVerdict.InsideSpawn(pid.Value, entry, jobs.TryMarkNoted(entry)),
+            JobMembership.Unknown => new OwnerPeerVerdict.Unresolvable($"job membership unreadable for pid {pid.Value}"),
+            _ => null,
+        };
     }
 }
 

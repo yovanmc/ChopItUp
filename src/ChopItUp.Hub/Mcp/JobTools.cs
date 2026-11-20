@@ -43,7 +43,7 @@ public sealed class JobTools(JobRunner jobs, JobStore store, RunStore runs, Spaw
         [Description("PowerShell script text the hub runs before it stops the job early, e.g. a GPU service's interrupt.")] string? cancel_command = null)
     {
         var me = Caller;
-        var room = Gate("start_job", room_id, me, needsRun: true);
+        var (room, run) = Gate("start_job", room_id, me, needsRun: true);
         var timeout = timeout_minutes ?? JobRunner.DefaultTimeoutMinutes;
         if (timeout is < 1 or > JobRunner.MaxTimeoutMinutes)
             throw Refuse("start_job", room_id, me, "bad-timeout", $"timeout_minutes must be 1 to {JobRunner.MaxTimeoutMinutes}.");
@@ -54,7 +54,7 @@ public sealed class JobTools(JobRunner jobs, JobStore store, RunStore runs, Spaw
             throw Refuse("start_job", room_id, me, "no-artifacts-folder", $"The room's artifacts folder is not usable: {lease.Refusal}");
 
         Job job;
-        try { job = jobs.Start(room_id, runs.Active(room_id)!.Id, me, command, string.IsNullOrWhiteSpace(cancel_command) ? null : cancel_command, gpu, timeout, lease.Path); }
+        try { job = jobs.Start(room_id, run!.Id, me, command, string.IsNullOrWhiteSpace(cancel_command) ? null : cancel_command, gpu, timeout, lease.Path); }
         catch (IOException e) { throw Refuse("start_job", room_id, me, "no-job-folder", $"The job's folder could not be made: {e.Message}"); }
 
         var shown = command.Length <= CommandNoteChars ? command : command[..CommandNoteChars] + "…";
@@ -108,7 +108,7 @@ public sealed class JobTools(JobRunner jobs, JobStore store, RunStore runs, Spaw
     }
 
     /// <summary>The checks every job tool shares, in a fixed order.</summary>
-    private Room Gate(string tool, string roomId, string caller, bool needsRun)
+    private (Room Room, Run? Run) Gate(string tool, string roomId, string caller, bool needsRun)
     {
         if (roster.FirstOrDefault(p => p.Id == caller) is not { } participant || !ExchangePolicy.IsSpawnable(participant))
             throw Refuse(tool, roomId, caller, "not-a-spawn", $"{tool} may only be called by a spawn the hub started, not by an app-backed host.");
@@ -116,11 +116,12 @@ public sealed class JobTools(JobRunner jobs, JobStore store, RunStore runs, Spaw
             throw new McpException($"Unknown room '{roomId}'. Call list_rooms.");
         if (room.Directory is null)
             throw Refuse(tool, roomId, caller, "no-directory", $"Room '{roomId}' has no directory.");
-        if (needsRun && runs.Active(roomId) is null)
+        var run = runs.Active(roomId);
+        if (needsRun && run is null)
             throw Refuse(tool, roomId, caller, "no-active-run", $"No run is active in room '{roomId}'.");
         if (!spawner.Snapshot(roomId).InFlight.Contains(caller))
             throw Refuse(tool, roomId, caller, "not-in-flight", $"{tool} may only be called by a spawn in flight in room '{roomId}'.");
-        return room;
+        return (room, run);
     }
 
     private Job JobIn(string tool, string roomId, string caller, string id) =>

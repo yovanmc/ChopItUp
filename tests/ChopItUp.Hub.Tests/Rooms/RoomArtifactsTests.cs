@@ -188,6 +188,8 @@ public sealed class RoomArtifactsTests : IDisposable
         File.WriteAllText(Path.Combine(folder, "renders", "jobs", "kept.png"), "x");
 
         Assert.Equal(["renders/jobs/kept.png"], RoomArtifacts.Scan(folder).Files.Keys);
+        // A job's own folder is walked whole, a jobs folder inside it included.
+        Assert.Equal(["jobs/7/frame.png", "renders/jobs/kept.png"], RoomArtifacts.Scan(folder, skipJobs: false).Files.Keys.Order(StringComparer.Ordinal));
     }
 
     [Theory]

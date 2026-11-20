@@ -57,9 +57,10 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
 
     private enum Phase { Pending, Running, Ended }
 
-    private sealed class Live(Job job)
+    private sealed class Live(Job job, List<FileStream> scripts)
     {
         public Job Job { get; } = job;
+        public List<FileStream> Scripts { get; } = scripts;
         public object Gate { get; } = new();
         public Phase Phase { get; set; } = Phase.Pending;
         public string? StopStatus { get; set; }
@@ -79,20 +80,26 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         var job = store.Start(roomId, runId, authorId, command, cancelCommand, gpu, timeoutMinutes,
             id => Path.Combine(artifactsFolder, RoomArtifacts.JobsFolder, $"{Job.NameFor(id)}-{Guid.NewGuid().ToString("N")[..8]}"),
             clock.GetUtcNow());
+        var scripts = new List<FileStream>();
         try
         {
             if (Directory.Exists(job.Folder)) throw new IOException($"'{job.Folder}' already exists");
             Directory.CreateDirectory(job.Folder);
             File.WriteAllText(Path.Combine(job.Folder, ScriptFile), command);
             if (cancelCommand is not null) File.WriteAllText(Path.Combine(job.Folder, CancelFile), cancelCommand);
+            // Held read-only until the job ends: a spawn that can write the artifacts folder cannot
+            // swap the code between the start note and the run, which may wait hours for the GPU.
+            scripts.Add(HoldReadOnly(Path.Combine(job.Folder, ScriptFile)));
+            if (cancelCommand is not null) scripts.Add(HoldReadOnly(Path.Combine(job.Folder, CancelFile)));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            foreach (var held in scripts) held.Dispose();
             store.End(job.Id, JobStatus.Failed, null, clock.GetUtcNow());
             store.MarkNoted(job.Id, clock.GetUtcNow());   // the tool's refusal is the report
             throw new IOException(e.Message, e);
         }
-        var live = new Live(job);
+        var live = new Live(job, scripts);
         _live[job.Id] = live;
         spawner.TrackJob(roomId, job.Name, TimeSpan.FromMinutes(timeoutMinutes),
             reason => StopAsync(job.Id, reason == JobStopReason.TimedOut ? JobStatus.TimedOut : JobStatus.Stopped).GetAwaiter().GetResult());
@@ -137,7 +144,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
                 try { lease = await _gpu.AcquireAsync(new GpuHolder(Environment.ProcessId, job.Name, job.Folder, job.CancelCommand), live.Stop.Token); }
                 catch (OperationCanceledException) { }
                 if (lease?.Stale is { CancelCommand: { } staleCancel } stale)
-                    await RunCancelAsync(job, staleCancel, Directory.Exists(stale.Folder) ? stale.Folder : job.Folder, "stale-cancel.ps1");
+                    await RunTempCancelAsync(job, staleCancel, Directory.Exists(stale.Folder) ? stale.Folder : job.Folder);
             }
             (status, exitCode, failure) = await RunProcessAsync(live, lease);
         }
@@ -152,6 +159,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
             lock (live.Gate) live.Phase = Phase.Ended;
             _live.TryRemove(job.Id, out _);
             live.Stop.Dispose();
+            foreach (var held in live.Scripts) held.Dispose();
         }
         Finish(job, status, exitCode, failure, report: !_stopping);
     }
@@ -169,6 +177,8 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         psi.Environment["CHOPITUP_ARTIFACTS"] = Path.GetDirectoryName(Path.GetDirectoryName(job.Folder))!;
 
         using var process = new Process { StartInfo = psi };
+        // Opened before the start, so nothing between the start and the try below can throw.
+        using var log = new FileStream(Path.Combine(job.Folder, LogFile), FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
         IDisposable jobObject;
         lock (live.Gate)
         {
@@ -182,23 +192,26 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
             }
             live.Phase = Phase.Running;
         }
-        store.MarkProcessStarted(job.Id, process.Id, clock.GetUtcNow());
-
-        using var log = new FileStream(Path.Combine(job.Folder, LogFile), FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
         var gate = new SemaphoreSlim(1, 1);
         var pumps = Task.WhenAll(Pump(process.StandardOutput.BaseStream, log, gate), Pump(process.StandardError.BaseStream, log, gate));
         string? stopped = null;
         try
         {
+            store.MarkProcessStarted(job.Id, process.Id, clock.GetUtcNow());
             try { await process.WaitForExitAsync(live.Stop.Token); }
             catch (OperationCanceledException)
             {
                 stopped = live.StopStatus ?? JobStatus.Stopped;
-                if (job.CancelCommand is not null) await RunCancelAsync(job, job.CancelCommand, job.Folder, CancelFile);
+                if (job.CancelCommand is not null) await RunCancelAsync(job, Path.Combine(job.Folder, CancelFile), job.Folder);
                 KillTree(process);
                 try { await process.WaitForExitAsync(CancellationToken.None).WaitAsync(DrainGrace); }
                 catch (TimeoutException) { }
             }
+        }
+        catch
+        {
+            KillTree(process);   // a job the hub cannot track any more must not outlive this call
+            throw;
         }
         finally
         {
@@ -226,16 +239,35 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         }
     }
 
-    /// <summary>Runs a cancel command (written to <paramref name="fileName"/> in the job's folder) in
+    private static FileStream HoldReadOnly(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+    /// <summary>Runs <paramref name="command"/> from a script in a fresh temp folder (never in a folder
+    /// a spawn can write), then deletes the folder. For a dead holder's or a lost job's cancel command,
+    /// whose text comes from the hub's own records.</summary>
+    private async Task RunTempCancelAsync(Job job, string command, string workingDirectory)
+    {
+        DirectoryInfo? temp = null;
+        try
+        {
+            temp = Directory.CreateTempSubdirectory("chopitup_job_");
+            var script = Path.Combine(temp.FullName, CancelFile);
+            await File.WriteAllTextAsync(script, command);
+            await RunCancelAsync(job, script, Directory.Exists(workingDirectory) ? workingDirectory : temp.FullName);
+        }
+        catch (Exception e) { Console.Error.WriteLine($"job {job.Name}: cancel command failed: {e.GetType().Name}: {e.Message}"); }
+        finally
+        {
+            try { temp?.Delete(recursive: true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>Runs the cancel script at <paramref name="script"/> in
     /// <paramref name="workingDirectory"/>, inside a job object, for at most
     /// <see cref="JobSettings.CancelLimit"/>. Never throws.</summary>
-    private async Task RunCancelAsync(Job job, string command, string workingDirectory, string fileName)
+    private async Task RunCancelAsync(Job job, string script, string workingDirectory)
     {
         try
         {
-            var folder = Directory.Exists(job.Folder) ? job.Folder : Directory.CreateTempSubdirectory("chopitup_job_").FullName;
-            var script = Path.Combine(folder, fileName);
-            await File.WriteAllTextAsync(script, command);
             var psi = ShellStart(settings.ResolveShell(), workingDirectory, script);
             psi.Environment["CHOPITUP_JOB_DIR"] = job.Folder;
             using var process = new Process { StartInfo = psi };
@@ -293,7 +325,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         try
         {
             if (!Directory.Exists(job.Folder)) return;
-            var scan = RoomArtifacts.Scan(job.Folder);
+            var scan = RoomArtifacts.Scan(job.Folder, skipJobs: false);
             var prefix = ArtifactRef.Prefix + RoomArtifacts.JobsFolder + "/" + Path.GetFileName(job.Folder) + "/";
             if (scan.Files.Count > 0) runs.RecordArtifacts(job.RunId, scan.Files.Keys.Select(p => prefix + p), job.AuthorId, clock.GetUtcNow());
         }
@@ -345,13 +377,23 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         return longest;
     }
 
+    private IReadOnlyList<Job> _unreported = [];
+
+    /// <summary>Reads the jobs a previous hub process left while the host starts, before the server
+    /// takes a request: ExecuteAsync runs on a pool thread, and a read there could see a job this hub
+    /// has just started and end it as lost.</summary>
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        try { _unreported = store.Unreported(); }
+        catch (Exception e) { Console.Error.WriteLine($"jobs: reading lost jobs failed: {e.Message}"); }
+        return base.StartAsync(cancellationToken);
+    }
+
     /// <summary>Hub start: reports every job a previous hub process lost or never noted, one row at
     /// a time, so one bad row never stops the others.</summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        IReadOnlyList<Job> unreported;
-        try { unreported = store.Unreported(); }
-        catch (Exception e) { Console.Error.WriteLine($"jobs: reading lost jobs failed: {e.Message}"); return; }
+        var unreported = _unreported;
         if (unreported.Count == 0) return;
 
         // A previous hub that died holding the GPU left its record: stop that render now, unless
@@ -360,10 +402,10 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         {
             try
             {
-                var recovering = unreported.First(j => j.Gpu);
+                var recovering = unreported.First(j => j.Status == JobStatus.Running && j.Gpu);
                 using var lease = _gpu.TryAcquire(new GpuHolder(Environment.ProcessId, "recovery", recovering.Folder, null));
                 if (lease?.Stale is { CancelCommand: { } staleCancel } stale)
-                    await RunCancelAsync(recovering, staleCancel, Directory.Exists(stale.Folder) ? stale.Folder : recovering.Folder, "stale-cancel.ps1");
+                    await RunTempCancelAsync(recovering, staleCancel, stale.Folder);
             }
             catch (Exception e) { Console.Error.WriteLine($"jobs: GPU record check at start failed: {e.Message}"); }
         }
@@ -381,7 +423,7 @@ public sealed class JobRunner(JobStore store, SpawnJobs tracker, SpawnerService 
         var status = job.Status;
         if (status == JobStatus.Running)
         {
-            if (!job.Gpu && job.Pid is not null && job.CancelCommand is { } cancel) await RunCancelAsync(job, cancel, Directory.Exists(job.Folder) ? job.Folder : Path.GetTempPath(), CancelFile);
+            if (!job.Gpu && job.Pid is not null && job.CancelCommand is { } cancel) await RunTempCancelAsync(job, cancel, job.Folder);
             CreditFiles(job);
             store.End(job.Id, JobStatus.Lost, null, clock.GetUtcNow());
             status = JobStatus.Lost;

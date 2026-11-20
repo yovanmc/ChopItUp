@@ -802,7 +802,7 @@ public sealed class ChopDb
         tx.Commit();
     }
 
-    /// <summary>Background jobs (row 85): one row per job a spawn started, so a hub that stops or
+    /// <summary>Background jobs: one row per job a spawn started, so a hub that stops or
     /// crashes still reports every job it lost on its next start. <c>pid</c> and
     /// <c>process_started_at</c> say the process started, which decides whether its cancel command may
     /// run; <c>noted_at</c> says its end note reached the room. CREATE IF NOT EXISTS, so a torn attempt
