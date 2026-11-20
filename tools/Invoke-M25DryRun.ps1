@@ -426,7 +426,7 @@ PRAGMA user_version = 9;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-17' -Passed ($health.schema -eq 17) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-18' -Passed ($health.schema -eq 18) -Detail "schema=$($health.schema)"
 
     Write-Host "Stopping hub pid $($hubProcess.Id)..."
     Stop-Process -Id $hubProcess.Id
