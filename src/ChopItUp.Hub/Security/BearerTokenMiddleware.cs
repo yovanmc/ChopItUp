@@ -21,6 +21,9 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
     /// <summary>The fixed body for an owner credential presented from inside a spawn.</summary>
     public const string InsideSpawnError = "owner credential refused: presented from inside a spawn";
 
+    /// <summary>The fixed body for any credential presented from inside a background job.</summary>
+    public const string InsideJobError = "credential refused: presented from inside a background job";
+
     /// <summary>The fixed prefix for an unresolvable peer; the reason is appended in parentheses.</summary>
     public const string UnresolvableErrorPrefix = "owner credential refused: peer process unresolvable";
 
@@ -71,6 +74,17 @@ public sealed class BearerTokenMiddleware(RequestDelegate next, TokenStore token
                         await Refuse(context, $"{UnresolvableErrorPrefix} ({u.Reason})");
                         return;
                 }
+            }
+
+            // A background job acts as nobody: its starter's bearer, pasted into its command, is
+            // refused like an owner bearer would be.
+            if (peers.InsideBackgroundJob(context.Connection) is { } job)
+            {
+                Console.Error.WriteLine($"auth: refused '{participant}' from pid {job.Pid} inside background job '{job.Entry.Label}'");
+                if (job.NoteDue && job.Entry.RoomId is { } jobRoom)
+                    PostNote(jobRoom, $"Refused a credential presented from inside background job {job.Entry.Label} (pid {job.Pid}).");
+                await Refuse(context, InsideJobError);
+                return;
             }
 
             // /mcp lets any resolved participant through (a model authenticates its own tool calls);

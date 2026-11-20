@@ -4,9 +4,13 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ChopItUp.Hub.Spawning;
 
+/// <summary>What a tracked process is: a spawn (a model CLI, a gate, git) or a background job a spawn
+/// started through <c>start_job</c>.</summary>
+public enum SpawnJobKind { Spawn, BackgroundJob }
+
 /// <summary>What a live job was started for: enough for the middleware's refusal note to name the
 /// spawn, nothing the child could use.</summary>
-public sealed record SpawnJobEntry(int RootPid, string Label, string? RoomId, string? ParticipantId);
+public sealed record SpawnJobEntry(int RootPid, string Label, string? RoomId, string? ParticipantId, SpawnJobKind Kind = SpawnJobKind.Spawn);
 
 /// <summary><see cref="Unknown"/> is an answer, not an absence: a PID whose membership could not be
 /// read is neither inside nor outside, and the middleware fails closed on it.</summary>
@@ -39,12 +43,15 @@ public sealed class SpawnJobs
 
     public int LiveCount { get { lock (_gate) return _live.Count; } }
 
+    /// <summary>How many live entries are background jobs.</summary>
+    public int LiveBackgroundJobs { get { lock (_gate) return _live.Values.Count(s => s.Entry.Kind == SpawnJobKind.BackgroundJob); } }
+
     /// <summary>Creates the job, assigns <paramref name="process"/> to it, verifies the assignment
     /// took, and records it. Dispose the result when the run is over: that closes the job, which
     /// kills anything still inside it. A child that has already exited (a `git rev-parse` can finish
     /// between <c>Start()</c> and this call) has nothing to confine and gets a no-op tracker. A LIVE
     /// child that cannot be confined throws — the caller kills it rather than running it unconfined.</summary>
-    public IDisposable Track(Process process, ProcessSpec spec)
+    public IDisposable Track(Process process, ProcessSpec spec, SpawnJobKind kind = SpawnJobKind.Spawn)
     {
         if (process.HasExited) return Untracked;
         SafeFileHandle? job = null;
@@ -74,7 +81,7 @@ public sealed class SpawnJobs
                 throw new InvalidOperationException($"process {process.Id} ({spec.Label}) is not inside the job it was assigned to");
             }
         }
-        var entry = new SpawnJobEntry(process.Id, spec.Label, spec.RoomId, spec.ParticipantId);
+        var entry = new SpawnJobEntry(process.Id, spec.Label, spec.RoomId, spec.ParticipantId, kind);
         long id;
         lock (_gate)
         {

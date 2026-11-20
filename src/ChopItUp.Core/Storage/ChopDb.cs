@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 17;
+    public const int LatestSchemaVersion = 18;
 
     /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
     /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
@@ -142,6 +142,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 15) ApplyV15(conn);
             if (GetUserVersion(conn) < 16) ApplyV16(conn);
             if (GetUserVersion(conn) < 17) ApplyV17(conn);
+            if (GetUserVersion(conn) < 18) ApplyV18(conn);
             return 0;
         });
     }
@@ -797,6 +798,42 @@ public sealed class ChopDb
             cmd.ExecuteNonQuery();
         }
         cmd.CommandText = "PRAGMA user_version = 17;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Background jobs (row 85): one row per job a spawn started, so a hub that stops or
+    /// crashes still reports every job it lost on its next start. <c>pid</c> and
+    /// <c>process_started_at</c> say the process started, which decides whether its cancel command may
+    /// run; <c>noted_at</c> says its end note reached the room. CREATE IF NOT EXISTS, so a torn attempt
+    /// finishes. One transaction with the stamp.</summary>
+    private static void ApplyV18(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS jobs (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                room_id            TEXT NOT NULL,
+                run_id             INTEGER NOT NULL,
+                author_id          TEXT NOT NULL,
+                command            TEXT NOT NULL,
+                cancel_command     TEXT,
+                gpu                INTEGER NOT NULL,
+                timeout_minutes    INTEGER NOT NULL,
+                folder             TEXT NOT NULL,
+                status             TEXT NOT NULL,
+                exit_code          INTEGER,
+                pid                INTEGER,
+                process_started_at TEXT,
+                started_at         TEXT NOT NULL,
+                ended_at           TEXT,
+                noted_at           TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs (status);
+            PRAGMA user_version = 18;
+            """;
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

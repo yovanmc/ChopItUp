@@ -23,7 +23,7 @@ namespace ChopItUp.Hub.Hosting;
 
 public static class HubHost
 {
-    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null)
+    public static WebApplication Build(HubOptions options, IProcessRunner? processRunner = null, SpawnLimits? limits = null, CliLocator? cliLocator = null, Func<string, MemoryGit>? memoryGit = null, Func<string, GitTrail>? roomGit = null, TimeProvider? clock = null, RunLimits? runLimits = null, IOwnerPeerCheck? ownerPeerCheck = null, JobSettings? jobSettings = null)
     {
         var hubLock = HubLock.Acquire(options.DataDir);   // first: fail fast if another hub owns this dir
         // A port file that exists while the lock is held must always belong to the hub that holds the
@@ -142,6 +142,12 @@ public static class HubHost
             builder.Services.AddSingleton<GateLocks>();
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
+            // Background jobs. Registered after the spawner so the host stops it first: its stop
+            // ends every job as lost before the spawner's loop closes, and posts nothing.
+            builder.Services.AddSingleton(new JobStore(db));
+            builder.Services.AddSingleton(jobSettings ?? JobSettings.Default);
+            builder.Services.AddSingleton<JobRunner>();
+            builder.Services.AddHostedService(sp => sp.GetRequiredService<JobRunner>());
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddSingleton(memory);
             builder.Services.AddSingleton(skills);
@@ -161,7 +167,7 @@ public static class HubHost
             builder.Services.AddSingleton<RoomFileGate>();
             builder.Services.AddMcpServer(o => o.ServerInstructions = Participation.Instructions(roster))
                 .WithHttpTransport(o => o.SessionMode = HttpServerSessionMode.Stateless)
-                .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>().WithTools<SkillTools>();
+                .WithTools<RoomTools>().WithTools<MemoryTools>().WithTools<RunTools>().WithTools<SkillTools>().WithTools<JobTools>();
             builder.Services.AddSignalR();
 
             var app = builder.Build();

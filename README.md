@@ -190,9 +190,23 @@ Each directory room also has an artifacts folder beside it, `<room dir>.artifact
 path in the prompt and in `CHOPITUP_ARTIFACTS`, and writes renders and other large generated files
 there. Git does not track the folder, and it outlasts every exchange. `artifact:<path>` names a file
 in it, in a post or on a critique's `artifact:` line. In a run the hub records which spawn wrote each
-file, so a judge cannot critique its own output. Files under `jobs\` have no recorded author. A room
+file, so a judge cannot critique its own output. A file under `jobs\` is credited to the spawn that
+started its job once the job ends, and cannot be critiqued before then. A room
 whose folder cannot be used (it would overlap another room, or the path is a link or a file) keeps
 working without one, and the hub says so once.
+
+Background jobs. A spawn in flight in a run can start a long command with `start_job` and end its turn;
+`job_status` and `cancel_job` look at and stop it. A job runs with the hub's full rights, git writes and
+network included, outside both CLI sandboxes and outside Claude's deny list: it is a PowerShell script
+the hub runs in its own folder, `<room dir>.artifacts\jobs\j<id>-<hex>\`, logging to `job.log` there.
+Its environment carries no hub credential, and a credential presented from inside it is refused. The
+hub posts the command when the job starts, and its exit code and last log lines when it ends, which
+wakes the run's conductor. The hub stops a job on `cancel_job`, at its time limit (default 2 h, at most
+8 h), when its run ends or is stopped, and when the hub stops, running its `cancel_command` first when
+the job gave one. A job started with `gpu: true` holds one GPU slot shared by every hub on the machine
+(a lock file in `%LOCALAPPDATA%\ChopItUp`) for its whole life, so a scratch hub and the live hub never
+render at once, and the next holder runs a crashed holder's `cancel_command` before starting. After a
+crash the next start reports every job the old hub lost.
 
 Outside a run, each of a directory room's exchanges works in its own git worktree at
 `<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's

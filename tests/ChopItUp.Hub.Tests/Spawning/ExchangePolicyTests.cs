@@ -566,13 +566,16 @@ public sealed class ExchangePolicyTests
     [InlineData("phase: critique @opus look\nartifact: `a.png`", "write the line as: artifact: artifact:a.png")]       // the printed line must be accepted as printed
     [InlineData("phase: critique @opus look\nartifact: both.png", null)]                                                // spaced: the repo path
     [InlineData("phase: critique @opus look\nartifact:both.png", "artifact: artifact:both.png for the folder file")]
+    [InlineData("phase: critique @opus look\nartifact: artifact:jobs/j1-a/out.png", "background job output with no recorded author")]  // its job still runs
+    [InlineData("phase: critique @opus look\nartifact: artifact:jobs/j2-b/out.png", null)]                                   // credited when its job ended
     public void A_critique_checks_every_artifact_line_and_needs_one_judge_who_authored_none(string body, string? refusal)
     {
         var authors = new Dictionary<string, string>
         {
             ["artifact:a.png"] = "sonnet", ["artifact:o.png"] = "opus", ["artifact:f.png"] = "fable", ["artifact:gone.png"] = "sonnet",
+            ["artifact:jobs/j2-b/out.png"] = "sonnet",
         };
-        var inFolder = new[] { "a.png", "o.png", "f.png", "both.png" };
+        var inFolder = new[] { "a.png", "o.png", "f.png", "both.png", "jobs/j1-a/out.png", "jobs/j2-b/out.png" };
         var inRepo = new[] { "src/foo.cs", "both.png" };
         bool Exists(string v)
         {

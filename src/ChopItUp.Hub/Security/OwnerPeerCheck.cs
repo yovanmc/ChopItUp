@@ -16,6 +16,12 @@ public abstract record OwnerPeerVerdict
 public interface IOwnerPeerCheck
 {
     OwnerPeerVerdict Check(ConnectionInfo connection);
+
+    /// <summary>The background job the peer of <paramref name="connection"/> runs inside, or null.
+    /// Asked about every bearer while a background job is live: a job may not act as anyone, even
+    /// with a bearer its starter pasted into its command. A peer that cannot be resolved answers
+    /// null, so a lookup failure never locks the models out.</summary>
+    OwnerPeerVerdict.InsideSpawn? InsideBackgroundJob(ConnectionInfo connection) => null;
 }
 
 public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
@@ -37,6 +43,17 @@ public sealed class OwnerPeerCheck(SpawnJobs jobs) : IOwnerPeerCheck
             JobMembership.Unknown => new OwnerPeerVerdict.Unresolvable($"job membership unreadable for pid {pid.Value}"),
             _ => new OwnerPeerVerdict.Allowed(),
         };
+    }
+
+    public OwnerPeerVerdict.InsideSpawn? InsideBackgroundJob(ConnectionInfo connection)
+    {
+        if (!OperatingSystem.IsWindows() || jobs.LiveBackgroundJobs == 0) return null;
+        if (connection.RemoteIpAddress is null || connection.LocalIpAddress is null) return null;
+        var pid = PeerProcess.OwningPid(new PeerProcess.Endpoints(connection.RemoteIpAddress, connection.RemotePort, connection.LocalIpAddress, connection.LocalPort));
+        if (pid is null) return null;
+        return jobs.Membership(pid.Value, out var entry) == JobMembership.Inside && entry!.Kind == SpawnJobKind.BackgroundJob
+            ? new OwnerPeerVerdict.InsideSpawn(pid.Value, entry, jobs.TryMarkNoted(entry))
+            : null;
     }
 }
 

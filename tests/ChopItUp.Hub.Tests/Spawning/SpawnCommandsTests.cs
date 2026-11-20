@@ -187,11 +187,11 @@ public sealed class SpawnCommandsTests
     // --- run_gate on a second Claude allowlist -----------------------------------------------------
 
     [Fact]
-    public void ClaudeInDirectory_can_be_given_the_run_tools_allowlist_which_adds_run_gate_to_the_ordinary_six()
+    public void ClaudeInDirectory_can_be_given_the_run_tools_allowlist_which_adds_run_gate_and_the_job_tools()
     {
         var spec = SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort: null, allowedTools: SpawnCommands.ClaudeRunToolsAllowed);
         var allowed = spec.Arguments[spec.Arguments.ToList().IndexOf("--allowedTools") + 1];
-        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate", allowed);
+        Assert.Equal(SpawnCommands.ClaudeDirectoryToolsAllowed + ",mcp__chopitup__run_gate,mcp__chopitup__start_job,mcp__chopitup__job_status,mcp__chopitup__cancel_job", allowed);
         // The built-in --tools list (never the allowlist) is what actually enables Bash etc; unaffected.
         Assert.Equal(SpawnCommands.ClaudeBuiltins, spec.Arguments[spec.Arguments.ToList().IndexOf("--tools") + 1]);
     }
