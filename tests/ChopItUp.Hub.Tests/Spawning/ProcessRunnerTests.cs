@@ -10,6 +10,19 @@ public sealed class ProcessRunnerTests
     private static ProcessSpec Spec(string stdin, params string[] args) =>
         new(Cmd, args, new Dictionary<string, string>(), Path.GetTempPath(), stdin, "test");
 
+    /// <summary>Both CLIs write UTF-8: a spec that says so reads U+2019 and U+00B7 back whole on the
+    /// uncapped path, whatever the console code page is.</summary>
+    [Fact]
+    public async Task Utf8_output_is_read_back_whole()
+    {
+        var spec = new ProcessSpec("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "$o = [Console]::OpenStandardOutput(); $o.Write([byte[]](0xE2,0x80,0x99,0xC2,0xB7), 0, 5); $o.Flush(); $e = [Console]::OpenStandardError(); $e.Write([byte[]](0xE2,0x80,0x99), 0, 3); $e.Flush()"],
+            new Dictionary<string, string>(), Path.GetTempPath(), "", "test") { Utf8Output = true };
+
+        var r = await new ProcessRunner().RunAsync(spec, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.Equal(("\u2019\u00B7", "\u2019"), (r.StandardOutput, r.StandardError));
+    }
+
     [Fact]
     public async Task Stdin_is_delivered_and_stdout_stderr_and_exit_code_come_back()
     {
