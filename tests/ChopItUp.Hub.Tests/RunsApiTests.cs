@@ -11,7 +11,7 @@ namespace ChopItUp.Hub.Tests;
 /// straight through <see cref="RunStore"/> rather than driven through a spawn: the endpoint is a
 /// projection of the store, and the three states it has to answer for include two
 /// (<c>parked</c>, <c>ended</c>) that a real hub cannot be walked into inside a test: the caps are
-/// hard code, so parking one for real costs 8 hours or 80 spawns.</summary>
+/// hard code, so parking one for real costs its default 4 hours or 40 spawns.</summary>
 public sealed class RunsApiTests : IAsyncLifetime
 {
     private static readonly DateTimeOffset T0 = DateTimeOffset.Parse("2026-03-01T09:00:00Z");
@@ -50,7 +50,7 @@ public sealed class RunsApiTests : IAsyncLifetime
     [Fact]
     public async Task Run14_an_active_run_answers_its_phase_counters_caps_artifacts_and_gate_runs()
     {
-        var run = Runs.Start("general", "sonnet", "build-thing", "begin", rootMessageId: 41, T0);
+        var run = Runs.Start("general", "sonnet", "build-thing", "begin", rootMessageId: 41, 8, 80, T0);
         Runs.EnterPhase(run.Id, "build/api", T0);
         Runs.EnterPhase(run.Id, "critique", T0);
         Runs.EnterPhase(run.Id, "build/api", T0);       // second entry into the tag the run now sits in
@@ -106,7 +106,7 @@ public sealed class RunsApiTests : IAsyncLifetime
     [Fact]
     public async Task A_run_with_more_artifacts_than_the_list_holds_answers_the_newest_and_the_omitted_count()
     {
-        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 7, T0);
+        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 7, 8, 80, T0);
         Runs.RecordArtifacts(run.Id, Enumerable.Range(0, RunArtifactList.MaxShown + 3).Select(i => $"artifact:frames/{i:000}.png"), "sonnet", T0);
 
         var (_, body) = await GetRun();
@@ -118,7 +118,7 @@ public sealed class RunsApiTests : IAsyncLifetime
     [Fact]
     public async Task Run14_a_parked_run_answers_the_reason_and_its_elapsed_stays_frozen_while_parked()
     {
-        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 7, T0);
+        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 7, 8, 80, T0);
         Runs.EnterPhase(run.Id, "build", T0);
         Runs.Park(run.Id, "the conductor broke the phase rules twice in a row", capSpent: false, T0.AddMinutes(30));
         _clock.Advance(TimeSpan.FromHours(2));   // the owner was away; parked time is not run time
@@ -136,7 +136,7 @@ public sealed class RunsApiTests : IAsyncLifetime
     [Fact]
     public async Task Run14_the_room_answers_its_most_recent_run_once_that_run_has_ended()
     {
-        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 9, T0);
+        var run = Runs.Start("general", "sonnet", "build-thing", "", rootMessageId: 9, 8, 80, T0);
         Runs.EnterPhase(run.Id, "ping", T0.AddMinutes(10));
         Runs.End(run.Id, "the conductor posted phase: ping", T0.AddMinutes(12));
         _clock.Advance(TimeSpan.FromMinutes(90));
@@ -160,7 +160,7 @@ public sealed class RunsApiTests : IAsyncLifetime
     [Fact]
     public async Task Run14_the_run_answers_every_phase_tag_it_entered_not_only_the_one_it_sits_in()
     {
-        var run = Runs.Start("general", "sonnet", "build-thing", "begin", rootMessageId: 41, T0);
+        var run = Runs.Start("general", "sonnet", "build-thing", "begin", rootMessageId: 41, 8, 80, T0);
         Runs.EnterPhase(run.Id, "build", T0);
         Runs.EnterPhase(run.Id, "ping", T0);
         Runs.EnterPhase(run.Id, "build", T0);

@@ -161,7 +161,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-16' -Passed ($health.schema -eq 16) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-17' -Passed ($health.schema -eq 17) -Detail "schema=$($health.schema)"
 
     # $script:PlaintextTokens (seeded before the hub started, above): tokens.json holds only host-file
     # rows' SHA-256 after the hub's own startup migration, never a usable plaintext.

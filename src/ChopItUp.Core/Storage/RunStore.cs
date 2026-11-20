@@ -10,7 +10,8 @@ public sealed class RunStore(ChopDb db)
 {
     private const string Select = """
         SELECT id, room_id, conductor_id, skill_name, arguments, status, reason, cap_spent, phase,
-               root_message_id, started_at, parked_at, parked_seconds, ended_at, spawns_used, exchanges
+               root_message_id, started_at, parked_at, parked_seconds, ended_at, spawns_used, exchanges,
+               budget_hours, spawn_budget, waiting_since, waited_seconds
         FROM runs
         """;
 
@@ -18,13 +19,14 @@ public sealed class RunStore(ChopDb db)
     /// second run in the same room, surfaced as <see cref="InvalidOperationException"/> — never
     /// confused with a foreign-key failure on a bad room or participant id, which propagates as the
     /// raw <see cref="SqliteException"/> it is.</summary>
-    public Run Start(string roomId, string conductorId, string skillName, string arguments, long rootMessageId, DateTimeOffset now)
+    public Run Start(string roomId, string conductorId, string skillName, string arguments, long rootMessageId,
+        int budgetHours, int spawnBudget, DateTimeOffset now)
     {
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO runs (room_id, conductor_id, skill_name, arguments, status, root_message_id, started_at)
-            VALUES ($room, $conductor, $skill, $args, 'active', $root, $at);
+            INSERT INTO runs (room_id, conductor_id, skill_name, arguments, status, root_message_id, started_at, budget_hours, spawn_budget)
+            VALUES ($room, $conductor, $skill, $args, 'active', $root, $at, $hours, $spawns);
             SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$room", roomId);
@@ -32,6 +34,8 @@ public sealed class RunStore(ChopDb db)
         cmd.Parameters.AddWithValue("$skill", skillName);
         cmd.Parameters.AddWithValue("$args", arguments);
         cmd.Parameters.AddWithValue("$root", rootMessageId);
+        cmd.Parameters.AddWithValue("$hours", budgetHours);
+        cmd.Parameters.AddWithValue("$spawns", spawnBudget);
         cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
         long id;
         try { id = (long)cmd.ExecuteScalar()!; }
@@ -88,19 +92,89 @@ public sealed class RunStore(ChopDb db)
     /// <summary>Stops the run for a recoverable reason and stamps <c>parked_at</c>, so
     /// <see cref="Resume"/> can later add the parked interval to <c>parked_seconds</c>.
     /// <paramref name="capSpent"/> is true only for a hard cap (spawns, wall clock, phase re-entry),
-    /// false for a refusal or silence park, whoever reached it.</summary>
+    /// false for a refusal or silence park, whoever reached it. An open wait is folded into
+    /// <c>waited_seconds</c> at <paramref name="now"/>, so the restart park counts hub downtime during a
+    /// wait as waited time.</summary>
     public Run Park(long id, string reason, bool capSpent, DateTimeOffset now)
     {
+        var fold = OpenWaitSeconds(id, now);
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE runs SET status = 'parked', reason = $reason, cap_spent = $cap, parked_at = $at WHERE id = $id";
+        cmd.CommandText = """
+            UPDATE runs SET status = 'parked', reason = $reason, cap_spent = $cap, parked_at = $at,
+                            waiting_since = NULL, waited_seconds = waited_seconds + $fold
+            WHERE id = $id
+            """;
         cmd.Parameters.AddWithValue("$reason", reason);
         cmd.Parameters.AddWithValue("$cap", capSpent ? 1 : 0);
         cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
+        cmd.Parameters.AddWithValue("$fold", fold);
         cmd.Parameters.AddWithValue("$id", id);
         if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Run #{id} does not exist.");
         return ById(id)!;
     }
+
+    /// <summary>A parked run's budget becomes <paramref name="budgetHours"/> and
+    /// <paramref name="spawnBudget"/>, its phase-entry counts reset to none, its cap-spent flag
+    /// cleared, and it resumes (the parked interval folds as in <see cref="Resume"/>). One
+    /// transaction. Throws when the run is not parked or the budget would shrink.</summary>
+    public Run Extend(long id, int budgetHours, int spawnBudget, DateTimeOffset now)
+    {
+        var current = ById(id) ?? throw new InvalidOperationException($"Run #{id} does not exist.");
+        if (current.Status != RunStatus.Parked)
+            throw new InvalidOperationException($"Run #{id} is {current.Status}, not parked.");
+        if (budgetHours < current.BudgetHours || spawnBudget < current.SpawnBudget)
+            throw new InvalidOperationException($"Run #{id}: an extension never shrinks the budget.");
+        var addedSeconds = (long)Math.Max(0, (now - (current.ParkedAt ?? now)).TotalSeconds);
+        using var conn = db.Open();
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            DELETE FROM run_phases WHERE run_id = $id;
+            UPDATE runs SET status = 'active', reason = NULL, cap_spent = 0, parked_at = NULL,
+                            parked_seconds = parked_seconds + $added,
+                            budget_hours = $hours, spawn_budget = $spawns
+            WHERE id = $id;
+            """;
+        cmd.Parameters.AddWithValue("$added", addedSeconds);
+        cmd.Parameters.AddWithValue("$hours", budgetHours);
+        cmd.Parameters.AddWithValue("$spawns", spawnBudget);
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+        return ById(id)!;
+    }
+
+    /// <summary>Marks an active run as waiting on a job from <paramref name="now"/>. A run already
+    /// waiting keeps its first instant.</summary>
+    public Run StartWait(long id, DateTimeOffset now)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE runs SET waiting_since = $at WHERE id = $id AND status = 'active' AND waiting_since IS NULL";
+        cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+        return ById(id) ?? throw new InvalidOperationException($"Run #{id} does not exist.");
+    }
+
+    /// <summary>Ends an open wait: the interval up to <paramref name="now"/> joins
+    /// <c>waited_seconds</c>. A run that is not waiting is returned unchanged.</summary>
+    public Run EndWait(long id, DateTimeOffset now)
+    {
+        var fold = OpenWaitSeconds(id, now);
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE runs SET waiting_since = NULL, waited_seconds = waited_seconds + $fold WHERE id = $id AND waiting_since IS NOT NULL";
+        cmd.Parameters.AddWithValue("$fold", fold);
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+        return ById(id) ?? throw new InvalidOperationException($"Run #{id} does not exist.");
+    }
+
+    private long OpenWaitSeconds(long id, DateTimeOffset now) =>
+        ById(id)?.WaitingSince is { } since ? (long)Math.Max(0, (now - since).TotalSeconds) : 0;
 
     /// <summary>Parked -&gt; active: clears the reason, adds the whole parked interval to
     /// <c>parked_seconds</c> and clears <c>parked_at</c>. Throws when the run is not parked, or is
@@ -129,11 +203,17 @@ public sealed class RunStore(ChopDb db)
 
     public Run End(long id, string reason, DateTimeOffset now)
     {
+        var fold = OpenWaitSeconds(id, now);
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE runs SET status = 'ended', reason = $reason, ended_at = $at WHERE id = $id";
+        cmd.CommandText = """
+            UPDATE runs SET status = 'ended', reason = $reason, ended_at = $at,
+                            waiting_since = NULL, waited_seconds = waited_seconds + $fold
+            WHERE id = $id
+            """;
         cmd.Parameters.AddWithValue("$reason", reason);
         cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
+        cmd.Parameters.AddWithValue("$fold", fold);
         cmd.Parameters.AddWithValue("$id", id);
         if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Run #{id} does not exist.");
         return ById(id)!;
@@ -305,11 +385,14 @@ public sealed class RunStore(ChopDb db)
     /// Frozen while parked: <c>parked_seconds</c> has not yet absorbed the interval the run is
     /// currently sitting in, so while <see cref="Run.Status"/> is <see cref="RunStatus.Parked"/> with
     /// <see cref="Run.ParkedAt"/> set, elapsed is pinned at <c>(ParkedAt - StartedAt) -
-    /// ParkedSeconds</c>.</summary>
-    public static TimeSpan ActiveElapsed(Run r, DateTimeOffset now) =>
-        r.Status == RunStatus.Parked && r.ParkedAt is { } parkedAt
-            ? (parkedAt - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds)
-            : (now - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds);
+    /// ParkedSeconds</c>. Waiting on a job is excluded the same way: <see cref="Run.WaitedSeconds"/> is
+    /// subtracted, and an open wait pins elapsed at <see cref="Run.WaitingSince"/>.</summary>
+    public static TimeSpan ActiveElapsed(Run r, DateTimeOffset now)
+    {
+        var end = r.Status == RunStatus.Parked && r.ParkedAt is { } parkedAt ? parkedAt
+            : r.WaitingSince ?? now;
+        return (end - r.StartedAt) - TimeSpan.FromSeconds(r.ParkedSeconds) - TimeSpan.FromSeconds(r.WaitedSeconds);
+    }
 
     /// <summary>Strips one layer of surrounding backticks/quotes, backslashes to forward slashes,
     /// drops a leading <c>./</c>, trims, and lowercases. Used on write, on read, and by the critique
@@ -338,5 +421,8 @@ public sealed class RunStore(ChopDb db)
         r.IsDBNull(11) ? null : Timestamps.Parse(r.GetString(11)),
         r.GetInt64(12),
         r.IsDBNull(13) ? null : Timestamps.Parse(r.GetString(13)),
-        r.GetInt32(14), r.GetInt32(15));
+        r.GetInt32(14), r.GetInt32(15),
+        r.GetInt32(16), r.GetInt32(17),
+        r.IsDBNull(18) ? null : Timestamps.Parse(r.GetString(18)),
+        r.GetInt64(19));
 }

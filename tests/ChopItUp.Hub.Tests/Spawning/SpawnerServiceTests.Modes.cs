@@ -172,6 +172,22 @@ public sealed class SpawnerServiceModesTests : SpawnerServiceTestBase
     }
 
     [Fact]
+    public async Task A_continue_with_hours_after_a_mode_leg_is_refused_and_reopens_nothing()
+    {
+        Mode("relay");
+        _runner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok("""{"result":"answer"}"""));
+        await PostAsOwner("One relay leg.");
+        await _runner.NextSpecAsync(Wait);
+        await _runner.NextSpecAsync(Wait);
+        await WaitForStatus("concluded");
+
+        await PostAsOwner("/continue hours: 3");
+
+        await WaitForMessage(m => m.Body == "No run is parked in this room; hours: applies to a parked run, so nothing was continued.");
+        Assert.Equal(2, _runner.Count);
+    }
+
+    [Fact]
     public async Task M49_underfunded_quote_and_changed_body_store_nothing()
     {
         Mode("panel");

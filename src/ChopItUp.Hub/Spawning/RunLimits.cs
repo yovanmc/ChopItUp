@@ -1,9 +1,13 @@
 namespace ChopItUp.Hub.Spawning;
 
-/// <summary>The run caps are hard code, not configuration: exactly the shape
+/// <summary>The run limits are hard code, not configuration: exactly the shape
 /// <see cref="SpawnLimits.Default"/> sets for exchanges, and just as unreachable from inside a
-/// room. <see cref="Spawns"/>, <see cref="WallClock"/> and <see cref="PhaseEntries"/> are the three
-/// HARD caps: a park naming one of them is always <c>capSpent: true</c>.
+/// room. A run's spawn and wall-clock caps are its own budget (<c>runs.budget_hours</c>,
+/// <c>runs.spawn_budget</c>): each budget hour is <see cref="Hour"/> of active time and buys
+/// <see cref="SpawnsPerHour"/> spawns, and a run start with no `hours:` gets
+/// <see cref="DefaultHours"/>. Tests shrink <see cref="Hour"/> and the other two to reach a cap fast.
+/// The budget caps and <see cref="PhaseEntries"/> are the three HARD caps: a park naming one of them
+/// is always <c>capSpent: true</c>.
 /// <see cref="SpawnTimeout"/> is the per-spawn wall clock while a run is active, replacing
 /// <see cref="SpawnLimits.Timeout"/>'s 5 minutes for the duration of a run.
 ///
@@ -24,11 +28,15 @@ namespace ChopItUp.Hub.Spawning;
 /// <see cref="EffectiveGateProgressInterval"/> defaults to 30 seconds. No invariant against it is
 /// needed (unlike <see cref="GateTimeout"/>, a too-large value only means fewer reports, never a
 /// broken cap).</summary>
-public sealed record RunLimits(int Spawns, TimeSpan WallClock, TimeSpan SpawnTimeout, int PhaseEntries, TimeSpan? GateTimeout = null, TimeSpan? GateProgressInterval = null)
+public sealed record RunLimits(int SpawnsPerHour, TimeSpan Hour, TimeSpan SpawnTimeout, int PhaseEntries, TimeSpan? GateTimeout = null, TimeSpan? GateProgressInterval = null,
+    int DefaultHours = ChopItUp.Core.Skills.RunBudget.DefaultHours)
 {
     public static readonly RunLimits Default = new(
-        Spawns: 80, WallClock: TimeSpan.FromHours(8),
+        SpawnsPerHour: 10, Hour: TimeSpan.FromHours(1),
         SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3);
+
+    /// <summary>The active time <paramref name="budgetHours"/> budget hours allow.</summary>
+    public TimeSpan WallClockFor(int budgetHours) => Hour * budgetHours;
 
     // Redeclared (not left as the plain synthesized property) so the invariant below runs as part of
     // construction: a positional record's primary constructor cannot carry a validating body of its

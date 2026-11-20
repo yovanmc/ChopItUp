@@ -18,6 +18,9 @@ trail they leave and the .bak restore): `pwsh tools\Invoke-Row40MemoryEditCheck.
 Judge rows migration dry run (no model calls, scratch hub, a v15 state with fabricated messages,
 an owner-set class and an owner clear, migrated to v16 through the real exe):
 `pwsh tools\Invoke-Row82DryRun.ps1 [-HubExe <exe>]`.
+Run budget migration dry run (no model calls, scratch hub, a v16 state with fabricated messages and a
+parked cap-spent run, migrated to v17 through the real exe; an installed single-file exe needs
+`-SqliteBin` pointed at a build output): `pwsh tools\Invoke-Row84DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.

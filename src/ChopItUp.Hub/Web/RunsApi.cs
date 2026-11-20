@@ -38,7 +38,7 @@ public static class RunsApi
 /// it.
 ///
 /// <see cref="ElapsedMinutes"/> comes from <see cref="RunStore.ActiveElapsed"/> and nowhere else: the
-/// wall-clock cap counts time the run spent ACTIVE, so parked time is excluded and a parked run's
+/// wall-clock cap counts time the run spent ACTIVE, so parked and job-wait time is excluded and a parked run's
 /// clock is frozen where it stood. An ended run is read at its own <c>endedAt</c> for the same
 /// reason — its clock stopped when it did, and a finished run whose elapsed kept climbing would be
 /// the same lie one minute later.</summary>
@@ -57,10 +57,10 @@ public sealed record RunSnapshot(
         return new(
         run.Id, run.RoomId, run.ConductorId, run.SkillName, run.Status, run.Reason, run.CapSpent,
         run.Phase, entries.GetValueOrDefault(run.Phase), limits.PhaseEntries,
-        run.Exchanges, run.SpawnsUsed, limits.Spawns,
+        run.Exchanges, run.SpawnsUsed, run.SpawnBudget,
         run.StartedAt, run.EndedAt,
         (int)RunStore.ActiveElapsed(run, run.EndedAt ?? now).TotalMinutes,
-        (int)limits.WallClock.TotalMinutes,
+        (int)limits.WallClockFor(run.BudgetHours).TotalMinutes,
         artifacts, runs.GateRuns(run.Id), entries, omitted);
     }
 }

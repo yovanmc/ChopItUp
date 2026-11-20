@@ -36,7 +36,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void Start_round_trips_every_field_and_ById_Active_Latest_agree()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "--phase build", rootMessageId: 42, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "--phase build", rootMessageId: 42, 4, 40, T0);
 
         Assert.Equal(1L, run.Id);
         Assert.Equal(Room, run.RoomId);
@@ -54,6 +54,7 @@ public sealed class RunStoreTests : IDisposable
         Assert.Null(run.EndedAt);
         Assert.Equal(0, run.SpawnsUsed);
         Assert.Equal(0, run.Exchanges);
+        Assert.Equal((4, 40, (DateTimeOffset?)null, 0L), (run.BudgetHours, run.SpawnBudget, run.WaitingSince, run.WaitedSeconds));
 
         Assert.Equal(run, _store.ById(run.Id));
         Assert.Equal(run, _store.Active(Room));
@@ -64,9 +65,9 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void A_second_Start_in_the_same_room_is_refused_as_already_active_not_a_bare_constraint_error()
     {
-        _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
 
-        var ex = Assert.Throws<InvalidOperationException>(() => _store.Start(Room, Conductor, "roadmap", "", 2, T0));
+        var ex = Assert.Throws<InvalidOperationException>(() => _store.Start(Room, Conductor, "roadmap", "", 2, 4, 40, T0));
         Assert.Contains("already", ex.Message, StringComparison.OrdinalIgnoreCase);
 
         // Still exactly the first run - the failed insert left nothing behind.
@@ -79,14 +80,14 @@ public sealed class RunStoreTests : IDisposable
         // Neither "no-such-room" nor "no-such-participant" exists - PRAGMA foreign_keys=ON must reject
         // this as an FK violation, and Start's narrow catch (SqliteExtendedErrorCode == 2067) must let
         // it through rather than relabelling it.
-        var ex = Assert.ThrowsAny<SqliteException>(() => _store.Start("no-such-room", Conductor, "roadmap", "", 1, T0));
+        var ex = Assert.ThrowsAny<SqliteException>(() => _store.Start("no-such-room", Conductor, "roadmap", "", 1, 4, 40, T0));
         Assert.DoesNotContain("already", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Park_and_End_both_clear_Active()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         _store.Park(run.Id, "the conductor did not post", capSpent: false, T0.AddMinutes(5));
         Assert.Null(_store.Active(Room));
         var parked = _store.ById(run.Id)!;
@@ -106,7 +107,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void Resume_restores_active_and_accumulates_parked_seconds_across_two_parks()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
 
         _store.Park(run.Id, "idle", capSpent: false, T0.AddMinutes(10));
         var resumed = _store.Resume(run.Id, T0.AddMinutes(70));   // parked for 1 hour = 3600s
@@ -124,7 +125,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void Resume_on_a_cap_spent_park_throws_and_leaves_the_run_parked()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         _store.Park(run.Id, "the run used its 80 spawns", capSpent: true, T0.AddMinutes(5));
 
         Assert.Throws<InvalidOperationException>(() => _store.Resume(run.Id, T0.AddMinutes(10)));
@@ -134,7 +135,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void ActiveElapsed_excludes_parked_time()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         _store.Park(run.Id, "idle", capSpent: false, T0.AddHours(1));
         var resumed = _store.Resume(run.Id, T0.AddHours(2));   // parked 1 hour
 
@@ -146,7 +147,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void ActiveElapsed_freezes_while_still_parked_rather_than_growing_with_the_wall_clock()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         var parked = _store.Park(run.Id, "idle", capSpent: false, T0.AddHours(1));   // 1 hour active before parking
 
         // Asked long after, while STILL parked (never resumed), elapsed must stay pinned at what it
@@ -156,9 +157,62 @@ public sealed class RunStoreTests : IDisposable
     }
 
     [Fact]
+    public void ActiveElapsed_freezes_while_waiting_and_excludes_every_finished_wait_across_a_reopened_store()
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
+        var waiting = _store.StartWait(run.Id, T0.AddHours(1));
+        Assert.Equal(T0.AddHours(1), _store.StartWait(run.Id, T0.AddHours(2)).WaitingSince);   // a second start keeps the first instant
+        Assert.Equal(TimeSpan.FromHours(1), RunStore.ActiveElapsed(waiting, T0.AddHours(9)));   // frozen while waiting
+
+        var done = _store.EndWait(run.Id, T0.AddHours(3));   // waited 2 h
+        Assert.Equal(((DateTimeOffset?)null, 7200L), (done.WaitingSince, done.WaitedSeconds));
+        Assert.Equal(TimeSpan.FromHours(2), RunStore.ActiveElapsed(done, T0.AddHours(4)));
+        Assert.Equal(done, _store.EndWait(run.Id, T0.AddHours(5)));   // not waiting: unchanged
+
+        var reopened = new RunStore(new ChopDb(Path.Combine(_dir, "chopitup.db"))).ById(run.Id)!;
+        Assert.Equal(TimeSpan.FromHours(2), RunStore.ActiveElapsed(reopened, T0.AddHours(4)));   // persisted
+    }
+
+    [Fact]
+    public void Park_and_End_fold_an_open_wait_and_a_parked_run_cannot_start_one()
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
+        _store.StartWait(run.Id, T0.AddHours(1));
+        var parked = _store.Park(run.Id, "the hub restarted while this run was active", capSpent: false, T0.AddHours(2));
+        Assert.Equal(((DateTimeOffset?)null, 3600L), (parked.WaitingSince, parked.WaitedSeconds));
+        Assert.Equal(TimeSpan.FromHours(1), RunStore.ActiveElapsed(parked, T0.AddHours(5)));
+        Assert.Null(_store.StartWait(run.Id, T0.AddHours(3)).WaitingSince);
+
+        _store.Resume(run.Id, T0.AddHours(3));
+        _store.StartWait(run.Id, T0.AddHours(4));
+        var ended = _store.End(run.Id, "stopped by the owner", T0.AddHours(4.5));
+        Assert.Equal(((DateTimeOffset?)null, 5400L), (ended.WaitingSince, ended.WaitedSeconds));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Extend_adds_budget_resets_phase_counts_clears_cap_spent_and_resumes(bool capSpent)
+    {
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 2, 20, T0);
+        _store.EnterPhase(run.Id, "build/1", T0);
+        _store.EnterPhase(run.Id, "build/1", T0);
+        _store.Park(run.Id, "phase build/1 entered 3 times", capSpent, T0.AddHours(1));
+
+        Assert.Throws<InvalidOperationException>(() => _store.Extend(run.Id, 1, 30, T0.AddHours(2)));   // never shrinks
+        var extended = _store.Extend(run.Id, 5, 50, T0.AddHours(2));
+
+        Assert.Equal((RunStatus.Active, false, (string?)null, (DateTimeOffset?)null), (extended.Status, extended.CapSpent, extended.Reason, extended.ParkedAt));
+        Assert.Equal((5, 50, 3600L), (extended.BudgetHours, extended.SpawnBudget, extended.ParkedSeconds));
+        Assert.Empty(_store.PhaseEntries(run.Id));
+        Assert.Equal("build/1", extended.Phase);
+        Assert.Throws<InvalidOperationException>(() => _store.Extend(run.Id, 1, 10, T0.AddHours(3)));   // active: not parked
+    }
+
+    [Fact]
     public void CountSpawn_and_CountExchange_increment_and_return_the_new_count()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
 
         Assert.Equal(1, _store.CountSpawn(run.Id));
         Assert.Equal(2, _store.CountSpawn(run.Id));
@@ -172,7 +226,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void EnterPhase_counts_per_tag_independently_and_sets_runs_phase_and_PhaseEntries_reads_the_whole_map()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
 
         Assert.Equal(1, _store.EnterPhase(run.Id, "build", T0));
         Assert.Equal(2, _store.EnterPhase(run.Id, "build", T0));
@@ -190,7 +244,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void RecordArtifact_twice_keeps_the_latest_author()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
 
         _store.RecordArtifact(run.Id, "docs/PLAN.md", "opus", T0);
         _store.RecordArtifact(run.Id, "docs/PLAN.md", "sonnet", T0.AddMinutes(1));
@@ -208,7 +262,7 @@ public sealed class RunStoreTests : IDisposable
     [InlineData("DOCS/PLAN.MD")]
     public void ArtifactAuthor_matches_four_different_spellings_of_one_recorded_path(string spelling)
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         _store.RecordArtifact(run.Id, "docs/PLAN.md", "opus", T0);
 
         Assert.Equal("opus", _store.ArtifactAuthor(run.Id, spelling));
@@ -217,7 +271,7 @@ public sealed class RunStoreTests : IDisposable
     [Fact]
     public void ArtifactAuthor_returns_null_for_an_unknown_path()
     {
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         Assert.Null(_store.ArtifactAuthor(run.Id, "nope.md"));
     }
 
@@ -227,7 +281,7 @@ public sealed class RunStoreTests : IDisposable
         // The hub must be able to record a refusal even when there is no run at all.
         _store.RecordGateRun(runId: null, roomId: Room, gate: "budget", callerId: "opus", exitCode: null, outcome: "refused: no active run", T0);
 
-        var run = _store.Start(Room, Conductor, "roadmap", "", 1, T0);
+        var run = _store.Start(Room, Conductor, "roadmap", "", 1, 4, 40, T0);
         _store.RecordGateRun(run.Id, Room, "budget", "opus", 0, "ok", T0.AddMinutes(1));
         _store.RecordGateRun(run.Id, Room, "budget", "opus", 1, "failed", T0.AddMinutes(2));
 

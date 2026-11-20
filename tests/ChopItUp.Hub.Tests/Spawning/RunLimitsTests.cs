@@ -2,15 +2,18 @@ using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>The run ceiling is one hard-coded value, not configuration: no constructor argument,
-/// no environment variable, no room-scoped override exists anywhere near it.</summary>
+/// <summary>The run limits are one hard-coded value, not configuration: no environment variable and
+/// no room-scoped override exists anywhere near them. A run's own budget is set only by a human
+/// `hours:` token, in whole budget hours.</summary>
 public sealed class RunLimitsTests
 {
     [Fact]
-    public void Default_carries_D9s_four_numbers()
+    public void Default_carries_the_budget_hour_and_the_two_fixed_limits()
     {
-        Assert.Equal(80, RunLimits.Default.Spawns);
-        Assert.Equal(TimeSpan.FromHours(8), RunLimits.Default.WallClock);
+        Assert.Equal(10, RunLimits.Default.SpawnsPerHour);
+        Assert.Equal(TimeSpan.FromHours(1), RunLimits.Default.Hour);
+        Assert.Equal(4, RunLimits.Default.DefaultHours);
+        Assert.Equal(TimeSpan.FromHours(3), RunLimits.Default.WallClockFor(3));
         Assert.Equal(TimeSpan.FromMinutes(30), RunLimits.Default.SpawnTimeout);
         Assert.Equal(3, RunLimits.Default.PhaseEntries);
     }
@@ -24,13 +27,13 @@ public sealed class RunLimitsTests
         Assert.Equal(TimeSpan.FromMinutes(25), RunLimits.Default.EffectiveGateTimeout);
         Assert.True(RunLimits.Default.EffectiveGateTimeout < RunLimits.Default.SpawnTimeout);
 
-        var explicitLimits = new RunLimits(Spawns: 80, WallClock: TimeSpan.FromHours(8), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(10));
+        var explicitLimits = new RunLimits(SpawnsPerHour: 80, Hour: TimeSpan.FromHours(8), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(10));
         Assert.Equal(TimeSpan.FromMinutes(10), explicitLimits.EffectiveGateTimeout);
 
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new RunLimits(Spawns: 80, WallClock: TimeSpan.FromHours(8), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(30)));
+            new RunLimits(SpawnsPerHour: 80, Hour: TimeSpan.FromHours(8), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(30)));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new RunLimits(Spawns: 80, WallClock: TimeSpan.FromHours(8), SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(45)));
+            new RunLimits(SpawnsPerHour: 80, Hour: TimeSpan.FromHours(8), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(30), PhaseEntries: 3, GateTimeout: TimeSpan.FromMinutes(45)));
     }
 
     [Fact]
@@ -40,6 +43,6 @@ public sealed class RunLimitsTests
         // SpawnTimeout that default is negative, which a ">= SpawnTimeout" check alone misses
         // (-1 min is not >= 4 min).
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            new RunLimits(Spawns: 1, WallClock: TimeSpan.FromHours(1), SpawnTimeout: TimeSpan.FromMinutes(4), PhaseEntries: 1));
+            new RunLimits(SpawnsPerHour: 1, Hour: TimeSpan.FromHours(1), DefaultHours: 1, SpawnTimeout: TimeSpan.FromMinutes(4), PhaseEntries: 1));
     }
 }

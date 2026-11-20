@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 16;
+    public const int LatestSchemaVersion = 17;
 
     /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
     /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
@@ -141,6 +141,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 14) ApplyV14(conn);
             if (GetUserVersion(conn) < 15) ApplyV15(conn);
             if (GetUserVersion(conn) < 16) ApplyV16(conn);
+            if (GetUserVersion(conn) < 17) ApplyV17(conn);
             return 0;
         });
     }
@@ -770,6 +771,32 @@ public sealed class ChopDb
         cmd.Parameters.AddWithValue("$note", OwnerRemoteNote);
         cmd.Parameters.AddWithValue("$id", OwnerRemoteParticipantId);
         cmd.Parameters.AddWithValue("$old", OwnerRemoteNoteBeforeV16);
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Per-run budgets and job waits. The budget defaults are the caps every run had before
+    /// v17 (8 h, 80 spawns), so a run that exists at migration keeps exactly its budget. Each column is
+    /// guarded, so a torn attempt finishes. One transaction with the stamp.</summary>
+    private static void ApplyV17(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        foreach (var (name, definition) in new[]
+        {
+            ("budget_hours", "INTEGER NOT NULL DEFAULT 8"),
+            ("spawn_budget", "INTEGER NOT NULL DEFAULT 80"),
+            ("waiting_since", "TEXT"),
+            ("waited_seconds", "INTEGER NOT NULL DEFAULT 0"),
+        })
+        {
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = '{name}'";
+            if (Convert.ToInt64(cmd.ExecuteScalar()) != 0) continue;
+            cmd.CommandText = $"ALTER TABLE runs ADD COLUMN {name} {definition};";
+            cmd.ExecuteNonQuery();
+        }
+        cmd.CommandText = "PRAGMA user_version = 17;";
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

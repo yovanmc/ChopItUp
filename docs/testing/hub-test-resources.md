@@ -98,6 +98,7 @@ xUnit cannot split one class across threads, so the SpawnerService tests are one
 | SpaMissingClientTests | SpaServingTests.cs | R4 | parallel |
 | SpaServingTests | SpaServingTests.cs | R4 | parallel |
 | SpawnCommandsTests | Spawning/SpawnCommandsTests.cs | none | parallel |
+| SpawnerServiceBudgetTests | Spawning/SpawnerServiceBudgetTests.cs | R4 | parallel |
 | SpawnerServiceImportTests | Spawning/SpawnerServiceTests.Import.cs | R4 | parallel |
 | SpawnerServiceMemoryTests | Spawning/SpawnerServiceTests.Memory.cs | R4 | parallel |
 | SpawnerServiceModesTests | Spawning/SpawnerServiceTests.Modes.cs | R4 | parallel |

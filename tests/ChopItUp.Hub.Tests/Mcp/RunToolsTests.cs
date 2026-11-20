@@ -38,7 +38,7 @@ public sealed class RunToolsTests : IAsyncLifetime
     /// <see cref="RunLimits.Default"/>'s own EffectiveGateTimeout, which this leaves untouched.</summary>
     public async Task InitializeAsync()
     {
-        var runLimits = new RunLimits(RunLimits.Default.Spawns, RunLimits.Default.WallClock, RunLimits.Default.SpawnTimeout,
+        var runLimits = new RunLimits(RunLimits.Default.SpawnsPerHour, RunLimits.Default.Hour, RunLimits.Default.SpawnTimeout,
             RunLimits.Default.PhaseEntries, GateProgressInterval: TimeSpan.FromMilliseconds(40));
         _host = await HubTestHost.StartAsync(_dir, processRunner: _runner, runLimits: runLimits);
         _host.AuthorizeAs(ChopDb.OwnerParticipantId);   // every non-GET /api call here needs a credential
