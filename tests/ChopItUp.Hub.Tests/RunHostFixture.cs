@@ -1,4 +1,5 @@
 using System.Text.Json;
+using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
 using ChopItUp.Hub.Memory;
@@ -61,6 +62,18 @@ internal static class RunHostFixture
     {
         await using var client = await host.ClientFor(participant);
         HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = room, ["body"] = body, ["client_key"] = Guid.NewGuid().ToString() }));
+    }
+
+    internal static async Task<Run> WaitForRun(HubTestHost host, string room, Func<Run, bool> match)
+    {
+        var runs = host.Services.GetRequiredService<RunStore>();
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(15);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (runs.Latest(room) is { } run && match(run)) return run;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException($"run in '{room}' never reached the expected state; last: {runs.Latest(room)}");
     }
 
     /// <summary>The prompt's sentence that names the spawn's triggers (the transcript names every id).</summary>

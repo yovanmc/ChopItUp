@@ -485,6 +485,7 @@ public sealed class ExchangePolicy
         foreach (var (id, pending) in x.Pending)
         {
             if (inFlightInRoom.Contains(id)) continue;
+            if (pending.NotBefore is { } notBefore && now < notBefore) continue;
             if (now - pending.LastTriggerAt < _limits.Debounce) continue;
             if (lastStartByParticipant.TryGetValue(id, out var last) && now - last < _limits.MinSpacing) continue;
             // A synthesis spawn is always the exchange's last. Budget - TurnsCommitted can read
@@ -510,6 +511,7 @@ public sealed class ExchangePolicy
             if (inFlightInRoom.Contains(id)) continue;
             var at = pending.LastTriggerAt + _limits.Debounce;
             if (lastStartByParticipant.TryGetValue(id, out var last) && last + _limits.MinSpacing > at) at = last + _limits.MinSpacing;
+            if (pending.NotBefore is { } notBefore && notBefore > at) at = notBefore;
             if (wake is null || at < wake) wake = at;
         }
         return wake;

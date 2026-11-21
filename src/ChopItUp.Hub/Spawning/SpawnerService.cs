@@ -284,6 +284,8 @@ public sealed partial class SpawnerService : BackgroundService
                     Console.Error.WriteLine($"room {room.Id}: worktree recovery at startup failed: {e.GetType().Name}: {e.Message}");
                 }
             }
+            // A run held across a restart arms its resume now, before any event arrives.
+            Guarded(ArmWake, nameof(ArmWake));
             while (await _events.Reader.WaitToReadAsync(stoppingToken))
             {
                 while (_events.Reader.TryRead(out var ev)) Guarded(() => Handle(ev), ev.GetType().Name);
@@ -444,6 +446,7 @@ public sealed partial class SpawnerService : BackgroundService
     /// so that turn can finish and present.</summary>
     private void OnTick()
     {
+        ResumeDue();
         ExpireJobs();
         foreach (var run in _runs.ListActive()) DriveRun(run, new RunEvent.Tick());
     }
@@ -1321,6 +1324,16 @@ public sealed partial class SpawnerService : BackgroundService
             PostNote(room, $"@{id} was not started: {r.StandardError}.");
         else if (!h.Posted)
         {
+            var raw = KeepRawOutput(h, r);
+            if (DetectLimit(h, r) is { } hit && HoldForLimit(h, hit, raw))
+            {
+                TryDeleteDir(h.WorkDir);
+                if (trail is not null) PostTrailNotes(room, id, trail);
+                h.Cancel.Dispose();
+                CloseIdleWorktrees(room);
+                Publish(room);
+                return;
+            }
             var isCodex = h.Participant.Host == "codex";
             var final = isCodex
                 ? SpawnCommands.CodexFinalText(Path.Combine(h.WorkDir, "last.txt"))
@@ -1330,13 +1343,13 @@ public sealed partial class SpawnerService : BackgroundService
             // that beats the raw stderr tail below, which is often empty or unrelated noise.
             var codexFailure = final is null && isCodex ? SpawnOutput.CodexFailure(r.StandardOutput) : null;
             if (final is not null)
-                PostNote(room, $"@{id} replied without posting to the room (exit code {exit}). Its reply:\n\n{Truncate(Scrub(StripAnsi(final), h.Token), NoteReplyChars)}");
+                PostNote(room, $"@{id} replied without posting to the room (exit code {exit}).{RawNote(raw)} Its reply:\n\n{Truncate(Scrub(StripAnsi(final), h.Token), NoteReplyChars)}");
             else if (codexFailure is not null)
-                PostNote(room, $"@{id} exited with code {exit} without replying. Codex reported: {Truncate(Scrub(StripAnsi(codexFailure), h.Token), NoteStderrChars)}");
+                PostNote(room, $"@{id} exited with code {exit} without replying.{RawNote(raw)} Codex reported: {Truncate(Scrub(StripAnsi(codexFailure), h.Token), NoteStderrChars)}");
             else
             {
                 var stderr = Scrub(StripAnsi(r.StandardError.Trim()), h.Token);
-                PostNote(room, $"@{id} exited with code {exit} without replying."
+                PostNote(room, $"@{id} exited with code {exit} without replying.{RawNote(raw)}"
                     + (stderr.Length > 0 ? $" Last output:\n\n{Tail(stderr, NoteStderrChars)}" : ""));
             }
         }
@@ -1496,6 +1509,8 @@ public sealed partial class SpawnerService : BackgroundService
         // A job's own deadline, for a parked run's jobs too: OnTick expires a job that never reported.
         foreach (var job in _jobs.Values.SelectMany(jobs => jobs.Values))
             if (next is null || job.Deadline < next) next = job.Deadline;
+        // A run held for a usage limit reopens at its resume instant (OnTick's ResumeDue).
+        if (_runs.NextResume()?.ResumeAt is { } resumeAt && (next is null || resumeAt < next)) next = resumeAt;
 
         _wake?.Cancel();
         _wake?.Dispose();

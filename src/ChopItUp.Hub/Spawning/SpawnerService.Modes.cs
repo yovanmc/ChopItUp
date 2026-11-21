@@ -281,6 +281,20 @@ public sealed partial class SpawnerService
                 : handle.PostedTexts.Count != 0 ? PanelExecution.Bound(string.Join("\n\n---\n\n", handle.PostedTexts))
                 : PanelExecution.Bound(handle.Participant.Host == "codex" ? SpawnCommands.CodexFinalText(Path.Combine(handle.WorkDir, "last.txt")) : SpawnOutput.ClaudeFinalText(result.StandardOutput));
         if (answer is not null && handle.Token.Length > 0) answer = Scrub(StripAnsi(answer), handle.Token);
+        if (answer is null && handle.PostedTexts.Count == 0 && !result.Cancelled && !result.TimedOut)
+        {
+            var raw = KeepRawOutput(handle, result);
+            if (DetectLimit(handle, result) is { } hit && hit.ResetAt is { } due && exchange.Status == ExchangeStatus.Open && exchange.LimitRetried.Add(id))
+            {
+                Requeue(exchange, id, handle.Request, due + ResumeGrace, _clock.GetUtcNow());
+                handle.Cancel.Dispose();
+                if (!panel) TryDeleteDir(handle.WorkDir);
+                PostNote(exchange.RoomId, $"@{id} hit a usage limit. Asking it again at {LocalTime(due + ResumeGrace)}, two minutes after the reset.{RawNote(raw)}");
+                Publish(exchange.RoomId);
+                return;
+            }
+            if (raw is not null) PostNote(exchange.RoomId, $"@{id} ended without an answer.{RawNote(raw)}");
+        }
         handle.Cancel.Dispose();
         if (!panel)
         {

@@ -22,18 +22,6 @@ public sealed class SpawnerServiceBudgetTests
     private static Task Post(HubTestHost host, string room, string body) =>
         host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body });
 
-    private static async Task<Run> WaitForRun(HubTestHost host, string room, Func<Run, bool> match)
-    {
-        var runs = host.Services.GetRequiredService<RunStore>();
-        var deadline = DateTime.UtcNow + Wait;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (runs.Latest(room) is { } run && match(run)) return run;
-            await Task.Delay(50);
-        }
-        throw new TimeoutException($"run in '{room}' never reached the expected state; last: {runs.Latest(room)}");
-    }
-
     [Theory]
     [InlineData("/build-thing @sonnet hours: 2 begin", 2, 20)]
     [InlineData("/build-thing @sonnet begin", 4, 40)]
