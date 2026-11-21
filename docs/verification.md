@@ -37,6 +37,11 @@ Goal skill check (real Claude and Codex, about ten spawns, spends; scratch hub):
 run of a small fixture goal must plan, build with both builders, be critiqued by both judges and
 present with an inline image the room file route serves; the transcript, GOAL.md and the image land
 in `-EvidenceDir`: `pwsh tools\Invoke-Row86GoalCheck.ps1 [-HubExe <exe>] [-EvidenceDir <dir>]`.
+Goal pilot (real Claude and Codex, about fifteen spawns, spends; interactive desktop): one goal through
+the real shell and a scratch hub, with a GPU background job against `tools\fixtures\Start-FakeRenderService.ps1`.
+It must plan, build, critique with both judges and present two inline images within budget, the job
+must exit 0 with no overlapping render, and the shell must raise one presented notification:
+`pwsh tools\Invoke-Row89Pilot.ps1 [-ShellExe <exe>] [-HubExe <exe>] [-EvidenceDir <dir>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.
