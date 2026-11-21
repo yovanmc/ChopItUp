@@ -209,6 +209,14 @@ the job gave one. A job started with `gpu: true` holds one GPU slot shared by ev
 render at once, and the next holder runs a crashed holder's `cancel_command` before starting. After a
 crash the next start reports every job the old hub lost.
 
+Usage limits. When a spawn ends without posting because its CLI hit a usage limit, the hub reads the
+limit line and its reset time. In a run, the run parks with that spawn refunded and resumes by itself
+two minutes after the reset, across a restart too; a post resumes it sooner. Outside a run, the
+participant goes back into its exchange with its turn refunded and is asked again two minutes after
+the reset, while the others keep working. A limit with no reset time, or a run held three times on one
+reset, waits for the owner. Every spawn that ends without posting keeps its raw output, scrubbed, in
+`spawn-failures\` under the hub's data folder (the newest 200 files), and its note names the file.
+
 Outside a run, each of a directory room's exchanges works in its own git worktree at
 `<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's
 HEAD, so two exchanges edit the room's repository side by side without racing. When an exchange

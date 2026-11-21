@@ -11,3 +11,4 @@ Branch row-87-usage-limits, created from main d7735e2. Design: design.md (risk l
 ## Could not verify in this environment
 
 - A real usage limit hit on either CLI (not reproducible on demand); the raw-output store exists to capture one.
+dissect-critic pass 1: FIX-THEN-SHIP (2 BLOCKER, 4 MAJOR, 6 DEFECT, 5 NIT), folded in design.md.
