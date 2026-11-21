@@ -34,6 +34,7 @@ public partial class App : System.Windows.Application
     private TrayIcon? _tray;
     private ShellLog? _log;
     private readonly CancellationTokenSource _startCts = new();
+    private readonly System.Net.Http.HttpClient _noticeHttp = new() { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
@@ -108,6 +109,13 @@ public partial class App : System.Windows.Application
             onShow: () => Dispatcher.BeginInvoke(() => _window?.ShowAndActivate()),
             onQuit: () => Dispatcher.BeginInvoke(() => _ = QuitAsync()));
 
+        // Run notices become tray notifications, window hidden or not.
+        var notices = new Notices.RunNoticeListener(_noticeHttp,
+            origin: () => _hub.Status.State is HubState.Ready or HubState.Attached ? _hub.ResolvedOrigin : null,
+            onNotice: notice => Dispatcher.BeginInvoke(() => ShowNotice(notice)),
+            log: _log.Append);
+        _ = notices.RunAsync(_startCts.Token);
+
         // 6. Start or attach. Never throws (HubChild guards its whole body); the window and tray react
         // to StatusChanged as it moves through Starting -> Ready/Attached/Failed.
         _ = _hub.StartOrAttachAsync(_startCts.Token);
@@ -122,6 +130,14 @@ public partial class App : System.Windows.Application
             _window?.OnHubStatus(status);
             _tray?.Update(status);
         });
+
+    private void ShowNotice(Notices.RunNotice notice)
+    {
+        if (Quitting || _tray is null) return;
+        var roomId = notice.RoomId;
+        _tray.ShowNotice(notice.Title, notice.Text, () => _window?.OpenRoom(roomId));
+        _log?.Append($"NOTICE shown kind={notice.Kind} run={notice.RunId}");
+    }
 
     /// <summary>Kills the hub this shell started (idempotent; a no-op when attached) and does not
     /// wait for it, tears the tray down, closes the window and exits 0. Cancels the readiness poll
@@ -140,6 +156,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(System.Windows.ExitEventArgs e)
     {
         _hub?.Dispose();
+        _noticeHttp.Dispose();
         _log?.Append("EXIT");
         _singleInstance?.Dispose();
         base.OnExit(e);

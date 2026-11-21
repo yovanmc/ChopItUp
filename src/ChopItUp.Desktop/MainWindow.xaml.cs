@@ -280,6 +280,19 @@ public partial class MainWindow : System.Windows.Window, IHostActions
         _log.Append("HIDE");
     }
 
+    /// <summary>The page that opens <paramref name="roomId"/>: the web UI selects the room named in
+    /// <c>?room=</c>.</summary>
+    public static Uri RoomUri(Uri origin, string roomId) => new(origin, "?room=" + Uri.EscapeDataString(roomId));
+
+    /// <summary>A click on a run notification: shows the window on that run's room.</summary>
+    public void OpenRoom(string roomId)
+    {
+        ShowAndActivate();
+        if (Web.CoreWebView2 is not { } core || !_navigated) return;
+        core.Navigate(RoomUri(_hub.ResolvedOrigin, roomId).AbsoluteUri);
+        _log.Append("OPEN ROOM from notice");
+    }
+
     /// <summary>Open, from the tray menu, a tray double-click, or a second launch.</summary>
     public void ShowAndActivate()
     {

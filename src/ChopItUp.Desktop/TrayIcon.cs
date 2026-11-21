@@ -16,6 +16,7 @@ public sealed class TrayIcon : IDisposable
     private readonly System.Windows.Forms.NotifyIcon _icon;
     private readonly System.Windows.Forms.ToolStripMenuItem _status;
     private readonly System.Drawing.Icon _glyph;
+    private Action? _onNoticeClick;
 
     public TrayIcon(Action onOpen, Action onQuit)
     {
@@ -51,6 +52,17 @@ public sealed class TrayIcon : IDisposable
             Visible = true,
         };
         _icon.DoubleClick += (_, _) => onOpen();
+        // A balloon renders as a Windows notification. Only the newest one is clickable, so the click
+        // action is the newest notice's and a closed balloon forgets it.
+        _icon.BalloonTipClicked += (_, _) => { var click = _onNoticeClick; _onNoticeClick = null; click?.Invoke(); };
+        _icon.BalloonTipClosed += (_, _) => _onNoticeClick = null;
+    }
+
+    /// <summary>Shows one notification; a click on it runs <paramref name="onClick"/>.</summary>
+    public void ShowNotice(string title, string text, Action onClick)
+    {
+        _onNoticeClick = onClick;
+        _icon.ShowBalloonTip(10_000, title, text.Length == 0 ? " " : text, System.Windows.Forms.ToolTipIcon.Info);
     }
 
     public void Update(HubStatus status)

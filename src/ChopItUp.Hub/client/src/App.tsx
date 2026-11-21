@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { HubConnectionState, type HubConnection } from '@microsoft/signalr';
 import * as api from './api';
+import { keepOrFirst, roomFromSearch } from './roomLink';
 import { createConnection, type Liveness } from './realtime';
 import Composer from './Composer';
 import ExchangeBar from './ExchangeBar';
@@ -187,7 +188,7 @@ export function TokenGate({
 
 export default function App() {
   const [rooms, setRooms] = useState<Room[]>([]);
-  const [roomId, setRoomId] = useState<string | null>(null);
+  const [roomId, setRoomId] = useState<string | null>(() => roomFromSearch(window.location.search));
   const [messages, setMessages] = useState<Message[]>([]);
   /** What each room holds unsent, and the message each room's next post replies to. Both are kept
    *  per room so a switch away and back finds the composer as it was left; their transitions live in
@@ -342,8 +343,7 @@ export default function App() {
   const refreshRooms = useCallback(async (signal?: AbortSignal) => {
     const loaded = await api.listRooms(showArchivedRef.current, signal);
     setRooms(loaded);
-    // Keep the open room if it is still listed; otherwise (archived and hidden, or gone) the first one.
-    setRoomId((current) => (current !== null && loaded.some((room) => room.id === current) ? current : (loaded[0]?.id ?? null)));
+    setRoomId((current) => keepOrFirst(current, loaded));
   }, []);
 
   const toggleArchived = useCallback(() => {
