@@ -116,6 +116,9 @@ public sealed class RunPolicy(RunLimits limits)
 {
     /// <summary>The cap-spent refusal text, public so the service posts the identical line rather
     /// than duplicating the string.</summary>
+    /// <summary>The end reason of a run whose conductor pinged: the run presented its result.</summary>
+    public const string PingReason = "the conductor pinged";
+
     public const string CapSpentRefusal = "this run is parked because a cap is spent; /continue hours: N adds budget, or /stop it";
 
     public RunDecision Decide(RunState s, RunEvent e, IReadOnlyList<long> pendingSteers)
@@ -160,7 +163,7 @@ public sealed class RunPolicy(RunLimits limits)
         var tag = p.Tag ?? throw new ArgumentException(
             "a ConductorPosted with no Refusal must carry a phase Tag", nameof(p));
 
-        if (tag.Kind == "ping") return new RunDecision.End("the conductor pinged", ExchangeStopCause.Run);
+        if (tag.Kind == "ping") return new RunDecision.End(PingReason, ExchangeStopCause.Run);
 
         var key = tag.ToString();
         var entries = s.PhaseEntries.GetValueOrDefault(key);

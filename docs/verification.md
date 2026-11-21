@@ -29,6 +29,10 @@ Usage-limit migration and resume dry run (no model calls, scratch hub, a v18 sta
 messages migrated to v19 through the real exe, then a fabricated held run whose reset has passed and
 whose spawns are over budget; the next start clears its resume instant and posts the reset note and the
 cap refusal): `pwsh tools\Invoke-Row87DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Run notification check (no model calls: the shell and its scratch hub see only a fake `claude.cmd`;
+interactive desktop): a hidden shell shows one held and one parked notification for a fabricated run,
+and a UIA click on the notification opens the room. With Windows notifications off for the user, the
+click leg is reported as not run: `pwsh tools\Invoke-Row88ToastCheck.ps1 [-ShellExe <exe>] [-HubExe <exe>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.
