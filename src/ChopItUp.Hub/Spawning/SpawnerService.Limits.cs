@@ -1,5 +1,6 @@
 using System.Globalization;
 using ChopItUp.Core.Model;
+using ChopItUp.Hub.Realtime;
 
 namespace ChopItUp.Hub.Spawning;
 
@@ -62,6 +63,8 @@ public sealed partial class SpawnerService
             PostNote(room, resumeAt is { } at
                 ? $"Run #{run.Id} held: @{id} hit a usage limit (\"{text}\"). It resumes at {LocalTime(at)}, two minutes after the reset; a post resumes it sooner.{RawNote(raw)}"
                 : $"Run #{run.Id} parked: @{id} hit a usage limit (\"{text}\") {why}. Post to resume. @{_owner.Id}{RawNote(raw)}");
+            if (resumeAt is { } resume) Notify(RunNotice.Held, run, $"@{id} hit a usage limit. It resumes at {LocalTime(resume)}.");
+            else Notify(RunNotice.Parked, run, $"@{id} hit a usage limit {why}.");
             return true;
         }
         var exchange = h.Exchange;

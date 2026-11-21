@@ -140,6 +140,7 @@ public static class HubHost
             // One gate per room at a time. A singleton so the lock survives regardless of RunTools'
             // own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no state of its own).
             builder.Services.AddSingleton<GateLocks>();
+            builder.Services.AddSingleton<RunNoticeBus>();
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             // Background jobs. Registered after the spawner so the host stops it first: its stop
@@ -214,6 +215,7 @@ public static class HubHost
             app.MapRolesApi();
             app.MapExchangeApi();
             app.MapRunsApi();
+            app.MapRunNoticeStream();
             app.MapMemoryApi();
             app.MapSkillsApi();
             return app;

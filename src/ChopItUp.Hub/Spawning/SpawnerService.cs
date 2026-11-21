@@ -173,9 +173,10 @@ public sealed partial class SpawnerService : BackgroundService
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
         CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, RoomArtifacts artifacts, ParticipantStore participants, SkillStore skills, TimeProvider clock,
-        RunStore runs, RunLimits runLimits, JobStore jobStore)
+        RunStore runs, RunLimits runLimits, JobStore jobStore, RunNoticeBus notices)
     {
         _jobStore = jobStore;
+        _notices = notices;
         _store = store; _roster = roster; _signal = signal; _tokens = tokens; _runner = runner;
         _options = options; _limits = limits; _server = server; _hub = hub; _locate = cliLocator; _memory = memory;
         _trails = trails; _worktrees = worktrees; _artifacts = artifacts; _owner = roster.First(p => p.Id == participants.OwnerId());
@@ -841,6 +842,7 @@ public sealed partial class SpawnerService : BackgroundService
         foreach (var handle in _inFlight.Values.Where(h => h.Request.RoomId == run.RoomId).ToList())
             handle.Cancel.Cancel();
         PostNote(run.RoomId, $"Run #{run.Id} parked: {reason}. @{_owner.Id}");
+        Notify(RunNotice.Parked, run, Capitalized(reason) + ".");
         Publish(run.RoomId);
     }
 
@@ -866,6 +868,7 @@ public sealed partial class SpawnerService : BackgroundService
         var phaseEntries = _runs.PhaseEntries(ended.Id).GetValueOrDefault(ended.Phase);
         PostNote(run.RoomId, $"Run #{run.Id} ended: {reason}. Used {ended.SpawnsUsed}/{ended.SpawnBudget} spawns, "
             + $"{elapsed.TotalHours:0.0}/{_runLimits.WallClockFor(ended.BudgetHours).TotalHours:0.0}h active time, phase '{ended.Phase}' entered {phaseEntries}/{_runLimits.PhaseEntries} time(s).");
+        if (reason == RunPolicy.PingReason) Notify(RunNotice.Presented, run, "The conductor presented its result.");
         Publish(run.RoomId);
     }
 
