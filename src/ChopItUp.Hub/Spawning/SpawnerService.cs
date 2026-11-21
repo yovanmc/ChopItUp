@@ -285,8 +285,11 @@ public sealed partial class SpawnerService : BackgroundService
                     Console.Error.WriteLine($"room {room.Id}: worktree recovery at startup failed: {e.GetType().Name}: {e.Message}");
                 }
             }
-            // A run held across a restart arms its resume now, before any event arrives.
-            Guarded(ArmWake, nameof(ArmWake));
+            // A run held across a restart arms its resume now, before any event arrives. Only then: HubHost
+            // parks every active run before this service starts, so a held run is the one thing a
+            // startup wake can be for, and arming for anything else would race whatever a caller
+            // writes to the run store while the hub comes up.
+            if (_runs.NextResume() is not null) Guarded(ArmWake, nameof(ArmWake));
             while (await _events.Reader.WaitToReadAsync(stoppingToken))
             {
                 while (_events.Reader.TryRead(out var ev)) Guarded(() => Handle(ev), ev.GetType().Name);
