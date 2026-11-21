@@ -223,6 +223,13 @@ stream open for its whole life, window hidden or not, and shows each event as a 
 from its tray icon. A click on the notification opens the window on that room (`?room=<id>`).
 Windows draws nothing while notifications are off for the user (Settings, System, Notifications).
 
+Goal runs. `tools\skills\goal` is a run skill: after `ChopItUp.Hub.exe --data <data dir> --import-skill
+tools\skills\goal`, posting `/goal @opus hours: N <goal>` in a directory room starts a run. The
+conductor has `GOAL.md` written in the room (goal, done-when criteria, a rubric, the plan and an
+artifact index), sends `@gpt-6-astra` and `@sonnet` named build rounds, asks `@opus-judge` and
+`@gpt-5.6-sol` to score the renders against the rubric, and presents with the images inline when the
+rubric passes or the budget runs low.
+
 Outside a run, each of a directory room's exchanges works in its own git worktree at
 `<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's
 HEAD, so two exchanges edit the room's repository side by side without racing. When an exchange
