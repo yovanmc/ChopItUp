@@ -33,6 +33,10 @@ Run notification check (no model calls: the shell and its scratch hub see only a
 interactive desktop): a hidden shell shows one held and one parked notification for a fabricated run,
 and a UIA click on the notification opens the room. With Windows notifications off for the user, the
 click leg is reported as not run: `pwsh tools\Invoke-Row88ToastCheck.ps1 [-ShellExe <exe>] [-HubExe <exe>]`.
+Goal skill check (real Claude and Codex, about ten spawns, spends; scratch hub): one `/goal @opus hours: 2`
+run of a small fixture goal must plan, build with both builders, be critiqued by both judges and
+present with an inline image the room file route serves; the transcript, GOAL.md and the image land
+in `-EvidenceDir`: `pwsh tools\Invoke-Row86GoalCheck.ps1 [-HubExe <exe>] [-EvidenceDir <dir>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.
