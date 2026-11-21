@@ -281,6 +281,26 @@ public sealed partial class SpawnerService
                 : handle.PostedTexts.Count != 0 ? PanelExecution.Bound(string.Join("\n\n---\n\n", handle.PostedTexts))
                 : PanelExecution.Bound(handle.Participant.Host == "codex" ? SpawnCommands.CodexFinalText(Path.Combine(handle.WorkDir, "last.txt")) : SpawnOutput.ClaudeFinalText(result.StandardOutput));
         if (answer is not null && handle.Token.Length > 0) answer = Scrub(StripAnsi(answer), handle.Token);
+        if (answer is null && handle.PostedTexts.Count == 0 && !result.Cancelled && !result.TimedOut)
+        {
+            var raw = KeepRawOutput(handle, result);
+            var hit = DetectLimit(handle, result);
+            if (hit is { ResetAt: { } due } && exchange.Status == ExchangeStatus.Open && exchange.LimitRetried.Add(id))
+            {
+                Requeue(exchange, id, handle.Request, due + ResumeGrace, _clock.GetUtcNow());
+                handle.Cancel.Dispose();
+                if (!panel)
+                {
+                    TryDeleteDir(handle.WorkDir);
+                    if (trail is not null) PostTrailNotes(exchange.RoomId, id, trail);
+                }
+                PostNote(exchange.RoomId, LimitRetryNote(id, LimitText(handle, hit), due + ResumeGrace, raw));
+                Publish(exchange.RoomId);
+                return;
+            }
+            if (hit is not null) PostNote(exchange.RoomId, LimitNotRetriedNote(id, LimitText(handle, hit), hit, exchange, raw));
+            else if (raw is not null) PostNote(exchange.RoomId, $"@{id} ended without an answer.{RawNote(raw)}");
+        }
         handle.Cancel.Dispose();
         if (!panel)
         {

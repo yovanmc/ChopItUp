@@ -8,6 +8,20 @@ public sealed class SpawnCommandsTests
     private static readonly ResolvedCli ClaudeExe = new(@"C:\tools\claude.exe", [], @"C:\tools\claude.exe");
     private static readonly ResolvedCli CodexShim = new(@"C:\Windows\System32\cmd.exe", ["/d", "/c", @"C:\tools\codex.cmd"], @"C:\tools\codex.cmd");
 
+    /// <summary>Every model spawn reads its output as UTF-8, so a limit line's U+2019 and U+00B7
+    /// survive.</summary>
+    [Fact]
+    public void Every_model_spawn_reads_its_output_as_utf8()
+    {
+        Assert.All(new[]
+        {
+            SpawnCommands.Claude(ClaudeExe, "opus", @"C:\d\mcp.json", @"C:\d", "P", "l"),
+            SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\d\mcp.json", @"C:\d\settings.json", "R", @"C:\Rooms\lab", "P", "l"),
+            SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\d", @"C:\d\last.txt", "P", "l"),
+            SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\Rooms\lab", @"C:\d\last.txt", "P", "l"),
+        }, spec => Assert.True(spec.Utf8Output));
+    }
+
     [Fact]
     public void Claude_command_line_is_the_verified_one_and_carries_no_token()
     {

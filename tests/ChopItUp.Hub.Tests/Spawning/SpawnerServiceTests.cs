@@ -256,7 +256,8 @@ public sealed partial class SpawnerServiceTests : SpawnerServiceTestBase
             JsonSerializer.Serialize(new { type = "result", result = "Here is my answer, and by the way the token is " + ClaudeTokenIn(spec) })));
         await PostAsOwner("@opus answer without the tool");
         var note = await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("replied without posting"));
-        Assert.StartsWith("@opus replied without posting to the room (exit code 0). Its reply:", note.Body);
+        Assert.StartsWith(@"@opus replied without posting to the room (exit code 0). Raw output: spawn-failures\", note.Body);
+        Assert.Contains(" in the hub's data folder. Its reply:", note.Body);
         Assert.Contains("Here is my answer", note.Body);
         Assert.DoesNotContain(_host.TokenFor("opus"), note.Body);
         Assert.Contains("<token>", note.Body);

@@ -1934,12 +1934,54 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(80, new RunStore(db).Latest("general")!.SpawnBudget);
     }
 
+    /// <summary>A fresh database turned back into the exact v18 shape: v19 only adds
+    /// <c>runs.resume_at</c>.</summary>
+    private void WriteV18()
+    {
+        new ChopDb(DbPath).EnsureDatabase();
+        RawExec("ALTER TABLE runs DROP COLUMN resume_at; PRAGMA user_version = 18;");
+        RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'owner', 'fabricated', '2026-11-20T10:00:00.000+00:00');");
+        SqliteConnection.ClearAllPools();
+    }
+
+    [Fact]
+    public void A_v18_database_is_backed_up_then_gains_the_resume_column_empty()
+    {
+        WriteV18();
+        RawExec("INSERT INTO runs (room_id, conductor_id, skill_name, arguments, status, root_message_id, started_at, budget_hours, spawn_budget) VALUES ('general', 'opus', 'build-thing', '', 'parked', 1, '2026-11-20T10:00:00.0000000Z', 8, 80);");
+        SqliteConnection.ClearAllPools();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(19, db.GetSchemaVersion());
+        Assert.Contains(".v18.", Path.GetFileName(db.LastBackupPath!));
+        Assert.Equal(18L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'resume_at'"));
+        Assert.Equal(1L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM messages"));
+        Assert.Null(new RunStore(db).Latest("general")!.ResumeAt);
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM messages"));
+    }
+
+    [Fact]
+    public void A_torn_v19_with_the_column_but_stamp_18_is_finished()
+    {
+        WriteV18();
+        RawExec("ALTER TABLE runs ADD COLUMN resume_at TEXT;");
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(19, db.GetSchemaVersion());
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'resume_at'"));
+    }
+
     /// <summary>A fresh database turned back into the exact v17 shape: v18 only adds the jobs table
-    /// and its index.</summary>
+    /// and its index, v19 only <c>runs.resume_at</c>.</summary>
     private void WriteV17()
     {
         new ChopDb(DbPath).EnsureDatabase();
-        RawExec("DROP INDEX ix_jobs_status; DROP TABLE jobs; PRAGMA user_version = 17;");
+        RawExec("ALTER TABLE runs DROP COLUMN resume_at; DROP INDEX ix_jobs_status; DROP TABLE jobs; PRAGMA user_version = 17;");
         RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'owner', 'fabricated', '2026-11-20T10:00:00.000+00:00');");
         SqliteConnection.ClearAllPools();
     }
@@ -1952,7 +1994,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(18, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v17.", Path.GetFileName(db.LastBackupPath!));
         Assert.Equal(17L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
         Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'jobs'"));
@@ -1971,7 +2013,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(18, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ix_jobs_status'"));
     }
 

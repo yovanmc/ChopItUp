@@ -11,7 +11,7 @@ public sealed class RunStore(ChopDb db)
     private const string Select = """
         SELECT id, room_id, conductor_id, skill_name, arguments, status, reason, cap_spent, phase,
                root_message_id, started_at, parked_at, parked_seconds, ended_at, spawns_used, exchanges,
-               budget_hours, spawn_budget, waiting_since, waited_seconds
+               budget_hours, spawn_budget, waiting_since, waited_seconds, resume_at
         FROM runs
         """;
 
@@ -102,7 +102,7 @@ public sealed class RunStore(ChopDb db)
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE runs SET status = 'parked', reason = $reason, cap_spent = $cap, parked_at = $at,
-                            waiting_since = NULL, waited_seconds = waited_seconds + $fold
+                            waiting_since = NULL, waited_seconds = waited_seconds + $fold, resume_at = NULL
             WHERE id = $id
             """;
         cmd.Parameters.AddWithValue("$reason", reason);
@@ -112,6 +112,50 @@ public sealed class RunStore(ChopDb db)
         cmd.Parameters.AddWithValue("$id", id);
         if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Run #{id} does not exist.");
         return ById(id)!;
+    }
+
+    /// <summary>Parks an active run for a usage limit, in one UPDATE: the spawn the limit stopped is
+    /// refunded (never below zero), the park is not cap-spent, and <paramref name="resumeAt"/> (null
+    /// when the CLI named no reset) is when the run reopens by itself. An open wait folds as in
+    /// <see cref="Park"/>.</summary>
+    public Run Hold(long id, string reason, DateTimeOffset? resumeAt, DateTimeOffset now)
+    {
+        var fold = OpenWaitSeconds(id, now);
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE runs SET status = 'parked', reason = $reason, cap_spent = 0, parked_at = $at,
+                            waiting_since = NULL, waited_seconds = waited_seconds + $fold,
+                            spawns_used = MAX(spawns_used - 1, 0), resume_at = $resume
+            WHERE id = $id AND status = 'active'
+            """;
+        cmd.Parameters.AddWithValue("$reason", reason);
+        cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(now));
+        cmd.Parameters.AddWithValue("$fold", fold);
+        cmd.Parameters.AddWithValue("$resume", resumeAt is { } r ? Timestamps.Stamp(r) : DBNull.Value);
+        cmd.Parameters.AddWithValue("$id", id);
+        if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException($"Run #{id} is not active.");
+        return ById(id)!;
+    }
+
+    /// <summary>Clears a held run's resume instant, whatever the resume decides.</summary>
+    public void ClearResume(long id)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE runs SET resume_at = NULL WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>The parked run with the earliest resume instant, or null.</summary>
+    public Run? NextResume()
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = Select + " WHERE status = 'parked' AND resume_at IS NOT NULL ORDER BY resume_at LIMIT 1";
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? Map(r) : null;
     }
 
     /// <summary>A parked run's budget becomes <paramref name="budgetHours"/> and
@@ -134,7 +178,7 @@ public sealed class RunStore(ChopDb db)
             DELETE FROM run_phases WHERE run_id = $id;
             UPDATE runs SET status = 'active', reason = NULL, cap_spent = 0, parked_at = NULL,
                             parked_seconds = parked_seconds + $added,
-                            budget_hours = $hours, spawn_budget = $spawns
+                            budget_hours = $hours, spawn_budget = $spawns, resume_at = NULL
             WHERE id = $id;
             """;
         cmd.Parameters.AddWithValue("$added", addedSeconds);
@@ -192,7 +236,8 @@ public sealed class RunStore(ChopDb db)
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            UPDATE runs SET status = 'active', reason = NULL, parked_at = NULL, parked_seconds = parked_seconds + $added
+            UPDATE runs SET status = 'active', reason = NULL, parked_at = NULL, parked_seconds = parked_seconds + $added,
+                            resume_at = NULL
             WHERE id = $id
             """;
         cmd.Parameters.AddWithValue("$added", addedSeconds);
@@ -208,7 +253,7 @@ public sealed class RunStore(ChopDb db)
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE runs SET status = 'ended', reason = $reason, ended_at = $at,
-                            waiting_since = NULL, waited_seconds = waited_seconds + $fold
+                            waiting_since = NULL, waited_seconds = waited_seconds + $fold, resume_at = NULL
             WHERE id = $id
             """;
         cmd.Parameters.AddWithValue("$reason", reason);
@@ -424,5 +469,6 @@ public sealed class RunStore(ChopDb db)
         r.GetInt32(14), r.GetInt32(15),
         r.GetInt32(16), r.GetInt32(17),
         r.IsDBNull(18) ? null : Timestamps.Parse(r.GetString(18)),
-        r.GetInt64(19));
+        r.GetInt64(19),
+        r.IsDBNull(20) ? null : Timestamps.Parse(r.GetString(20)));
 }

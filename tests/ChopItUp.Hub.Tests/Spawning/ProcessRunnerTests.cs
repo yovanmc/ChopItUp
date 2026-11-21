@@ -127,9 +127,10 @@ public sealed class ProcessRunnerTests
     [InlineData(false)]
     public async Task Output_is_read_as_utf8_only_for_a_spec_that_asks_for_it(bool utf8)
     {
-        // git writes paths as UTF-8 bytes, and a gate script writes in the console code page. The child
-        // writes exact bytes to both pipes.
-        const string name = "größe–≈.bin";
+        // git writes paths as UTF-8 bytes, a gate script writes in the console code page, and both
+        // model CLIs write their limit lines (U+2019, U+00B7) as UTF-8. The child writes exact bytes to
+        // both pipes.
+        const string name = "größe–≈’·.bin";
         var bytes = Encoding.UTF8.GetBytes(name);
         var spec = new ProcessSpec("pwsh",
             ["-NoProfile", "-Command", $"$b=[Convert]::FromHexString('{Convert.ToHexString(bytes)}'); [Console]::OpenStandardOutput().Write($b,0,$b.Length); [Console]::OpenStandardError().Write($b,0,$b.Length)"],

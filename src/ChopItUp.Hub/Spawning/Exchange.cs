@@ -26,6 +26,10 @@ public sealed class PendingSpawn
     /// replayed-continuation why-line; null for every other spawn, including a plain (non-replayed)
     /// continuation.</summary>
     public long? RefusedAt { get; init; }
+
+    /// <summary>The earliest instant this spawn may launch: set when a usage limit stopped the
+    /// participant, two minutes past the reset its CLI named; null for every other pending spawn.</summary>
+    public DateTimeOffset? NotBefore { get; init; }
 }
 
 /// <summary>One room's exchange: rooted in an owner message, a budget of model turns, then a
@@ -50,6 +54,10 @@ public sealed class Exchange
     public int TurnsStarted { get; set; }
     public OrderedDictionary<string, PendingSpawn> Pending { get; } = new(StringComparer.Ordinal);
     public HashSet<string> InFlight { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Participants already asked again after a usage limit in this exchange. The unattended
+    /// ask happens once each, so a CLI that keeps naming a reset never relaunches in a loop.</summary>
+    public HashSet<string> LimitRetried { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Every participant this exchange ever accepted a turn for, launched or still pending.
     /// An owner prompt that mentions one of them supersedes the exchange; a prompt that mentions none of

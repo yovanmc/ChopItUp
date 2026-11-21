@@ -25,6 +25,10 @@ Background jobs migration and lost-job dry run (no model calls, scratch hub, a v
 messages migrated to v18 through the real exe, then a fabricated job row left running with a parked run
 and a marker cancel command; the next start ends it as lost, runs the cancel command once and posts the
 note): `pwsh tools\Invoke-Row85DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Usage-limit migration and resume dry run (no model calls, scratch hub, a v18 state with fabricated
+messages migrated to v19 through the real exe, then a fabricated held run whose reset has passed and
+whose spawns are over budget; the next start clears its resume instant and posts the reset note and the
+cap refusal): `pwsh tools\Invoke-Row87DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
 Web research check (real Sonnet, one call, spends): a directory room spawn searches, fetches
 example.com and is denied a fetch of the hub's loopback address, and the agent commit lists all three:
 `pwsh tools\Invoke-Row83WebCheck.ps1`.

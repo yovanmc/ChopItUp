@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 18;
+    public const int LatestSchemaVersion = 19;
 
     /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
     /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
@@ -143,6 +143,7 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 16) ApplyV16(conn);
             if (GetUserVersion(conn) < 17) ApplyV17(conn);
             if (GetUserVersion(conn) < 18) ApplyV18(conn);
+            if (GetUserVersion(conn) < 19) ApplyV19(conn);
             return 0;
         });
     }
@@ -834,6 +835,24 @@ public sealed class ChopDb
             CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs (status);
             PRAGMA user_version = 18;
             """;
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Usage-limit holds: <c>runs.resume_at</c> is the instant a run parked for a usage
+    /// limit reopens its conductor by itself; NULL for every other park and every other status.</summary>
+    private static void ApplyV19(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'resume_at'";
+        if (Convert.ToInt64(cmd.ExecuteScalar()) == 0)
+        {
+            cmd.CommandText = "ALTER TABLE runs ADD COLUMN resume_at TEXT;";
+            cmd.ExecuteNonQuery();
+        }
+        cmd.CommandText = "PRAGMA user_version = 19;";
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

@@ -100,7 +100,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-18' -Passed ($health.schema -eq 18) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-19' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
 
     # 'claude', 'codex' and 'owner' were seeded into tokens.json BEFORE the hub ever started (below
     # the param block); the file itself now holds only their SHA-256 after the hub's own startup

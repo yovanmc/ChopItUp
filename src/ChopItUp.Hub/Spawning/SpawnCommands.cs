@@ -31,7 +31,7 @@ public static class SpawnCommands
              "--output-format", "json", "--disable-slash-commands", "--setting-sources", "",
              .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             new Dictionary<string, string>(),
-            workDir, prompt, label);
+            workDir, prompt, label) { Utf8Output = true };
 
     // WriteIndented + a trailing newline: this JSON also lands in
     // host-configs\claude-code-owner-remote.json, which the owner hand-merges like every other file
@@ -71,7 +71,7 @@ public static class SpawnCommands
              "--approve-for-me", "-C", workDir, "--skip-git-repo-check", "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },
-            workDir, prompt, label);
+            workDir, prompt, label) { Utf8Output = true };
 
     /// <summary>The model's final text from a `--output-format json` or `stream-json` run (see
     /// <see cref="SpawnOutput.ClaudeFinalText"/>); null when stdout is neither.</summary>
@@ -211,7 +211,7 @@ public static class SpawnCommands
                     [ClaudeMcpToolTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
                     [ClaudeMcpIdleTimeoutEnvVar] = mcpToolTimeoutMs.Value.ToString(),
                 }, artifactsDir),
-            roomDir, prompt, label);
+            roomDir, prompt, label) { Utf8Output = true };
 
     private static Dictionary<string, string> WithArtifacts(Dictionary<string, string> environment, string? artifactsDir)
     {
@@ -241,5 +241,5 @@ public static class SpawnCommands
              "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             WithArtifacts(new Dictionary<string, string> { [TokenEnvVar] = token }, artifactsDir),
-            roomDir, prompt, label);
+            roomDir, prompt, label) { Utf8Output = true };
 }

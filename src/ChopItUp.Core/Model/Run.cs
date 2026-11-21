@@ -16,13 +16,14 @@ public static class RunStatus
 /// <see cref="SpawnBudget"/> are the run's caps (schema v17), set at start and raised by
 /// <c>/continue</c>. <see cref="WaitingSince"/> is set while the run waits on a job with nothing else
 /// driving it, and <see cref="WaitedSeconds"/> holds every finished wait: neither counts as active
-/// time.</summary>
+/// time. <see cref="ResumeAt"/> (schema v19) is set only on a run parked for a usage limit: the
+/// instant it reopens its conductor by itself.</summary>
 public sealed record Run(
     long Id, string RoomId, string ConductorId, string SkillName, string Arguments,
     string Status, string? Reason, bool CapSpent, string Phase, long RootMessageId,
     DateTimeOffset StartedAt, DateTimeOffset? ParkedAt, long ParkedSeconds, DateTimeOffset? EndedAt,
     int SpawnsUsed, int Exchanges,
-    int BudgetHours, int SpawnBudget, DateTimeOffset? WaitingSince, long WaitedSeconds);
+    int BudgetHours, int SpawnBudget, DateTimeOffset? WaitingSince, long WaitedSeconds, DateTimeOffset? ResumeAt = null);
 
 /// <summary>Who wrote which file path, read out of a spawn's own git diff rather than a
 /// self-report.</summary>
