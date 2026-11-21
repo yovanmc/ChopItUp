@@ -14,7 +14,9 @@ public sealed partial class SpawnerService
 {
     internal static readonly TimeSpan ResumeGrace = TimeSpan.FromMinutes(2);
     private const int MaxHoldsOnOneReset = 3;
-    private readonly Dictionary<long, (DateTimeOffset? Reset, int Count)> _holds = new();
+    // Keyed on the limit line itself: a CLI that still names the same reset after it passed gives a
+    // new parsed instant each time (the not-cleared retry), but the same line.
+    private readonly Dictionary<long, (string Line, int Count)> _holds = new();
 
     private UsageLimitHit? DetectLimit(SpawnHandle h, ProcessResult r) =>
         UsageLimits.Detect(h.Participant.Host, r.StandardOutput, r.StandardError, _clock.LocalTimeZone, _clock.GetUtcNow());
@@ -25,6 +27,19 @@ public sealed partial class SpawnerService
 
     private static string RawNote(string? raw) => raw is null ? "" : $" Raw output: {raw} in the hub's data folder.";
 
+    private static string LimitText(SpawnHandle h, UsageLimitHit hit) =>
+        Truncate(StripAnsi(h.Token.Length > 0 ? Scrub(hit.Text, h.Token) : hit.Text), 300);
+
+    /// <summary>The note for a limit that is not retried outside a run: it has no reset time, or the
+    /// participant was already asked again once in this exchange.</summary>
+    private static string LimitNotRetriedNote(string id, string text, UsageLimitHit hit, string? raw) =>
+        hit.ResetAt is null
+            ? $"@{id} hit a usage limit (\"{text}\") with no reset time given, so it is not asked again.{RawNote(raw)}"
+            : $"@{id} hit a usage limit again (\"{text}\"), so it is not asked again.{RawNote(raw)}";
+
+    private string LimitRetryNote(string id, string text, DateTimeOffset notBefore, string? raw) =>
+        $"@{id} hit a usage limit (\"{text}\"). Asking it again at {LocalTime(notBefore)}, two minutes after the reset.{RawNote(raw)}";
+
     /// <summary>Holds what <paramref name="hit"/> stopped. True when the hold took the spawn's place
     /// entirely, so the caller posts no failed-spawn note and does not finish it.</summary>
     private bool HoldForLimit(SpawnHandle h, UsageLimitHit hit, string? raw)
@@ -32,13 +47,14 @@ public sealed partial class SpawnerService
         var room = h.Request.RoomId;
         var id = h.Participant.Id;
         var now = _clock.GetUtcNow();
-        var text = Truncate(StripAnsi(h.Token.Length > 0 ? Scrub(hit.Text, h.Token) : hit.Text), 300);
+        var text = LimitText(h, hit);
         if (!h.Exchange.Joinable && _runs.Active(room) is { } run)
         {
-            var count = _holds.TryGetValue(run.Id, out var last) && last.Reset == hit.ResetAt ? last.Count + 1 : 1;
-            _holds[run.Id] = (hit.ResetAt, count);
+            var count = _holds.TryGetValue(run.Id, out var last) && last.Line == hit.Text ? last.Count + 1 : 1;
+            _holds[run.Id] = (hit.Text, count);
             DateTimeOffset? resumeAt = hit.ResetAt is { } reset && count <= MaxHoldsOnOneReset ? reset + ResumeGrace : null;
-            _runs.Hold(run.Id, resumeAt is null ? $"@{id} hit a usage limit" : $"@{id} hit a usage limit; resumes at {LocalTime(resumeAt.Value)}", resumeAt, now);
+            var limit = $"@{id} hit a usage limit (\"{Truncate(text, 120)}\")";
+            _runs.Hold(run.Id, resumeAt is null ? limit : $"{limit}; resumes at {LocalTime(resumeAt.Value)}", resumeAt, now);
             h.Exchange.InFlight.Remove(id);
             if (Newest(room) is { Status: ExchangeStatus.Open } x) PostNote(room, ExchangePolicy.Stop(x, ExchangeStopCause.Run));
             foreach (var other in _inFlight.Values.Where(o => o.Request.RoomId == room).ToList()) other.Cancel.Cancel();
@@ -48,20 +64,14 @@ public sealed partial class SpawnerService
                 : $"Run #{run.Id} parked: @{id} hit a usage limit (\"{text}\") {why}. Post to resume. @{_owner.Id}{RawNote(raw)}");
             return true;
         }
-        if (hit.ResetAt is not { } due)
-        {
-            PostNote(room, $"@{id} hit a usage limit (\"{text}\") with no reset time given, so it is not asked again.{RawNote(raw)}");
-            return false;
-        }
         var exchange = h.Exchange;
-        if (exchange.Status != ExchangeStatus.Open) return false;
-        if (!exchange.LimitRetried.Add(id))
+        if (hit.ResetAt is not { } due || exchange.Status != ExchangeStatus.Open || !exchange.LimitRetried.Add(id))
         {
-            PostNote(room, $"@{id} hit a usage limit again (\"{text}\"), so it is not asked again.{RawNote(raw)}");
+            PostNote(room, LimitNotRetriedNote(id, text, hit, raw));
             return false;
         }
         Requeue(exchange, id, h.Request, due + ResumeGrace, now);
-        PostNote(room, $"@{id} hit a usage limit (\"{text}\"). Asking it again at {LocalTime(due + ResumeGrace)}, two minutes after the reset.{RawNote(raw)}");
+        PostNote(room, LimitRetryNote(id, text, due + ResumeGrace, raw));
         return true;
     }
 
@@ -89,8 +99,9 @@ public sealed partial class SpawnerService
         while (_runs.NextResume() is { ResumeAt: { } at } held && at <= now)
         {
             _runs.ClearResume(held.Id);
-            if (PostNote(held.RoomId, $"Run #{held.Id}: the usage-limit reset passed.") is not { } noteId) continue;
-            DriveRun(_runs.ById(held.Id)!, new RunEvent.HumanPosted(noteId));
+            // A note that failed to post still resumes the run, triggered by its root message.
+            var trigger = PostNote(held.RoomId, $"Run #{held.Id}: the usage-limit reset passed.") ?? held.RootMessageId;
+            DriveRun(_runs.ById(held.Id)!, new RunEvent.HumanPosted(trigger));
         }
     }
 }

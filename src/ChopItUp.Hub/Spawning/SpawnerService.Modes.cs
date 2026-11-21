@@ -284,16 +284,22 @@ public sealed partial class SpawnerService
         if (answer is null && handle.PostedTexts.Count == 0 && !result.Cancelled && !result.TimedOut)
         {
             var raw = KeepRawOutput(handle, result);
-            if (DetectLimit(handle, result) is { } hit && hit.ResetAt is { } due && exchange.Status == ExchangeStatus.Open && exchange.LimitRetried.Add(id))
+            var hit = DetectLimit(handle, result);
+            if (hit is { ResetAt: { } due } && exchange.Status == ExchangeStatus.Open && exchange.LimitRetried.Add(id))
             {
                 Requeue(exchange, id, handle.Request, due + ResumeGrace, _clock.GetUtcNow());
                 handle.Cancel.Dispose();
-                if (!panel) TryDeleteDir(handle.WorkDir);
-                PostNote(exchange.RoomId, $"@{id} hit a usage limit. Asking it again at {LocalTime(due + ResumeGrace)}, two minutes after the reset.{RawNote(raw)}");
+                if (!panel)
+                {
+                    TryDeleteDir(handle.WorkDir);
+                    if (trail is not null) PostTrailNotes(exchange.RoomId, id, trail);
+                }
+                PostNote(exchange.RoomId, LimitRetryNote(id, LimitText(handle, hit), due + ResumeGrace, raw));
                 Publish(exchange.RoomId);
                 return;
             }
-            if (raw is not null) PostNote(exchange.RoomId, $"@{id} ended without an answer.{RawNote(raw)}");
+            if (hit is not null) PostNote(exchange.RoomId, LimitNotRetriedNote(id, LimitText(handle, hit), hit, raw));
+            else if (raw is not null) PostNote(exchange.RoomId, $"@{id} ended without an answer.{RawNote(raw)}");
         }
         handle.Cancel.Dispose();
         if (!panel)

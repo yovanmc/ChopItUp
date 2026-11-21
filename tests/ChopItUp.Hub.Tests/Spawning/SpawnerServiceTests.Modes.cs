@@ -149,6 +149,20 @@ public sealed class SpawnerServiceModesTests : SpawnerServiceTestBase
         Assert.Equal(1, _runner.Count);
     }
 
+    /// <summary>A relay leg stopped by a usage limit with no reset time names the limit, and the second
+    /// turn never starts.</summary>
+    [Fact]
+    public async Task M49_a_relay_leg_stopped_by_a_usage_limit_names_it_and_launches_nothing_more()
+    {
+        Mode("relay");
+        _runner.Handler = (_, _, _) => Task.FromResult(new ProcessResult(1, false, false, """{"type":"result","is_error":true,"result":"You've hit your monthly spend limit."}""", "", TimeSpan.Zero));
+        await PostAsOwner("A relay that runs out.");
+        await _runner.NextSpecAsync(Wait);
+        await WaitForStatus("concluded");
+        await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("hit a usage limit (\"You've hit your monthly spend limit.\") with no reset time given", StringComparison.Ordinal));
+        Assert.Equal(1, _runner.Count);
+    }
+
     [Fact]
     public async Task M49_panel_one_failure_synthesizes_labelled_unavailable_then_continue_costs_three()
     {

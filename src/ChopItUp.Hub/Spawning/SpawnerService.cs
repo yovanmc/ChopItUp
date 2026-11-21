@@ -1325,7 +1325,8 @@ public sealed partial class SpawnerService : BackgroundService
         else if (!h.Posted)
         {
             var raw = KeepRawOutput(h, r);
-            if (DetectLimit(h, r) is { } hit && HoldForLimit(h, hit, raw))
+            var hit = DetectLimit(h, r);
+            if (hit is not null && HoldForLimit(h, hit, raw))
             {
                 TryDeleteDir(h.WorkDir);
                 if (trail is not null) PostTrailNotes(room, id, trail);
@@ -1334,15 +1335,17 @@ public sealed partial class SpawnerService : BackgroundService
                 Publish(room);
                 return;
             }
+            // A limit that was not held already has its note, which names the limit line.
             var isCodex = h.Participant.Host == "codex";
-            var final = isCodex
+            var final = hit is not null ? null : isCodex
                 ? SpawnCommands.CodexFinalText(Path.Combine(h.WorkDir, "last.txt"))
                 : SpawnCommands.ClaudeFinalText(r.StandardOutput);
             var exit = r.ExitCode?.ToString() ?? "none";
             // Codex's own stdout names the reason it never replied (a turn.failed or error event);
             // that beats the raw stderr tail below, which is often empty or unrelated noise.
-            var codexFailure = final is null && isCodex ? SpawnOutput.CodexFailure(r.StandardOutput) : null;
-            if (final is not null)
+            var codexFailure = final is null && isCodex && hit is null ? SpawnOutput.CodexFailure(r.StandardOutput) : null;
+            if (hit is not null) { }
+            else if (final is not null)
                 PostNote(room, $"@{id} replied without posting to the room (exit code {exit}).{RawNote(raw)} Its reply:\n\n{Truncate(Scrub(StripAnsi(final), h.Token), NoteReplyChars)}");
             else if (codexFailure is not null)
                 PostNote(room, $"@{id} exited with code {exit} without replying.{RawNote(raw)} Codex reported: {Truncate(Scrub(StripAnsi(codexFailure), h.Token), NoteStderrChars)}");

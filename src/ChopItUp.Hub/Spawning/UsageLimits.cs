@@ -37,7 +37,7 @@ public static class UsageLimits
     public static readonly TimeSpan FarthestReset = TimeSpan.FromDays(8);
 
     private const string Apostrophe = "['’]";
-    private static readonly Regex ClaudeHit = new($@"^You{Apostrophe}ve hit your (?<limit>.+?)(?:\s+\S\s+resets\s+(?<reset>[^·]+?))?(?:\s+\S\s+.*)?\.?$", RegexOptions.CultureInvariant);
+    private static readonly Regex ClaudeHit = new($@"^You{Apostrophe}ve hit your (?<limit>[^·]*?\blimit)(?:\s+\S\s+resets\s+(?<reset>[^·]+?))?(?:\s+\S\s+.*)?\.?$", RegexOptions.CultureInvariant);
     private static readonly Regex ClaudeNoReset = new($@"^You{Apostrophe}re out of usage credits", RegexOptions.CultureInvariant);
     private static readonly Regex CodexHit = new($@"^You{Apostrophe}ve hit your usage limit\b.*?(?:try again at (?<reset>[^.]+)\.|try again later\.)", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase | RegexOptions.Singleline);
     private static readonly Regex CodexNoReset = new(@"^(?:Your workspace is out of credits|You hit your spend cap|Quota exceeded\. Check your plan)", RegexOptions.CultureInvariant);

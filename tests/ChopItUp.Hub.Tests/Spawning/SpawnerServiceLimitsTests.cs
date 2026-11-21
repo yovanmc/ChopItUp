@@ -33,6 +33,20 @@ public sealed class SpawnerServiceLimitsTests
     private static ProcessResult ClaudeFailed(string text) =>
         new(1, false, false, """{"type":"result","is_error":true,"result":""" + System.Text.Json.JsonSerializer.Serialize(text) + "}", "", TimeSpan.FromMilliseconds(1));
 
+    /// <summary>Advances to <paramref name="at"/> and waits for the next launch. The hub arms its wake
+    /// on its own thread, maybe after that advance: a wake armed late is fired by the small steps
+    /// that follow.</summary>
+    private static async Task<ProcessSpec> AdvanceToNextSpec(FakeTimeProvider clock, FakeProcessRunner runner, DateTimeOffset at)
+    {
+        if (at > clock.GetUtcNow()) clock.Advance(at - clock.GetUtcNow());
+        for (var step = 0; step < 20; step++)
+        {
+            try { return await runner.NextSpecAsync(TimeSpan.FromMilliseconds(250)); }
+            catch (OperationCanceledException) { clock.Advance(TimeSpan.FromSeconds(1)); }
+        }
+        throw new TimeoutException("no launch after the wake");
+    }
+
     private static Task Post(HubTestHost host, string room, string body) =>
         host.Client.PostAsJsonAsync($"api/rooms/{room}/messages", new { body });
 
@@ -82,12 +96,39 @@ public sealed class SpawnerServiceLimitsTests
         await runner.NextSpecAsync(Wait);
         var parked = await WaitForRun(host, room, r => r.Status == RunStatus.Parked);
         Assert.Null(parked.ResumeAt);
+        Assert.Contains("You've hit your monthly spend limit.", parked.Reason);
         await WaitForNoteContaining(host, room, $"Run #{parked.Id} parked: @sonnet hit a usage limit (\"You've hit your monthly spend limit.\") with no reset time given. Post to resume.");
 
         clock.Advance(TimeSpan.FromDays(2));
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(400)));
         await Post(host, room, "carry on");
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await runner.NextSpecAsync(Wait)));
+    }
+
+    /// <summary>A CLI that still prints the same reset after it passed is held at most three times;
+    /// the fourth hit waits for the owner.</summary>
+    [Fact]
+    public async Task A_run_held_three_times_on_the_same_limit_line_parks_for_the_owner()
+    {
+        var clock = Clock();
+        var (host, runner, room) = await StartRunHostAsync(Instant, RunLimits.Default, clock);
+        await using var _ = host;
+        runner.Handler = (_, _, _) => Task.FromResult(ClaudeFailed(ClaudeLimit));
+
+        await Post(host, room, "/build-thing @sonnet begin");
+        await runner.NextSpecAsync(Wait);
+        DateTimeOffset? previous = null;
+        for (var hold = 1; hold <= 3; hold++)
+        {
+            var held = await WaitForRun(host, room, r => r.Status == RunStatus.Parked && r.ResumeAt is { } at && at != previous);
+            previous = held.ResumeAt;
+            await AdvanceToNextSpec(clock, runner, held.ResumeAt!.Value);
+        }
+
+        var parked = await WaitForRun(host, room, r => r.Status == RunStatus.Parked && r.ResumeAt is null);
+        await WaitForNoteContaining(host, room, $"Run #{parked.Id} parked: @sonnet hit a usage limit (\"{ClaudeLimit}\") 4 times on the same reset. Post to resume.");
+        clock.Advance(TimeSpan.FromDays(1));
+        Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(400)));
     }
 
     [Fact]
@@ -113,16 +154,8 @@ public sealed class SpawnerServiceLimitsTests
             {
                 againRunner.Handler = (_, _, _) => Task.FromResult(FakeProcessRunner.Ok(Working));
                 Assert.Equal(ResetAt3pm + SpawnerService.ResumeGrace, again.Services.GetRequiredService<RunStore>().ById(runId)!.ResumeAt);
-                // The restarted hub arms its wake on a pool thread, maybe after this first advance: a
-                // wake armed late is fired by the small steps that follow.
-                clock.Advance(ResetAt3pm + SpawnerService.ResumeGrace - Start);
-                ProcessSpec? conductor = null;
-                for (var step = 0; step < 20 && conductor is null; step++)
-                {
-                    try { conductor = await againRunner.NextSpecAsync(TimeSpan.FromMilliseconds(250)); }
-                    catch (OperationCanceledException) { clock.Advance(TimeSpan.FromSeconds(1)); }
-                }
-                Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductor ?? throw new TimeoutException("the held run never resumed")));
+                var conductor = await AdvanceToNextSpec(clock, againRunner, ResetAt3pm + SpawnerService.ResumeGrace);
+                Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(conductor));
             }
         }
         finally
@@ -180,6 +213,26 @@ public sealed class SpawnerServiceLimitsTests
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(400)));
         clock.Advance(ResetAt3pm + SpawnerService.ResumeGrace - Start);
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await runner.NextSpecAsync(Wait)));
+    }
+
+    /// <summary>Outside a run, a limit with no reset time gets one note naming it, and the participant
+    /// is not asked again.</summary>
+    [Fact]
+    public async Task A_plain_exchange_limit_with_no_reset_posts_one_note_and_relaunches_nothing()
+    {
+        var clock = Clock();
+        var (host, runner, _) = await StartRunHostAsync(Instant, RunLimits.Default, clock);
+        await using var _ = host;
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("plain", "PLAIN", null);
+        runner.Handler = (_, _, _) => Task.FromResult(ClaudeFailed("You've hit your monthly spend limit."));
+
+        await Post(host, "plain", "@sonnet hello");
+        await runner.NextSpecAsync(Wait);
+        await WaitForNoteContaining(host, "plain", "@sonnet hit a usage limit (\"You've hit your monthly spend limit.\") with no reset time given, so it is not asked again. Raw output: spawn-failures\\");
+
+        clock.Advance(TimeSpan.FromDays(2));
+        Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(400)));
+        Assert.DoesNotContain(await AllMessagesFrom(host, "plain"), m => m.Body.Contains("replied without posting", StringComparison.Ordinal));
     }
 
     /// <summary>The unattended ask after a reset happens once per participant per exchange: a second

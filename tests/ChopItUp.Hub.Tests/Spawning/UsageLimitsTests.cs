@@ -59,6 +59,8 @@ public sealed class UsageLimitsTests
         { "codex", "", "codex\nYou’ve hit your usage limit. Try again at 3:15 PM.\n" },
         { "codex", CodexEvent("turn.failed", "stream disconnected before completion"), "exited 1" },
         { "claude", ClaudeResult("Error: ENOENT", true), "spawn failed" },
+        // A short reply that starts like a limit line but names no limit.
+        { "claude", ClaudeResult("You've hit your target: all 12 tests pass.", false), "" },
         // A phrase from the other CLI is not this one's.
         { "gemini", ClaudeResult("You've hit your 5-hour limit · resets 3pm", true), "" },
     };
