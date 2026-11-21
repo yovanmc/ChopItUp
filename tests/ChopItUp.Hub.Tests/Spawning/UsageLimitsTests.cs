@@ -69,18 +69,18 @@ public sealed class UsageLimitsTests
         Assert.Null(UsageLimits.Detect(host, stdout, stderr, Zone, Now));
 
     [Theory]
-    [InlineData("9:30am", 10, 15)]          // 30 min past: not cleared yet, so 15 min from now
-    [InlineData("8am", -1, -1)]             // 2 h past: tomorrow at 8
-    [InlineData("Dec 31, 3pm", -2, -2)]     // more than 8 days out: no usable reset
-    [InlineData("13pm", -3, -3)]            // not a clock time
-    public void A_reset_in_the_past_or_far_away_reads_as_designed(string text, int hour, int minute)
+    [InlineData("9:30am", "retry")]         // 30 min past: not cleared yet, so 15 min from now
+    [InlineData("8am", "tomorrow")]         // 2 h past: tomorrow at 8
+    [InlineData("Dec 31, 3pm", "none")]     // more than 8 days out: no usable reset
+    [InlineData("13pm", "none")]            // not a clock time
+    public void A_reset_in_the_past_or_far_away_reads_as_designed(string text, string outcome)
     {
         var reset = UsageLimits.ParseReset(text, Zone, Now);
 
-        var expected = hour switch
+        var expected = outcome switch
         {
-            -1 => Local(11, 21, 8),
-            -2 or -3 => (DateTimeOffset?)null,
+            "tomorrow" => Local(11, 21, 8),
+            "none" => (DateTimeOffset?)null,
             _ => Now + UsageLimits.NotClearedRetry,
         };
         Assert.Equal(expected, reset);
