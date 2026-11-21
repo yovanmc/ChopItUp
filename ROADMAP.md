@@ -7,7 +7,6 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 88 | Windows toast for run events | [ ] | READY | — | Shell listens while hidden; toast on present, park, usage hold; click opens the room. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 86 | Goal skill | [ ] | READY | — | `tools/skills/goal/` `run: true` skill: GOAL.md ledger, rounds, two judges, jobs, presentation with images. Owner imports it. Needs 79 to 85. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 89 | Goal pilot | [ ] | BLOCKED: rows 79 to 88 | — | Scratch hub, real CLIs, fake GPU service: flow steps 1 to 5 within budget, images inline, one toast. Spec: `.scratch/goal-runs/spec.md` in the main clone. |
 | 66 | CI never runs everything on main | [ ] | LEAD: `ci.yml` triggers only on `pull_request` and `workflow_dispatch` | — | The PR run is the affected selector, so no run covers the whole suite after merges. Verify read-only, then add a full run on push to `main` or on a schedule. |

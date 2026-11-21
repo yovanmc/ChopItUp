@@ -217,6 +217,12 @@ the reset, while the others keep working. A limit with no reset time, or a run h
 reset, waits for the owner. Every spawn that ends without posting keeps its raw output, scrubbed, in
 `spawn-failures\` under the hub's data folder (the newest 200 files), and its note names the file.
 
+Run notifications. When a run presents (its conductor pings), parks, or is held for a usage limit, the
+hub sends one event on `GET /api/runs/events`, a server-sent event stream. The desktop shell keeps that
+stream open for its whole life, window hidden or not, and shows each event as a Windows notification
+from its tray icon. A click on the notification opens the window on that room (`?room=<id>`).
+Windows draws nothing while notifications are off for the user (Settings, System, Notifications).
+
 Outside a run, each of a directory room's exchanges works in its own git worktree at
 `<room dir>.worktrees\x<root>`, on its own branch `chopitup/x<root>` forked from the room directory's
 HEAD, so two exchanges edit the room's repository side by side without racing. When an exchange
