@@ -30,12 +30,12 @@ public sealed partial class SpawnerService
     private static string LimitText(SpawnHandle h, UsageLimitHit hit) =>
         Truncate(StripAnsi(h.Token.Length > 0 ? Scrub(hit.Text, h.Token) : hit.Text), 300);
 
-    /// <summary>The note for a limit that is not retried outside a run: it has no reset time, or the
-    /// participant was already asked again once in this exchange.</summary>
-    private static string LimitNotRetriedNote(string id, string text, UsageLimitHit hit, string? raw) =>
-        hit.ResetAt is null
-            ? $"@{id} hit a usage limit (\"{text}\") with no reset time given, so it is not asked again.{RawNote(raw)}"
-            : $"@{id} hit a usage limit again (\"{text}\"), so it is not asked again.{RawNote(raw)}";
+    /// <summary>The note for a limit that is not retried outside a run: it has no reset time, its
+    /// exchange has ended, or the participant was already asked again once in this exchange.</summary>
+    private static string LimitNotRetriedNote(string id, string text, UsageLimitHit hit, Exchange exchange, string? raw) =>
+        hit.ResetAt is null ? $"@{id} hit a usage limit (\"{text}\") with no reset time given, so it is not asked again.{RawNote(raw)}"
+        : exchange.Status != ExchangeStatus.Open ? $"@{id} hit a usage limit (\"{text}\") after its exchange ended, so it is not asked again.{RawNote(raw)}"
+        : $"@{id} hit a usage limit again (\"{text}\"), so it is not asked again.{RawNote(raw)}";
 
     private string LimitRetryNote(string id, string text, DateTimeOffset notBefore, string? raw) =>
         $"@{id} hit a usage limit (\"{text}\"). Asking it again at {LocalTime(notBefore)}, two minutes after the reset.{RawNote(raw)}";
@@ -67,7 +67,7 @@ public sealed partial class SpawnerService
         var exchange = h.Exchange;
         if (hit.ResetAt is not { } due || exchange.Status != ExchangeStatus.Open || !exchange.LimitRetried.Add(id))
         {
-            PostNote(room, LimitNotRetriedNote(id, text, hit, raw));
+            PostNote(room, LimitNotRetriedNote(id, text, hit, exchange, raw));
             return false;
         }
         Requeue(exchange, id, h.Request, due + ResumeGrace, now);

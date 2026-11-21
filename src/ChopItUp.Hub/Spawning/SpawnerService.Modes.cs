@@ -298,7 +298,7 @@ public sealed partial class SpawnerService
                 Publish(exchange.RoomId);
                 return;
             }
-            if (hit is not null) PostNote(exchange.RoomId, LimitNotRetriedNote(id, LimitText(handle, hit), hit, raw));
+            if (hit is not null) PostNote(exchange.RoomId, LimitNotRetriedNote(id, LimitText(handle, hit), hit, exchange, raw));
             else if (raw is not null) PostNote(exchange.RoomId, $"@{id} ended without an answer.{RawNote(raw)}");
         }
         handle.Cancel.Dispose();
