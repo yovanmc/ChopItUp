@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m10-check.log"
@@ -76,7 +77,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
     Add-Check -Name 'memory.seed-kept' -Passed ((Get-Content -LiteralPath (Join-Path $DataDir 'memory\MEMORY.md') -Raw) -like "*$codeword*") -Detail 'hub start must not overwrite an existing core'
     Add-Check -Name 'memory.no-git-before-approval' -Passed (-not (Test-Path -LiteralPath (Join-Path $DataDir 'memory\.git'))) -Detail 'lazy init'
 

@@ -21,6 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -139,8 +140,8 @@ try {
 
     # --- Step 5: assertions ------------------------------------------------------------------------
 
-    # /health reports schema 19.
-    Add-Check -Name 'health.schema' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    # /health reports the latest schema.
+    Add-Check -Name 'health.schema' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # Exactly one .bak exists, sound, correctly versioned, and its fingerprint (including the 500
     # WAL-only rows) equals the pre-migration fingerprint.

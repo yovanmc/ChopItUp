@@ -224,7 +224,7 @@ function Get-RelativeFileHashes {
 
 Invoke-Check -Name 'health.responds-200-expected-schema' -Body {
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 10
-    $expectedSchema = 13   # must equal ChopDb.LatestSchemaVersion (src/ChopItUp.Core/Storage/ChopDb.cs)
+    $expectedSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
     @{ Passed = ($health.ok -eq $true -and $health.schema -eq $expectedSchema); Detail = "ok=$($health.ok) schema=$($health.schema) expected=$expectedSchema" }
 }
 

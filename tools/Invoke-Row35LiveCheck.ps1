@@ -28,7 +28,7 @@
     defect to chase.
 
     `-SeedOnly` spends no model call: it starts the hub, binds the room, confirms `/health` reports
-    schema 19 and that the hub itself ran `git init` in the room directory (RoomDirectories), then
+    the latest schema and that the hub itself ran `git init` in the room directory (RoomDirectories), then
     stops. Nothing is posted and no exchange ever opens. `-SkipClaude` / `-SkipCodex` each drop
     one leg (e.g. to re-run only the side that FAILed). Spend: at most one Claude call and one Codex
     call per leg run, never a retry loop inside this script - a FAIL here gets one manual re-run first,
@@ -63,6 +63,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 # Gate-script convention (Invoke-M20RoadmapCheck.ps1 carries the same setting): read native exit codes
 # from $LASTEXITCODE explicitly rather than letting a nonzero git exit throw, since every git assertion
@@ -226,7 +227,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     $room = Invoke-Api POST '/api/rooms' @{ name = 'Row 35 live check'; directory = $RoomDir }
     $roomId = $room.id

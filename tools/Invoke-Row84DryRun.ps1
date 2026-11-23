@@ -23,6 +23,7 @@ param(
     [string]$SqliteBin = ''
 )
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 $HubExe = (Resolve-Path -LiteralPath $HubExe).Path
@@ -76,7 +77,7 @@ $budgetColumns = "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name IN (
 try {
     # 1. A fresh database from this exe, then the v16 state it would have had.
     $first = Start-Hub
-    Add-Check 'fresh.schema-19' ($first.Health.schema -eq 19) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-latest' ($first.Health.schema -eq $latestSchema) "schema=$($first.Health.schema) expected=$latestSchema"
     Stop-Hub $first.Process
     Add-Check 'fresh.budget-columns' ([long](Invoke-Sql $dbPath $budgetColumns -Scalar -ReadOnly) -eq 4)
     Invoke-Sql $dbPath @"
@@ -98,7 +99,7 @@ PRAGMA user_version = 16;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-19' ($second.Health.schema -eq 19) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-latest' ($second.Health.schema -eq $latestSchema) "schema=$($second.Health.schema) expected=$latestSchema"
 
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v16.*.bak')
     Add-Check 'backup.one-v16-file' ($baks.Count -eq 1) "count=$($baks.Count)"

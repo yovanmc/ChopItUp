@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 if (-not $RoomsRoot) { $RoomsRoot = "$DataDir.rooms" }   # a sibling: anything under the data dir is refused by design
 $script:Checks = New-Object System.Collections.Generic.List[object]
@@ -78,7 +79,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # Rooms: create, refuse, list.
     $room = Invoke-Api POST '/api/rooms' @{ name = 'Live check' }
