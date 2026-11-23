@@ -192,10 +192,10 @@ describe('ExchangeBar', () => {
   /** A snapshot from an older hub, and any stop the hub could not attribute, sends no cause. Guessing
    *  "you" there would blame the hub owner wrongly, so the null case is neutral. */
   test.each([
-    ['run', 'Stopped by the run', ['Stopped by you']],
-    ['owner', 'Stopped by you', []],
-    [null, 'Exchange stopped ·', ['Stopped by you', 'Stopped by the run']],
-  ] as const)('a stop attributed to %s says who did it and nobody else', (stoppedBy, says, doesNotSay) => {
+    ['a stop by the run says the run did it', 'run', 'Stopped by the run', ['Stopped by you']],
+    ['a stop by the owner says you did it', 'owner', 'Stopped by you', []],
+    ['a stop with no cause names nobody', null, 'Exchange stopped ·', ['Stopped by you', 'Stopped by the run']],
+  ] as const)('%s', (_title, stoppedBy, says, doesNotSay) => {
     const markup = render({ ...BASE, status: 'stopped', stoppedBy, inFlight: [] });
 
     expect(markup).toContain(says);
