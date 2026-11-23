@@ -28,7 +28,7 @@
     defect to chase.
 
     `-SeedOnly` spends no model call: it starts the hub, binds the room, confirms `/health` reports
-    schema 19 and that the hub itself ran `git init` in the room directory (RoomDirectories), then
+    schema 20 and that the hub itself ran `git init` in the room directory (RoomDirectories), then
     stops. Nothing is posted and no exchange ever opens. `-SkipClaude` / `-SkipCodex` each drop
     one leg (e.g. to re-run only the side that FAILed). Spend: at most one Claude call and one Codex
     call per leg run, never a retry loop inside this script - a FAIL here gets one manual re-run first,
@@ -226,7 +226,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'hub.health-schema' -Passed ($health.schema -eq 20) -Detail "schema=$($health.schema)"
 
     $room = Invoke-Api POST '/api/rooms' @{ name = 'Row 35 live check'; directory = $RoomDir }
     $roomId = $room.id

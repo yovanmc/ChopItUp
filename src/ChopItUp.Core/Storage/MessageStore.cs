@@ -3,6 +3,10 @@ using Microsoft.Data.Sqlite;
 
 namespace ChopItUp.Core.Storage;
 
+/// <summary>Which spawn posted a message and the usage block it reported; see
+/// <see cref="MessageStore.GetSpawnUsage"/>.</summary>
+public sealed record SpawnUsage(string? SpawnId, string? Usage);
+
 public sealed class MessageStore(ChopDb db)
 {
     public const int DefaultLimit = 50;
@@ -276,6 +280,41 @@ public sealed class MessageStore(ChopDb db)
     /// table) but flagged, so every reader can tell history from a live message and the spawner never
     /// dispatches anything inside it.</summary>
     public Message Import(string roomId, string authorId, string body) => Post(roomId, authorId, body, null, null, imported: true).Message;
+
+    /// <summary>Marks a message as posted by spawn <paramref name="spawnId"/>. Never replaces a stamp
+    /// already there. False when the id is unknown or already stamped.</summary>
+    public bool StampSpawn(long messageId, string spawnId) =>
+        Update("UPDATE messages SET spawn_id = $v WHERE id = $id AND spawn_id IS NULL", messageId, spawnId);
+
+    /// <summary>Stores the usage block a spawn reported (the hub's
+    /// <c>SpawnOutput.Usage</c>) on one of its messages. Never replaces a block already there.</summary>
+    public bool SetSpawnUsage(long messageId, string usageJson) =>
+        Update("UPDATE messages SET spawn_usage = $v WHERE id = $id AND spawn_usage IS NULL", messageId, usageJson);
+
+    /// <summary>The spawn that posted a message and the usage it reported, or null for an unknown id.
+    /// A null <see cref="SpawnUsage.SpawnId"/> means no spawn is recorded: a human post, a row from
+    /// before v20, or a post the hub's loop never handled (one still queued when the hub stopped). A
+    /// null <see cref="SpawnUsage.Usage"/> means none is recorded: the spawn reported none, or the hub
+    /// stopped before the spawn finished.</summary>
+    public SpawnUsage? GetSpawnUsage(long messageId)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT spawn_id, spawn_usage FROM messages WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", messageId);
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? new SpawnUsage(reader.IsDBNull(0) ? null : reader.GetString(0), reader.IsDBNull(1) ? null : reader.GetString(1)) : null;
+    }
+
+    private bool Update(string sql, long messageId, string value)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("$id", messageId);
+        cmd.Parameters.AddWithValue("$v", value);
+        return cmd.ExecuteNonQuery() == 1;
+    }
 
     private static Message? FindByClientKey(SqliteConnection conn, string roomId, string authorId, string clientKey)
     {

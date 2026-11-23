@@ -58,6 +58,7 @@ public sealed partial class SpawnerService
             handle.Posted = true;
             handle.PostedTexts.Add(message.Body);
             handle.Exchange.MessageIds.Add(message.Id);
+            StampSpawn(handle, message.Id);
             return true; // Mode outputs cannot purchase a mention handoff.
         }
         if (handle is not null) return false; // A tracked explicit/run spawn keeps its own exchange routing.
@@ -261,11 +262,12 @@ public sealed partial class SpawnerService
                 result = await _runner.RunAsync(spec with { RoomId = request.RoomId, ParticipantId = participant.Id }, handle.Timeout, handle.Cancel.Token);
             }
             catch (Exception e) { result = new(null, false, false, "", e.Message, TimeSpan.Zero); }
-            _events.Writer.TryWrite(new FinishedEvent(handle, result, null));
+            // Both panel commands ask for structured output (Claude json, Codex --json).
+            _events.Writer.TryWrite(new FinishedEvent(handle, result, null, UsageOf(participant.Host, structured: true, result, handle.Token)));
         });
     }
 
-    private void OnModeFinished(SpawnHandle handle, ProcessResult result, TrailReport? trail)
+    private void OnModeFinished(SpawnHandle handle, ProcessResult result, TrailReport? trail, string? usage = null)
     {
         var exchange = handle.Exchange;
         var leg = exchange.ModeLeg!;
@@ -304,7 +306,7 @@ public sealed partial class SpawnerService
         handle.Cancel.Dispose();
         if (!panel)
         {
-            if (answer is not null && handle.PostedTexts.Count == 0) PublishModeAnswer(exchange, id, answer, "answer");
+            if (answer is not null && handle.PostedTexts.Count == 0) PublishModeAnswer(exchange, id, answer, "answer", handle.SpawnId, usage);
             leg.Answers[id] = answer;
             TryDeleteDir(handle.WorkDir);
             if (trail is not null) PostTrailNotes(exchange.RoomId, id, trail);
@@ -318,13 +320,14 @@ public sealed partial class SpawnerService
         }
         else if (leg.Synthesis)
         {
-            if (answer is not null) PublishModeAnswer(exchange, id, answer, "synthesis");
+            if (answer is not null) PublishModeAnswer(exchange, id, answer, "synthesis", handle.SpawnId, usage);
             else PostNote(exchange.RoomId, "Panel synthesis unavailable. The first-pass outcomes remain visible.");
             if (exchange.Status == ExchangeStatus.Open) exchange.Status = ExchangeStatus.Concluded;
         }
         else
         {
             leg.Answers[id] = answer;
+            leg.Spawns[id] = (handle.SpawnId, usage);
             if (exchange.InFlight.Count == 0 && exchange.Pending.Count == 0)
             {
                 PublishPanelFirstPasses(exchange);
@@ -336,10 +339,14 @@ public sealed partial class SpawnerService
         Publish(exchange.RoomId);
     }
 
-    private void PublishModeAnswer(Exchange exchange, string participant, string body, string stage)
+    /// <summary>Posts a mode answer the hub publishes for a spawn; <paramref name="spawnId"/> and
+    /// <paramref name="usage"/> name the spawn that produced it, so the row carries them like a post the
+    /// spawn made itself.</summary>
+    private void PublishModeAnswer(Exchange exchange, string participant, string body, string stage, string? spawnId = null, string? usage = null)
     {
         var post = _store.Post(exchange.RoomId, participant, body, $"mode:{exchange.RootMessageId}:{exchange.ModeLeg!.Number}:{stage}:{participant}", exchange.RootMessageId);
         exchange.MessageIds.Add(post.Message.Id);
+        if (spawnId is not null) StoreUsage(spawnId, post.Message.Id, usage, stamp: true);
         if (!post.Deduplicated) { _pendingAnnouncements.Add(post.Message.Id); _signal.Publish(exchange.RoomId, post.Message); }
     }
 
@@ -362,7 +369,11 @@ public sealed partial class SpawnerService
         if (leg.FirstPassPublished) return;
         leg.FirstPassPublished = true;
         foreach (var peer in leg.Settings.Participants)
-            if (leg.Answers.TryGetValue(peer, out var outcome) && outcome is not null) PublishModeAnswer(exchange, peer, outcome, "first-pass");
+            if (leg.Answers.TryGetValue(peer, out var outcome) && outcome is not null)
+            {
+                var spawn = leg.Spawns.TryGetValue(peer, out var s) ? s : default;
+                PublishModeAnswer(exchange, peer, outcome, "first-pass", spawn.SpawnId, spawn.Usage);
+            }
             else PostNote(exchange.RoomId, $"Panel first pass @{peer}: unavailable.");
     }
 
