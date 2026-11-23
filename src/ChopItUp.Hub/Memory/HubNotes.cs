@@ -45,6 +45,16 @@ public static class HubNotes
     public static string Imported(string source, string path, int imported, int skipped) =>
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
 
+    /// <summary>Carries the same "not committed" clause a single approval's note does when git did not
+    /// take some of the writes.</summary>
+    public static string ImportApproved(string source, string path, int approved, int refused, int uncommitted = 0) =>
+        $"{ImportPrefix}{source} ({path}): {approved} proposal(s) approved"
+        + (uncommitted > 0 ? $" ({uncommitted} not committed: git unavailable or failed; see the hub log)" : "")
+        + (refused > 0 ? $", {refused} not written; see the memory panel." : ".");
+
+    public static string CoreWarning(int projected) =>
+        $"Approving every core entry of this import would make the core {projected} characters, over the {MemoryStore.CoreChars} cap. Approvals past the cap are refused.";
+
     /// <summary>A rewrite is a whole-file replacement, not an append or a supersede, so "written to" /
     /// "replaced" are both wrong for it; the note names the topic and the entries the
     /// consolidation removed instead.</summary>
