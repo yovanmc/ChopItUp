@@ -114,6 +114,33 @@ public sealed class SpawnOutputTests
         Assert.Equal(expected, SpawnOutput.CodexFailure(stdout));
     }
 
+    // Trimmed from a measured `claude -p --output-format json` result: the session, uuid and credential
+    // fields stay in the fixture so the test proves they are not copied.
+    private const string ClaudeUsage = """{"input_tokens":2,"output_tokens":4,"cache_read_input_tokens":649}""";
+    private const string ClaudeModelUsage = """{"claude-haiku-5-5":{"inputTokens":2,"outputTokens":4,"costUSD":0.0007}}""";
+    private const string ClaudeJsonResult = """{"type":"result","subtype":"success","is_error":false,"session_id":"s-1","uuid":"u-1","credential_expires_at":"2026-12-13T20:00:36.036Z","total_cost_usd":0.0007,"usage":""" + ClaudeUsage + ""","modelUsage":""" + ClaudeModelUsage + ""","result":"ok"}""";
+    private const string ClaudeBlock = """{"host":"claude","usage":""" + ClaudeUsage + ""","modelUsage":""" + ClaudeModelUsage + "}";
+    private const string CodexUsage = """{"input_tokens":15789,"cached_input_tokens":11392,"output_tokens":5}""";
+
+    public static TheoryData<string, string, bool, string, string?> UsageCases => new()
+    {
+        { "claude json result", "claude", true, ClaudeJsonResult, ClaudeBlock },
+        { "claude stream-json final result line", "claude", true, "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"assistant\",\"message\":{\"usage\":{\"input_tokens\":9}}}\n" + ClaudeJsonResult + "\n", ClaudeBlock },
+        { "claude modelUsage only", "claude", true, """{"type":"result","usage":null,"modelUsage":""" + ClaudeModelUsage + "}", """{"host":"claude","modelUsage":""" + ClaudeModelUsage + "}" },
+        { "claude result without usage fields", "claude", true, """{"type":"result","result":"ok"}""", null },
+        { "claude stdout that is not json", "claude", true, "Error: something broke", null },
+        { "claude empty stdout", "claude", true, "", null },
+        { "codex --json last turn.completed", "codex", true, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n{\"type\":\"turn.completed\",\"usage\":" + CodexUsage + "}\n", """{"host":"codex","usage":""" + CodexUsage + "}" },
+        { "codex --json without turn.completed", "codex", true, "{\"type\":\"turn.started\"}\n", null },
+        { "plain codex reply quoting an event line", "codex", false, "Here is the event:\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n", null },
+        { "block over 16 KB", "claude", true, """{"type":"result","modelUsage":{"m":{"note":" """ + new string('x', 16_400) + "\"}}}", null },
+    };
+
+    [Theory]
+    [MemberData(nameof(UsageCases))]
+    public void Usage_keeps_only_the_reported_usage_fields_and_is_null_when_nothing_was_reported(string _, string host, bool structured, string stdout, string? expected) =>
+        Assert.Equal(expected, SpawnOutput.Usage(host, structured, stdout));
+
     [Fact]
     public void M9_A9_flatten_folds_line_breaks_caps_at_400_characters_and_the_list_caps_at_50()
     {

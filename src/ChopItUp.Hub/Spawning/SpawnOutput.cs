@@ -102,6 +102,60 @@ public static class SpawnOutput
         return last;
     }
 
+    public const int MaxUsageBytes = 16_384;
+
+    /// <summary>The usage block a spawn reported, as compact JSON, or null when nothing was reported.
+    /// Claude: <c>usage</c> and <c>modelUsage</c> from the result object (`json`) or the last result
+    /// line (`stream-json`). Codex: <c>usage</c> from the last <c>turn.completed</c> line (`--json`).
+    /// <paramref name="host"/> is the hub's record of the CLI it launched, not a reported value, and
+    /// <c>modelUsage</c>'s keys are the only model names a reader may attribute. Plain Codex output
+    /// (<paramref name="structured"/> false) is the model's own text and is never parsed. Every other
+    /// result field (session, uuid, credential expiry, text) is dropped. Null over
+    /// <see cref="MaxUsageBytes"/>; never throws.</summary>
+    public static string? Usage(string host, bool structured, string stdout)
+    {
+        if (!structured || string.IsNullOrWhiteSpace(stdout)) return null;
+        JsonElement? source = null;
+        if (host == "claude")
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(stdout);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object) source = doc.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                foreach (var root in Lines(stdout))
+                    if (Str(root, "type") == "result") source = root;
+            }
+        }
+        else if (host == "codex")
+        {
+            foreach (var root in Lines(stdout))
+                if (Str(root, "type") == "turn.completed") source = root;
+        }
+        if (source is not { } s) return null;
+        var fields = host == "claude" ? new[] { "usage", "modelUsage" } : new[] { "usage" };
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("host", host);
+            var any = false;
+            foreach (var name in fields)
+            {
+                if (!s.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) continue;
+                writer.WritePropertyName(name);
+                value.WriteTo(writer);
+                any = true;
+            }
+            writer.WriteEndObject();
+            writer.Flush();
+            if (!any) return null;
+        }
+        return buffer.Length > MaxUsageBytes ? null : System.Text.Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
     /// <summary>Codex: why a turn failed, from the last <c>turn.failed</c> event's <c>error.message</c>,
     /// or else the last top-level <c>{"type":"error","message":…}</c> line. Codex sometimes wraps the
     /// real cause as a JSON string holding another <c>error.message</c> (a re-serialized API error);
