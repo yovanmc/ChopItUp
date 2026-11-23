@@ -263,8 +263,12 @@ you make while its turn is running is swept into that turn's commit and shares i
 (or `Not committed for <id>: …`) lands in the room, and the Trail button in the header lists the last 20
 commits. Nothing is ever pushed.
 
-Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own sandbox
-(workspace-write, network on); Claude Code runs as the owner's own Windows user, confined only by a
+Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own Windows
+sandbox (`mxc`, workspace-write, network on, measured on codex-cli 0.169.1). Its writes outside the
+room folder, the room's artifacts folder (a plain room: its scratch folder) and the container's own
+temp folder are refused, with no escalation, which includes the owner's real `%TEMP%` and user
+package caches: a package not already in the NuGet cache cannot be restored by a Codex spawn. Its
+reads are not confined, and loopback and `start_job` stay open as described above; Claude Code runs as the owner's own Windows user, confined only by a
 deny list and the prompt, because Claude Code 2.1.220 has no read fence this hub can switch on — a
 read outside the room is a rule the model is told to follow, not a wall it cannot cross.
 
