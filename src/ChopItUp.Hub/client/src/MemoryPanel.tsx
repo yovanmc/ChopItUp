@@ -9,7 +9,23 @@ interface Props {
   /** True while the room's exchange has spawns in flight: the hub refuses decisions then (409), so
    *  the buttons say so instead of inviting a click that only produces a banner. */
   locked: boolean;
+  /** The import origin an approve all is running for, or null. Every control waits while it runs. */
+  busyImport: string | null;
   onDecide: (id: number, decision: 'approve' | 'reject') => void;
+  /** Approves every pending row of one import origin (`<source>:<path>`). */
+  onApproveImport: (origin: string) => void;
+}
+
+/** The imports worth a batch control: an origin with two or more pending rows, in the order its
+ *  first row appears. Editor rows are hand edits, not imports, and an approved-but-unwritten row
+ *  takes its own Retry. */
+function importBatches(proposals: MemoryProposal[]): { origin: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const p of proposals) {
+    if (p.status !== 'pending' || !p.source || p.source === 'editor') continue;
+    counts.set(p.source, (counts.get(p.source) ?? 0) + 1);
+  }
+  return [...counts].filter(([, count]) => count >= 2).map(([origin, count]) => ({ origin, count }));
 }
 
 /** The hub's words for the hints it computes, because a slug is not a reason. */
@@ -37,8 +53,10 @@ function backupPath(topic: string, id: number): string {
  *  The card shows what the hub owner needs to judge a proposal rather than merely read it: which entry
  *  approval retires, why the text might be an instruction wearing a fact's clothes, and the closest
  *  entries the topic already holds. All three are absent from a plain proposal's card. */
-function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
+function MemoryPanel({ proposals, busyId, locked, busyImport, onDecide, onApproveImport }: Props) {
   if (proposals.length === 0) return null;
+  const batches = importBatches(proposals);
+  const waiting = locked || busyImport !== null;
   return (
     <section className="memory" aria-label="Memory proposals">
       <header className="memory-head">
@@ -51,6 +69,21 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
             : 'Approve writes the entry to the shared memory. Reject drops it.'}
         </span>
       </header>
+      {batches.length > 0 && (
+        <ul className="memory-imports" aria-label="Imports">
+          {batches.map((b) => (
+            <li key={b.origin}>
+              <span className="memory-imports-text">
+                {b.count} pending from {b.origin}
+              </span>
+              {/* A batch also waits for a single card's decision: both take the hub's one decision lock. */}
+              <button type="button" className="send" disabled={waiting || busyId !== null} onClick={() => onApproveImport(b.origin)}>
+                {busyImport === b.origin ? 'Approving…' : `Approve all ${b.count}`}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <ul className="memory-list">
         {proposals.map((p) => {
           const busy = busyId === p.id;
@@ -175,7 +208,7 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                   <button
                     type="button"
                     className="quiet"
-                    disabled={busy || locked}
+                    disabled={busy || waiting}
                     onClick={() => onDecide(p.id, 'reject')}
                   >
                     Reject
@@ -184,7 +217,7 @@ function MemoryPanel({ proposals, busyId, locked, onDecide }: Props) {
                 <button
                   type="button"
                   className="send"
-                  disabled={busy || locked}
+                  disabled={busy || waiting}
                   onClick={() => onDecide(p.id, 'approve')}
                 >
                   {busy ? 'Working…' : unwritten ? 'Retry write' : 'Approve'}

@@ -160,6 +160,9 @@ record, and nothing is written until the owner approves that. The previous file 
 "Import memory" in the room header seeds the store from a vendor's own memory: point it at Claude
 Code's memory folder (one file per memory) or Codex's `~\.codex\memories\` (split on headings). Every
 file or section becomes a pending proposal authored as `claude` or `codex`; re-importing adds nothing.
+An import with two or more pending proposals gets one "Approve all" control in the memory panel. It
+writes them oldest first, leaves any the hub refuses pending, and posts one note. An import whose core
+entries would take `MEMORY.md` past its 6,000-character cap says so when it lands.
 
 Rollback: `data\memory\` is plain markdown and needs no rollback.
 
@@ -185,6 +188,12 @@ with network access, cwd set to the room; git is read-only for it by rule. A Cla
 also search the web and fetch pages (WebSearch and WebFetch); its system prompt marks their results
 as untrusted data, and a fetch of the hub's own loopback address is denied. Only one spawn runs at a
 time within one exchange, so two models never edit the same tree at once.
+
+In a plain room (no directory) a Claude spawn has WebSearch and WebFetch and no file or shell tool,
+under the same untrusted-data rule and loopback deny. A Codex spawn has its CLI's default web search
+and a shell in an empty scratch folder that the hub deletes after the turn. With no commit trail, the
+hub posts one note per spawn that made such calls, listing them (at most 10) as the participant's own
+text, fenced.
 
 Each directory room also has an artifacts folder beside it, `<room dir>.artifacts`. A spawn finds its
 path in the prompt and in `CHOPITUP_ARTIFACTS`, and writes renders and other large generated files

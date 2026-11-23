@@ -281,6 +281,7 @@ export function RolesEditor({
                 className="field roles-text"
                 rows={2}
                 value={draft(globalKey)}
+                placeholder="What this participant does in every room that does not override it."
                 onChange={(event) => edit(globalKey, event.target.value)}
                 disabled={saving}
               />
@@ -303,6 +304,7 @@ export function RolesEditor({
                 className="field roles-text"
                 rows={2}
                 value={draft(roomKey)}
+                placeholder="What this participant does in this room instead."
                 onChange={(event) => edit(roomKey, event.target.value)}
                 disabled={saving}
               />
@@ -341,12 +343,6 @@ export function RolesEditor({
           {error}
         </p>
       )}
-
-      <footer className="dialog-actions">
-        <button type="button" className="quiet" onClick={onClose}>
-          Close
-        </button>
-      </footer>
     </>
   );
 }
@@ -455,11 +451,6 @@ export default function RolesDialog({ room, onClose }: Props) {
             ) : (
               <p className="dialog-note">Reading this room…</p>
             )}
-            <footer className="dialog-actions">
-              <button type="button" className="quiet" onClick={onClose}>
-                Close
-              </button>
-            </footer>
           </>
         ) : (
           <RolesEditor

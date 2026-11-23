@@ -80,7 +80,7 @@ function Invoke-Sql([string]$Path, [string]$Sql, [switch]$Scalar, [switch]$ReadO
 try {
     # 1. A fresh database from this exe, then the v17 state it would have had.
     $first = Start-Hub
-    Add-Check 'fresh.schema-19' ($first.Health.schema -eq 19) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-21' ($first.Health.schema -eq 21) "schema=$($first.Health.schema)"
     Stop-Hub $first.Process
     Add-Check 'fresh.jobs-table' ([long](Invoke-Sql $dbPath "SELECT COUNT(*) FROM pragma_table_info('jobs')" -Scalar -ReadOnly) -eq 16)
     Invoke-Sql $dbPath @"
@@ -96,7 +96,7 @@ PRAGMA user_version = 17;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-19' ($second.Health.schema -eq 19) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-21' ($second.Health.schema -eq 21) "schema=$($second.Health.schema)"
     Stop-Hub $second.Process
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v17.*.bak')
     Add-Check 'backup.one-v17-file' ($baks.Count -eq 1) "count=$($baks.Count)"
