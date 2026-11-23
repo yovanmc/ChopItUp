@@ -24,7 +24,7 @@
               directory (ContentRoot). The different working directory matters because ContentRoot
               *is* the working directory -- a same-directory launch would never notice future drift
               from BaseDirectory to a ContentRoot-relative path.
-        C3 -- /health reports schema 21; an MCP post_message (via `tools/ChopItUp.Corpus --mcp-check`,
+        C3 -- /health reports the latest schema; an MCP post_message (via `tools/ChopItUp.Corpus --mcp-check`,
               never a hand-rolled transport) lands and reads back, a repeat with the same client_key
               deduplicates; the web shell is fetched AND the script it references is fetched too and
               asserted to be real JavaScript, not the shell again -- see
@@ -68,6 +68,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 if ([string]::IsNullOrWhiteSpace($PublishDir)) {
@@ -344,7 +345,7 @@ try {
     Add-Check -Name 'c2.no-database-in-working-directory' -Passed (-not (Test-Path -LiteralPath (Join-Path $workDir 'data'))) -Detail (Join-Path $workDir 'data')
 
     # --- C3: health schema, MCP post/dedup, UI shell + real script fetch -----------------------------
-    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'c3.health-schema' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # tokens.json has been rewritten to the hashed shape by now (/health above only answers once
     # startup finishes), so it holds no plaintext to read back; $claudeToken (seeded above, before the

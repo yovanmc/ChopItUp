@@ -26,6 +26,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m23-dryrun.log"
@@ -179,7 +180,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-21' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-latest' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # 'claude' and 'owner' were seeded into tokens.json before this Start-Process call; the file
     # itself holds only their SHA-256.

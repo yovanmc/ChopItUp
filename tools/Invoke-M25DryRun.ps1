@@ -39,6 +39,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $slnPath = Join-Path $repoRoot 'ChopItUp.slnx'
@@ -426,7 +427,7 @@ PRAGMA user_version = 9;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-21' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-latest' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     Write-Host "Stopping hub pid $($hubProcess.Id)..."
     Stop-Process -Id $hubProcess.Id
@@ -461,7 +462,7 @@ PRAGMA user_version = 9;
 
     # --- Step 5: the migrated database -----------------------------------------------------------
     $after = Get-Counts -Path $dbPath
-    Add-Check -Name 'migrated.stamped-v14' -Passed ($after['user_version'] -eq 14) -Detail "user_version=$($after['user_version'])"
+    Add-Check -Name 'migrated.stamped-latest' -Passed ($after['user_version'] -eq $latestSchema) -Detail "user_version=$($after['user_version']) expected=$latestSchema"
     Add-Check -Name 'migrated.messages-have-reply-to-id' -Passed ([bool]$after['has_reply_to_id']) -Detail "has_reply_to_id=$($after['has_reply_to_id'])"
     foreach ($t in 'participants', 'rooms', 'messages', 'read_cursors', 'memory_proposals', 'skills', 'skill_files', 'runs', 'run_phases', 'run_artifacts', 'run_gate_runs') {
         $added = if ($t -eq 'participants') { 1 } else { 0 }   # v16 appends opus-judge

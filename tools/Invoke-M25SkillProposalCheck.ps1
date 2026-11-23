@@ -46,6 +46,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 $script:Checks = New-Object System.Collections.Generic.List[object]
 $log = "$DataDir.m25-skillcheck.log"
@@ -161,7 +162,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-21' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-latest' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # $script:PlaintextTokens (seeded before the hub started, above): tokens.json holds only host-file
     # rows' SHA-256 after the hub's own startup migration, never a usable plaintext.

@@ -32,7 +32,7 @@
     LEGS:
       fixture.*      -- build and stamp the v11 database.
       hub.*          -- launch the real exe, wait for /health.
-      migrated.*     -- schema 21, every pre-migration table's row count and room name preserved,
+      migrated.*     -- the latest schema, every pre-migration table's row count and room name preserved,
                         the two new columns present and NULL, room_roles present and empty.
       api.*          -- a persona and a role set over the API and read back.
       auth.*         -- each of the three write routes refused with no credential, storage unchanged.
@@ -56,6 +56,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 $HarnessVersion = 'row14-rolescheck-v1'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -301,11 +302,11 @@ PRAGMA user_version = 11;
     }
     if (-not $health) { throw "Hub /health did not respond within 30s at $base/health." }
     Add-Check -Name 'hub.launched-directly-not-dotnet-run' -Passed $true -Detail "pid=$($hubProcess.Id) port=$port"
-    Add-Check -Name 'health.schema-is-21' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-latest' -Passed ($health.schema -eq $latestSchema) -Detail "schema=$($health.schema) expected=$latestSchema"
 
     # --- Step 5: the migrated database preserved everything ---------------------------------------------
     $after = Get-Counts -Path $dbPath
-    Add-Check -Name 'migrated.stamped-v14' -Passed ($after['user_version'] -eq 14) -Detail "user_version=$($after['user_version'])"
+    Add-Check -Name 'migrated.stamped-latest' -Passed ($after['user_version'] -eq $latestSchema) -Detail "user_version=$($after['user_version']) expected=$latestSchema"
     foreach ($t in 'participants', 'rooms', 'messages') {
         $added = if ($t -eq 'participants') { 1 } else { 0 }   # v16 appends opus-judge
         Add-Check -Name "migrated.$t-count-preserved" -Passed ($after[$t] -eq $before[$t] + $added) -Detail "before=$($before[$t]) after=$($after[$t])"

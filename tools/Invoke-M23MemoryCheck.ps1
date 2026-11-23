@@ -24,7 +24,7 @@ param(
     [string]$DataDir = (Join-Path $env:TEMP ('chopitup_m23selfcheck_' + [guid]::NewGuid().ToString('N'))),
     [int]$Port = 8805,
     [int]$TimeoutSeconds = 30,
-    [int]$ExpectedSchema = 13,          # pass 999 to force that row RED on demand
+    [int]$ExpectedSchema = (& (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')),   # pass 999 to force that row RED on demand
     [string]$SkillName = 'consolidate-memory'   # pass a bogus name to force that row RED on demand
 )
 

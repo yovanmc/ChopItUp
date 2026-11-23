@@ -23,6 +23,7 @@ param(
     [int]$TimeoutSeconds = 240
 )
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 $HubExe = (Resolve-Path -LiteralPath $HubExe).Path
@@ -63,7 +64,7 @@ try {
         -WindowStyle Hidden -PassThru -RedirectStandardError "$scratch\hub.err.log" -RedirectStandardOutput "$scratch\hub.out.log"
     $health = $null
     foreach ($i in 1..60) { try { $health = Invoke-RestMethod "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 } }
-    Add-Check 'hub.health-schema-21' ($health.schema -eq 21) "schema=$($health.schema)"
+    Add-Check 'hub.health-schema-latest' ($health.schema -eq $latestSchema) "schema=$($health.schema) expected=$latestSchema"
 
     $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' `
         -Body (@{ body = '@sonnet reply in the room with the single word ok.' } | ConvertTo-Json)

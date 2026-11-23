@@ -25,6 +25,7 @@ param(
     [string]$SqliteBin = ''
 )
 $ErrorActionPreference = 'Stop'
+$latestSchema = & (Join-Path $PSScriptRoot 'Get-ChopSchemaVersion.ps1')
 . (Join-Path $PSScriptRoot 'ChopTokenHelpers.ps1')
 
 $HubExe = (Resolve-Path -LiteralPath $HubExe).Path
@@ -79,7 +80,7 @@ function Invoke-Sql([string]$Path, [string]$Sql, [switch]$Scalar, [switch]$ReadO
 try {
     # 1. A fresh database from this exe, then the v19 state it would have had, with fabricated rows.
     $first = Start-Hub
-    Add-Check 'fresh.schema-21' ($first.Health.schema -eq 21) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-latest' ($first.Health.schema -eq $latestSchema) "schema=$($first.Health.schema) expected=$latestSchema"
     Stop-Hub $first.Process
     Add-Check 'fresh.spawn-columns' ([long](Invoke-Sql $dbPath $columns -Scalar -ReadOnly) -eq 2)
     Invoke-Sql $dbPath @"
@@ -98,7 +99,7 @@ PRAGMA user_version = 19;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-21' ($second.Health.schema -eq 21) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-latest' ($second.Health.schema -eq $latestSchema) "schema=$($second.Health.schema) expected=$latestSchema"
     Stop-Hub $second.Process
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v19.*.bak')
     Add-Check 'backup.one-v19-file' ($baks.Count -eq 1) "count=$($baks.Count)"
@@ -116,7 +117,7 @@ PRAGMA user_version = 19;
 
     # 3. A restart on the migrated store takes no second backup and keeps the stamp.
     $third = Start-Hub
-    Add-Check 'restart.health-schema-21' ($third.Health.schema -eq 21) "schema=$($third.Health.schema)"
+    Add-Check 'restart.health-schema-latest' ($third.Health.schema -eq $latestSchema) "schema=$($third.Health.schema) expected=$latestSchema"
     Stop-Hub $third.Process
     Add-Check 'restart.no-second-backup' (@(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v*.bak').Count -eq 1)
 }
