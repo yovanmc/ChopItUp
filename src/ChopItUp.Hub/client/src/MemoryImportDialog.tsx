@@ -60,7 +60,7 @@ export default function MemoryImportDialog({ roomId, roomName, onClose, onImport
     try {
       const count = await discardImport(source, path.trim());
       setDiscarded(count);
-      onImported({ imported: 0, skipped: 0, proposals: [] });
+      onImported({ imported: 0, skipped: 0, coreWarning: null, proposals: [] });
     } catch (failure) {
       setError(describeError(failure));
     } finally {
@@ -128,6 +128,7 @@ export default function MemoryImportDialog({ roomId, roomName, onClose, onImport
               {result.imported === 1 ? '1 proposal added' : `${result.imported} proposals added`}
               {result.skipped > 0 && ` · ${result.skipped} already proposed`}
             </h3>
+            {result.coreWarning && discarded === null && <p className="dialog-error">{result.coreWarning}</p>}
             {result.imported > 0 && discarded === null && (
               <p className="dialog-note">
                 They are waiting in the memory panel behind this dialog. Wrong folder?{' '}

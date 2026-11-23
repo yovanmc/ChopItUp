@@ -366,7 +366,15 @@ export type MemorySource = 'claude' | 'codex';
 export interface MemoryImportResult {
   imported: number;
   skipped: number;
+  /** Set when approving every core row of the import would take MEMORY.md past its cap. */
+  coreWarning: string | null;
   proposals: MemoryProposal[];
+}
+
+/** `POST /api/memory/import/approve`: what one approve all wrote, and the rows the hub refused. */
+export interface MemoryImportApproval {
+  approved: number;
+  refused: { id: number; error: string | null }[];
 }
 
 /** One row of `GET /api/memory/topics`: the core first, then topics in slug order. */
@@ -376,6 +384,8 @@ export interface MemoryFile {
   path: string;
   chars: number;
   cap: number;
+  /** For a room topic, the characters a spawn in that room reads (the rest is reached with recall). */
+  spawnReads: number | null;
 }
 
 /** `GET /api/memory/topics/{slug}`: the whole file, uncut and LF-normalised, and the hash a save must

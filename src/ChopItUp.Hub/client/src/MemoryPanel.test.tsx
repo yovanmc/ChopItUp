@@ -39,8 +39,58 @@ const BASE: MemoryProposal = {
   related: [],
 };
 
-const render = (p: MemoryProposal) =>
-  renderToStaticMarkup(<MemoryPanel proposals={[p]} busyId={null} locked={false} onDecide={() => undefined} />);
+const render = (p: MemoryProposal) => renderList([p]);
+
+const renderList = (proposals: MemoryProposal[], locked = false, busyImport: string | null = null, busyId: number | null = null) =>
+  renderToStaticMarkup(
+    <MemoryPanel
+      proposals={proposals}
+      busyId={busyId}
+      busyImport={busyImport}
+      locked={locked}
+      onDecide={() => undefined}
+      onApproveImport={() => undefined}
+    />,
+  );
+
+/** A folder import can land dozens of proposals at once, and one click per card does not scale. */
+describe('MemoryPanel, approve all for one import', () => {
+  const FROM_A = 'codex:C:/notes/a';
+  const FROM_B = 'codex:C:/notes/b';
+  const rows = [
+    { ...BASE, id: 1, source: FROM_A },
+    { ...BASE, id: 2, source: FROM_A },
+    { ...BASE, id: 3, source: FROM_B },
+    { ...BASE, id: 4, source: null },
+    { ...BASE, id: 5, source: FROM_A },
+  ];
+
+  test('an import with two or more pending rows gets one control that names its count and folder', () => {
+    const html = renderList(rows);
+
+    expect(html.match(/Approve all/g)).toHaveLength(1);
+    expect(html).toContain('Approve all 3');
+    expect(html).toContain('3 pending from codex:C:/notes/a');
+  });
+
+  test('the control is disabled while a spawn runs or any decision is in flight', () => {
+    expect(renderList(rows, true)).toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
+    expect(renderList(rows, false, FROM_A)).toMatch(/<button[^>]*disabled=""[^>]*>Approving…/);
+    expect(renderList(rows, false, null, 2)).toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
+    expect(renderList(rows)).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
+  });
+
+  test('editor rows and approved-but-unwritten rows are not part of an import batch', () => {
+    const html = renderList([
+      { ...BASE, id: 1, source: 'editor' },
+      { ...BASE, id: 2, source: 'editor' },
+      { ...BASE, id: 3, source: FROM_A, status: 'approved' },
+      { ...BASE, id: 4, source: FROM_A },
+    ]);
+
+    expect(html).not.toContain('Approve all');
+  });
+});
 
 describe('MemoryPanel (row 18, AC5)', () => {
   test('a plain proposal renders no replaces line, no flags and no related list', () => {

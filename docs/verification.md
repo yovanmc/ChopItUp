@@ -29,6 +29,21 @@ Usage-limit migration and resume dry run (no model calls, scratch hub, a v18 sta
 messages migrated to v19 through the real exe, then a fabricated held run whose reset has passed and
 whose spawns are over budget; the next start clears its resume instant and posts the reset note and the
 cap refusal): `pwsh tools\Invoke-Row87DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Spawn usage migration dry run (no model calls, scratch hub, a v19 state with fabricated messages
+migrated to v20 through the real exe; the backup, both spawn columns and the untouched old rows are
+checked): `pwsh tools\Invoke-Row65DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Spawn usage check (real Sonnet, one call, spends; scratch hub): the reply row's spawn id matches the
+hub's spawn log line and its stored block holds only `host`, `usage` and a Sonnet `modelUsage` key:
+`pwsh tools\Invoke-Row65UsageCheck.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Spawn tasks migration dry run (no model calls, scratch hub, a v20 state with fabricated messages
+migrated to v21 through the real exe; the backup, the empty `spawn_tasks` table with its index, the
+untouched old rows and an empty tasks route are checked): `pwsh tools\Invoke-SpawnTasksDryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Spawn tasks check (real Sonnet, one call, spends; scratch hub): `GET /api/rooms/general/tasks` reports
+one completed task whose spawn id matches the hub's log line, with requested model sonnet, a positive
+duration, one post, token numbers and a reported Sonnet model: `pwsh tools\Invoke-SpawnTasksCheck.ps1 [-HubExe <exe>]`.
+Plain-room web check (real Sonnet and real Codex, two calls, spends; scratch hub): each host searches
+in the plain general room and the hub posts one fenced note listing its calls; the Claude note marks a
+fetch of the hub's own loopback `/health` as denied: `pwsh tools\Invoke-PlainWebCheck.ps1 [-HubExe <exe>]`.
 Run notification check (no model calls: the shell and its scratch hub see only a fake `claude.cmd`;
 interactive desktop): a hidden shell shows one held and one parked notification for a fabricated run,
 and a UIA click on the notification opens the room. With Windows notifications off for the user, the

@@ -134,6 +134,20 @@ describe('what the dialog shows', () => {
     expect(markup).toContain('You review.');
     expect(markup).toContain('You keep the notes here.');
   });
+
+  test('an empty role box says what belongs in it, like the persona box does', () => {
+    const markup = render(EMPTY);
+
+    expect(markup).toContain('placeholder="What this participant does in every room that does not override it."');
+    expect(markup).toContain('placeholder="What this participant does in this room instead."');
+  });
+
+  test('the head close button is the only close control: the footer adds no second one', () => {
+    const markup = render();
+
+    expect(markup.match(/aria-label="Close"/g)?.length).toBe(1);
+    expect(markup).not.toContain('>Close</button>');
+  });
 });
 
 /** Classes decide who a run dispatches to (ExchangePolicy) and what effort a row is

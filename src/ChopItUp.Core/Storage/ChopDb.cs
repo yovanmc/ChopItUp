@@ -7,7 +7,7 @@ namespace ChopItUp.Core.Storage;
 /// pooling off, WAL + foreign_keys + busy_timeout on every open.</summary>
 public sealed class ChopDb
 {
-    public const int LatestSchemaVersion = 19;
+    public const int LatestSchemaVersion = 21;
 
     /// <summary>The hub's own row: author of exchange notes (timeouts, budget refusals, a spawn's
     /// reply when it failed to post, conclusions). Kind <c>system</c>: not a human, not a model, never
@@ -144,6 +144,8 @@ public sealed class ChopDb
             if (GetUserVersion(conn) < 17) ApplyV17(conn);
             if (GetUserVersion(conn) < 18) ApplyV18(conn);
             if (GetUserVersion(conn) < 19) ApplyV19(conn);
+            if (GetUserVersion(conn) < 20) ApplyV20(conn);
+            if (GetUserVersion(conn) < 21) ApplyV21(conn);
             return 0;
         });
     }
@@ -853,6 +855,61 @@ public sealed class ChopDb
             cmd.ExecuteNonQuery();
         }
         cmd.CommandText = "PRAGMA user_version = 19;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Spawn usage: <c>messages.spawn_id</c> names the spawn that posted a row, and
+    /// <c>messages.spawn_usage</c> holds the usage block that spawn reported, on one of its rows.
+    /// Both are NULL for every earlier row and every human post.</summary>
+    private static void ApplyV20(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        foreach (var column in new[] { "spawn_id", "spawn_usage" })
+        {
+            cmd.CommandText = $"SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = '{column}'";
+            if (Convert.ToInt64(cmd.ExecuteScalar()) != 0) continue;
+            cmd.CommandText = $"ALTER TABLE messages ADD COLUMN {column} TEXT;";
+            cmd.ExecuteNonQuery();
+        }
+        cmd.CommandText = "PRAGMA user_version = 20;";
+        cmd.ExecuteNonQuery();
+        tx.Commit();
+    }
+
+    /// <summary>Spawn tasks: one <c>spawn_tasks</c> row per spawn launch, written at launch and
+    /// completed at finish. A row with no <c>ended_at</c> is a spawn the hub stopped or crashed under.</summary>
+    private static void ApplyV21(SqliteConnection conn)
+    {
+        using var tx = conn.BeginTransaction();
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS spawn_tasks (
+                spawn_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                participant_id TEXT NOT NULL,
+                host TEXT NOT NULL,
+                requested_model TEXT,
+                effort TEXT,
+                root_message_id INTEGER NOT NULL,
+                turn INTEGER NOT NULL,
+                run_id INTEGER,
+                retry INTEGER NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                duration_ms INTEGER,
+                exit_code INTEGER,
+                termination TEXT,
+                tool_calls INTEGER,
+                posts INTEGER,
+                usage TEXT
+            );
+            CREATE INDEX IF NOT EXISTS ix_spawn_tasks_room ON spawn_tasks(room_id, started_at);
+            PRAGMA user_version = 21;
+            """;
         cmd.ExecuteNonQuery();
         tx.Commit();
     }

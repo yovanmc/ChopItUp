@@ -492,7 +492,7 @@ public sealed class ExchangePolicy
             // nonzero here (a free turn was left when it was queued), which would wrongly tell it
             // another turn follows.
             var remainingAfter = pending.Reason == SpawnReason.Synthesis ? 0 : x.Budget - x.TurnsCommitted;
-            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, remainingAfter, pending.Reason, pending.RefusedAt));
+            due.Add(new SpawnRequest(x.RoomId, id, pending.TriggerIds.ToList(), x.RootMessageId, x.TurnsStarted + due.Count + 1, remainingAfter, pending.Reason, pending.RefusedAt, Retry: pending.NotBefore is not null));
             if (exclusive) break;
         }
         return due;
