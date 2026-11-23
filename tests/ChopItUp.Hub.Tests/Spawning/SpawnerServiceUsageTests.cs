@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace ChopItUp.Hub.Tests.Spawning;
 
-/// <summary>Row 65: each message a spawn posts carries that spawn's id, and the usage block it
+/// <summary>Each message a spawn posts carries that spawn's id, and the usage block it
 /// reported lands on exactly one of its rows; "not reported" is a stamped row with no block.</summary>
 public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
 {
@@ -160,6 +160,58 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(first), Block("claude-sonnet-5-5", 11)), await WaitForUsage(Row("general", "relay first").Id));
         Assert.Equal(new SpawnUsage(SpawnIdOf(second), Block("claude-opus-5-5", 12)), await WaitForUsage(Row("general", "relay second").Id));
+    }
+
+    [Fact]
+    public async Task A_relay_leg_that_posts_itself_keeps_its_usage_on_its_own_row_and_no_answer_row_is_added()
+    {
+        Mode("relay");
+        _runner.Handler = async (spec, _, _) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) != "sonnet") return FakeProcessRunner.Ok(Result("relay closing", "claude-opus-5-5", 14));
+            await PostAs("sonnet", "relay self post");
+            return FakeProcessRunner.Ok(Result("relay self post", "claude-sonnet-5-5", 13));
+        };
+        await PostAsOwner("Relay with a post.");
+        var first = await _runner.NextSpecAsync(Wait);
+        await WaitForStatus("concluded");
+
+        Assert.Equal(new SpawnUsage(SpawnIdOf(first), Block("claude-sonnet-5-5", 13)), await WaitForUsage(Row("general", "relay self post").Id));
+        Assert.Single(Store.ReadLast("general", 100), m => m.AuthorId == "sonnet");
+    }
+
+    [Fact]
+    public async Task A_cancelled_spawn_still_stores_a_result_line_it_printed_before_the_stop()
+    {
+        var posted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (_, _, cancellation) =>
+        {
+            await PostAs("opus", "posted then stopped");
+            posted.SetResult();
+            try { await Task.Delay(Timeout.Infinite, cancellation); } catch (OperationCanceledException) { }
+            return new ProcessResult(null, false, true, Result("done", "claude-opus-5-5", 4), "", TimeSpan.Zero);
+        };
+        await PostAsOwner("@opus answer then wait for the stop");
+        var spec = await _runner.NextSpecAsync(Wait);
+        await posted.Task.WaitAsync(Wait);
+        await Spawner.StopAsync("general");
+
+        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), Block("claude-opus-5-5", 4)), await WaitForUsage(Row("general", "posted then stopped").Id));
+    }
+
+    [Fact]
+    public async Task A_codex_directory_spawn_stores_the_usage_of_its_last_turn()
+    {
+        await MakeRoom("lab-codex");
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAsIn("gpt-6-astra", "lab-codex", "codex lab reply");
+            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":15,\"output_tokens\":6}}\n");
+        };
+        await PostAsOwnerIn("lab-codex", "@gpt-6-astra work here");
+        var spec = await _runner.NextSpecAsync(Wait);
+
+        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), """{"host":"codex","usage":{"input_tokens":15,"output_tokens":6}}"""), await WaitForUsage(Row("lab-codex", "codex lab reply").Id));
     }
 
     [Fact]

@@ -2035,8 +2035,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(20, ChopDb.LatestSchemaVersion);
-        Assert.Equal(20, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(2L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name IN ('spawn_id','spawn_usage') AND \"notnull\" = 0"));
     }
 
@@ -2048,7 +2047,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(20, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Contains(".v19.", Path.GetFileName(db.LastBackupPath!));
         Assert.Equal(19L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
         Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name IN ('spawn_id','spawn_usage')"));
@@ -2065,7 +2064,7 @@ public sealed class SchemaMigrationTests : IDisposable
         var db = new ChopDb(DbPath);
         db.EnsureDatabase();
 
-        Assert.Equal(20, db.GetSchemaVersion());
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
         Assert.Equal(2L, ScalarLong("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name IN ('spawn_id','spawn_usage')"));
     }
 

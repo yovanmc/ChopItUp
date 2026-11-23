@@ -292,9 +292,10 @@ public sealed class MessageStore(ChopDb db)
         Update("UPDATE messages SET spawn_usage = $v WHERE id = $id AND spawn_usage IS NULL", messageId, usageJson);
 
     /// <summary>The spawn that posted a message and the usage it reported, or null for an unknown id.
-    /// A null <see cref="SpawnUsage.SpawnId"/> means no spawn is recorded (a human post, a row from
-    /// before v20, or a post the hub never saw finish); a null <see cref="SpawnUsage.Usage"/> means
-    /// none was reported.</summary>
+    /// A null <see cref="SpawnUsage.SpawnId"/> means no spawn is recorded: a human post, a row from
+    /// before v20, or a post the hub's loop never handled (one still queued when the hub stopped). A
+    /// null <see cref="SpawnUsage.Usage"/> means none is recorded: the spawn reported none, or the hub
+    /// stopped before the spawn finished.</summary>
     public SpawnUsage? GetSpawnUsage(long messageId)
     {
         using var conn = db.Open();
