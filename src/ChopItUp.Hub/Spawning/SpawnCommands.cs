@@ -61,8 +61,27 @@ public static class SpawnCommands
         }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine;
     }
 
-    /// <summary>`--approve-for-me` is the only policy under which a headless Codex may call an MCP
-    /// tool; `--ignore-user-config` keeps the owner's config.toml out while auth still comes from
+    /// <summary>Codex's own sandbox for every Codex spawn, measured on codex-cli 0.169.1 through the
+    /// hub's cmd.exe launch shape. `--ignore-user-config` also drops the owner's <c>[windows] sandbox</c>
+    /// and <c>sandbox_mode</c>, so without these a shell command runs with no sandbox at all. `mxc` is
+    /// the Windows sandbox whose HTTPS works (`unelevated` fails schannel with SEC_E_NO_CREDENTIALS);
+    /// an unknown value makes Codex exit rather than run unsandboxed. `approval_policy=never` means a
+    /// blocked command fails back to the model: no escalation, no reviewer (`--approve-for-me` let a
+    /// reviewer approve a write outside the room). Excluding the TMP variable keeps the owner's real
+    /// %TEMP% read-only while the container's own temp folder still works. The hub's MCP tools are
+    /// pre-approved, so start_job, cancel_job and run_gate reach the hub. Writes are confined to the
+    /// working directory and any <c>--add-dir</c>; reads are not confined, and user package caches
+    /// (an uncached NuGet package, for one) cannot be written.</summary>
+    public static readonly IReadOnlyList<string> CodexSandbox =
+    [
+        "-c", $"mcp_servers.{McpServerName}.default_tools_approval_mode=approve",
+        "-c", "sandbox_workspace_write.network_access=true",
+        "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+        "-s", "workspace-write", "-c", "windows.sandbox=mxc", "-c", "approval_policy=never",
+    ];
+
+    /// <summary>A plain-room Codex spawn under <see cref="CodexSandbox"/>, confined to its scratch
+    /// folder; `--ignore-user-config` keeps the owner's config.toml out while auth still comes from
     /// CODEX_HOME (verified); `-c` values are literal strings when they are not TOML, so no quotes
     /// and no cmd.exe quoting hazards; `-` reads the prompt from stdin. <paramref name="effort"/> is
     /// passed as `-c model_reasoning_effort=&lt;value&gt;` (null appends nothing); measured on
@@ -78,7 +97,8 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec=60",
              .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
-             "--approve-for-me", "-C", workDir, "--skip-git-repo-check", "-m", model,
+             .. CodexSandbox,
+             "-C", workDir, "--skip-git-repo-check", "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
             new Dictionary<string, string> { [TokenEnvVar] = token },
             workDir, prompt, label) { Utf8Output = true };
@@ -238,9 +258,9 @@ public static class SpawnCommands
     }
 
     /// <summary>A Codex spawn in a directory room: `-C` is the room (a repository, so the repo check is
-    /// not skipped), `--json` carries the command_execution items the trail records, and network is on
-    /// inside workspace-write. Measured: every flag accepted, but the sandbox did not stop a
-    /// `git commit`; the prompt rule and the trail are the mechanism.
+    /// not skipped), `--json` carries the command_execution items the trail records, and
+    /// <see cref="CodexSandbox"/> confines writes to the room and <paramref name="artifactsDir"/> with
+    /// network on. Git stays read-only for the spawn by the prompt rule and the trail.
     /// <paramref name="toolTimeoutSeconds"/>: a 60 s MCP tool-call timeout kills a long
     /// <c>run_gate</c> call well before a gate can finish, so an in-run Codex spawn passes
     /// <c>RunLimits.EffectiveGateTimeout</c> in seconds. Every other caller keeps the 60 s default.</summary>
@@ -252,9 +272,9 @@ public static class SpawnCommands
              "-c", $"mcp_servers.{McpServerName}.bearer_token_env_var={TokenEnvVar}",
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
              "-c", $"mcp_servers.{McpServerName}.tool_timeout_sec={toolTimeoutSeconds}",
-             "-c", "sandbox_workspace_write.network_access=true",
              .. effort is null ? Array.Empty<string>() : new[] { "-c", $"model_reasoning_effort={effort}" },
-             "--approve-for-me", "-C", roomDir,
+             .. CodexSandbox,
+             "-C", roomDir,
              .. artifactsDir is null ? Array.Empty<string>() : new[] { "--add-dir", artifactsDir },
              "-m", model,
              "--color", "never", "-o", lastMessagePath, "-"],
