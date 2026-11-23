@@ -81,6 +81,11 @@ public sealed class SpawnerServiceLimitsTests
         Assert.Contains($"#{noteId}", WhyHere(conductor.StandardInput));
         var resumed = await WaitForRun(host, room, r => r.Status == RunStatus.Active);
         Assert.Null(resumed.ResumeAt);
+        // The conductor's tasks carry the run and its raised effort; a conductor resumed after a hold
+        // is a new turn, not a retry.
+        var tasks = host.Services.GetRequiredService<TaskStore>().ForRoom(room, 10);
+        Assert.Equal(new[] { ((long?)held.Id, (string?)"high", false), (held.Id, "high", false) }, tasks.Select(t => (t.Start.RunId, t.Start.Effort, t.Start.Retry)));
+        Assert.Equal(TaskTermination.UsageLimit, tasks[^1].End?.Termination);
     }
 
     [Fact]
@@ -255,6 +260,9 @@ public sealed class SpawnerServiceLimitsTests
 
         clock.Advance(TimeSpan.FromDays(1));
         Assert.True(await runner.NoSpecWithin(TimeSpan.FromMilliseconds(400)));
+        // Newest first: the relaunch the requeue scheduled is the one retry.
+        var tasks = host.Services.GetRequiredService<TaskStore>().ForRoom("plain", 10);
+        Assert.Equal(new[] { (true, (string?)TaskTermination.UsageLimit), (false, TaskTermination.UsageLimit) }, tasks.Select(t => (t.Start.Retry, t.End?.Termination)));
     }
 
     [Fact]

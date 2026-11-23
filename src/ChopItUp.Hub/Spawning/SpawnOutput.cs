@@ -102,6 +102,41 @@ public static class SpawnOutput
         return last;
     }
 
+    private static readonly HashSet<string> CodexToolItems = new(StringComparer.Ordinal) { "command_execution", "file_change", "mcp_tool_call", "web_search" };
+
+    /// <summary>How many tool calls a spawn made, or null when its output does not list them.
+    /// <paramref name="stream"/> is true only for the shapes that list calls: Claude `stream-json`
+    /// (every <c>tool_use</c> block, denied ones and <c>post_message</c> included) and Codex `--json`
+    /// (each command, file change, MCP call or web search item, once per item id; an item without a
+    /// string id counts once per completed event). Plain Claude json, plain Codex text and an empty kept
+    /// stream (an output overflow keeps none) give null, never 0. Shapes it does not expect are
+    /// skipped.</summary>
+    public static int? ToolCalls(string host, bool stream, string stdout)
+    {
+        if (!stream || string.IsNullOrWhiteSpace(stdout)) return null;
+        var count = 0;
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var root in Lines(stdout))
+        {
+            if (host == "claude")
+            {
+                if (Str(root, "type") != "assistant" || !root.TryGetProperty("message", out var message) || message.ValueKind != JsonValueKind.Object
+                    || !message.TryGetProperty("content", out var content) || content.ValueKind != JsonValueKind.Array) continue;
+                foreach (var block in content.EnumerateArray())
+                    if (Str(block, "type") == "tool_use") count++;
+            }
+            else if (host == "codex")
+            {
+                var type = Str(root, "type");
+                if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) continue;
+                if (Str(item, "type") is not { } kind || !CodexToolItems.Contains(kind)) continue;
+                if (Str(item, "id") is { } id) { if (seen.Add(id)) count++; }
+                else if (type == "item.completed") count++;
+            }
+        }
+        return count;
+    }
+
     public const int MaxUsageBytes = 16_384;
 
     /// <summary>The usage block a spawn reported, as compact JSON, or null when nothing was reported.

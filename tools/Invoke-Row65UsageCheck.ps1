@@ -63,7 +63,7 @@ try {
         -WindowStyle Hidden -PassThru -RedirectStandardError "$scratch\hub.err.log" -RedirectStandardOutput "$scratch\hub.out.log"
     $health = $null
     foreach ($i in 1..60) { try { $health = Invoke-RestMethod "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 } }
-    Add-Check 'hub.health-schema-20' ($health.schema -eq 20) "schema=$($health.schema)"
+    Add-Check 'hub.health-schema-21' ($health.schema -eq 21) "schema=$($health.schema)"
 
     $posted = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' `
         -Body (@{ body = '@sonnet reply in the room with the single word ok.' } | ConvertTo-Json)

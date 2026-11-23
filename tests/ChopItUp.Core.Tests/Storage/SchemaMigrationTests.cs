@@ -1940,7 +1940,7 @@ public sealed class SchemaMigrationTests : IDisposable
     private void WriteV18()
     {
         new ChopDb(DbPath).EnsureDatabase();
-        RawExec("ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; ALTER TABLE runs DROP COLUMN resume_at; PRAGMA user_version = 18;");
+        RawExec("DROP INDEX ix_spawn_tasks_room; DROP TABLE spawn_tasks; ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; ALTER TABLE runs DROP COLUMN resume_at; PRAGMA user_version = 18;");
         RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'owner', 'fabricated', '2026-11-20T10:00:00.000+00:00');");
         SqliteConnection.ClearAllPools();
     }
@@ -1983,7 +1983,7 @@ public sealed class SchemaMigrationTests : IDisposable
     private void WriteV17()
     {
         new ChopDb(DbPath).EnsureDatabase();
-        RawExec("ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; ALTER TABLE runs DROP COLUMN resume_at; DROP INDEX ix_jobs_status; DROP TABLE jobs; PRAGMA user_version = 17;");
+        RawExec("DROP INDEX ix_spawn_tasks_room; DROP TABLE spawn_tasks; ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; ALTER TABLE runs DROP COLUMN resume_at; DROP INDEX ix_jobs_status; DROP TABLE jobs; PRAGMA user_version = 17;");
         RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'owner', 'fabricated', '2026-11-20T10:00:00.000+00:00');");
         SqliteConnection.ClearAllPools();
     }
@@ -2019,12 +2019,65 @@ public sealed class SchemaMigrationTests : IDisposable
         Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ix_jobs_status'"));
     }
 
-    /// <summary>A fresh database turned back into the exact v19 shape: v20 only adds
-    /// <c>messages.spawn_id</c> and <c>messages.spawn_usage</c>.</summary>
+    /// <summary>A fresh database turned back into the exact v20 shape: v21 only adds the
+    /// <c>spawn_tasks</c> table and its index.</summary>
+    private void WriteV20()
+    {
+        new ChopDb(DbPath).EnsureDatabase();
+        RawExec("DROP INDEX ix_spawn_tasks_room; DROP TABLE spawn_tasks; PRAGMA user_version = 20;");
+        RawExec("INSERT INTO messages (room_id, author_id, body, created_at, spawn_id) VALUES ('general', 'opus', 'fabricated', '2026-11-22T10:00:00.000+00:00', 'general-1-1-0000abcd');");
+        SqliteConnection.ClearAllPools();
+    }
+
+    private static readonly string SpawnTaskColumns =
+        "SELECT COUNT(*) FROM pragma_table_info('spawn_tasks') WHERE name IN ('spawn_id','room_id','participant_id','host','requested_model','effort','root_message_id','turn','run_id','retry','started_at','ended_at','duration_ms','exit_code','termination','tool_calls','posts','usage')";
+
+    [Fact]
+    public void A_fresh_database_has_the_spawn_tasks_table()
+    {
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Equal(18L, ScalarLong(SpawnTaskColumns));
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ix_spawn_tasks_room'"));
+    }
+
+    [Fact]
+    public void A_v20_database_is_backed_up_then_gains_an_empty_spawn_tasks_table()
+    {
+        WriteV20();
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Contains(".v20.", Path.GetFileName(db.LastBackupPath!));
+        Assert.Equal(20L, BackupScalar(db.LastBackupPath!, "PRAGMA user_version"));
+        Assert.Equal(0L, BackupScalar(db.LastBackupPath!, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'spawn_tasks'"));
+        Assert.Equal(0L, ScalarLong("SELECT COUNT(*) FROM spawn_tasks"));
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM messages WHERE spawn_id = 'general-1-1-0000abcd'"));
+    }
+
+    [Fact]
+    public void A_torn_v21_with_the_table_but_stamp_20_is_finished()
+    {
+        WriteV20();
+        RawExec("CREATE TABLE spawn_tasks (spawn_id TEXT PRIMARY KEY, room_id TEXT NOT NULL, participant_id TEXT NOT NULL, host TEXT NOT NULL, requested_model TEXT, effort TEXT, root_message_id INTEGER NOT NULL, turn INTEGER NOT NULL, run_id INTEGER, retry INTEGER NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, duration_ms INTEGER, exit_code INTEGER, termination TEXT, tool_calls INTEGER, posts INTEGER, usage TEXT);");
+
+        var db = new ChopDb(DbPath);
+        db.EnsureDatabase();
+
+        Assert.Equal(ChopDb.LatestSchemaVersion, db.GetSchemaVersion());
+        Assert.Equal(1L, ScalarLong("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ix_spawn_tasks_room'"));
+    }
+
+    /// <summary>A fresh database turned back into the exact v19 shape: v21 only adds the
+    /// <c>spawn_tasks</c> table, v20 only <c>messages.spawn_id</c> and <c>messages.spawn_usage</c>.</summary>
     private void WriteV19()
     {
         new ChopDb(DbPath).EnsureDatabase();
-        RawExec("ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; PRAGMA user_version = 19;");
+        RawExec("DROP INDEX ix_spawn_tasks_room; DROP TABLE spawn_tasks; ALTER TABLE messages DROP COLUMN spawn_id; ALTER TABLE messages DROP COLUMN spawn_usage; PRAGMA user_version = 19;");
         RawExec("INSERT INTO messages (room_id, author_id, body, created_at) VALUES ('general', 'opus', 'fabricated', '2026-11-22T10:00:00.000+00:00');");
         SqliteConnection.ClearAllPools();
     }

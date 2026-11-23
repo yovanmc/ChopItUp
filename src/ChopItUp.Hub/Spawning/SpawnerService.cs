@@ -56,7 +56,7 @@ public sealed partial class SpawnerService : BackgroundService
     private abstract record Event;
     private sealed record PostedEvent(Message Message) : Event;
     // Usage: the block the spawn reported (SpawnOutput.Usage), parsed off the loop thread; null when none.
-    private sealed record FinishedEvent(SpawnHandle Handle, ProcessResult Result, TrailReport? Trail, string? Usage = null) : Event;
+    private sealed record FinishedEvent(SpawnHandle Handle, ProcessResult Result, TrailReport? Trail, string? Usage = null, int? ToolCalls = null) : Event;
     private sealed record StopEvent(string RoomId, TaskCompletionSource<ExchangeSnapshot?> Reply) : Event;
     private sealed record StopOneEvent(string RoomId, long RootMessageId, TaskCompletionSource<(ExchangeStopOutcome, ExchangeSnapshot?)> Reply) : Event;
     private sealed record TickEvent : Event;
@@ -131,6 +131,7 @@ public sealed partial class SpawnerService : BackgroundService
     private readonly SkillStore _skills;
     private readonly TimeProvider _clock;
     private readonly RunStore _runs;
+    private readonly TaskStore _tasks;
     private readonly RunLimits _runLimits;
     private readonly RunPolicy _runPolicy;
     private readonly Channel<Event> _events = Channel.CreateUnbounded<Event>(new UnboundedChannelOptions { SingleReader = true });
@@ -176,7 +177,7 @@ public sealed partial class SpawnerService : BackgroundService
     public SpawnerService(MessageStore store, IReadOnlyList<Participant> roster, MessageSignal signal, TokenStore tokens,
         IProcessRunner runner, ChopItUp.Hub.Hosting.HubOptions options, SpawnLimits limits, IServer server, IHubContext<RoomHub> hub,
         CliLocator cliLocator, MemoryStore memory, RoomTrails trails, ExchangeWorktrees worktrees, RoomArtifacts artifacts, ParticipantStore participants, SkillStore skills, TimeProvider clock,
-        RunStore runs, RunLimits runLimits, JobStore jobStore, RunNoticeBus notices)
+        RunStore runs, RunLimits runLimits, JobStore jobStore, RunNoticeBus notices, TaskStore tasks)
     {
         _jobStore = jobStore;
         _notices = notices;
@@ -188,6 +189,7 @@ public sealed partial class SpawnerService : BackgroundService
         _skills = skills;
         _clock = clock;
         _runs = runs;
+        _tasks = tasks;
         _runLimits = runLimits;
         _runPolicy = new RunPolicy(runLimits);
     }
@@ -319,7 +321,7 @@ public sealed partial class SpawnerService : BackgroundService
             case PostedEvent p: if (!_pendingAnnouncements.Remove(p.Message.Id)) OnMessage(p.Message); break;
             case InvokeEvent call: call.Invoke(); break;
             case PanelPreparedEvent ready: OnPanelPrepared(ready); break;
-            case FinishedEvent f: OnFinished(f.Handle, f.Result, f.Trail, f.Usage); break;
+            case FinishedEvent f: OnFinished(f.Handle, f.Result, f.Trail, f.Usage, f.ToolCalls); break;
             case StopEvent s:
                 ExchangeSnapshot? reply = null;
                 try { reply = OnStop(s.RoomId); }
@@ -1202,6 +1204,7 @@ public sealed partial class SpawnerService : BackgroundService
                 Cancel = new CancellationTokenSource(), Directory = tree, InWorktree = inWorktree, Timeout = timeout, StartedAt = now,
             };
             _inFlight[(request.RoomId, participant.Id)] = handle;
+            StartTask(handle, effort, activeRun?.Id);
             Console.Error.WriteLine($"spawn {spawnId}: {participant.Id} starting (turn {request.TurnNumber}/{x.Budget}, {request.RemainingAfter} after)");
             Interlocked.Increment(ref _live);
             var turn = request.TurnNumber; var budget = x.Budget; var roomId = request.RoomId; var host = participant.Host; var continueBranch = x.ContinuesBranch;
@@ -1294,7 +1297,9 @@ public sealed partial class SpawnerService : BackgroundService
                 {
                     // Plain Codex stdout is the model's own text, so only a structured stream is read.
                     var usage = UsageOf(host, structured: host == "claude" || directory is not null, result, token);
-                    _events.Writer.TryWrite(new FinishedEvent(handle, result, trail, usage));   // always: OnFinished is the only place _live is decremented
+                    // Only a directory room's spawn streams its events (Claude stream-json, Codex --json).
+                    var toolCalls = ToolCountOf(host, stream: directory is not null, result);
+                    _events.Writer.TryWrite(new FinishedEvent(handle, result, trail, usage, toolCalls));   // always: OnFinished is the only place _live is decremented
                 }
             });
         }
@@ -1315,6 +1320,44 @@ public sealed partial class SpawnerService : BackgroundService
     {
         try { return SpawnOutput.Usage(host, structured, Scrub(result.StandardOutput, token)); }
         catch (Exception e) { Console.Error.WriteLine($"spawn usage parse error {e.GetType().Name}: {e.Message}"); return null; }
+    }
+
+    /// <summary>The tool calls a finished spawn's stream lists, or null when it lists none or its
+    /// output overflowed. Never throws: a spawn's finish never depends on the count.</summary>
+    private static int? ToolCountOf(string host, bool stream, ProcessResult result)
+    {
+        if (result.OutputLimitExceeded) return null;
+        try { return SpawnOutput.ToolCalls(host, stream, result.StandardOutput); }
+        catch (Exception e) { Console.Error.WriteLine($"spawn tool count error {e.GetType().Name}: {e.Message}"); return null; }
+    }
+
+    /// <summary>Writes a launch's task row, before its process starts. Never throws: a spawn never
+    /// fails because of telemetry.</summary>
+    private void StartTask(SpawnHandle h, string? effort, long? runId)
+    {
+        var r = h.Request;
+        try
+        {
+            if (!_tasks.Start(new TaskStart(h.SpawnId, r.RoomId, h.Participant.Id, h.Participant.Host, h.Participant.Model, effort,
+                    r.RootMessageId, r.TurnNumber, runId, r.Retry, h.StartedAt)))
+                Console.Error.WriteLine($"spawn {h.SpawnId}: a task row with this id already exists");
+        }
+        catch (Exception e) { Console.Error.WriteLine($"spawn {h.SpawnId}: task start error {e.GetType().Name}: {e.Message}"); }
+    }
+
+    /// <summary>Completes a spawn's task row once. A limit counts only for a spawn that posted
+    /// nothing. Never throws.</summary>
+    private void FinishTask(SpawnHandle h, ProcessResult r, string? usage, int? toolCalls)
+    {
+        try
+        {
+            var refused = r.ExitCode is null && r.StandardError.StartsWith(WorktreeRefused, StringComparison.Ordinal);
+            var limitHit = !h.Posted && DetectLimit(h, r) is not null;
+            var end = new TaskEnd(_clock.GetUtcNow(), (long)r.Elapsed.TotalMilliseconds, r.ExitCode, TaskTermination.Of(r, refused, limitHit),
+                toolCalls, h.PostedMessageIds.Count, usage);
+            if (!_tasks.Finish(h.SpawnId, end)) Console.Error.WriteLine($"spawn {h.SpawnId}: no open task row to finish");
+        }
+        catch (Exception e) { Console.Error.WriteLine($"spawn {h.SpawnId}: task finish error {e.GetType().Name}: {e.Message}"); }
     }
 
     /// <summary>Marks a message the spawn posted itself with its spawn id, as the post is handled, so a
@@ -1338,13 +1381,14 @@ public sealed partial class SpawnerService : BackgroundService
         catch (Exception e) { Console.Error.WriteLine($"spawn {spawnId}: usage store error {e.GetType().Name}: {e.Message}"); }
     }
 
-    private void OnFinished(SpawnHandle h, ProcessResult r, TrailReport? trail, string? usage = null)
+    private void OnFinished(SpawnHandle h, ProcessResult r, TrailReport? trail, string? usage = null, int? toolCalls = null)
     {
         var id = h.Participant.Id;
         var room = h.Request.RoomId;
         _inFlight.Remove((room, id));
         Interlocked.Decrement(ref _live);
         _artifactLeaseChecked.Remove(room);
+        FinishTask(h, r, usage, toolCalls);
         // The block goes on the highest-id row the spawn posted itself; a mode answer the hub posts for
         // it is stamped where it is published.
         if (h.PostedMessageIds.Count != 0) StoreUsage(h.SpawnId, h.PostedMessageIds.Max(), usage, stamp: false);
