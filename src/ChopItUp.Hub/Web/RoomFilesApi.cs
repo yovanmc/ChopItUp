@@ -163,9 +163,10 @@ public static class RoomFilesApi
 
             if (parsed.IsVideo)
             {
-                // The stream owns the handle from here and closes it when the response ends.
+                // The stream owns the handle once it exists and closes it when the response ends.
+                var stream = new FileStream(handle, FileAccess.Read);
                 owned = null;
-                return Results.File(new FileStream(handle, FileAccess.Read), parsed.ContentType, lastModified: written, entityTag: tag, enableRangeProcessing: true);
+                return Results.File(stream, parsed.ContentType, lastModified: written, entityTag: tag, enableRangeProcessing: true);
             }
             if (length > MaxImageBytes) return Refuse(413, $"The image is over {MaxImageBytes / (1024 * 1024)} MB.");
             // Read whole and closed before the response, so a spawn can replace the file by rename
