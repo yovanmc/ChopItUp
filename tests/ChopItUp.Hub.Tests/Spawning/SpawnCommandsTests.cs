@@ -61,7 +61,11 @@ public sealed class SpawnCommandsTests
              "-c", "mcp_servers.chopitup.bearer_token_env_var=CHOPITUP_TOKEN",
              "-c", "mcp_servers.chopitup.startup_timeout_sec=20",
              "-c", "mcp_servers.chopitup.tool_timeout_sec=60",
-             "--approve-for-me", "-C", @"C:\data\spawns\s2", "--skip-git-repo-check", "-m", "gpt-6-astra",
+             "-c", "mcp_servers.chopitup.default_tools_approval_mode=approve",
+             "-c", "sandbox_workspace_write.network_access=true",
+             "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+             "-s", "workspace-write", "-c", "windows.sandbox=mxc", "-c", "approval_policy=never",
+             "-C", @"C:\data\spawns\s2", "--skip-git-repo-check", "-m", "gpt-6-astra",
              "--color", "never", "-o", @"C:\data\spawns\s2\last.txt", "-"],
             spec.Arguments);
         Assert.Equal("tok456", spec.Environment["CHOPITUP_TOKEN"]);
@@ -189,14 +193,40 @@ public sealed class SpawnCommandsTests
              "-c", "mcp_servers.chopitup.bearer_token_env_var=CHOPITUP_TOKEN",
              "-c", "mcp_servers.chopitup.startup_timeout_sec=20",
              "-c", "mcp_servers.chopitup.tool_timeout_sec=60",
+             "-c", "mcp_servers.chopitup.default_tools_approval_mode=approve",
              "-c", "sandbox_workspace_write.network_access=true",
-             "--approve-for-me", "-C", @"C:\Rooms\lab", "-m", "gpt-6-astra",
+             "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
+             "-s", "workspace-write", "-c", "windows.sandbox=mxc", "-c", "approval_policy=never",
+             "-C", @"C:\Rooms\lab", "-m", "gpt-6-astra",
              "--color", "never", "-o", @"C:\data\spawns\s2\last.txt", "-"],
             spec.Arguments);
         Assert.Equal(@"C:\Rooms\lab", spec.WorkingDirectory);
         Assert.Equal("tok456", spec.Environment["CHOPITUP_TOKEN"]);
         Assert.DoesNotContain(spec.Arguments, a => a.Contains("tok456"));
         Assert.DoesNotContain("--skip-git-repo-check", spec.Arguments);
+    }
+
+    private static readonly string[] SandboxBlock =
+        ["-c", "mcp_servers.chopitup.default_tools_approval_mode=approve", "-c", "sandbox_workspace_write.network_access=true",
+         "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true", "-s", "workspace-write", "-c", "windows.sandbox=mxc", "-c", "approval_policy=never"];
+
+    /// <summary>Every Codex shape runs under Codex's own Windows sandbox with no escalation and no
+    /// reviewer (measured on codex-cli 0.169.1: `--ignore-user-config` drops the owner's
+    /// <c>[windows] sandbox</c>, so without these values a shell command runs unsandboxed, and
+    /// `--approve-for-me` let a reviewer approve an escalated write outside the room).</summary>
+    [Theory]
+    [InlineData(false, "high", false, 60)]
+    [InlineData(true, "high", true, 60)]
+    [InlineData(true, null, true, 1800)]
+    public void Every_codex_shape_runs_sandboxed_with_no_escalation(bool inDirectory, string? effort, bool artifacts, int toolTimeout)
+    {
+        var spec = inDirectory
+            ? SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\Rooms\lab", @"C:\d\last.txt", "P", "l", effort, toolTimeout, artifacts ? @"C:\Rooms\lab.artifacts" : null)
+            : SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\d", @"C:\d\last.txt", "P", "l", effort);
+        var joined = string.Join('\u0001', spec.Arguments);
+        Assert.Contains(string.Join('\u0001', SandboxBlock), joined);
+        Assert.All(new[] { "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox", "danger-full-access", "approvals_reviewer", "--full-auto" },
+            banned => Assert.DoesNotContain(banned, joined));
     }
 
     // --- run_gate on a second Claude allowlist -----------------------------------------------------

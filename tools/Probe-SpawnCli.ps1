@@ -89,7 +89,12 @@ try {
         '-c', 'mcp_servers.chopitup.bearer_token_env_var=CHOPITUP_TOKEN',
         '-c', 'mcp_servers.chopitup.startup_timeout_sec=20',
         '-c', 'mcp_servers.chopitup.tool_timeout_sec=60',
-        '--approve-for-me', '-C', $codexDir, '--skip-git-repo-check', '-m', 'gpt-5.4-mini',
+        # Source of truth: SpawnCommands.CodexSandbox; keep this copy in sync by hand.
+        '-c', 'mcp_servers.chopitup.default_tools_approval_mode=approve',
+        '-c', 'sandbox_workspace_write.network_access=true',
+        '-c', 'sandbox_workspace_write.exclude_tmpdir_env_var=true',
+        '-s', 'workspace-write', '-c', 'windows.sandbox=mxc', '-c', 'approval_policy=never',
+        '-C', $codexDir, '--skip-git-repo-check', '-m', 'gpt-5.4-mini',
         '--color', 'never', '-o', (Join-Path $codexDir 'last.txt'), '-')
     $r2 = Invoke-Child -FileName (Join-Path $env:SystemRoot 'System32\cmd.exe') -argv $codexArgs -Env @{ CHOPITUP_TOKEN = $codexTok } -WorkDir $codexDir `
         -Stdin "You are participant 'gpt-5.4-mini' in room 'general'. Call the chopitup post_message tool once with room_id 'general', body exactly 'probe ok from codex' and client_key 'probe-codex-$stamp'. Then reply with the word done."

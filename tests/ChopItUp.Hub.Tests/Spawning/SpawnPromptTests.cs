@@ -148,6 +148,10 @@ public sealed class SpawnPromptTests
         Assert.Contains(SpawnPrompt.DirectoryRules(@"C:\Rooms\lab"), withDir);
         Assert.DoesNotContain("You have no files", withDir);
         Assert.Contains("post_message exactly once", withDir);
+        // Codex's sandbox refuses writes to user package caches; Claude runs as the owner and is not told so.
+        var codexDir = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@gpt-6-astra hi")) with { Self = Roster.Single(p => p.Id == "gpt-6-astra"), Directory = @"C:\Rooms\lab" }, SpawnLimits.Default);
+        Assert.Contains("Package caches in your user profile are read-only to you", codexDir);
+        Assert.DoesNotContain("Package caches in your user profile", withDir);
     }
 
     /// <summary>A spawn told its working directory is a linked worktree of the room directory gets an
