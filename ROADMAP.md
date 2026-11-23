@@ -7,10 +7,6 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
-| 50 | Persistent sessions per participant per room | [ ] | BACKLOG | — | `claude -p --resume` / `codex exec resume` per (participant, room); `/reset @id`; auto-fresh at a threshold; tests for interruption, reconnect, delta sync, worktree changes; usage measured first; never inside a run. |
-| 52 | Research tools in plain rooms | [ ] | BACKLOG | — | Web search and fetch for plain-room spawns with honest unavailable-tool messages; files and shell stay directory-room only (SpawnCommands.cs:24-32). |
-| 53 | Task usage telemetry | [ ] | BACKLOG | — | Model, effort, duration, tool and retry counts, termination reason, token metrics when reported (else unknown), per task. |
-| 65 | Keep the spawn result usage on the message row | [ ] | BACKLOG | — | `--output-format json` results carry usage fields (SpawnCommands.cs:29); SpawnOutput.cs:77 keeps only the text. Retain the block per reply for reported-model attribution only, not provider-route proof. Acceptance: one real retained payload on a message row, linked to its spawn, with explicit missing-data behavior. |
 | 54 | Joined hosts with bounded delegation | [ ] | BACKLOG | — | A `claude-code` row and a mention-capable `codex` row for the native sessions, bounded delegation per room, never an owner credential in a worker; the README's Claude Code paragraph rewritten. |
 | 55 | Phone access via Tailscale | [ ] | BACKLOG | — | `tailscale serve localhost:8790` plus an allowed-host knob for the Host gate (Hosting/LoopbackHostFilter.cs); then a layout under ~640px (styles.css:1554 is the only width breakpoint). Tailscale not installed yet. |
 | 56 | Memory import at scale | [ ] | BACKLOG | — | 67 topic files become 67 single approvals (MemoryApi.cs:357-362); approve-all per import; warn when the core would exceed 6,000. |
@@ -19,6 +15,7 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 | 39 | Roles dialog polish | [ ] | BACKLOG | — | Participant boxes ~14px narrow; dim row links; second row clips; missing role placeholders and backdrop scrim; duplicate Close/X. |
 | 6 | Town view: walkable characters per participant (Octopath-style) | [ ] | DEFERRED: long-term vision | — | Renderer and art are undecided. Working assumptions: Phaser 3 in-page and CC0 placeholder art with simple avatars. Decide both when this row starts. |
 | 7 | ChatGPT chat-tab read-only connector via tunnel | [ ] | DEFERRED: Plus-plan gating unverified, tunnels out of v1 | — | help.openai.com: write actions Business/Enterprise only; Pro read-only; Plus unlisted. |
+| 50 | Persistent sessions per participant per room | [ ] | DEFERRED: owner parked it, a resumed turn saves no usage | — | Measurements in `.scratch/row50-measurements.md` (local): a resumed turn costs about what a fresh hub prompt costs; Codex resume drops `--approve-for-me` (shell blocked) and reports running-total usage; session files keep room text in `~/.claude/projects` and `~/.codex/sessions` [V 2026-11-23 77554de2]. Scope: `--resume` per (participant, room), `/reset @id`, auto-fresh, never inside a run. |
 
 **Legend:** ✅ Merged · 📝 Plan ready · 🔬 Researching/Planning · [ ] Not started
 

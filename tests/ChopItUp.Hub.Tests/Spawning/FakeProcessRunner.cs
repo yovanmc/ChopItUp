@@ -11,7 +11,12 @@ public sealed class FakeProcessRunner(TimeProvider? clock = null) : IProcessRunn
 {
     private readonly Channel<ProcessSpec> _seen = Channel.CreateUnbounded<ProcessSpec>();
     private readonly List<(ProcessSpec Spec, DateTimeOffset At)> _runs = new();
-    public Func<ProcessSpec, TimeSpan, CancellationToken, Task<ProcessResult>> Handler { get; set; } = (_, _, _) => Task.FromResult(Ok("""{"result":"done"}"""));
+    /// <summary>The smallest Claude stream-json transcript the hub launches for: init, one text line, the result.</summary>
+    public const string StreamDone =
+        "{\"type\":\"system\",\"subtype\":\"init\"}\n"
+        + "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\n"
+        + "{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"done\"}\n";
+    public Func<ProcessSpec, TimeSpan, CancellationToken, Task<ProcessResult>> Handler { get; set; } = (_, _, _) => Task.FromResult(Ok(StreamDone));
 
     /// <summary>Every launch so far with its wall-clock start, copied under the lock.</summary>
     public IReadOnlyList<(ProcessSpec Spec, DateTimeOffset At)> Runs { get { lock (_runs) return _runs.ToList(); } }
