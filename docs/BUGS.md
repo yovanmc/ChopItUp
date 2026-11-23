@@ -16,11 +16,14 @@
 =======
 - 78 `SpawnPrompt.cs:382` tells every in-run worker the hub commits its diff "authored as you", but the hub commits with the repository's own identity and credits the host only by a `Co-authored-by` trailer (`SpawnerService.cs:1093-1098`, `RoomCommits.cs:7-11`) · reword the worker paragraph to match · [V 2026-09-25 305b3c3]
 <<<<<<< HEAD
+<<<<<<< HEAD
 >>>>>>> d992044 (bug 79: Pin each role source sentence by its text)
 - 80 chore: two parameterized client tests title their rows with the input object, so a row reads as the wrong outcome · `src/ChopItUp.Hub/client/src/api.test.ts:227` 404 row reads "is a credential refusal", `ExchangeBar.test.tsx:198` null row reads "says who did it" · [V 2026-10-16 95aca28d]
 =======
 >>>>>>> 759c5d7 (bug 80: Title parameterized client test rows by their outcome)
 - 81 chore: no test deploys over an existing exe and checks the target then holds the new bytes · `tests/ChopItUp.Hub.Tests/DeployScriptTests.cs:330-334` the restore test checks only the backup after `deployV2` · [V 2026-10-16 95aca28d]
+=======
+>>>>>>> 24e0b7f (bug 81: Check that a deploy over an install leaves the new exe in the target)
 - 82 chore: `docs/testing/hub-test-resources.md` R2 and R3 cite lines a few above the calls they name, though the doc says every cited line was opened · `HubHostTests.cs` `Console.SetError` sits at :222, :266, :317, :332 and the environment writes at :377, :382, :384, not the cited :219/:263/:314/:329 and :374/:381 · [V 2026-10-16 a0c8019e]
 - 90 Codex directory spawns are not confined to their workspace: under the hub's `--approve-for-me`, a spawn asked to write to a sibling of the room wrote it, with and without `--add-dir` (codex-cli 0.169.0-alpha.11.1, 4 of 4 runs). The same prompt with `--sandbox workspace-write` and no `--approve-for-me` was rejected "blocked by policy". The README still says Codex "runs under its own sandbox" · `src/ChopItUp.Hub/Spawning/SpawnCommands.cs:231` "`--approve-for-me`", `README.md:219` "Codex runs under its own sandbox (workspace-write, network on)" · the flag is the only policy under which a headless Codex may call an MCP tool (`SpawnCommands.cs:56`), so removing it is not the fix · [V 2026-11-18 af5d5f39]
 - 91 The large-file note has no bound: a spawn that commits about 700 or more files over 5 MB posts a note above the 24,000-character transcript limit, and the prompt trim then drops that note and every older message until it leaves the window · `src/ChopItUp.Hub/Memory/HubNotes.cs:89` "`LargeFiles`", `src/ChopItUp.Hub/Spawning/SpawnLimits.cs:22` "`24_000`" · bounding the note changes what it names, so choose the bound first · [V 2026-11-18 af5d5f39]
