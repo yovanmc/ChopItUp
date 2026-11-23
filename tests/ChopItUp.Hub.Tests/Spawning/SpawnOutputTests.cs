@@ -258,21 +258,27 @@ public sealed class SpawnOutputTests
         Assert.Equal(expected, SpawnOutput.ToolCalls(host, stream, stdout));
 
     [Fact]
-    public void M9_A9_flatten_folds_line_breaks_caps_at_400_characters_and_the_list_caps_at_50()
+    public void M9_A9_flatten_folds_line_breaks_caps_at_400_characters_and_the_lists_keep_every_call()
     {
         Assert.Equal("a ⏎ b ⏎ c", SpawnOutput.Flatten("a\r\nb\nc"));
         var flat = SpawnOutput.Flatten(new string('x', 500));
         Assert.Equal(401, flat.Length);
         Assert.EndsWith("…", flat);
 
+        // The parsers count every call; the commit message and the calls note decide how many to list.
         var many = string.Join('\n', Enumerable.Range(0, 60).Select(i =>
             $$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t{{{i}}}","name":"Bash","input":{"command":"echo {{{i}}}"}}]}}"""));
-        Assert.Equal(50, SpawnOutput.ClaudeShellCommands(many).Count);
+        Assert.Equal(60, SpawnOutput.ClaudeShellCommands(many).Count);
         Assert.Equal("echo 0", SpawnOutput.ClaudeShellCommands(many)[0].Command);
 
         var fetches = string.Join('\n', Enumerable.Range(0, 60).Select(i =>
             $$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"w{{{i}}}","name":"WebFetch","input":{"url":"https://example.com/{{{i}}}"}}]}}"""));
-        Assert.Equal(50, SpawnOutput.ClaudeWebRequests(fetches).Count);
+        Assert.Equal(60, SpawnOutput.ClaudeWebRequests(fetches).Count);
+
+        var codex = string.Join('\n', Enumerable.Range(0, 60).Select(i =>
+            $$$"""{"type":"item.completed","item":{"id":"item_{{{i}}}","type":"command_execution","command":"echo {{{i}}}"}}"""));
+        Assert.Equal(60, SpawnOutput.CodexShellCommands(codex).Count);
+        Assert.Equal(60, SpawnOutput.CodexCalls(codex).Count);
         Assert.Equal(401, SpawnOutput.ClaudeWebRequests(
             $$$$$"""{"type":"assistant","message":{"content":[{"type":"tool_use","id":"w","name":"WebSearch","input":{"query":"{{{{{new string('q', 500)}}}}}"}}]}}""")[0].Target.Length);
     }

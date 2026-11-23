@@ -18,6 +18,8 @@ public sealed record WebRequest(string Tool, string Target, bool Denied);
 /// nothing here throws — the commit still happens, with an empty log.</summary>
 public static class SpawnOutput
 {
+    /// <summary>How many entries of each list a commit message names; the parsers return every call, so
+    /// the message can count the rest.</summary>
     public const int MaxCommands = 50;
     public const int MaxCommandChars = 400;
 
@@ -26,13 +28,13 @@ public static class SpawnOutput
     /// denied — it never ran.</summary>
     public static IReadOnlyList<ShellCommand> ClaudeShellCommands(string stdout) =>
         ClaudeToolCalls(stdout, new Dictionary<string, string> { ["Bash"] = "command" })
-            .Select(c => new ShellCommand(Flatten(c.Target), c.Denied)).Take(MaxCommands).ToList();
+            .Select(c => new ShellCommand(Flatten(c.Target), c.Denied)).ToList();
 
     /// <summary>Claude: every WebSearch (its query) and WebFetch (its URL) tool_use, in order, under the
-    /// same denial rule and caps as <see cref="ClaudeShellCommands"/>.</summary>
+    /// same denial rule and per-entry character cap as <see cref="ClaudeShellCommands"/>.</summary>
     public static IReadOnlyList<WebRequest> ClaudeWebRequests(string stdout) =>
         ClaudeToolCalls(stdout, new Dictionary<string, string> { ["WebSearch"] = "query", ["WebFetch"] = "url" })
-            .Select(c => new WebRequest(c.Tool, Flatten(c.Target), c.Denied)).Take(MaxCommands).ToList();
+            .Select(c => new WebRequest(c.Tool, Flatten(c.Target), c.Denied)).ToList();
 
     /// <summary>The tool_use blocks whose name is a key of <paramref name="inputField"/>, with that
     /// input field's string value, in order; a call the final result lists under permission_denials
@@ -115,7 +117,7 @@ public static class SpawnOutput
             if (!byId.ContainsKey(id)) order.Add(id);
             byId[id] = command;
         }
-        return order.Select(id => new ShellCommand(Flatten(byId[id]), false)).Take(MaxCommands).ToList();
+        return order.Select(id => new ShellCommand(Flatten(byId[id]), false)).ToList();
     }
 
     /// <summary>Codex: every web_search item in first-seen order, the completed form replacing the
@@ -124,8 +126,7 @@ public static class SpawnOutput
     /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
     /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
     /// WebSearch marked "(not completed)". MCP calls outside the hub are included as
-    /// <see cref="CodexCalls"/> reads them. It filters after the cap, so it can hold fewer than
-    /// <see cref="MaxCommands"/> calls.</summary>
+    /// <see cref="CodexCalls"/> reads them.</summary>
     public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout) =>
         CodexCalls(stdout).Where(c => c.Tool != ShellTool).ToList();
 
@@ -134,7 +135,7 @@ public static class SpawnOutput
     /// <summary>Codex: every web_search item (as <see cref="CodexWebRequests"/> reads it), every
     /// command_execution item (as a <see cref="ShellTool"/> call with its command) and every
     /// mcp_tool_call item on a server other than the hub's own (<see cref="CodexMcpCall"/>), in one
-    /// first-seen order, for a plain room's calls note. Same caps as the shell lists.</summary>
+    /// first-seen order, for a plain room's calls note. Same per-entry character cap as the shell lists.</summary>
     public static IReadOnlyList<WebRequest> CodexCalls(string stdout)
     {
         var order = new List<string>();
@@ -161,7 +162,7 @@ public static class SpawnOutput
                     : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + NotCompleted, false), false),
             };
         }
-        return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).Take(MaxCommands).ToList();
+        return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).ToList();
     }
 
     private const string NoTarget = "(no target)";
