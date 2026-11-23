@@ -80,8 +80,11 @@ public static class SpawnOutput
         return found.Select(f => (f.Tool, f.Target, f.Id.Length > 0 && denied.Contains(f.Id))).ToList();
     }
 
-    /// <summary>An error tool_result whose text is the CLI's deny message (measured shape: "Permission to
-    /// use Bash with command … has been denied."); its content is a string or text blocks.</summary>
+    /// <summary>An error tool_result whose text is one of the CLI's deny messages, measured on 2.1.328:
+    /// "Permission to use Bash with command … has been denied.", "Permission to use Write has been denied
+    /// because Claude Code is running in don't ask mode. …" and "WebFetch denied access to domain:127.0.0.1.".
+    /// Its content is a string or text blocks. A Bash call that ran and failed reads "Exit code 1\n…", so
+    /// its output cannot pass for a denial.</summary>
     private static bool IsDenialResult(JsonElement block)
     {
         if (!block.TryGetProperty("is_error", out var isError) || isError.ValueKind != JsonValueKind.True) return false;
@@ -92,8 +95,9 @@ public static class SpawnOutput
             JsonValueKind.Array => string.Concat(content.EnumerateArray().Select(t => Str(t, "text") ?? "")),
             _ => null,
         };
-        return text is not null && text.StartsWith("Permission to use ", StringComparison.Ordinal)
-            && text.Contains(" has been denied", StringComparison.Ordinal);
+        return text is not null
+            && ((text.StartsWith("Permission to use ", StringComparison.Ordinal) && text.Contains(" has been denied", StringComparison.Ordinal))
+                || text.StartsWith("WebFetch denied access to domain:", StringComparison.Ordinal));
     }
 
     /// <summary>Codex: every command_execution item in first-seen order, the completed form replacing

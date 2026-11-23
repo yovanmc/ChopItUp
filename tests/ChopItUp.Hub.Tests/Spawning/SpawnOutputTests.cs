@@ -50,12 +50,14 @@ public sealed class SpawnOutputTests
     }
 
     /// <summary>A spawn killed at its timeout or stopped never writes the result line, so its
-    /// permission_denials are missing; the denied call's own tool_result still says so.</summary>
+    /// permission_denials are missing; the denied call's own tool_result still says so. A command that
+    /// ran, failed and printed the deny text is not a denial (texts measured on 2.1.328).</summary>
     [Fact]
     public void Claude_stream_with_no_result_line_marks_calls_denied_from_their_tool_result()
     {
         var killed = string.Join('\n', ClaudeStream.Split('\n').Where(l => !l.Contains("\"type\":\"result\"")))
-            + "\n" + """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01G","is_error":true,"content":[{"type":"text","text":"Permission to use WebFetch with url http://127.0.0.1:8790/api/rooms has been denied."}]}]}}""";
+            + "\n" + """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01G","is_error":true,"content":"WebFetch denied access to domain:127.0.0.1."}]}}"""
+            + "\n" + """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01D","is_error":true,"content":[{"type":"text","text":"Exit code 1\nPermission to use Bash with command x has been denied."}]}]}}""";
         Assert.Equal(
             [new ShellCommand("echo hello", false), new ShellCommand("git -c user.name=x commit --allow-empty -m probe", true), new ShellCommand("dir ⏎ type probe.txt", false)],
             SpawnOutput.ClaudeShellCommands(killed));
