@@ -44,6 +44,12 @@ public static class HubNotes
     public static string Imported(string source, string path, int imported, int skipped) =>
         $"{ImportPrefix}{source} ({path}): {imported} proposal(s) added, {skipped} already proposed. Review them in the memory panel.";
 
+    public static string ImportApproved(string source, string path, int approved, int refused) =>
+        $"{ImportPrefix}{source} ({path}): {approved} proposal(s) approved" + (refused > 0 ? $", {refused} refused and still pending." : ".");
+
+    public static string CoreWarning(int projected) =>
+        $"Approving every core entry of this import would make the core {projected} characters, over the {MemoryStore.CoreChars} cap. Approvals past the cap are refused.";
+
     /// <summary>A rewrite is a whole-file replacement, not an append or a supersede, so "written to" /
     /// "replaced" are both wrong for it; the note names the topic and the entries the
     /// consolidation removed instead.</summary>

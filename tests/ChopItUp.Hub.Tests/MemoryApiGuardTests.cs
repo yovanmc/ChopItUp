@@ -45,8 +45,8 @@ public sealed class MemoryApiGuardTests
         await using var host = await HubTestHost.StartAsync(dir, processRunner: runner, limits: Fast);
         host.AuthorizeAs(ChopDb.OwnerParticipantId);
         var proposals = host.Services.GetRequiredService<MemoryProposalStore>();
-        proposals.Create("general", "opus", "user", "A", "a", null);
-        proposals.Create("general", "opus", "user", "B", "b", null);
+        proposals.Create("general", "opus", "user", "A", "a", $"claude:{dir}");
+        proposals.Create("general", "opus", "user", "B", "b", $"claude:{dir}");
 
         Assert.Equal(HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus hi" })).StatusCode);
         await runner.NextSpecAsync(Wait);                                                 // in flight now
@@ -60,6 +60,7 @@ public sealed class MemoryApiGuardTests
         File.WriteAllText(Path.Combine(planted, "x.md"), "---\nname: x\ndescription: Planted\nmetadata:\n  type: user\n---\nBy a spawn.\n");
         Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsJsonAsync("api/memory/import", new { source = "claude", path = planted, roomId = "general" })).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await host.Client.DeleteAsync($"api/memory/proposals?source=claude&path={Uri.EscapeDataString(planted)}")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "claude", path = dir })).StatusCode);
         Assert.Equal("pending", proposals.Get(1)!.Status);
         Assert.Equal(2, proposals.List(null, null).Count);
 

@@ -147,6 +147,19 @@ public sealed class MemoryProposalStore(ChopDb db)
         return cmd.ExecuteNonQuery() == 1 ? Get(id) : null;
     }
 
+    /// <summary>Every PENDING proposal of one import, oldest first.</summary>
+    public IReadOnlyList<MemoryProposal> PendingOf(string source)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = Select + " WHERE source = $source AND status = 'pending' ORDER BY id";
+        cmd.Parameters.AddWithValue("$source", source);
+        using var reader = cmd.ExecuteReader();
+        var rows = new List<MemoryProposal>();
+        while (reader.Read()) rows.Add(Map(reader));
+        return rows;
+    }
+
     /// <summary>Discards every PENDING proposal of one import. Returns the count.</summary>
     public int DeletePending(string source)
     {

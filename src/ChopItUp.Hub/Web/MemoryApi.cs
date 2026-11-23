@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using ChopItUp.Core.Memory;
 using ChopItUp.Core.Messaging;
@@ -35,6 +36,7 @@ public static class MemoryApi
         api.MapPost("/proposals/{id:long}/approve", Approve);
         api.MapPost("/proposals/{id:long}/reject", Reject);
         api.MapPost("/import", Import);
+        api.MapPost("/import/approve", ApproveImport);
         api.MapDelete("/proposals", Discard);
         api.MapGet("/topics", ListTopics);
         api.MapGet("/topics/{slug}", GetTopic);
@@ -235,13 +237,13 @@ public static class MemoryApi
     /// editor's save (which hands it the row it just created) so the two doors cannot drift. Runs
     /// under <see cref="Decisions"/>, which the caller holds. Returns the refusal, or null and the
     /// decided row.</summary>
-    private static async Task<(IResult? Refusal, MemoryProposal? Decided)> ApproveCore(MemoryProposal p, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal)
+    private static async Task<(IResult? Refusal, MemoryProposal? Decided)> ApproveCore(MemoryProposal p, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, bool notes = true)
     {
         // Refuse before marking, so a refused row stays pending rather than becoming the replayable
         // approved-but-unwritten state. A row that is already approved (a Retry after a crash between
         // mark and write) skips the check: it was committed to when it passed, and Retry must be able
         // to finish it.
-        var provenance = $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
+        var provenance = Provenance(p, DateTimeOffset.UtcNow);
 
         // A rewrite's pre-write checks run on both the pending path and the Retry path (approved,
         // written_to still null), unlike the append/supersede checks below, which stay pending-only.
@@ -261,7 +263,7 @@ public static class MemoryApi
             {
                 var current = memory.ReadTopic(p.Topic)!.FullChars;
                 var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
-                if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                if (notes && RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
                 return (Results.Conflict(new { error = refused, chars, current, cap }), null);
             }
         }
@@ -281,7 +283,7 @@ public static class MemoryApi
                 {
                     var current = memory.ReadTopic(MemoryStore.CoreTopic)!.FullChars;
                     var refused = HubNotes.Refused(p, chars, current);   // the banner and the room note read the same text
-                    if (RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
+                    if (notes && RefusalNoted.TryAdd((memory.Root, p.Id), 0)) Note(store, signal, p.RoomId, refused);   // once per proposal per store per process, never per click
                     return (Results.Conflict(new { error = refused, chars, current, cap = MemoryStore.CoreChars }), null);
                 }
             }
@@ -310,9 +312,48 @@ public static class MemoryApi
         var removedTitles = beforeTitles is null ? null : beforeTitles.Except(memory.Titles(p.Topic), StringComparer.Ordinal).ToList();
         var hash = await git.CommitAsync($"Approve memory proposal #{p.Id} ({p.Topic}): {p.Title}");
         var decided = proposals.RecordWrite(p.Id, written, hash) ?? proposals.Get(p.Id)!;
-        Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
+        if (notes) Note(store, signal, decided.RoomId, HubNotes.Approved(decided, removedTitles));
         return (null, decided);
     }
+
+    private static string Provenance(MemoryProposal p, DateTimeOffset at) =>
+        $"approved {Timestamps.Stamp(at)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
+
+    /// <summary>Approve all for one import: every PENDING row of that origin, oldest first, through
+    /// <see cref="ApproveCore"/> under <see cref="Decisions"/>, so each row gets the same checks and
+    /// commit a single Approve gives it. A refused row stays pending and is reported, and the rows
+    /// after it still run. One summary note when anything was approved, never one per row.</summary>
+    private static async Task<IResult> ApproveImport(ImportBody body, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
+    {
+        var source = (body.Source ?? "").Trim().ToLowerInvariant();
+        if (!MemoryImport.Sources.Contains(source, StringComparer.Ordinal) || string.IsNullOrWhiteSpace(body.Path))
+            return Results.BadRequest(new { error = "source (claude or codex) and path are required." });
+        await Decisions.WaitAsync();
+        try
+        {
+            if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });
+            var approved = new List<MemoryProposal>();
+            var refused = new List<object>();
+            foreach (var p in proposals.PendingOf($"{source}:{body.Path}"))
+            {
+                // A spawn can start while this runs (spawns never take Decisions), and from then on a
+                // write could race its own memory reads, so the rest wait for the next click.
+                if (spawner.AnySpawnInFlight) { refused.Add(new { p.Id, error = SpawnRunning }); continue; }
+                var (refusal, decided) = await ApproveCore(p, proposals, memory, git, store, signal, notes: false);
+                if (decided is not null) approved.Add(decided);
+                else refused.Add(new { p.Id, error = ErrorOf(refusal) });
+            }
+            if (approved.Count > 0)
+                Note(store, signal, approved[0].RoomId, HubNotes.ImportApproved(source, body.Path!, approved.Count, refused.Count));
+            return Results.Json(new { approved = approved.Count, refused });
+        }
+        finally { Decisions.Release(); }
+    }
+
+    /// <summary>The <c>error</c> text of a refusal <see cref="ApproveCore"/> built.</summary>
+    private static string? ErrorOf(IResult? refusal) =>
+        refusal is IValueHttpResult { Value: { } value } && JsonSerializer.SerializeToElement(value).TryGetProperty("error", out var error)
+            ? error.GetString() : null;
 
     private static async Task<IResult> Reject(long id, MemoryProposalStore proposals, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
@@ -335,7 +376,7 @@ public static class MemoryApi
     /// skipped, so re-importing is safe; a draft that fails validation is skipped, never fatal. A folder
     /// over <see cref="MemoryImport.MaxDrafts"/> is refused whole. One summary note, never one per
     /// draft.</summary>
-    private static IResult Import(ImportBody body, MemoryProposalStore proposals, ParticipantStore participants, MessageStore store, MessageSignal signal, SpawnerService spawner)
+    private static IResult Import(ImportBody body, MemoryProposalStore proposals, ParticipantStore participants, MemoryStore memory, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
         if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });   // a spawn could import its own file under a vendor's name
         if (string.IsNullOrWhiteSpace(body.RoomId) || !store.RoomExists(body.RoomId)) return Results.NotFound(new { error = $"Unknown room '{body.RoomId}'." });
@@ -360,8 +401,23 @@ public static class MemoryApi
             try { added.Add(proposals.Create(body.RoomId, author, d.Topic, d.Title, d.Body, origin, flags: ProposalFlags.Compute(d.Body, fromDirectory: false))); imported++; }
             catch (ArgumentException) { skipped++; }
         }
-        Note(store, signal, body.RoomId, HubNotes.Imported(source, body.Path!, imported, skipped));
-        return Results.Json(new { imported, skipped, proposals = added.Select(Map) }, statusCode: StatusCodes.Status201Created);
+        var coreWarning = CoreWarning(added, memory);
+        var note = HubNotes.Imported(source, body.Path!, imported, skipped);
+        Note(store, signal, body.RoomId, coreWarning is null ? note : $"{note} {coreWarning}");
+        return Results.Json(new { imported, skipped, coreWarning, proposals = added.Select(Map) }, statusCode: StatusCodes.Status201Created);
+    }
+
+    /// <summary>What MEMORY.md would hold if every core row of this import were approved in turn, as a
+    /// warning when that passes <see cref="MemoryStore.CoreChars"/>, else null. Topic rows never
+    /// touch the core, so only drafts from a core file count.</summary>
+    private static string? CoreWarning(IReadOnlyList<MemoryProposal> added, MemoryStore memory)
+    {
+        var core = added.Where(p => p.Topic == MemoryStore.CoreTopic).ToList();
+        if (core.Count == 0) return null;
+        var current = memory.ReadTopic(MemoryStore.CoreTopic)?.FullChars ?? 0;
+        var now = DateTimeOffset.UtcNow;
+        var projected = current + core.Sum(p => memory.ProjectedCoreChars(null, p.Title, p.Body, Provenance(p, now)) - current);
+        return projected > MemoryStore.CoreChars ? HubNotes.CoreWarning(projected) : null;
     }
 
     /// <summary>Undo for a mis-targeted import: every PENDING proposal with that source goes. Approved
