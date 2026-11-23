@@ -160,6 +160,9 @@ record, and nothing is written until the owner approves that. The previous file 
 "Import memory" in the room header seeds the store from a vendor's own memory: point it at Claude
 Code's memory folder (one file per memory) or Codex's `~\.codex\memories\` (split on headings). Every
 file or section becomes a pending proposal authored as `claude` or `codex`; re-importing adds nothing.
+An import with two or more pending proposals gets one "Approve all" control in the memory panel. It
+writes them oldest first, leaves any the hub refuses pending, and posts one note. An import whose core
+entries would take `MEMORY.md` past its 6,000-character cap says so when it lands.
 
 Rollback: `data\memory\` is plain markdown and needs no rollback.
 

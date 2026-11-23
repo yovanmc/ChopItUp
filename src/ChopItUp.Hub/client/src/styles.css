@@ -1844,7 +1844,7 @@ input {
 .memory-imports {
   list-style: none;
   margin: 0;
-  padding: 4px 24px 0;
+  padding: 4px 24px 6px;
   display: grid;
   gap: 6px;
 }
