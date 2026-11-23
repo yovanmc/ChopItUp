@@ -58,12 +58,15 @@ public sealed class RoomArtifacts(MessageStore store, RoomPathRules rules)
     }
 
     /// <summary>Runs <paramref name="ensure"/> off the caller's thread and gives up after
-    /// <paramref name="limit"/>.</summary>
+    /// <paramref name="limit"/>. Never throws: the spawner waits on this answer before a room's next
+    /// launch, so a check that faults or is cancelled becomes a refusal too.</summary>
     public static async Task<Lease> WithinAsync(Func<Lease> ensure, TimeSpan limit)
     {
         var check = Task.Run(ensure);
-        if (await Task.WhenAny(check, Task.Delay(limit)) == check) return await check;
-        return new(null, $"the folder did not answer within {limit.TotalSeconds:0} s");
+        if (await Task.WhenAny(check, Task.Delay(limit)) != check)
+            return new(null, $"the folder did not answer within {limit.TotalSeconds:0} s");
+        try { return await check; }
+        catch (Exception e) { return new(null, e.Message); }
     }
 
     /// <summary>Walks <paramref name="folder"/> without following links and, with
