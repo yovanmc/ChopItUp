@@ -3,6 +3,7 @@ import type {
   MemoryEditResult,
   MemoryFile,
   MemoryFileText,
+  MemoryImportApproval,
   MemoryImportResult,
   MemoryPreview,
   MemoryProposal,
@@ -398,6 +399,18 @@ export async function discardImport(source: MemorySource, path: string, signal?:
     await write(`/api/memory/proposals?source=${source}&path=${encodeURIComponent(path)}`, { method: 'DELETE', signal }),
   );
   return result.discarded;
+}
+
+/** Approves every pending proposal of one import, oldest first. A refused row stays pending. */
+export async function approveImport(source: MemorySource, path: string, signal?: AbortSignal): Promise<MemoryImportApproval> {
+  return unwrap<MemoryImportApproval>(
+    await write('/api/memory/import/approve', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source, path }),
+      signal,
+    }),
+  );
 }
 
 export async function importMemory(

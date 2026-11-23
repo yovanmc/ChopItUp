@@ -29,6 +29,7 @@ import type {
   ExchangeSnapshot,
   MemoryImportResult,
   MemoryProposal,
+  MemorySource,
   Message,
   Room,
   RunSnapshot,
@@ -211,6 +212,7 @@ export default function App() {
   const [continuingRoots, setContinuingRoots] = useState<ReadonlySet<number>>(() => new Set());
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
   const [deciding, setDeciding] = useState<number | null>(null);
+  const [approvingImport, setApprovingImport] = useState<string | null>(null);
   const [skillProposals, setSkillProposals] = useState<SkillProposal[]>([]);
   const [decidingSkill, setDecidingSkill] = useState<number | null>(null);
   /** The hub's own refusal sentence per skill proposal, shown on the card that produced it rather
@@ -719,6 +721,31 @@ export default function App() {
     [roomId, loadProposals, refused],
   );
 
+  /** Approve all for one import. The hub writes what it can and leaves refused rows pending, so the
+   *  list is re-read either way and the banner names the first refusal. */
+  const approveImport = useCallback(
+    async (origin: string) => {
+      if (!roomId) return;
+      const colon = origin.indexOf(':');
+      setApprovingImport(origin);
+      try {
+        const result = await api.approveImport(origin.slice(0, colon) as MemorySource, origin.slice(colon + 1));
+        const [first] = result.refused;
+        setError(
+          first
+            ? `${result.approved} approved. ${result.refused.length} refused and still pending, first #${first.id}: ${first.error ?? 'refused'}`
+            : null,
+        );
+      } catch (failure) {
+        if (!refused(failure, 'That import was not approved.')) setError(api.describeError(failure));
+      } finally {
+        setApprovingImport(null);
+        loadProposals(roomId).catch(() => undefined);
+      }
+    },
+    [roomId, loadProposals, refused],
+  );
+
   /** The hub owner's word on a proposed skill, carrying the pasted bearer token and, on an approve, the
    *  tree hash the card displayed. Refusals (401/403 from the gate, 409 from a spawn in flight,
    *  a changed source or a stale installed-or-not state) land on the card that produced them and the
@@ -862,8 +889,10 @@ export default function App() {
             <MemoryPanel
               proposals={proposals}
               busyId={deciding}
+              busyImport={approvingImport}
               locked={(exchange?.inFlight.length ?? 0) > 0}
               onDecide={decide}
+              onApproveImport={approveImport}
             />
             <SkillPanel
               proposals={skillProposals}
