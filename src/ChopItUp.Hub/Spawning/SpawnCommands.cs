@@ -72,7 +72,7 @@ public static class SpawnCommands
     /// pre-approved, so start_job, cancel_job and run_gate reach the hub. Writes are confined to the
     /// working directory and any <c>--add-dir</c>; reads are not confined, and user package caches
     /// (an uncached NuGet package, for one) cannot be written.</summary>
-    public static readonly string[] CodexSandbox =
+    public static readonly IReadOnlyList<string> CodexSandbox =
     [
         "-c", $"mcp_servers.{McpServerName}.default_tools_approval_mode=approve",
         "-c", "sandbox_workspace_write.network_access=true",
