@@ -90,7 +90,15 @@ public static class SpawnOutput
     /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
     /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
     /// WebSearch marked "(not completed)". Same caps as the shell lists.</summary>
-    public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout)
+    public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout) =>
+        CodexCalls(stdout).Where(c => c.Tool != ShellTool).ToList();
+
+    public const string ShellTool = "Shell";
+
+    /// <summary>Codex: every web_search item (as <see cref="CodexWebRequests"/> reads it) and every
+    /// command_execution item (as a <see cref="ShellTool"/> call with its command), in one first-seen
+    /// order, for a plain room's calls note. Same caps as the shell lists.</summary>
+    public static IReadOnlyList<WebRequest> CodexCalls(string stdout)
     {
         var order = new List<string>();
         var byId = new Dictionary<string, (WebRequest Call, bool Completed)>(StringComparer.Ordinal);
@@ -98,14 +106,18 @@ public static class SpawnOutput
         foreach (var root in Lines(stdout))
         {
             var type = Str(root, "type");
-            if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item)
-                || item.ValueKind != JsonValueKind.Object || Str(item, "type") != "web_search") continue;
+            if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) continue;
+            var kind = Str(item, "type");
+            if (kind is not ("web_search" or "command_execution")) continue;
+            if (kind == "command_execution" && Str(item, "command") is null) continue;
             var id = Str(item, "id") ?? $"anon-{anonymous++}";
             if (byId.TryGetValue(id, out var seen) && seen.Completed) continue;
             if (!byId.ContainsKey(id)) order.Add(id);
-            byId[id] = type == "item.completed"
-                ? (CompletedWebSearch(item), true)
-                : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + " (not completed)", false), false);
+            byId[id] = kind == "command_execution"
+                ? (new WebRequest(ShellTool, Str(item, "command")!, false), type == "item.completed")
+                : type == "item.completed"
+                    ? (CompletedWebSearch(item), true)
+                    : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + " (not completed)", false), false);
         }
         return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).Take(MaxCommands).ToList();
     }

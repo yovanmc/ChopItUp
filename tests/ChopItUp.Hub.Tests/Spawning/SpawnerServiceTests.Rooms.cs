@@ -145,6 +145,95 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.Contains("\nWeb requests (3):\n  1. WebSearch: red query\n  2. WebFetch: https://example.com/?k=<token>\n  3. WebFetch: http://127.0.0.1:8790/api/rooms [denied]", body);
         Assert.Contains("echo " + new string('x', 380) + "<token>", body);
         Assert.DoesNotContain(token[..12], body);
+        Assert.DoesNotContain(await MessagesIn("lab-web"), m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by"));   // the commit is the record here
+    }
+
+    private static string TokenOf(ProcessSpec spec)
+    {
+        var args = spec.Arguments.ToList();
+        using var doc = JsonDocument.Parse(File.ReadAllText(args[args.IndexOf("--mcp-config") + 1]));
+        return doc.RootElement.GetProperty("mcpServers").GetProperty("chopitup").GetProperty("headers").GetProperty("Authorization").GetString()!["Bearer ".Length..];
+    }
+
+    /// <summary>A plain room has no commit trail, so its spawn's web calls go to one fenced room note,
+    /// stripped and scrubbed like the commit's lines; the launch carries the loopback deny list.</summary>
+    [Fact]
+    public async Task A_plain_room_claude_spawns_web_calls_reach_one_fenced_note_stripped_and_scrubbed()
+    {
+        string token = "", settings = "";
+        _runner.Handler = async (spec, _, _) =>
+        {
+            token = TokenOf(spec);
+            var args = spec.Arguments.ToList();
+            settings = File.ReadAllText(args[args.IndexOf("--settings") + 1]);
+            await PostAs("sonnet", "Looked it up.");
+            return FakeProcessRunner.Ok($$$$$"""
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w1","name":"WebSearch","input":{"query":"\u001b[31mred\u001b[0m query"}}]}}
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w2","name":"WebFetch","input":{"url":"https://example.com/?k={{{{{token}}}}}"}}]}}
+                {"type":"assistant","message":{"content":[{"type":"tool_use","id":"w3","name":"WebFetch","input":{"url":"http://127.0.0.1:8790/api/rooms"}}]}}
+                {"type":"result","subtype":"success","is_error":false,"result":"done","permission_denials":[{"tool_name":"WebFetch","tool_use_id":"w3"}]}
+                """);
+        };
+
+        await PostAsOwner("@sonnet look it up");
+        await _runner.NextSpecAsync(Wait);
+        var note = await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by sonnet (3)."));
+        Assert.Contains("```text\n1. WebSearch \"red query\"\n2. WebFetch \"https://example.com/?k=<token>\"\n3. WebFetch \"http://127.0.0.1:8790/api/rooms\" [denied]\n```", note.Body);
+        Assert.DoesNotContain(token[..12], note.Body);
+        Assert.Contains("WebFetch(domain:[::1])", settings);
+        Assert.Contains("WebFetch(domain:127.0.0.1)", settings);
+    }
+
+    [Fact]
+    public async Task A_plain_room_codex_spawns_searches_and_commands_reach_one_note_in_order()
+    {
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAs("gpt-6-astra", "Searched.");
+            return FakeProcessRunner.Ok(
+                "{\"type\":\"item.completed\",\"item\":{\"id\":\"w1\",\"type\":\"web_search\",\"query\":\"q\",\"action\":{\"type\":\"search\",\"query\":\"dotnet 10\"}}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"curl https://example.com\"}}\n"
+                + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\n");
+        };
+
+        await PostAsOwner("@gpt-6-astra search it");
+        await _runner.NextSpecAsync(Wait);
+        var note = await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by gpt-6-astra (2)."));
+        Assert.Contains("```text\n1. WebSearch \"dotnet 10\"\n2. Shell \"curl https://example.com\"\n```", note.Body);
+    }
+
+    [Fact]
+    public async Task A_plain_room_spawn_with_no_web_call_posts_no_calls_note()
+    {
+        _runner.Handler = async (_, _, _) => { await PostAs("sonnet", "No lookups."); return FakeProcessRunner.Ok(FakeProcessRunner.StreamDone); };
+        await PostAsOwner("@sonnet just answer");
+        await _runner.NextSpecAsync(Wait);
+        await WaitForStatus("concluded");
+        await Spawner.InLoopAsync(() => true);
+        Assert.DoesNotContain(await Messages(), m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by"));
+    }
+
+    private const string OneSearch = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"late\"}}]}}\n";
+
+    /// <summary>The note is posted on every end path, not only a clean finish.</summary>
+    [Fact]
+    public async Task A_timed_out_plain_spawn_still_posts_its_calls_note()
+    {
+        _runner.Handler = (_, timeout, _) => Task.FromResult(new ProcessResult(null, true, false, OneSearch, "", timeout));
+        await PostAsOwner("@sonnet look slowly");
+        await _runner.NextSpecAsync(Wait);
+        await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by sonnet (1).") && m.Body.Contains("WebSearch \"late\""));
+    }
+
+    /// <summary>A relay leg finishes through the mode branch and still posts its calls note.</summary>
+    [Fact]
+    public async Task A_plain_room_relay_leg_posts_its_calls_note()
+    {
+        Mode("relay");
+        _runner.Handler = (spec, _, _) => Task.FromResult(FakeProcessRunner.Ok(FakeProcessRunner.ParticipantOf(spec) == "sonnet"
+            ? OneSearch.Replace("late", "relayed") + "{\"type\":\"result\",\"result\":\"relay first\"}\n" : FakeProcessRunner.StreamDone));
+        await PostAsOwner("Relay with a lookup.");
+        await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by sonnet (1).") && m.Body.Contains("WebSearch \"relayed\""));
     }
 
     [Theory]
@@ -681,12 +770,15 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
     }
 
     [Fact]
-    public async Task M9_A6_a_null_directory_room_keeps_the_m5_command_line_byte_for_byte()
+    public async Task A_null_directory_room_launches_claude_with_only_the_web_tools_and_its_settings_in_the_scratch_folder()
     {
         await PostAsOwner("@opus hi");
         var spec = await _runner.NextSpecAsync(Wait);
-        Assert.Equal(["-p", "--tools", "", "--strict-mcp-config", "--mcp-config", spec.Arguments[5], "--allowedTools", SpawnCommands.ClaudeToolAllowed,
-                      "--no-session-persistence", "--model", "opus", "--output-format", "json", "--disable-slash-commands", "--setting-sources", ""],
+        var mcp = Path.Combine(spec.WorkingDirectory, "mcp.json");
+        var settings = Path.Combine(spec.WorkingDirectory, "settings.json");
+        Assert.Equal(["-p", "--permission-mode", "dontAsk", "--tools", "WebSearch,WebFetch", "--strict-mcp-config", "--mcp-config", mcp,
+                      "--allowedTools", "WebSearch,WebFetch," + SpawnCommands.ClaudeToolAllowed, "--settings", settings, "--append-system-prompt", SpawnPrompt.PlainRoomTools("claude"),
+                      "--no-session-persistence", "--model", "opus", "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", ""],
             spec.Arguments);
         Assert.StartsWith(Path.Combine(_dir, "spawns"), spec.WorkingDirectory);
         Assert.DoesNotContain("Files: this room's directory", spec.StandardInput);

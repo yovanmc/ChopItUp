@@ -189,6 +189,16 @@ public sealed class SpawnOutputTests
         { "nothing listed", "", [] },
     };
 
+    [Fact]
+    public void Codex_calls_list_searches_and_commands_in_one_first_seen_order()
+    {
+        var stdout = "{\"type\":\"item.started\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"ls\"}}\n"
+            + "{\"type\":\"item.completed\",\"item\":{\"id\":\"w1\",\"type\":\"web_search\",\"action\":{\"type\":\"search\",\"query\":\"q\"}}}\n"
+            + "{\"type\":\"item.completed\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"ls -la\"}}\n"
+            + "{\"type\":\"item.completed\",\"item\":{\"id\":\"m1\",\"type\":\"mcp_tool_call\"}}\n";
+        Assert.Equal([new WebRequest(SpawnOutput.ShellTool, "ls -la", false), new WebRequest("WebSearch", "q", false)], SpawnOutput.CodexCalls(stdout));
+    }
+
     [Theory]
     [MemberData(nameof(CodexWebCases))]
     public void Codex_web_requests_name_each_search_or_page_in_order(string _, string stdout, WebRequest[] expected) =>

@@ -92,7 +92,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.True(openBeforeStart);
         var root = Row("general", "@opus two parts please").Id;
         Assert.Equal(new TaskStart(SpawnIdOf(spec), "general", "opus", "claude", "opus", null, root, 1, null, false, task.Start.StartedAt), task.Start);
-        Assert.Equal(new TaskEnd(task.End!.EndedAt, 1, 0, TaskTermination.Completed, null, 2, Block("claude-opus-5-5", 7)), task.End);
+        Assert.Equal(new TaskEnd(task.End!.EndedAt, 1, 0, TaskTermination.Completed, 0, 2, Block("claude-opus-5-5", 7)), task.End);
         Assert.True(task.End.EndedAt >= task.Start.StartedAt);
     }
 
@@ -184,22 +184,23 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
     }
 
     [Fact]
-    public async Task A_plain_codex_reply_quoting_an_event_line_is_stamped_and_reads_as_not_reported()
+    public async Task A_plain_room_codex_spawn_stores_the_usage_of_its_last_turn_and_counts_its_calls()
     {
         _runner.Handler = async (_, _, _) =>
         {
             await PostAs("gpt-6-astra", "codex reply");
-            return FakeProcessRunner.Ok("codex reply\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n");
+            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"i1\",\"type\":\"agent_message\",\"text\":\"{\\\"type\\\":\\\"turn.completed\\\"}\"}}\n"
+                + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n");
         };
         await PostAsOwner("@gpt-6-astra show me an event");
         var spec = await _runner.NextSpecAsync(Wait);
         await WaitForStatus("concluded");
         await Spawner.InLoopAsync(() => true);
 
-        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "codex reply").Id));
+        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), """{"host":"codex","usage":{"input_tokens":1}}"""), await WaitForUsage(Row("general", "codex reply").Id));
         var task = await WaitForTask("general", SpawnIdOf(spec));
-        Assert.Equal(("codex", "gpt-6-astra", TaskTermination.Completed, (int?)null, (string?)null),
-            (task.Start.Host, task.Start.RequestedModel, task.End!.Termination, task.End.ToolCalls, task.End.Usage));
+        Assert.Equal(("codex", "gpt-6-astra", TaskTermination.Completed, (int?)0),
+            (task.Start.Host, task.Start.RequestedModel, task.End!.Termination, task.End.ToolCalls));
     }
 
     [Fact]

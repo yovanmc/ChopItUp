@@ -220,6 +220,26 @@ public sealed class SpawnerServiceLimitsTests
         Assert.Equal("sonnet", FakeProcessRunner.ParticipantOf(await runner.NextSpecAsync(Wait)));
     }
 
+    /// <summary>A held spawn leaves OnFinished early, after its plain-room calls note.</summary>
+    [Fact]
+    public async Task A_plain_room_spawn_held_for_a_limit_still_posts_its_calls_note()
+    {
+        var (host, runner, _) = await StartRunHostAsync(Instant, RunLimits.Default, Clock());
+        await using var _ = host;
+        host.Services.GetRequiredService<MessageStore>().CreateRoom("plain", "PLAIN", null);
+        var failed = ClaudeFailed(ClaudeLimit);
+        runner.Handler = (_, _, _) => Task.FromResult(failed with
+        {
+            StandardOutput = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"before the limit\"}}]}}\n" + failed.StandardOutput,
+        });
+
+        await Post(host, "plain", "@sonnet hello");
+        await runner.NextSpecAsync(Wait);
+        await WaitForNoteContaining(host, "plain", "Asking it again at 2026-11-20 15:02 hub time");
+        var note = await WaitForNoteContaining(host, "plain", "Web and shell calls by sonnet (1).");
+        Assert.Contains("WebSearch \"before the limit\"", note.Body);
+    }
+
     /// <summary>Outside a run, a limit with no reset time gets one note naming it, and the participant
     /// is not asked again.</summary>
     [Fact]
