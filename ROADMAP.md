@@ -7,6 +7,7 @@ Local Windows hub where Yovan, Claude and GPT share rooms over MCP on their own 
 ## Milestones
 | # | Title | Status | Ready | Plan | Notes |
 |---|-------|--------|-------|------|-------|
+| 109 | Room reads from inside a spawn | [ ] | OWNER: choose A document it, B room-scoped spawn tokens plus peer read refusal, C B plus a read fence | — | A spawn reads any room by `GET /api` (`Security/BearerTokenMiddleware.cs:40`), its own bearer via `read_messages` (`Mcp/RoomTools.cs:56`), or `chopitup.db` on disk; no CLI confines reads [V 2026-11-23 c8b347e2]. |
 | 54 | Joined hosts with bounded delegation | [ ] | BACKLOG | — | A `claude-code` row and a mention-capable `codex` row for the native sessions, bounded delegation per room, never an owner credential in a worker; the README's Claude Code paragraph rewritten. |
 | 55 | Phone access via Tailscale | [ ] | BACKLOG | — | `tailscale serve localhost:8790` plus an allowed-host knob for the Host gate (Hosting/LoopbackHostFilter.cs); then a layout under ~640px (styles.css:1554 is the only width breakpoint). Tailscale not installed yet. |
 | 56 | Memory import at scale | [ ] | BACKLOG | — | 67 topic files become 67 single approvals (MemoryApi.cs:357-362); approve-all per import; warn when the core would exceed 6,000. |
