@@ -41,6 +41,9 @@ untouched old rows and an empty tasks route are checked): `pwsh tools\Invoke-Spa
 Spawn tasks check (real Sonnet, one call, spends; scratch hub): `GET /api/rooms/general/tasks` reports
 one completed task whose spawn id matches the hub's log line, with requested model sonnet, a positive
 duration, one post, token numbers and a reported Sonnet model: `pwsh tools\Invoke-SpawnTasksCheck.ps1 [-HubExe <exe>]`.
+Plain-room web check (real Sonnet and real Codex, two calls, spends; scratch hub): each host searches
+in the plain general room and the hub posts one fenced note listing its calls; the Claude note marks a
+fetch of the hub's own loopback `/health` as denied: `pwsh tools\Invoke-PlainWebCheck.ps1 [-HubExe <exe>]`.
 Run notification check (no model calls: the shell and its scratch hub see only a fake `claude.cmd`;
 interactive desktop): a hidden shell shows one held and one parked notification for a fabricated run,
 and a UIA click on the notification opens the room. With Windows notifications off for the user, the
