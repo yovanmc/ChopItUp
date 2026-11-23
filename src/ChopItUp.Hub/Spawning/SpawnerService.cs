@@ -1348,7 +1348,7 @@ public sealed partial class SpawnerService : BackgroundService
     /// launch task can post it after a hub stop closed the loop's channel.</summary>
     private void PostCallsNote(string roomId, string participantId, IReadOnlyList<WebRequest>? calls)
     {
-        if (calls is { Count: > 0 } && HubNotes.Calls(participantId, calls, atLeast: calls.Count >= SpawnOutput.MaxCommands) is { } note)
+        if (calls is { Count: > 0 } && HubNotes.Calls(participantId, calls) is { } note)
             PostNote(roomId, note);
     }
 
