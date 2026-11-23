@@ -141,6 +141,30 @@ public sealed class SpawnOutputTests
     public void Usage_keeps_only_the_reported_usage_fields_and_is_null_when_nothing_was_reported(string _, string host, bool structured, string stdout, string? expected) =>
         Assert.Equal(expected, SpawnOutput.Usage(host, structured, stdout));
 
+    public static TheoryData<string, string, bool, string, int?> ToolCallCases => new()
+    {
+        // Claude stream-json: every tool_use block, denied ones included.
+        { "claude stream-json lists five calls", "claude", true, ClaudeStream, 7 },
+        { "claude stream-json with no calls", "claude", true, "{\"type\":\"system\",\"subtype\":\"init\"}\n{\"type\":\"result\",\"result\":\"ok\"}\n", 0 },
+        { "claude plain json lists no calls", "claude", false, """{"type":"result","num_turns":3,"result":"ok"}""", null },
+        // Codex --json: allow-listed item types, once per id.
+        { "codex items paired by id", "codex", true, CodexStream, 2 },
+        { "codex mcp, file and web items count, messages do not", "codex", true,
+          "{\"type\":\"item.completed\",\"item\":{\"id\":\"a\",\"type\":\"agent_message\",\"text\":\"x\"}}\n" +
+          "{\"type\":\"item.started\",\"item\":{\"id\":\"b\",\"type\":\"mcp_tool_call\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"b\",\"type\":\"mcp_tool_call\"}}\n" +
+          "{\"type\":\"item.completed\",\"item\":{\"id\":\"c\",\"type\":\"file_change\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"d\",\"type\":\"web_search\"}}\n" +
+          "{\"type\":\"item.completed\",\"item\":{\"id\":\"e\",\"type\":\"reasoning\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}\n", 4 },
+        { "plain codex lists no calls", "codex", false, "done\n", null },
+        { "empty kept stream (an overflow keeps none)", "claude", true, "", null },
+        { "hostile shapes never throw", "codex", true, "{\"type\":\"item.completed\",\"item\":[1]}\n{\"type\":\"item.completed\",\"item\":{\"id\":7,\"type\":\"mcp_tool_call\"}}\n[1,2]\n{\"type\":\"assistant\",\"message\":{\"content\":\"text\"}}\n", 1 },
+        { "hostile claude shapes never throw", "claude", true, "{\"type\":\"assistant\",\"message\":[1]}\n{\"type\":\"assistant\",\"message\":{\"content\":[1,\"x\",{\"type\":\"tool_use\"}]}}\n", 1 },
+    };
+
+    [Theory]
+    [MemberData(nameof(ToolCallCases))]
+    public void Tool_calls_are_counted_only_from_streams_that_list_them(string _, string host, bool stream, string stdout, int? expected) =>
+        Assert.Equal(expected, SpawnOutput.ToolCalls(host, stream, stdout));
+
     [Fact]
     public void M9_A9_flatten_folds_line_breaks_caps_at_400_characters_and_the_list_caps_at_50()
     {
