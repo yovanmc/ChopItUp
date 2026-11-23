@@ -127,6 +127,9 @@ public sealed class ModeLeg
     public required string FrozenContext { get; init; }
     public required IReadOnlyDictionary<string, string?> Roles { get; init; }
     public Dictionary<string, string?> Answers { get; } = new(StringComparer.Ordinal);
+    /// <summary>The spawn behind each panel first-pass answer and the usage it reported, for the row the
+    /// hub posts later.</summary>
+    public Dictionary<string, (string SpawnId, string? Usage)> Spawns { get; } = new(StringComparer.Ordinal);
 
     public string? SnapshotRoot { get; set; }
     public string? Commit { get; set; }
