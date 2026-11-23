@@ -104,12 +104,12 @@ public static class HubNotes
     /// enough to fence is broken up. A tool name that is not a plain word is encoded with its target
     /// under the label "Call". At most <see cref="CallsNoteLines"/> lines, each target cut at
     /// <see cref="CallsNoteChars"/> characters before encoding, then a count of the rest; the header
-    /// gives the total, "at least" when a parser hit its cap. Null when there is no call.</summary>
-    public static string? Calls(string participantId, IReadOnlyList<WebRequest> calls, bool atLeast)
+    /// gives the total. Null when there is no call.</summary>
+    public static string? Calls(string participantId, IReadOnlyList<WebRequest> calls)
     {
         if (calls.Count == 0) return null;
         var sb = new System.Text.StringBuilder();
-        sb.Append("Web and shell calls by ").Append(participantId).Append(" (").Append(atLeast ? "at least " : "").Append(calls.Count)
+        sb.Append("Web and shell calls by ").Append(participantId).Append(" (").Append(calls.Count)
           .Append("). The text below was written by ").Append(participantId).Append("'s calls, not by the hub.\n\n```text\n");
         for (var i = 0; i < Math.Min(calls.Count, CallsNoteLines); i++)
         {
