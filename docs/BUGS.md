@@ -39,8 +39,11 @@
 - 95 chore: the artifacts folder check says it reads a file after the run closed, but the run scenarios wait only for the first commit note · `tools/Invoke-ArtifactsFolderCheck.ps1:14` "`file-written`", `:128` "`^Committed `" · [V 2026-11-18 af5d5f39]
 =======
 - 96 chore: the video branch sets `owned = null` before `new FileStream(handle, ...)` runs, so a constructor that throws leaves the handle open until finalization · `src/ChopItUp.Hub/Web/RoomFilesApi.cs:167` "`owned = null;`" · [V 2026-11-19 471cf49e]
+<<<<<<< HEAD
 >>>>>>> 3e8b5a0 (bug 95: Say when the artifacts check reads a run's file)
 - 97 chore: no room file test rewrites a served file at the same length and revalidates with the old ETag, and two `./` rows start a hub to drive a strip `RoomFileRefTests` already pins · `tests/ChopItUp.Hub.Tests/RoomFilesApiTests.cs:96-97`, `:113` · [V 2026-11-19 400f2a0c]
+=======
+>>>>>>> d162f97 (bug 97: Revalidate a same-length rewrite with the old ETag, drop two strip rows)
 - 98 chore: four copies of the `mklink /J` test helper · `tests/ChopItUp.Hub.Tests/RoomFilesApiTests.cs:47`, `Rooms/RoomArtifactsTests.cs:54`, `Rooms/RoomPathsTests.cs:89`, `Skills/SkillImportTests.cs:77` · [V 2026-11-19 400f2a0c]
 - 99 chore: three factories build `RoomPathRules.ForHub(options.DataDir)` inline beside the registered rules · `src/ChopItUp.Hub/Hosting/HubHost.cs:153-156` · [V 2026-11-19 400f2a0c]
 - 100 chore: the Hub.Tests class inventory says it lists every class but omits `RoomFilesApiTests` (R4, R8), `RoomFileRefTests` and `FinalPathTests`, so its totals are stale · `docs/testing/hub-test-resources.md:118` · [V 2026-11-19 400f2a0c]
