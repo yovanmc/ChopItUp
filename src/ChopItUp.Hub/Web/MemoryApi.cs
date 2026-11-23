@@ -47,6 +47,8 @@ public static class MemoryApi
 
     private static string PathOf(string slug) => slug == MemoryStore.CoreTopic ? MemoryStore.CoreFileName : $"{MemoryStore.TopicsDirName}/{slug}.md";
     private static int CapOf(string slug) => slug == MemoryStore.CoreTopic ? MemoryStore.CoreChars : MemoryStore.TopicChars;
+    /// <summary>A room topic is written up to its cap, but a spawn in that room reads only its head.</summary>
+    private static int? SpawnReadsOf(string slug) => slug.StartsWith("room-", StringComparison.Ordinal) ? MemoryStore.RoomChars : null;
     /// <summary>CRLF and lone CR both become LF: the store writes LF and a browser textarea holds LF.</summary>
     private static string Lf(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n');
     /// <summary>The stale-edit token, over LF-normalised text so a CRLF file on disk, the hub's reply
@@ -60,11 +62,11 @@ public static class MemoryApi
     private static string Provisional(string author, string roomId) =>
         $"approved {Timestamps.Stamp(DateTimeOffset.UtcNow)} proposal {new string('9', 12)} by {author} in room {roomId}";
     private static object FileRow(MemoryStore memory, string slug) =>
-        new { slug, path = PathOf(slug), chars = memory.ReadTopic(slug, int.MaxValue) is { } t ? Lf(t.Text).Length : 0, cap = CapOf(slug) };
+        new { slug, path = PathOf(slug), chars = memory.ReadTopic(slug, int.MaxValue) is { } t ? Lf(t.Text).Length : 0, cap = CapOf(slug), spawnReads = SpawnReadsOf(slug) };
     private static object FileBody(string slug, string text)
     {
         var lf = Lf(text);
-        return new { slug, path = PathOf(slug), text = lf, chars = lf.Length, cap = CapOf(slug), hash = Hash(lf) };
+        return new { slug, path = PathOf(slug), text = lf, chars = lf.Length, cap = CapOf(slug), spawnReads = SpawnReadsOf(slug), hash = Hash(lf) };
     }
 
     /// <summary>The editor's file list: the core first, then every topic in slug order, each with its

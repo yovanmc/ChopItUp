@@ -22,16 +22,22 @@ export function setRoster(list: Participant[]): void {
   roster = new Map(list.map((p) => [p.id.toLowerCase(), p]));
   const mentionable = list.filter((p) => p.kind !== 'system');
   const alternation = mentionable.map((p) => escape(p.id)).join('|');
-  mention = mentionable.length === 0 ? null : new RegExp(`@(${alternation})(?!\\.?[\\w-])`, 'gi');
+  mention = mentionable.length === 0 ? null : new RegExp(`@(${alternation})(?!\\.?${WORD})`, 'giu');
   // The reference reader adds the lookbehind `Mentions.Find` has and the highlighter deliberately
   // lacks: `me@opus writes` decorates in the thread but names nobody, and the two readers have to
   // answer that body the same way.
-  reference = mentionable.length === 0 ? null : new RegExp(`(?<![\\w-])@(${alternation})(?!\\.?[\\w-])`, 'gi');
+  reference = mentionable.length === 0 ? null : new RegExp(`(?<!${WORD})@(${alternation})(?!\\.?${WORD})`, 'giu');
 }
 
-/** Ids like `gpt-5.5` carry regex metacharacters; the alternation must match them literally. */
+/** What continues a word around an id, for the highlighter and the reference reader alike. Twin of
+ *  the class in `Mentions` (Core): a letter, a digit, `_` or `-`, and any astral code point, because
+ *  .NET sees an astral character as a surrogate pair it cannot classify. Needs the `u` flag. */
+const WORD = '[\\p{L}\\p{N}_\\u{10000}-\\u{10FFFF}-]';
+
+/** Ids like `gpt-5.5` carry regex metacharacters; the alternation must match them literally. A `-`
+ *  is literal outside a class, and the `u` flag refuses an escape it does not need. */
 function escape(id: string): string {
-  return id.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  return id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** `null` before the roster has loaded: nothing is decorated rather than something wrong. The
@@ -51,7 +57,9 @@ export interface Recipients {
   turns: { turns: number; valid: boolean } | null;
 }
 
-const SLASH = /^\/([a-z0-9][a-z0-9-]{0,63})(?=[ \t]|\n|$)/;
+// Twin of `SlashCommands.Pattern` on "\r\n"-normalized text: arguments run to a line feed or the end,
+// so a lone CR on the first line makes it no command on both sides.
+const SLASH = /^\/([a-z0-9][a-z0-9-]{0,63})(?:[ \t]+[^\r\n]*)?(?=\n|$)/;
 const PHASE = /^phase:[ \t]+(plan|build|critique|verify|ping)(?:\/[a-z0-9][a-z0-9-]{0,31})?(?=[ \t]|\n|$)/;
 // Sticky (`y`) is `\G`'s twin; `u` is what makes `\p{L}`/`\p{N}` work. Classes are spelled out in ASCII
 // on purpose: `\w`/`\s` mean different things to V8 and to .NET, and the two readers must agree.
