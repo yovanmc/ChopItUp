@@ -2485,6 +2485,24 @@ input {
   width: min(760px, 100%);
 }
 
+/* The dialog is a flex column that scrolls, so without this every child shrinks once the rows are
+   taller than the dialog: the persona box went to one line. */
+.roles-dialog > * {
+  flex-shrink: 0;
+}
+
+/* The dialog is the one scroller, so its head stays pinned and the X, the only close control, stays
+   in reach. The negative margins take the head to the dialog's edges so rows pass under it. */
+.roles-dialog .dialog-head {
+  position: sticky;
+  top: -18px;
+  z-index: 1;
+  margin: -18px -20px 0;
+  padding: 18px 20px 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
 .roles-text {
   resize: vertical;
   font-size: 13px;
@@ -2499,14 +2517,24 @@ input {
   margin-top: 6px;
 }
 
+/* Outlined so a card's actions read as buttons against --raised, not as dim links. */
+.roles-card .roles-actions .quiet {
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.roles-card .roles-actions .quiet:disabled {
+  color: var(--faint);
+}
+
+/* No scroller of its own: an inner one took its scrollbar's width from every card and cut the card
+   below its edge. */
 .roles-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin: 4px 0 0;
   padding: 0;
-  max-height: 46vh;
-  overflow-y: auto;
   list-style: none;
 }
 
