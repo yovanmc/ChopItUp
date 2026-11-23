@@ -45,9 +45,9 @@ export default function RecipientStrip({ draft }: { draft: string }) {
       <span className="dispatch-preview">{action} No participant is spawned.</span>
     </div>;
   }
-  const { recipients, unknown: read, references: named, turns } = recipientsOf(body);
+  const { recipients, unknown: read, references: inText, turns } = recipientsOf(body);
   // The hub's reference note names only rows it could have spawned; any other inline id is ignored.
-  const references = named.filter(isSpawnable);
+  const references = inText.filter(isSpawnable);
   // A word the draft ends with has no separator after it yet, so it is still half-typed. Flagging it
   // would announce "@o matches nobody", then "@op", then "@opu" on the way to a perfectly good @opus.
   const trailing = /@([A-Za-z0-9][A-Za-z0-9_.-]*)$/.exec(draft);
