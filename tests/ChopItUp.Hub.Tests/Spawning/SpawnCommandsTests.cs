@@ -115,14 +115,14 @@ public sealed class SpawnCommandsTests
                  {
                      "Bash(git commit *)", "Bash(git commit)", "Bash(git push *)", "Bash(git add *)", "Bash(git reset)", "Bash(git -*)", "Bash(git.exe *)", "Bash(git.exe)",
                      "Edit(.git/**)", "Write(.git/**)", "Read(~/.ssh/**)", "Read(~/.claude/**)", "Read(~/.codex/**)", "Write(~/.claude/**)", "Edit(~/.codex/**)", "Write(~/.ssh/**)",
-                     "WebFetch(domain:127.0.0.1)", "WebFetch(domain:localhost)", "WebFetch(domain:[::1])",   // measured on 2.1.328: denied before any connection
+                     "WebFetch(domain:127.0.0.1)", "WebFetch(domain:localhost)", "WebFetch(domain:[::1])", "WebFetch(domain:0.0.0.0)",   // measured on 2.1.328: denied before any connection
                  })
             Assert.Contains(expected, deny);
         Assert.DoesNotContain("Bash(git log *)", deny);
         Assert.DoesNotContain("Bash(git status *)", deny);
         Assert.DoesNotContain("Bash(git *)", deny);
         Assert.DoesNotContain("Bash(*git.exe *)", deny);   // leading wildcards do not match on 2.1.220 (claim 35); a rule that looks like a fence and is not
-        Assert.Equal(SpawnCommands.GitWriteVerbs.Length * 2 + 5 + SpawnCommands.CredentialFolders.Length * 3 + 3, deny.Count);
+        Assert.Equal(SpawnCommands.GitWriteVerbs.Length * 2 + 5 + SpawnCommands.CredentialFolders.Length * 3 + 4, deny.Count);
     }
 
     [Fact]

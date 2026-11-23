@@ -181,6 +181,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         Assert.Contains("```text\n1. WebSearch \"red query\"\n2. WebFetch \"https://example.com/?k=<token>\"\n3. WebFetch \"http://127.0.0.1:8790/api/rooms\" [denied]\n```", note.Body);
         Assert.DoesNotContain(token[..12], note.Body);
         Assert.Contains("WebFetch(domain:[::1])", settings);
+        Assert.Contains("WebFetch(domain:0.0.0.0)", settings);
         Assert.Contains("WebFetch(domain:127.0.0.1)", settings);
     }
 

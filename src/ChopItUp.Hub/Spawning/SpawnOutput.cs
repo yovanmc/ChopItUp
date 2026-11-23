@@ -4,7 +4,8 @@ namespace ChopItUp.Hub.Spawning;
 
 public sealed record ShellCommand(string Command, bool Denied);
 
-/// <summary>One web call a Claude spawn made: <c>WebSearch</c> with its query or <c>WebFetch</c> with its URL.</summary>
+/// <summary>One call a spawn made, for a commit trail or a plain room's calls note: a Claude <c>WebSearch</c> query or
+/// <c>WebFetch</c> URL, or a Codex web search, shell command or MCP call outside the hub.</summary>
 public sealed record WebRequest(string Tool, string Target, bool Denied);
 
 /// <summary>Reads the two CLIs' structured stdout for what the trail records: which shell commands
@@ -188,7 +189,7 @@ public static class SpawnOutput
     /// <paramref name="stream"/> is true only for the shapes that list calls: Claude `stream-json`
     /// (every <c>tool_use</c> block, denied ones and <c>post_message</c> included) and Codex `--json`
     /// (each command, file change, MCP call or web search item, once per item id; an item without a
-    /// string id counts once per completed event). Plain Claude json, plain Codex text and an empty kept
+    /// string id counts once per completed event). Claude `json` (a panel leg), text output and an empty kept
     /// stream (an output overflow keeps none) give null, never 0. Shapes it does not expect are
     /// skipped.</summary>
     public static int? ToolCalls(string host, bool stream, string stdout)
@@ -223,7 +224,7 @@ public static class SpawnOutput
     /// Claude: <c>usage</c> and <c>modelUsage</c> from the result object (`json`) or the last result
     /// line (`stream-json`). Codex: <c>usage</c> from the last <c>turn.completed</c> line (`--json`).
     /// <paramref name="host"/> is the hub's record of the CLI it launched, not a reported value, and
-    /// <c>modelUsage</c>'s keys are the only model names a reader may attribute. Plain Codex output
+    /// <c>modelUsage</c>'s keys are the only model names a reader may attribute. Codex text output
     /// (<paramref name="structured"/> false) is the model's own text and is never parsed. Every other
     /// result field (session, uuid, credential expiry, text) is dropped. Null over
     /// <see cref="MaxUsageBytes"/>; never throws.</summary>

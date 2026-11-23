@@ -1300,7 +1300,10 @@ public sealed partial class SpawnerService : BackgroundService
                     var toolCalls = ToolCountOf(host, stream: true, result);
                     // A plain room has no commit trail: its calls go to a room note instead.
                     var calls = directory is null ? PlainCallsOf(host, result, token) : null;
-                    _events.Writer.TryWrite(new FinishedEvent(handle, result, trail, usage, toolCalls, calls));   // always: OnFinished is the only place _live is decremented
+                    // always: OnFinished is the only place _live is decremented. A hub stop closes the
+                    // channel before it kills the spawns, so the task posts the calls note itself then.
+                    if (!_events.Writer.TryWrite(new FinishedEvent(handle, result, trail, usage, toolCalls, calls)))
+                        PostCallsNote(roomId, participant.Id, calls);
                 }
             });
         }
@@ -1335,6 +1338,14 @@ public sealed partial class SpawnerService : BackgroundService
             return calls.Select(c => c with { Target = Scrub(StripAnsi(c.Target), token) }).ToList();
         }
         catch (Exception e) { Console.Error.WriteLine($"spawn calls parse error {e.GetType().Name}: {e.Message}"); return null; }
+    }
+
+    /// <summary>A plain-room spawn's calls note, when it made any call. Store and signal only, so the
+    /// launch task can post it after a hub stop closed the loop's channel.</summary>
+    private void PostCallsNote(string roomId, string participantId, IReadOnlyList<WebRequest>? calls)
+    {
+        if (calls is { Count: > 0 } && HubNotes.Calls(participantId, calls, atLeast: calls.Count >= SpawnOutput.MaxCommands) is { } note)
+            PostNote(roomId, note);
     }
 
     /// <summary>The tool calls a finished spawn's stream lists, or null when it lists none or its
@@ -1405,7 +1416,7 @@ public sealed partial class SpawnerService : BackgroundService
         _artifactLeaseChecked.Remove(room);
         FinishTask(h, r, usage, toolCalls);
         // Before every branch below, so a mode leg, a limit hold, a timeout and a failure all post it.
-        if (calls is { Count: > 0 } && HubNotes.Calls(id, calls, atLeast: calls.Count >= SpawnOutput.MaxCommands) is { } callsNote) PostNote(room, callsNote);
+        PostCallsNote(room, id, calls);
         // The block goes on the highest-id row the spawn posted itself; a mode answer the hub posts for
         // it is stamped where it is published.
         if (h.PostedMessageIds.Count != 0) StoreUsage(h.SpawnId, h.PostedMessageIds.Max(), usage, stamp: false);

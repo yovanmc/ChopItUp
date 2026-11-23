@@ -183,14 +183,16 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "posted then killed").Id));
     }
 
+    /// <summary>The event quoted in the agent's text comes last and carries its own usage, so a parse
+    /// of the text as a stream line would store that usage instead.</summary>
     [Fact]
-    public async Task A_plain_room_codex_spawn_stores_the_usage_of_its_last_turn_and_counts_its_calls()
+    public async Task A_plain_room_codex_spawn_stores_its_turn_usage_and_never_an_event_quoted_in_its_text()
     {
         _runner.Handler = async (_, _, _) =>
         {
             await PostAs("gpt-6-astra", "codex reply");
-            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"i1\",\"type\":\"agent_message\",\"text\":\"{\\\"type\\\":\\\"turn.completed\\\"}\"}}\n"
-                + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n");
+            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"i1\",\"type\":\"agent_message\",\"text\":\"{\\\"type\\\":\\\"turn.completed\\\",\\\"usage\\\":{\\\"input_tokens\\\":999}}\"}}\n");
         };
         await PostAsOwner("@gpt-6-astra show me an event");
         var spec = await _runner.NextSpecAsync(Wait);
@@ -312,7 +314,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Mode("panel");
         _runner.Handler = (spec, _, _) => Task.FromResult(FakeProcessRunner.Ok(spec.WorkingDirectory.EndsWith("synthesis")
             ? Result("panel combined", "claude-sonnet-5-5", 30)
-            : FakeProcessRunner.ParticipantOf(spec) == "sonnet" ? Result("panel sonnet", "claude-sonnet-5-5", 21) : Result("panel opus", "claude-opus-5-5", 22)));
+            : FakeProcessRunner.ParticipantOf(spec) == "sonnet" ? PanelSearch + Result("panel sonnet", "claude-sonnet-5-5", 21) : Result("panel opus", "claude-opus-5-5", 22)));
         await PostAsOwner("Panel this.");
         var specs = new[] { await _runner.NextSpecAsync(Wait), await _runner.NextSpecAsync(Wait), await _runner.NextSpecAsync(Wait) };
         await WaitForStatus("concluded");
@@ -329,10 +331,16 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
             Assert.Equal((FakeProcessRunner.ParticipantOf(leg), (string?)null, TaskTermination.Completed, (int?)null, 0),
                 (task.Start.ParticipantId, task.Start.Effort, task.End!.Termination, task.End.ToolCalls, task.End.Posts));
         }
+        // A panel leg is not a Launch spawn: its web call posts no calls note.
+        Assert.DoesNotContain(Store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by"));
     }
 
+    private const string PanelSearch = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"panel\"}}]}}\n";
+
+    /// <summary>The stop closes the loop's event channel before it kills the spawns, so the launch task
+    /// posts a plain room's calls note itself: the note is posted on every end path.</summary>
     [Fact]
-    public async Task A_hub_stopped_while_a_spawn_that_posted_still_runs_keeps_the_stamp_without_usage()
+    public async Task A_hub_stopped_while_a_spawn_that_posted_still_runs_keeps_the_stamp_without_usage_and_posts_its_calls_note()
     {
         await using var host = await HubTestHost.StartAsync(_dir + "_stop", processRunner: _runner, limits: Fast with { Timeout = TimeSpan.FromMinutes(5) });
         host.AuthorizeAs(ChopDb.OwnerParticipantId);
@@ -341,7 +349,8 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         {
             await using var client = await host.ClientFor("opus");
             HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "posted before stop" }));
-            return await FakeProcessRunner.HangUntilKilled(timeout, cancellation);
+            try { await Task.Delay(timeout, cancellation); } catch (OperationCanceledException) { }
+            return new ProcessResult(null, false, true, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"before the stop\"}}]}}\n", "", TimeSpan.Zero);
         };
         var post = await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus then the hub stops" });
         Assert.Equal(System.Net.HttpStatusCode.Created, post.StatusCode);
@@ -357,5 +366,6 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), store.GetSpawnUsage(row!.Id));
         var open = Assert.Single(host.Services.GetRequiredService<TaskStore>().ForRoom("general", 10));
         Assert.Equal((SpawnIdOf(spec), (TaskEnd?)null), (open.Start.SpawnId, open.End));
+        Assert.Single(store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by opus (1).") && m.Body.Contains("WebSearch \"before the stop\""));
     }
 }

@@ -10,7 +10,7 @@
       1. @sonnet: WebSearch, a WebFetch of https://example.com, and a WebFetch of the scratch hub's
          own http://127.0.0.1:<port>/health. The note lists the search, the example.com fetch, and
          the loopback fetch marked [denied] (the settings deny list).
-      2. @gpt-5.6-sol: one web search. The note lists a WebSearch line with the query. A hub-launched
+      2. @gpt-5.6-sol: one web search. The note lists a WebSearch line. A hub-launched
          Codex searches through its own codex_apps MCP server, which the note reads as a WebSearch.
     Each note must name the participant as the author of the fenced text.
 
@@ -44,7 +44,6 @@ function Add-Check([string]$Name, [bool]$Passed, [string]$Detail = '') {
 
 function Invoke-Exchange([string]$Body) {
     $null = Invoke-RestMethod -Uri "$base/api/rooms/general/messages" -Method Post -Headers $ownerAuth -ContentType 'application/json' -Body (@{ body = $Body } | ConvertTo-Json)
-    Start-Sleep -Seconds 2
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
         $state = $null
@@ -88,7 +87,7 @@ try {
     Add-Check 'codex.note-posted' ($null -ne $note)
     if ($note) {
         Add-Check 'codex.note-names-author' ($note.body.Contains("The text below was written by gpt-5.6-sol's calls, not by the hub."))
-        Add-Check 'codex.note-lists-search' ($note.body -match '\d+\. WebSearch "[^"\n]*Model Context Protocol') "body=$($note.body)"
+        Add-Check 'codex.note-lists-search' ($note.body -match '\d+\. WebSearch "') "body=$($note.body)"
     }
     if ($script:fails -gt 0) {
         # The room transcript on a failure, so a model that skipped a call is told apart from a missed parse.

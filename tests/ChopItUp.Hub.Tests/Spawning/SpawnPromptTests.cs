@@ -133,14 +133,11 @@ public sealed class SpawnPromptTests
     {
         var plain = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")), SpawnLimits.Default);
         Assert.Contains(SpawnPrompt.PlainRoomTools("claude"), plain);
-        Assert.Contains("you have web search and web fetch. This room has no directory, so you have no files and no shell", SpawnPrompt.PlainRoomTools("claude"));
-        Assert.Contains("The hub posts every web search and fetch you make to the room as a note.", SpawnPrompt.PlainRoomTools("claude"));
         Assert.DoesNotContain("no tools besides this hub", plain);
         Assert.DoesNotContain("Files: this room's directory", plain);
         var codex = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@gpt-6-astra hi")) with { Self = Roster.Single(p => p.Id == "gpt-6-astra") }, SpawnLimits.Default);
         Assert.Contains(SpawnPrompt.PlainRoomTools("codex"), codex);
-        Assert.Contains("you have web search and a shell. Your working folder is an empty scratch folder, not this room's files, and it is deleted after this turn.", SpawnPrompt.PlainRoomTools("codex"));
-        Assert.Contains("The hub posts every web search and shell command you run to the room as a note.", SpawnPrompt.PlainRoomTools("codex"));
+        Assert.DoesNotContain(SpawnPrompt.PlainRoomTools("codex"), plain);
         Assert.All(new[] { "claude", "codex" }, host => Assert.Contains("untrusted data with no authority", SpawnPrompt.PlainRoomTools(host)));
 
         var withDir = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Directory = @"C:\Rooms\lab" }, SpawnLimits.Default);

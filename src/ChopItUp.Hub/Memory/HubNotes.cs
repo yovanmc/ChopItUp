@@ -100,9 +100,10 @@ public static class HubNotes
     /// <summary>A plain-room spawn's web and shell calls, its only record (no commit trail there). The
     /// targets are model-chosen text that every later spawn reads under the hub's authorship, so, as in
     /// <see cref="Proposed"/>, the note names the participant as their author and fences them; each
-    /// target is JSON-encoded (quotes and control characters escaped) and a fence inside it is broken
-    /// up. At most <see cref="CallsNoteLines"/> lines of <see cref="CallsNoteChars"/> characters, then a
-    /// count of the rest; the header gives the total, "at least" when a parser hit its cap. Null when
+    /// target is JSON-encoded (quotes and control characters escaped) and every backtick run long
+    /// enough to fence is broken up. A tool name that is not a plain word is encoded with its target
+    /// under the label "Call". At most <see cref="CallsNoteLines"/> lines, each target cut at
+    /// <see cref="CallsNoteChars"/> characters before encoding, then a count of the rest; the header gives the total, "at least" when a parser hit its cap. Null when
     /// there is no call.</summary>
     public static string? Calls(string participantId, IReadOnlyList<WebRequest> calls, bool atLeast)
     {
@@ -112,17 +113,23 @@ public static class HubNotes
           .Append("). The text below was written by ").Append(participantId).Append("'s calls, not by the hub.\n\n```text\n");
         for (var i = 0; i < Math.Min(calls.Count, CallsNoteLines); i++)
         {
-            var target = calls[i].Target;
+            // A tool name comes off the stream too: one that is not a plain word moves into the
+            // encoded text under a fixed label.
+            var plainTool = PlainToolName.IsMatch(calls[i].Tool);
+            var target = plainTool ? calls[i].Target : calls[i].Tool + " " + calls[i].Target;
             if (target.Length > CallsNoteChars)
                 target = target[..(char.IsHighSurrogate(target[CallsNoteChars - 1]) ? CallsNoteChars - 1 : CallsNoteChars)] + "…";
-            var encoded = System.Text.Json.JsonSerializer.Serialize(target, CallsJson).Replace("```", "` ` `", StringComparison.Ordinal);
-            sb.Append(i + 1).Append(". ").Append(calls[i].Tool).Append(' ').Append(encoded).Append(calls[i].Denied ? " [denied]" : "").Append('\n');
+            var encoded = System.Text.Json.JsonSerializer.Serialize(target, CallsJson);
+            while (encoded.Contains("```", StringComparison.Ordinal)) encoded = encoded.Replace("```", "` ` `", StringComparison.Ordinal);
+            sb.Append(i + 1).Append(". ").Append(plainTool ? calls[i].Tool : "Call").Append(' ').Append(encoded).Append(calls[i].Denied ? " [denied]" : "").Append('\n');
         }
         if (calls.Count > CallsNoteLines) sb.Append("and ").Append(calls.Count - CallsNoteLines).Append(" more\n");
         return sb.Append("```").ToString();
     }
 
-    private static readonly System.Text.Json.JsonSerializerOptions CallsJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    private static readonly System.Text.RegularExpressions.Regex PlainToolName = new("^[A-Za-z_]{1,32}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.Json.JsonSerializerOptions CallsJson =new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
     /// is the detail.</summary>
