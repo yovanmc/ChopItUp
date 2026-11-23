@@ -85,11 +85,15 @@ public sealed class MemoryEditApiTests : IAsyncLifetime
     {
         Seed("user", "Likes tests.");
         var big = Drop("big", "# big\n\n## Seed\n" + new string('x', 30_000) + "\n");   // over the 24,000 topic cap on purpose
+        Drop("room-general", "# room-general\n\n## Fact\nKept here.\n");
 
         var list = (await GetJson("api/memory/topics")).EnumerateArray().ToList();
-        Assert.Equal(["core", "big", "user"], list.Select(r => r.GetProperty("slug").GetString()).ToList());
+        Assert.Equal(["core", "big", "room-general", "user"], list.Select(r => r.GetProperty("slug").GetString()).ToList());
         Assert.Equal(("MEMORY.md", 6000), (list[0].GetProperty("path").GetString(), list[0].GetProperty("cap").GetInt32()));
         Assert.Equal(("topics/big.md", 24000, big.Length), (list[1].GetProperty("path").GetString(), list[1].GetProperty("cap").GetInt32(), list[1].GetProperty("chars").GetInt32()));
+        // A room topic is written up to its 24,000 cap, but a spawn in that room reads only its head.
+        Assert.Equal([JsonValueKind.Null, JsonValueKind.Null, JsonValueKind.Number, JsonValueKind.Null], list.Select(r => r.GetProperty("spawnReads").ValueKind).ToList());
+        Assert.Equal(MemoryStore.RoomChars, list[2].GetProperty("spawnReads").GetInt32());
 
         var file = await GetJson("api/memory/topics/big");
         Assert.Equal(big, file.GetProperty("text").GetString());
