@@ -422,8 +422,15 @@ public sealed class RunToolsTests : IAsyncLifetime
         CallToolResult? gateResult = null;
         _runner.Handler = async (spec, _, ct) =>
         {
-            // 40 ms GateProgressInterval (InitializeAsync) * 5 intervals = 200 ms of gate wall time.
-            if (spec.Label.StartsWith("run_gate/")) { await Task.Delay(TimeSpan.FromMilliseconds(200), ct); return FakeProcessRunner.Ok("ok"); }
+            // The fake gate runs until the caller has seen three reports (40 ms GateProgressInterval,
+            // InitializeAsync), bounded at 20 s, so a loaded runner's slower ticks cannot end it before
+            // the reports arrive.
+            if (spec.Label.StartsWith("run_gate/"))
+            {
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(20);
+                while (progress.Reports.Count < 3 && DateTime.UtcNow < deadline) await Task.Delay(10, ct);
+                return FakeProcessRunner.Ok("ok");
+            }
             if (FakeProcessRunner.ParticipantOf(spec) == "sonnet")
             {
                 await using var client = await _host.ClientFor("sonnet");
@@ -434,7 +441,7 @@ public sealed class RunToolsTests : IAsyncLifetime
         };
 
         await PostRunStart("gated");
-        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(20));
+        await WaitUntil(() => gateResult is not null, TimeSpan.FromSeconds(30));
 
         var json = HubTestHost.Json(gateResult!);
         Assert.Equal("check-it", json.GetProperty("gate").GetString());
