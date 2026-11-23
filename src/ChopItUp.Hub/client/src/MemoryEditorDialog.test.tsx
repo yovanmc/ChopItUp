@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   canPreview,
   countLine,
+  fileLabel,
   isDirty,
   isOver,
   LOCKED_HINT,
@@ -57,8 +58,8 @@ function storeToken(token: string): void {
 
 afterEach(() => vi.unstubAllGlobals());
 
-const CORE: MemoryFile = { slug: 'core', path: 'MEMORY.md', chars: 4210, cap: 6000 };
-const USER: MemoryFile = { slug: 'user', path: 'topics/user.md', chars: 980, cap: 24000 };
+const CORE: MemoryFile = { slug: 'core', path: 'MEMORY.md', chars: 4210, cap: 6000, spawnReads: null };
+const USER: MemoryFile = { slug: 'user', path: 'topics/user.md', chars: 980, cap: 24000, spawnReads: null };
 const LOADED: MemoryFileText = {
   ...CORE,
   text: '# Memory\n\n## Standing rules\nRED before GREEN.\n',
@@ -129,8 +130,15 @@ describe('what the picker offers', () => {
     expect(markup.indexOf('MEMORY.md (core)')).toBeLessThan(markup.indexOf('topics/user.md'));
     expect(markup).toContain('MEMORY.md (core) · 4,210 of 6,000');
     expect(markup).toContain('topics/user.md · 980 of 24,000');
+    expect(markup).not.toContain('spawns read');
     expect(markup).toContain('aria-label="Memory file"');
     expect(markup).toContain('aria-label="Memory text"');
+  });
+
+  test("a room topic's option says how much of it a spawn in that room reads", () => {
+    expect(fileLabel({ slug: 'room-general', path: 'topics/room-general.md', chars: 4437, cap: 24000, spawnReads: 2000 })).toBe(
+      'topics/room-general.md · 4,437 of 24,000 · spawns read the first 2,000',
+    );
   });
 
   test('switching files is blocked while the text is dirty, and open while it is not', () => {
