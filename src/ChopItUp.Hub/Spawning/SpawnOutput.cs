@@ -91,7 +91,8 @@ public static class SpawnOutput
     /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
     /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
     /// WebSearch marked "(not completed)". MCP calls outside the hub are included as
-    /// <see cref="CodexCalls"/> reads them. Same caps as the shell lists.</summary>
+    /// <see cref="CodexCalls"/> reads them. It filters after the cap, so it can hold fewer than
+    /// <see cref="MaxCommands"/> calls.</summary>
     public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout) =>
         CodexCalls(stdout).Where(c => c.Tool != ShellTool).ToList();
 

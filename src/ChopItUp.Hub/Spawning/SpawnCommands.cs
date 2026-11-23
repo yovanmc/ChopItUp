@@ -168,7 +168,7 @@ public static class SpawnCommands
         // The hub also listens on [::1]. Measured on 2.1.328: WebFetch refuses a dotless host by itself,
         // and this rule makes that a permission denial: a second lock, not the only one.
         rules.Add("WebFetch(domain:[::1])");
-        // Measured on 2.1.328: 127.1, 2130706433 and 0x7f.0.0.1 normalize to 127.0.0.1 and localhost.
+        // Measured on 2.1.328: 127.1, 2130706433 and 0x7f.0.0.1 normalize to 127.0.0.1, and "localhost."
         // to localhost, so the rules above deny them. 0.0.0.0 (and 0) connected to a 127.0.0.1
         // listener on Windows; WebFetch's https upgrade then failed the handshake. This rule denies it
         // before any connection.

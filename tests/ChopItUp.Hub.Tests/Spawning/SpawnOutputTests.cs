@@ -132,7 +132,7 @@ public sealed class SpawnOutputTests
         { "claude empty stdout", "claude", true, "", null },
         { "codex --json last turn.completed", "codex", true, "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n{\"type\":\"turn.completed\",\"usage\":" + CodexUsage + "}\n", """{"host":"codex","usage":""" + CodexUsage + "}" },
         { "codex --json without turn.completed", "codex", true, "{\"type\":\"turn.started\"}\n", null },
-        { "plain codex reply quoting an event line", "codex", false, "Here is the event:\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n", null },
+        { "codex text output quoting an event line", "codex", false, "Here is the event:\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n", null },
         { "block over 16 KB", "claude", true, """{"type":"result","modelUsage":{"m":{"note":" """ + new string('x', 16_400) + "\"}}}", null },
     };
 
@@ -154,7 +154,7 @@ public sealed class SpawnOutputTests
           "{\"type\":\"item.started\",\"item\":{\"id\":\"b\",\"type\":\"mcp_tool_call\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"b\",\"type\":\"mcp_tool_call\"}}\n" +
           "{\"type\":\"item.completed\",\"item\":{\"id\":\"c\",\"type\":\"file_change\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"d\",\"type\":\"web_search\"}}\n" +
           "{\"type\":\"item.completed\",\"item\":{\"id\":\"e\",\"type\":\"reasoning\"}}\n{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}\n", 4 },
-        { "plain codex lists no calls", "codex", false, "done\n", null },
+        { "codex text output lists no calls", "codex", false, "done\n", null },
         { "empty kept stream (an overflow keeps none)", "claude", true, "", null },
         { "hostile shapes never throw", "codex", true, "{\"type\":\"item.completed\",\"item\":[1]}\n{\"type\":\"item.completed\",\"item\":{\"id\":7,\"type\":\"mcp_tool_call\"}}\n[1,2]\n{\"type\":\"assistant\",\"message\":{\"content\":\"text\"}}\n", 1 },
         { "hostile claude shapes never throw", "claude", true, "{\"type\":\"assistant\",\"message\":[1]}\n{\"type\":\"assistant\",\"message\":{\"content\":[1,\"x\",{\"type\":\"tool_use\"}]}}\n", 1 },

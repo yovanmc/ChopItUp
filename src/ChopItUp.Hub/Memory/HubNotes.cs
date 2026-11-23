@@ -103,8 +103,8 @@ public static class HubNotes
     /// target is JSON-encoded (quotes and control characters escaped) and every backtick run long
     /// enough to fence is broken up. A tool name that is not a plain word is encoded with its target
     /// under the label "Call". At most <see cref="CallsNoteLines"/> lines, each target cut at
-    /// <see cref="CallsNoteChars"/> characters before encoding, then a count of the rest; the header gives the total, "at least" when a parser hit its cap. Null when
-    /// there is no call.</summary>
+    /// <see cref="CallsNoteChars"/> characters before encoding, then a count of the rest; the header
+    /// gives the total, "at least" when a parser hit its cap. Null when there is no call.</summary>
     public static string? Calls(string participantId, IReadOnlyList<WebRequest> calls, bool atLeast)
     {
         if (calls.Count == 0) return null;
@@ -127,9 +127,10 @@ public static class HubNotes
         return sb.Append("```").ToString();
     }
 
-    private static readonly System.Text.RegularExpressions.Regex PlainToolName = new("^[A-Za-z_]{1,32}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    // \z, not $: in .NET, $ also matches before a final newline.
+    private static readonly System.Text.RegularExpressions.Regex PlainToolName = new(@"^[A-Za-z_]{1,32}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
-    private static readonly System.Text.Json.JsonSerializerOptions CallsJson =new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    private static readonly System.Text.Json.JsonSerializerOptions CallsJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
     /// is the detail.</summary>

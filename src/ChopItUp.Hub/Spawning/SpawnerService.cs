@@ -244,6 +244,10 @@ public sealed partial class SpawnerService : BackgroundService
         _modeShutdown.Cancel();
         _events.Writer.TryComplete();
         await base.StopAsync(cancellationToken);
+        // The loop's wait sees the cancelled token before its queue, so a spawn that finished while
+        // the loop was busy can leave its finish event unread. Its calls note is its only record.
+        while (_events.Reader.TryRead(out var left))
+            if (left is FinishedEvent f) PostCallsNote(f.Handle.Request.RoomId, f.Handle.Participant.Id, f.Calls);
         foreach (var x in _rooms.Values.SelectMany(list => list)) x.ModeLeg?.PreparationCancellation.Cancel();
         _wake?.Cancel();
         _wake?.Dispose();

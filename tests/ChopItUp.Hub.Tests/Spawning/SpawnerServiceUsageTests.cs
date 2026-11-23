@@ -335,6 +335,46 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.DoesNotContain(Store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by"));
     }
 
+    /// <summary>A spawn that finishes while the loop is busy after its drain (here, held inside
+    /// LaunchDue by the codex CLI lookup) leaves its finish event queued when the hub stops, because
+    /// the loop's next wait sees the cancelled token first. The stop drains it and posts the calls note.</summary>
+    [Fact]
+    public async Task A_spawn_that_finished_while_the_loop_was_busy_at_a_hub_stop_still_posts_its_calls_note()
+    {
+        var codexLookup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseLookup = new ManualResetEventSlim(false);
+        CliLocator locator = name =>
+        {
+            if (name == "codex") { codexLookup.TrySetResult(); releaseLookup.Wait(Wait); }
+            return new ResolvedCli($"fake-{name}.exe", [], $"fake-{name}.exe");
+        };
+        await using var host = await HubTestHost.StartAsync(_dir + "_drain", processRunner: _runner, limits: Fast with { Timeout = TimeSpan.FromMinutes(5) }, cliLocator: locator);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var store = host.Services.GetRequiredService<MessageStore>();
+        store.CreateRoom("side", "SIDE", null);
+        var sonnetGo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sonnetReturning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, timeout, cancellation) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) != "sonnet") return await FakeProcessRunner.HangUntilKilled(timeout, cancellation);
+            await sonnetGo.Task;
+            sonnetReturning.SetResult();
+            return FakeProcessRunner.Ok("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"at the stop\"}}]}}\n");
+        };
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@sonnet look it up" })).StatusCode);
+        await _runner.NextSpecAsync(Wait);
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/side/messages", new { body = "@gpt-6-astra hi" })).StatusCode);
+        await codexLookup.Task.WaitAsync(Wait);                  // the loop is now held inside LaunchDue
+        sonnetGo.SetResult();
+        await sonnetReturning.Task.WaitAsync(Wait);
+        await Task.Delay(500);                                    // the launch task's finally queues the finish event
+
+        var stop = host.Services.GetRequiredService<SpawnerService>().StopAsync(CancellationToken.None);
+        releaseLookup.Set();
+        await stop.WaitAsync(Wait);
+
+        Assert.Single(store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by sonnet (1).") && m.Body.Contains("WebSearch \"at the stop\""));
+    }
     private const string PanelSearch = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"panel\"}}]}}\n";
 
     /// <summary>The stop closes the loop's event channel before it kills the spawns, so the launch task

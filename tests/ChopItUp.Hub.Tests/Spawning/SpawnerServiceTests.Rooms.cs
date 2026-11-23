@@ -178,6 +178,8 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await PostAsOwner("@sonnet look it up");
         await _runner.NextSpecAsync(Wait);
         var note = await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by sonnet (3)."));
+        await Spawner.InLoopAsync(() => true);
+        Assert.Single(await Messages(), m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by"));
         Assert.Contains("```text\n1. WebSearch \"red query\"\n2. WebFetch \"https://example.com/?k=<token>\"\n3. WebFetch \"http://127.0.0.1:8790/api/rooms\" [denied]\n```", note.Body);
         Assert.DoesNotContain(token[..12], note.Body);
         Assert.Contains("WebFetch(domain:[::1])", settings);
