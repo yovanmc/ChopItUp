@@ -75,7 +75,7 @@ $newNote = 'The owner, posting from a session on another device. Same authority 
 try {
     # 1. A fresh database from this exe, then the v15 state it would have had.
     $first = Start-Hub
-    Add-Check 'fresh.schema-20' ($first.Health.schema -eq 20) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-21' ($first.Health.schema -eq 21) "schema=$($first.Health.schema)"
     Stop-Hub $first.Process
     Invoke-Sql $dbPath @"
 DELETE FROM participants WHERE id = 'opus-judge';
@@ -95,7 +95,7 @@ PRAGMA user_version = 15;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-20' ($second.Health.schema -eq 20) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-21' ($second.Health.schema -eq 21) "schema=$($second.Health.schema)"
 
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v15.*.bak')
     Add-Check 'backup.one-v15-file' ($baks.Count -eq 1) "count=$($baks.Count)"

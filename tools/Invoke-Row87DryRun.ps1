@@ -79,7 +79,7 @@ function Invoke-Sql([string]$Path, [string]$Sql, [switch]$Scalar, [switch]$ReadO
 try {
     # 1. A fresh database from this exe, then the v18 state it would have had.
     $first = Start-Hub
-    Add-Check 'fresh.schema-20' ($first.Health.schema -eq 20) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-21' ($first.Health.schema -eq 21) "schema=$($first.Health.schema)"
     Stop-Hub $first.Process
     Add-Check 'fresh.resume-column' ([long](Invoke-Sql $dbPath "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'resume_at'" -Scalar -ReadOnly) -eq 1)
     Invoke-Sql $dbPath @"
@@ -94,7 +94,7 @@ PRAGMA user_version = 18;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-20' ($second.Health.schema -eq 20) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-21' ($second.Health.schema -eq 21) "schema=$($second.Health.schema)"
     Stop-Hub $second.Process
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v18.*.bak')
     Add-Check 'backup.one-v18-file' ($baks.Count -eq 1) "count=$($baks.Count)"

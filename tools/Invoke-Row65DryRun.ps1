@@ -6,8 +6,9 @@
 
 .DESCRIPTION
     Starts the given hub on a fresh scratch data folder under %TEMP%, stops it, and turns that database
-    back into a v19 one: v20 only adds messages.spawn_id and messages.spawn_usage, so dropping those two
-    columns and stamping 19 is the exact v19 shape. Fabricated messages go in. The hub starts again on
+    back into a v19 one: v20 only adds messages.spawn_id and messages.spawn_usage, and v21 only the
+    spawn_tasks table, so dropping those two columns and that table
+    and stamping 19 is the exact v19 shape. Fabricated messages go in. The hub starts again on
     it: the backup, the stamp, both columns and the untouched old rows are checked. A third start must
     take no second backup.
 
@@ -78,12 +79,14 @@ function Invoke-Sql([string]$Path, [string]$Sql, [switch]$Scalar, [switch]$ReadO
 try {
     # 1. A fresh database from this exe, then the v19 state it would have had, with fabricated rows.
     $first = Start-Hub
-    Add-Check 'fresh.schema-20' ($first.Health.schema -eq 20) "schema=$($first.Health.schema)"
+    Add-Check 'fresh.schema-21' ($first.Health.schema -eq 21) "schema=$($first.Health.schema)"
     Stop-Hub $first.Process
     Add-Check 'fresh.spawn-columns' ([long](Invoke-Sql $dbPath $columns -Scalar -ReadOnly) -eq 2)
     Invoke-Sql $dbPath @"
 ALTER TABLE messages DROP COLUMN spawn_id;
 ALTER TABLE messages DROP COLUMN spawn_usage;
+DROP INDEX ix_spawn_tasks_room;
+DROP TABLE spawn_tasks;
 INSERT INTO messages (room_id, author_id, body, created_at, client_key) VALUES
     ('general', 'owner', 'fabricated question @opus', '2026-11-22T10:00:00.000+00:00', NULL),
     ('general', 'opus', 'fabricated answer', '2026-11-22T10:01:00.000+00:00', 'general-1-1-0000abcd'),
@@ -95,7 +98,7 @@ PRAGMA user_version = 19;
 
     # 2. The migration, through the real start path.
     $second = Start-Hub
-    Add-Check 'migrated.health-schema-20' ($second.Health.schema -eq 20) "schema=$($second.Health.schema)"
+    Add-Check 'migrated.health-schema-21' ($second.Health.schema -eq 21) "schema=$($second.Health.schema)"
     Stop-Hub $second.Process
     $baks = @(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v19.*.bak')
     Add-Check 'backup.one-v19-file' ($baks.Count -eq 1) "count=$($baks.Count)"
@@ -113,7 +116,7 @@ PRAGMA user_version = 19;
 
     # 3. A restart on the migrated store takes no second backup and keeps the stamp.
     $third = Start-Hub
-    Add-Check 'restart.health-schema-20' ($third.Health.schema -eq 20) "schema=$($third.Health.schema)"
+    Add-Check 'restart.health-schema-21' ($third.Health.schema -eq 21) "schema=$($third.Health.schema)"
     Stop-Hub $third.Process
     Add-Check 'restart.no-second-backup' (@(Get-ChildItem -LiteralPath $dataDir -Filter 'chopitup.db.v*.bak').Count -eq 1)
 }

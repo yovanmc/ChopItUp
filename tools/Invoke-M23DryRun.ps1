@@ -179,7 +179,7 @@ try {
         try { $health = Invoke-RestMethod -Uri "$base/health" -TimeoutSec 2; break } catch { Start-Sleep -Milliseconds 500 }
     }
     Add-Check -Name 'hub.started' -Passed ($null -ne $health) -Detail "pid=$($hub.Id)"
-    Add-Check -Name 'health.schema-is-20' -Passed ($health.schema -eq 20) -Detail "schema=$($health.schema)"
+    Add-Check -Name 'health.schema-is-21' -Passed ($health.schema -eq 21) -Detail "schema=$($health.schema)"
 
     # 'claude' and 'owner' were seeded into tokens.json before this Start-Process call; the file
     # itself holds only their SHA-256.
