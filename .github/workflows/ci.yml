@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
     branches: [ main ]
+  # The PR gate runs only the affected selection, so a weekly whole-suite run
+  # of main catches what the selector missed and runs the RealDuration tests.
+  schedule:
+    - cron: '37 9 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -12,6 +16,7 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,17 +33,17 @@ jobs:
           node --test tools/affected-tests.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'Selection regressions failed' }
           ./tools/Test-AffectedRunner.ps1
-      # Test GitHub's PR merge tree. Keep the required job for docs-only PRs;
-      # protected main does not need a duplicate post-merge run of the same tree.
-      - name: Verify affected code (manual runs verify everything)
+      # A PR run tests GitHub's PR merge tree from its base. Keep the required
+      # job for docs-only PRs. Scheduled and manual runs verify everything.
+      - name: Verify affected code (scheduled and manual runs verify everything)
         shell: pwsh
         env:
           AFFECTED_BASE: ${{ github.event.pull_request.base.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           $verification = @{ CommittedOnly = $true; LogDir = '${{ runner.temp }}/affected-results' }
-          if ($env:EVENT_NAME -eq 'workflow_dispatch') { $verification.Full = $true }
-          else { $verification.Base = $env:AFFECTED_BASE }
+          if ($env:EVENT_NAME -eq 'pull_request') { $verification.Base = $env:AFFECTED_BASE }
+          else { $verification.Full = $true; $verification.IncludeRealDuration = $true }
           ./tools/Invoke-AffectedTests.ps1 @verification
       - name: Retain selection and test results
         if: always()
