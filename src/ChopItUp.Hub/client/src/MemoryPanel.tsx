@@ -57,7 +57,6 @@ function MemoryPanel({ proposals, busyId, locked, busyImport, onDecide, onApprov
   if (proposals.length === 0) return null;
   const batches = importBatches(proposals);
   const waiting = locked || busyImport !== null;
-  // A batch also waits for a single card's decision: both take the hub's one decision lock.
   return (
     <section className="memory" aria-label="Memory proposals">
       <header className="memory-head">
@@ -77,6 +76,7 @@ function MemoryPanel({ proposals, busyId, locked, busyImport, onDecide, onApprov
               <span className="memory-imports-text">
                 {b.count} pending from {b.origin}
               </span>
+              {/* A batch also waits for a single card's decision: both take the hub's one decision lock. */}
               <button type="button" className="send" disabled={waiting || busyId !== null} onClick={() => onApproveImport(b.origin)}>
                 {busyImport === b.origin ? 'Approving…' : `Approve all ${b.count}`}
               </button>

@@ -253,13 +253,37 @@ public sealed class MemoryApiTests : IAsyncLifetime
             var result = await Post("api/memory/import/approve", new { source = "codex", path = src, roomId = "general" });
 
             Assert.Equal(1, result.GetProperty("approved").GetInt32());
-            var refused = Assert.Single(result.GetProperty("refused").EnumerateArray());
-            Assert.Equal(2, refused.GetProperty("id").GetInt64());
-            Assert.StartsWith("UnauthorizedAccessException", refused.GetProperty("error").GetString());
+            var refused = result.GetProperty("refused").EnumerateArray().ToList();
+            Assert.Equal([2L, 3L], refused.Select(r => r.GetProperty("id").GetInt64()).ToList());
+            Assert.StartsWith("UnauthorizedAccessException", refused[0].GetProperty("error").GetString());
+            Assert.Equal("Not tried: an earlier row of this import failed.", refused[1].GetProperty("error").GetString());
             Assert.Equal("pending", Proposals.Get(3)!.Status);
-            Assert.Equal($"Memory import from codex ({src}): 1 proposal(s) approved, 1 not written; see the memory panel.", Assert.Single((await Messages()).Skip(notesBefore)).Body);
+            Assert.Equal($"Memory import from codex ({src}): 1 proposal(s) approved, 2 not written; see the memory panel.", Assert.Single((await Messages()).Skip(notesBefore)).Body);
         }
         finally { File.SetAttributes(locked, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task A_pending_core_row_the_entry_rule_now_refuses_does_not_break_a_reimport()
+    {
+        var src = Path.Combine(_dir, "old"); Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "core.md"), "## Fine\nFits.\n");
+        using (var conn = Db.Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO memory_proposals (room_id, author_id, topic, title, body, status, source, created_at, kind, replaces, flags)
+                VALUES ('general', 'codex', 'core', 'Bad body', $body, 'pending', $source, $at, 'append', NULL, NULL)
+                """;
+            cmd.Parameters.AddWithValue("$body", "Fact.\n## Not allowed\nmore");
+            cmd.Parameters.AddWithValue("$source", "codex:" + src);
+            cmd.Parameters.AddWithValue("$at", Timestamps.Stamp(DateTimeOffset.UtcNow));
+            cmd.ExecuteNonQuery();
+        }
+
+        var r = await _host.Client.PostAsJsonAsync("api/memory/import", new { source = "codex", path = src, roomId = "general" });
+
+        Assert.Equal(HttpStatusCode.Created, r.StatusCode);
     }
 
     [Fact]

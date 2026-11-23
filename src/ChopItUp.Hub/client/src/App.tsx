@@ -733,7 +733,7 @@ export default function App() {
         const [first] = result.refused;
         setError(
           first
-            ? `${result.approved} approved. ${result.refused.length} refused and still pending, first #${first.id}: ${first.error ?? 'refused'}`
+            ? `${result.approved} approved. ${result.refused.length} not written, first #${first.id}: ${first.error ?? 'refused'}`
             : null,
         );
       } catch (failure) {

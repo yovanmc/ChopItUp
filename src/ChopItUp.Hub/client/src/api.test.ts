@@ -158,6 +158,17 @@ describe('posting a reply', () => {
 
 /** One exchange's own stop. The room stop ends every exchange in the room (and the run, when there
  *  is one), so a strip's Stop has to reach the per-root endpoint and name only its own root. */
+describe('approving one import', () => {
+  test('it POSTs the source, folder and room the panel counted', async () => {
+    const calls = stubFetch(() => json({ approved: 2, refused: [] }));
+
+    await api.approveImport('codex', 'C:/x/notes', 'lab');
+
+    expect(calls[0]?.url).toBe('/api/memory/import/approve');
+    expect(calls[0]?.init?.body).toBe('{"source":"codex","path":"C:/x/notes","roomId":"lab"}');
+  });
+});
+
 describe('stopping one exchange', () => {
   test('it POSTs to that root\'s stop, escaped like every other room path, with the owner token', async () => {
     storeToken('owner-secret');

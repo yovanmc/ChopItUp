@@ -340,8 +340,10 @@ public static class MemoryApi
             var refused = new List<object>();
             try
             {
-                foreach (var p in proposals.PendingOf($"{source}:{body.Path}", body.RoomId))
+                var batch = proposals.PendingOf($"{source}:{body.Path}", body.RoomId);
+                for (var i = 0; i < batch.Count; i++)
                 {
+                    var p = batch[i];
                     // A spawn can start while this runs (spawns never take Decisions), and from then on a
                     // write could race its own memory reads, so the rest wait for the next click.
                     if (spawner.AnySpawnInFlight) { refused.Add(new { p.Id, error = SpawnRunning }); continue; }
@@ -351,7 +353,9 @@ public static class MemoryApi
                     catch (Exception e) when (e is not OperationCanceledException)
                     {
                         // The row may be marked and unwritten, which its own card's Retry finishes.
+                        Console.Error.WriteLine($"memory: approve all of '{source}:{body.Path}' stopped at proposal {p.Id} ({e.GetType().Name}: {e.Message})");
                         refused.Add(new { p.Id, error = $"{e.GetType().Name}: {e.Message}" });
+                        refused.AddRange(batch.Skip(i + 1).Select(rest => new { rest.Id, error = "Not tried: an earlier row of this import failed." }));
                         break;
                     }
                     if (decided is not null) approved.Add(decided);
@@ -433,10 +437,22 @@ public static class MemoryApi
     {
         var core = pending.Where(p => p.Topic == MemoryStore.CoreTopic).ToList();
         if (core.Count == 0) return null;
-        var current = memory.ReadTopic(MemoryStore.CoreTopic)?.FullChars ?? 0;
-        var now = DateTimeOffset.UtcNow;
-        var projected = current + core.Sum(p => memory.ProjectedCoreChars(null, p.Title, p.Body, Provenance(p, now)) - current);
-        return projected > MemoryStore.CoreChars ? HubNotes.CoreWarning(projected) : null;
+        try
+        {
+            var current = memory.ReadTopic(MemoryStore.CoreTopic)?.FullChars ?? 0;
+            var now = DateTimeOffset.UtcNow;
+            var projected = current;
+            foreach (var p in core)
+            {
+                // A row the entry rule now refuses would be refused at approval too, so it adds nothing.
+                try { projected += memory.ProjectedCoreChars(null, p.Title, p.Body, Provenance(p, now)) - current; }
+                catch (ArgumentException) { }
+            }
+            return projected > MemoryStore.CoreChars ? HubNotes.CoreWarning(projected) : null;
+        }
+        // The import runs outside Decisions, so an approval can be writing MEMORY.md under this read.
+        // The warning is advice, and the rows already exist, so the import still answers.
+        catch (IOException) { return null; }
     }
 
     /// <summary>Undo for a mis-targeted import: every PENDING proposal with that source goes. Approved
