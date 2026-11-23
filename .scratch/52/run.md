@@ -30,3 +30,11 @@ Spec for the review: the done-when criteria in the first commit (6bde580), as fo
 - NIT, prompt phrase asserts on a constant: FIXED. Dropped, the Render containment and host split kept, plus the trust-rule assert.
 - NIT, the forged-usage test could not fail: FIXED. The quoted event now comes last with its own usage, and the test is renamed.
 - NIT, the live check asserted the model's query and slept 2 s: FIXED. It asserts any `WebSearch` line, and the sleep is gone.
+- Live check rerun on 463399e's code (0.0.0.0 rule in): 13 of 13 PASS.
+
+## Review 2 (code-reviewer, opus, HEAD 2821c42, FILES 22 · READ 27): CHANGES REQUIRED. Remediation round
+- MAJOR, a finish event written but never read at a hub stop: FIXED. The loop's wait sees the cancelled token before its queue, so `StopAsync` now drains the channel after the loop exits and posts each queued spawn's calls note. Test: a codex CLI lookup holds the loop inside LaunchDue while a plain spawn finishes, then the hub stops (RED before the drain).
+- DEFECT, `$` matches before a final newline: FIXED with `\z`. Test row with "open_page\n" (RED before).
+- NITs fixed: the garbled deny-list comment, `CodexWebRequests`'s cap doc, two stale "plain codex" test labels, an exactly-once note assertion in the plain Claude note test, the HubNotes formatting.
+- Gate after the remediation: Spawning, Mcp and RoomCommitsTests 590 of 590. The drain test passed 5 of 5 more runs.
+- NITs queued: BUGS 133 (the plain Codex prompt lacks the directory rules' hub API and data folder clause), BUGS 134 (the live check's fixed sleep before a silent delete).
