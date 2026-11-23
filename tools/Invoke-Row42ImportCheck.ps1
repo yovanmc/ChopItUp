@@ -157,8 +157,8 @@ try {
     # more FAIL in the tally.
     if ($null -eq $health) { throw "hub on port $Port did not become healthy (pid=$($hub.Id))" }
 
-    # 2. health.schema-is-19
-    Add-Check -Name 'health.schema-is-19' -Passed ($health.schema -eq 19) -Detail "schema=$($health.schema)"
+    # 2. health.schema-is-20
+    Add-Check -Name 'health.schema-is-20' -Passed ($health.schema -eq 20) -Detail "schema=$($health.schema)"
 
     # 3. backup.count-is-one -- exactly one *.bak, named chopitup.db.v2.<stamp>.bak (ChopDb.cs's
     # BackupBeforeMigration: "{DatabasePath}.v{fromVersion}.{stamp}.bak", stamp = yyyyMMdd'T'HHmmss'Z').
@@ -295,7 +295,7 @@ try {
     $importedStillTrue = ($importedRowsFinal.Count -eq $importedIds.Count) -and (@($importedRowsFinal | Where-Object { $_.imported -ne $true }).Count -eq 0)
     $corpusRowsFinal = @($allFinal | Where-Object { $_.id -in $corpusIds })
     $corpusStillFalse = ($corpusRowsFinal.Count -eq $corpusIds.Count) -and (@($corpusRowsFinal | Where-Object { $_.imported -ne $false }).Count -eq 0)
-    Add-Check -Name 'restart.flags-persist' -Passed ($health2.schema -eq 19 -and $importedStillTrue -and $corpusStillFalse -and $finalHasMoreOk) `
+    Add-Check -Name 'restart.flags-persist' -Passed ($health2.schema -eq 20 -and $importedStillTrue -and $corpusStillFalse -and $finalHasMoreOk) `
         -Detail "schema2=$($health2.schema) importedStillTrue=$importedStillTrue corpusStillFalse=$corpusStillFalse hasMore=$($finalResp.Body.hasMore)"
 }
 finally {

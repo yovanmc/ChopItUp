@@ -29,6 +29,9 @@ Usage-limit migration and resume dry run (no model calls, scratch hub, a v18 sta
 messages migrated to v19 through the real exe, then a fabricated held run whose reset has passed and
 whose spawns are over budget; the next start clears its resume instant and posts the reset note and the
 cap refusal): `pwsh tools\Invoke-Row87DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
+Spawn usage migration dry run (no model calls, scratch hub, a v19 state with fabricated messages
+migrated to v20 through the real exe; the backup, both spawn columns and the untouched old rows are
+checked): `pwsh tools\Invoke-Row65DryRun.ps1 [-HubExe <exe>] [-SqliteBin <dir>]`.
 Run notification check (no model calls: the shell and its scratch hub see only a fake `claude.cmd`;
 interactive desktop): a hidden shell shows one held and one parked notification for a fabricated run,
 and a UIA click on the notification opens the room. With Windows notifications off for the user, the
