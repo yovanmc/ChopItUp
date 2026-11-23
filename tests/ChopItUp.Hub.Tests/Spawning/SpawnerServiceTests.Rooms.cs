@@ -193,20 +193,25 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
             return FakeProcessRunner.Ok(
                 "{\"type\":\"item.completed\",\"item\":{\"id\":\"w1\",\"type\":\"web_search\",\"query\":\"q\",\"action\":{\"type\":\"search\",\"query\":\"dotnet 10\"}}}\n"
                 + "{\"type\":\"item.completed\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"curl https://example.com\"}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"m1\",\"type\":\"mcp_tool_call\",\"server\":\"chopitup\",\"tool\":\"post_message\",\"arguments\":{\"body\":\"Searched.\"}}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"m2\",\"type\":\"mcp_tool_call\",\"server\":\"codex_apps\",\"tool\":\"search_service.web_run\",\"arguments\":{\"system2_search_query\":[{\"q\":\"mcp spec\"}]}}}\n"
                 + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\n");
         };
 
         await PostAsOwner("@gpt-6-astra search it");
         await _runner.NextSpecAsync(Wait);
-        var note = await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by gpt-6-astra (2)."));
-        Assert.Contains("```text\n1. WebSearch \"dotnet 10\"\n2. Shell \"curl https://example.com\"\n```", note.Body);
+        var note = await WaitForMessage(m => m.Author == "hub" && m.Body.StartsWith("Web and shell calls by gpt-6-astra (3)."));
+        Assert.Contains("```text\n1. WebSearch \"dotnet 10\"\n2. Shell \"curl https://example.com\"\n3. WebSearch \"mcp spec\"\n```", note.Body);
     }
 
-    [Fact]
-    public async Task A_plain_room_spawn_with_no_web_call_posts_no_calls_note()
+    /// <summary>A Codex call to the hub's own MCP server is not a web or shell call.</summary>
+    [Theory]
+    [InlineData("sonnet", FakeProcessRunner.StreamDone)]
+    [InlineData("gpt-6-astra", "{\"type\":\"item.completed\",\"item\":{\"id\":\"m1\",\"type\":\"mcp_tool_call\",\"server\":\"chopitup\",\"tool\":\"post_message\",\"arguments\":{\"body\":\"No lookups.\"}}}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}\n")]
+    public async Task A_plain_room_spawn_with_no_web_call_posts_no_calls_note(string participant, string stdout)
     {
-        _runner.Handler = async (_, _, _) => { await PostAs("sonnet", "No lookups."); return FakeProcessRunner.Ok(FakeProcessRunner.StreamDone); };
-        await PostAsOwner("@sonnet just answer");
+        _runner.Handler = async (_, _, _) => { await PostAs(participant, "No lookups."); return FakeProcessRunner.Ok(stdout); };
+        await PostAsOwner($"@{participant} just answer");
         await _runner.NextSpecAsync(Wait);
         await WaitForStatus("concluded");
         await Spawner.InLoopAsync(() => true);

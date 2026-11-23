@@ -195,7 +195,7 @@ public sealed class SpawnOutputTests
         var stdout = "{\"type\":\"item.started\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"ls\"}}\n"
             + "{\"type\":\"item.completed\",\"item\":{\"id\":\"w1\",\"type\":\"web_search\",\"action\":{\"type\":\"search\",\"query\":\"q\"}}}\n"
             + "{\"type\":\"item.completed\",\"item\":{\"id\":\"c1\",\"type\":\"command_execution\",\"command\":\"ls -la\"}}\n"
-            + "{\"type\":\"item.completed\",\"item\":{\"id\":\"m1\",\"type\":\"mcp_tool_call\"}}\n";
+            + "{\"type\":\"item.completed\",\"item\":{\"id\":\"m1\",\"type\":\"mcp_tool_call\",\"server\":\"chopitup\",\"tool\":\"read_room\"}}\n";
         Assert.Equal([new WebRequest(SpawnOutput.ShellTool, "ls -la", false), new WebRequest("WebSearch", "q", false)], SpawnOutput.CodexCalls(stdout));
     }
 
@@ -203,6 +203,36 @@ public sealed class SpawnOutputTests
     [MemberData(nameof(CodexWebCases))]
     public void Codex_web_requests_name_each_search_or_page_in_order(string _, string stdout, WebRequest[] expected) =>
         Assert.Equal(expected, SpawnOutput.CodexWebRequests(stdout));
+
+    /// <summary>codex-cli 0.169.1, a hub-launched plain-room spawn (measured 2026-11-23): the search ran
+    /// as an <c>mcp_tool_call</c> on Codex's own <c>codex_apps</c> server, not as a web_search item,
+    /// and the reply went through the hub's own server.</summary>
+    private const string CodexAppsSearch = """
+        {"type":"item.started","item":{"id":"item_1","type":"mcp_tool_call","server":"codex_apps","tool":"search_service.web_run","arguments":{"system2_search_query":[{"q":"Model Context Protocol specification latest revision"}],"response_length":"short"},"result":null,"error":null,"status":"in_progress"}}
+        {"type":"item.completed","item":{"id":"item_1","type":"mcp_tool_call","server":"codex_apps","tool":"search_service.web_run","arguments":{"system2_search_query":[{"q":"Model Context Protocol specification latest revision"}],"response_length":"short"},"result":{"content":[{"type":"text","text":"Releases (https://github.com/modelcontextprotocol/modelcontextprotocol/releases)"}]},"error":null,"status":"completed"}}
+        {"type":"item.started","item":{"id":"item_2","type":"mcp_tool_call","server":"chopitup","tool":"post_message","arguments":{"room_id":"general","client_key":"k","body":"2026-07-28"},"result":null,"error":null,"status":"in_progress"}}
+        {"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"chopitup","tool":"post_message","arguments":{"room_id":"general","client_key":"k","body":"2026-07-28"},"result":{"content":[]},"error":null,"status":"completed"}}
+        {"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+        """;
+
+    [Fact]
+    public void The_measured_codex_apps_search_is_a_web_search_and_hub_calls_are_not_listed() =>
+        Assert.Equal([new WebRequest("WebSearch", "Model Context Protocol specification latest revision", false)], SpawnOutput.CodexCalls(CodexAppsSearch));
+
+    public static TheoryData<string, string, WebRequest[]> CodexMcpCases => new()
+    {
+        { "several queries join in order", """{"type":"item.completed","item":{"id":"a","type":"mcp_tool_call","server":"codex_apps","tool":"search_service.web_run","arguments":{"system2_search_query":[{"q":"one"},{"q":"two"}]}}}""", [new("WebSearch", "one | two", false)] },
+        { "another tool on a server the hub did not configure records server, tool and arguments", """{"type":"item.completed","item":{"id":"b","type":"mcp_tool_call","server":"codex_apps","tool":"gmail.search","arguments":{"query":"invoice"}}}""", [new("MCP", "codex_apps.gmail.search {\"query\":\"invoice\"}", false)] },
+        { "a web_run call with no search query is recorded generically", """{"type":"item.completed","item":{"id":"c","type":"mcp_tool_call","server":"codex_apps","tool":"search_service.web_run","arguments":{"open":[{"ref_id":"r"}]}}}""", [new("MCP", "codex_apps.search_service.web_run {\"open\":[{\"ref_id\":\"r\"}]}", false)] },
+        { "a call that never completed is marked", """{"type":"item.started","item":{"id":"d","type":"mcp_tool_call","server":"codex_apps","tool":"search_service.web_run","arguments":{"system2_search_query":[{"q":"q"}]}}}""", [new("WebSearch", "q (not completed)", false)] },
+        { "a missing server, tool or arguments still lists the call", """{"type":"item.completed","item":{"id":"e","type":"mcp_tool_call"}}""", [new("MCP", "(unknown server).(unknown tool)", false)] },
+        { "hub calls and hostile shapes are skipped", "{\"type\":\"item.completed\",\"item\":{\"id\":\"f\",\"type\":\"mcp_tool_call\",\"server\":\"chopitup\",\"tool\":\"post_message\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"g\",\"type\":\"mcp_tool_call\",\"server\":7,\"tool\":[1],\"arguments\":{\"system2_search_query\":[1,{\"q\":7}]}}}\n", [new("MCP", "(unknown server).(unknown tool) {\"system2_search_query\":[1,{\"q\":7}]}", false)] },
+    };
+
+    [Theory]
+    [MemberData(nameof(CodexMcpCases))]
+    public void Codex_calls_list_every_mcp_call_outside_the_hub(string _, string stdout, WebRequest[] expected) =>
+        Assert.Equal(expected, SpawnOutput.CodexCalls(stdout));
 
     [Theory]
     [MemberData(nameof(ToolCallCases))]

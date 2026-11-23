@@ -89,15 +89,17 @@ public static class SpawnOutput
     /// action). A search takes <c>action.query</c>, else the item's <c>query</c>; an opened page its
     /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
     /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
-    /// WebSearch marked "(not completed)". Same caps as the shell lists.</summary>
+    /// WebSearch marked "(not completed)". MCP calls outside the hub are included as
+    /// <see cref="CodexCalls"/> reads them. Same caps as the shell lists.</summary>
     public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout) =>
         CodexCalls(stdout).Where(c => c.Tool != ShellTool).ToList();
 
     public const string ShellTool = "Shell";
 
-    /// <summary>Codex: every web_search item (as <see cref="CodexWebRequests"/> reads it) and every
-    /// command_execution item (as a <see cref="ShellTool"/> call with its command), in one first-seen
-    /// order, for a plain room's calls note. Same caps as the shell lists.</summary>
+    /// <summary>Codex: every web_search item (as <see cref="CodexWebRequests"/> reads it), every
+    /// command_execution item (as a <see cref="ShellTool"/> call with its command) and every
+    /// mcp_tool_call item on a server other than the hub's own (<see cref="CodexMcpCall"/>), in one
+    /// first-seen order, for a plain room's calls note. Same caps as the shell lists.</summary>
     public static IReadOnlyList<WebRequest> CodexCalls(string stdout)
     {
         var order = new List<string>();
@@ -108,21 +110,47 @@ public static class SpawnOutput
             var type = Str(root, "type");
             if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) continue;
             var kind = Str(item, "type");
-            if (kind is not ("web_search" or "command_execution")) continue;
+            if (kind is not ("web_search" or "command_execution" or "mcp_tool_call")) continue;
             if (kind == "command_execution" && Str(item, "command") is null) continue;
+            if (kind == "mcp_tool_call" && Str(item, "server") == SpawnCommands.McpServerName) continue;
             var id = Str(item, "id") ?? $"anon-{anonymous++}";
             if (byId.TryGetValue(id, out var seen) && seen.Completed) continue;
             if (!byId.ContainsKey(id)) order.Add(id);
-            byId[id] = kind == "command_execution"
-                ? (new WebRequest(ShellTool, Str(item, "command")!, false), type == "item.completed")
-                : type == "item.completed"
+            var completed = type == "item.completed";
+            byId[id] = kind switch
+            {
+                "command_execution" => (new WebRequest(ShellTool, Str(item, "command")!, false), completed),
+                "mcp_tool_call" => (CodexMcpCall(item, completed), completed),
+                _ => completed
                     ? (CompletedWebSearch(item), true)
-                    : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + " (not completed)", false), false);
+                    : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + NotCompleted, false), false),
+            };
         }
         return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).Take(MaxCommands).ToList();
     }
 
     private const string NoTarget = "(no target)";
+    private const string NotCompleted = " (not completed)";
+
+    /// <summary>One Codex MCP call on a server the hub did not configure. Measured on 0.169.1: a
+    /// hub-launched spawn searches the web through Codex's own <c>codex_apps</c> server
+    /// (<c>search_service.web_run</c> with <c>system2_search_query: [{q}]</c>), not as a web_search
+    /// item. That search reads as a WebSearch of its queries; any other call reads as
+    /// <c>MCP "server.tool {arguments}"</c>, so reach outside the hub is never silent.</summary>
+    private static WebRequest CodexMcpCall(JsonElement item, bool completed)
+    {
+        var server = NonEmpty(Str(item, "server")) ?? "(unknown server)";
+        var tool = NonEmpty(Str(item, "tool")) ?? "(unknown tool)";
+        var args = item.TryGetProperty("arguments", out var a) && a.ValueKind == JsonValueKind.Object ? a : (JsonElement?)null;
+        var suffix = completed ? "" : NotCompleted;
+        if (server == "codex_apps" && tool == "search_service.web_run" && args is { } search
+            && search.TryGetProperty("system2_search_query", out var queries) && queries.ValueKind == JsonValueKind.Array)
+        {
+            var qs = queries.EnumerateArray().Select(q => NonEmpty(Str(q, "q"))).OfType<string>().ToList();
+            if (qs.Count > 0) return new WebRequest("WebSearch", string.Join(" | ", qs) + suffix, false);
+        }
+        return new WebRequest("MCP", $"{server}.{tool}" + (args is { } raw ? " " + raw.GetRawText() : "") + suffix, false);
+    }
 
     private static WebRequest CompletedWebSearch(JsonElement item)
     {
