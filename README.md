@@ -186,6 +186,12 @@ also search the web and fetch pages (WebSearch and WebFetch); its system prompt 
 as untrusted data, and a fetch of the hub's own loopback address is denied. Only one spawn runs at a
 time within one exchange, so two models never edit the same tree at once.
 
+In a plain room (no directory) a Claude spawn has WebSearch and WebFetch and no file or shell tool,
+under the same untrusted-data rule and loopback deny. A Codex spawn has its CLI's default web search
+and a shell in an empty scratch folder that the hub deletes after the turn. With no commit trail, the
+hub posts one note per spawn that made such calls, listing them (at most 10) as the participant's own
+text, fenced.
+
 Each directory room also has an artifacts folder beside it, `<room dir>.artifacts`. A spawn finds its
 path in the prompt and in `CHOPITUP_ARTIFACTS`, and writes renders and other large generated files
 there. Git does not track the folder, and it outlasts every exchange. `artifact:<path>` names a file

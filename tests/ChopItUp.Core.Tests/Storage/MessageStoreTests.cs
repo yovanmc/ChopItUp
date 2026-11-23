@@ -272,6 +272,26 @@ public sealed class MessageStoreTests : IDisposable
         Assert.False(retried.Message.Imported);
     }
 
+    [Fact]
+    public void A_spawn_stamp_and_its_usage_are_written_once_and_read_back_and_an_unstamped_row_reads_as_not_reported()
+    {
+        var first = _store.Post("general", "opus", "first");
+        var last = _store.Post("general", "opus", "last");
+        var human = _store.Post("general", "owner", "hi");
+
+        Assert.True(_store.StampSpawn(first.Id, "general-1-1-aa"));
+        Assert.True(_store.StampSpawn(last.Id, "general-1-1-aa"));
+        Assert.False(_store.StampSpawn(last.Id, "general-9-9-zz"));   // a stamp is never replaced
+        Assert.True(_store.SetSpawnUsage(last.Id, """{"host":"claude","usage":{"output_tokens":4}}"""));
+        Assert.False(_store.SetSpawnUsage(last.Id, """{"host":"claude"}"""));
+
+        Assert.Equal(new SpawnUsage("general-1-1-aa", null), _store.GetSpawnUsage(first.Id));
+        Assert.Equal(new SpawnUsage("general-1-1-aa", """{"host":"claude","usage":{"output_tokens":4}}"""), _store.GetSpawnUsage(last.Id));
+        Assert.Equal(new SpawnUsage(null, null), _store.GetSpawnUsage(human.Id));
+        Assert.Null(_store.GetSpawnUsage(999_999));
+        Assert.False(_store.StampSpawn(999_999, "x"));
+    }
+
     public void Dispose()
     {
         SqliteConnection.ClearAllPools();
