@@ -769,16 +769,11 @@ input {
 /* A transcript turn brought in by import. Same voice as the hub-note label so it reads as "the app is
    telling you where this came from", never as a second author. */
 .imported-tag {
-  display: inline-block;
+  display: block;
   margin-bottom: 2px;
-  padding: 0 5px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 620;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  /* --dim, not --faint: at 10px this line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */
+  font-size: 11px;
+  font-style: italic;
+  /* --dim, not --faint: this small line has to clear WCAG AA (--faint is ~3.2:1 on --panel). */
   color: var(--dim);
 }
 

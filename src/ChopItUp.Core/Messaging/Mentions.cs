@@ -21,7 +21,10 @@ public sealed class Mentions
         _canonical = ids.Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(i => i, i => i, StringComparer.OrdinalIgnoreCase);
         if (_canonical.Count == 0) return;
         var alternation = string.Join("|", _canonical.Keys.OrderByDescending(i => i.Length).ThenBy(i => i, StringComparer.Ordinal).Select(Regex.Escape));
-        _pattern = new Regex($@"(?<![\w-])@({alternation})(?!\.?[\w-])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        // A word character is a letter, a digit, `_` or `-`, spelled out rather than `\w` because the
+        // client twin's engine reads `\w` as ASCII. Any surrogate counts too: .NET sees an astral
+        // character as two code units it cannot classify, so the twin counts every astral code point.
+        _pattern = new Regex($@"(?<![\p{{L}}\p{{N}}_\-\uD800-\uDFFF])@({alternation})(?!\.?[\p{{L}}\p{{N}}_\-\uD800-\uDBFF])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     public IReadOnlyList<string> Find(string body)

@@ -4,6 +4,7 @@ using ChopItUp.Core.Messaging;
 using ChopItUp.Core.Model;
 using ChopItUp.Core.Storage;
 using ChopItUp.Hub.Git;
+using ChopItUp.Hub.Spawning;
 
 namespace ChopItUp.Hub.Memory;
 
@@ -102,6 +103,44 @@ public static class HubNotes
         return $"@{participantId}'s commit added {files.Count} file(s) over 5 MB to git history: {names}. Git keeps them for good."
             + (artifactsFolder is null ? "" : $" Write large generated files to {artifactsFolder} instead.");
     }
+
+    public const int CallsNoteLines = 10;
+    public const int CallsNoteChars = 160;
+
+    /// <summary>A plain-room spawn's web and shell calls, its only record (no commit trail there). The
+    /// targets are model-chosen text that every later spawn reads under the hub's authorship, so, as in
+    /// <see cref="Proposed"/>, the note names the participant as their author and fences them; each
+    /// target is JSON-encoded (quotes and control characters escaped) and every backtick run long
+    /// enough to fence is broken up. A tool name that is not a plain word is encoded with its target
+    /// under the label "Call". At most <see cref="CallsNoteLines"/> lines, each target cut at
+    /// <see cref="CallsNoteChars"/> characters before encoding, then a count of the rest; the header
+    /// gives the total, "at least" when a parser hit its cap. Null when there is no call.</summary>
+    public static string? Calls(string participantId, IReadOnlyList<WebRequest> calls, bool atLeast)
+    {
+        if (calls.Count == 0) return null;
+        var sb = new System.Text.StringBuilder();
+        sb.Append("Web and shell calls by ").Append(participantId).Append(" (").Append(atLeast ? "at least " : "").Append(calls.Count)
+          .Append("). The text below was written by ").Append(participantId).Append("'s calls, not by the hub.\n\n```text\n");
+        for (var i = 0; i < Math.Min(calls.Count, CallsNoteLines); i++)
+        {
+            // A tool name comes off the stream too: one that is not a plain word moves into the
+            // encoded text under a fixed label.
+            var plainTool = PlainToolName.IsMatch(calls[i].Tool);
+            var target = plainTool ? calls[i].Target : calls[i].Tool + " " + calls[i].Target;
+            if (target.Length > CallsNoteChars)
+                target = target[..(char.IsHighSurrogate(target[CallsNoteChars - 1]) ? CallsNoteChars - 1 : CallsNoteChars)] + "…";
+            var encoded = System.Text.Json.JsonSerializer.Serialize(target, CallsJson);
+            while (encoded.Contains("```", StringComparison.Ordinal)) encoded = encoded.Replace("```", "` ` `", StringComparison.Ordinal);
+            sb.Append(i + 1).Append(". ").Append(plainTool ? calls[i].Tool : "Call").Append(' ').Append(encoded).Append(calls[i].Denied ? " [denied]" : "").Append('\n');
+        }
+        if (calls.Count > CallsNoteLines) sb.Append("and ").Append(calls.Count - CallsNoteLines).Append(" more\n");
+        return sb.Append("```").ToString();
+    }
+
+    // \z, not $: in .NET, $ also matches before a final newline.
+    private static readonly System.Text.RegularExpressions.Regex PlainToolName = new(@"^[A-Za-z_]{1,32}\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.Json.JsonSerializerOptions CallsJson = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     /// <summary>The room's record of what the trail did around one spawn. One line; the commit itself
     /// is the detail.</summary>

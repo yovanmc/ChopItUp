@@ -15,7 +15,7 @@ public sealed class SpawnCommandsTests
     {
         Assert.All(new[]
         {
-            SpawnCommands.Claude(ClaudeExe, "opus", @"C:\d\mcp.json", @"C:\d", "P", "l"),
+            SpawnCommands.Claude(ClaudeExe, "opus", @"C:\d\mcp.json", @"C:\d\settings.json", "R", @"C:\d", "P", "l"),
             SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\d\mcp.json", @"C:\d\settings.json", "R", @"C:\Rooms\lab", "P", "l"),
             SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\d", @"C:\d\last.txt", "P", "l"),
             SpawnCommands.CodexInDirectory(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "t", @"C:\Rooms\lab", @"C:\d\last.txt", "P", "l"),
@@ -23,14 +23,15 @@ public sealed class SpawnCommandsTests
     }
 
     [Fact]
-    public void Claude_command_line_is_the_verified_one_and_carries_no_token()
+    public void Claude_command_line_is_the_verified_one_with_only_the_two_web_tools_and_carries_no_token()
     {
-        var spec = SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1", "PROMPT", "opus/s1");
+        var spec = SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\data\spawns\s1", "PROMPT", "opus/s1");
         Assert.Equal(@"C:\tools\claude.exe", spec.FileName);
         Assert.Equal(
-            ["-p", "--tools", "", "--strict-mcp-config", "--mcp-config", @"C:\data\spawns\s1\mcp.json",
-             "--allowedTools", "mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory,mcp__chopitup__propose_rewrite", "--no-session-persistence", "--model", "opus",
-             "--output-format", "json", "--disable-slash-commands", "--setting-sources", ""],
+            ["-p", "--permission-mode", "dontAsk", "--tools", "WebSearch,WebFetch", "--strict-mcp-config", "--mcp-config", @"C:\data\spawns\s1\mcp.json",
+             "--allowedTools", "WebSearch,WebFetch,mcp__chopitup__post_message,mcp__chopitup__recall,mcp__chopitup__propose_memory,mcp__chopitup__propose_rewrite",
+             "--settings", @"C:\data\spawns\s1\settings.json", "--append-system-prompt", "RULES", "--no-session-persistence", "--model", "opus",
+             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", ""],
             spec.Arguments);
         Assert.Empty(spec.Environment);
         Assert.Equal("PROMPT", spec.StandardInput);
@@ -55,7 +56,7 @@ public sealed class SpawnCommandsTests
         var spec = SpawnCommands.Codex(CodexShim, "gpt-6-astra", "http://127.0.0.1:8790/mcp", "tok456", @"C:\data\spawns\s2", @"C:\data\spawns\s2\last.txt", "PROMPT", "gpt-6-astra/s2");
         Assert.Equal(@"C:\Windows\System32\cmd.exe", spec.FileName);
         Assert.Equal(
-            ["/d", "/c", @"C:\tools\codex.cmd", "exec", "--ephemeral", "--ignore-user-config",
+            ["/d", "/c", @"C:\tools\codex.cmd", "exec", "--ephemeral", "--ignore-user-config", "--json",
              "-c", "mcp_servers.chopitup.url=http://127.0.0.1:8790/mcp",
              "-c", "mcp_servers.chopitup.bearer_token_env_var=CHOPITUP_TOKEN",
              "-c", "mcp_servers.chopitup.startup_timeout_sec=20",
@@ -114,14 +115,14 @@ public sealed class SpawnCommandsTests
                  {
                      "Bash(git commit *)", "Bash(git commit)", "Bash(git push *)", "Bash(git add *)", "Bash(git reset)", "Bash(git -*)", "Bash(git.exe *)", "Bash(git.exe)",
                      "Edit(.git/**)", "Write(.git/**)", "Read(~/.ssh/**)", "Read(~/.claude/**)", "Read(~/.codex/**)", "Write(~/.claude/**)", "Edit(~/.codex/**)", "Write(~/.ssh/**)",
-                     "WebFetch(domain:127.0.0.1)", "WebFetch(domain:localhost)",   // measured on 2.1.328: denied before any connection
+                     "WebFetch(domain:127.0.0.1)", "WebFetch(domain:localhost)", "WebFetch(domain:[::1])", "WebFetch(domain:0.0.0.0)",   // measured on 2.1.328: denied before any connection
                  })
             Assert.Contains(expected, deny);
         Assert.DoesNotContain("Bash(git log *)", deny);
         Assert.DoesNotContain("Bash(git status *)", deny);
         Assert.DoesNotContain("Bash(git *)", deny);
         Assert.DoesNotContain("Bash(*git.exe *)", deny);   // leading wildcards do not match on 2.1.220 (claim 35); a rule that looks like a fence and is not
-        Assert.Equal(SpawnCommands.GitWriteVerbs.Length * 2 + 5 + SpawnCommands.CredentialFolders.Length * 3 + 2, deny.Count);
+        Assert.Equal(SpawnCommands.GitWriteVerbs.Length * 2 + 5 + SpawnCommands.CredentialFolders.Length * 3 + 4, deny.Count);
     }
 
     [Fact]
@@ -149,7 +150,7 @@ public sealed class SpawnCommandsTests
     {
         var spec = inDirectory
             ? SpawnCommands.ClaudeInDirectory(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\Rooms\lab", "PROMPT", "opus/s1", effort)
-            : SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1", "PROMPT", "opus/s1", effort);
+            : SpawnCommands.Claude(ClaudeExe, "opus", @"C:\data\spawns\s1\mcp.json", @"C:\data\spawns\s1\settings.json", "RULES", @"C:\data\spawns\s1", "PROMPT", "opus/s1", effort);
         if (effort is null) Assert.DoesNotContain("--effort", spec.Arguments);
         else Assert.Equal(["--effort", effort], spec.Arguments.TakeLast(2));
     }

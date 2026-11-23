@@ -24,7 +24,7 @@ export const DID_NOT_HAPPEN = 'That edit was not saved.';
 
 /** The trail's own body rule, said before the 400 rather than after it. */
 export const SAVE_HINT =
-  'Saving files an approved rewrite in this room: the previous text is kept beside the file, the write is one commit, and the room gets a note. The file needs at least one ## entry heading.';
+  'Saving records an approved rewrite in this room: the previous text is kept beside the file, the write is one commit, and the room gets a note. The file needs at least one ## entry heading.';
 
 /** Thousands separators without a locale: `toLocaleString` would make the count on screen depend on
  *  the browser's language, and these are the hub's numbers. */
@@ -36,7 +36,8 @@ function grouped(n: number): string {
  *  to stay under. */
 export function fileLabel(file: MemoryFile): string {
   const name = file.slug === CORE ? `${file.path} (core)` : file.path;
-  return `${name} · ${grouped(file.chars)} of ${grouped(file.cap)}`;
+  const line = `${name} · ${grouped(file.chars)} of ${grouped(file.cap)}`;
+  return file.spawnReads === null ? line : `${line} · spawns read the first ${grouped(file.spawnReads)}`;
 }
 
 /** Plain inequality: the hub LF-normalises every read and a browser textarea holds LF, so the text

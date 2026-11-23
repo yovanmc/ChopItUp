@@ -35,7 +35,7 @@
     { "name": "non-ascii letter",          "body": "@opüs hi",                                            "recipients": [],                       "unknown": [],           "references": [] },
     { "name": "bom before at",             "body": "\uFEFF@opus hi",                                      "recipients": [],                       "unknown": [],           "references": ["opus"] },
     { "name": "email without tld",         "body": "me@opus writes",                                      "recipients": [],                       "unknown": [],           "references": [] },
-    { "name": "astral letter",             "body": "@opus𝐀 hi",                                "recipients": [],                       "unknown": [],           "references": ["opus"] },
+    { "name": "astral letter",             "body": "@opus𝐀 hi",                                "recipients": [],                       "unknown": [],           "references": [] },
     { "name": "turns before the mentions",        "body": "turns: 3 @opus @sonnet go",                  "recipients": ["opus", "sonnet"], "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 3 } },
     { "name": "turns between mentions, no space",  "body": "@opus turns:3 @sonnet go",                   "recipients": ["opus", "sonnet"], "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 3 } },
     { "name": "turns after a slash token",         "body": "/grill turns: 5 @opus what about X",         "recipients": ["opus"],           "unknown": [],       "references": [],         "turns": { "token": "valid", "value": 5 } },
@@ -51,6 +51,13 @@
     { "name": "turns extra whitespace is tolerated",      "body": "turns:  3 @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 3 } },
     { "name": "turns with a letter glued on is refused",  "body": "turns:16x @opus go",                      "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
     { "name": "turns at the ceiling",                     "body": "turns: 16 @opus",                         "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "valid", "value": 16 } },
-    { "name": "turns one past the ceiling",                "body": "turns: 17 @opus",                        "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } }
+    { "name": "turns one past the ceiling",                "body": "turns: 17 @opus",                        "recipients": ["opus"], "unknown": [], "references": [], "turns": { "token": "out-of-range", "value": 0 } },
+    { "name": "letter before the at sign is a word", "body": "caf\u00e9@opus is here", "recipients": [], "unknown": [], "references": [] },
+    { "name": "letter after the id continues it", "body": "see @opus\u00e9 later", "recipients": [], "unknown": [], "references": [] },
+    { "name": "astral letter before the at sign is a word", "body": "x\ud835\udc00@opus here", "recipients": [], "unknown": [], "references": [] },
+    { "name": "astral letter after the id continues it", "body": "see @opus\ud835\udc00 later", "recipients": [], "unknown": [], "references": [] },
+    { "name": "slash with a lone CR is no command", "body": "/grill @opus\rmore", "recipients": [], "unknown": [], "references": ["opus"] },
+    { "name": "phase tag before a lone CR is no tag", "body": "phase: build\r@opus go", "recipients": [], "unknown": [], "references": ["opus"] },
+    { "name": "any astral character before the at sign counts as a word", "body": "go\ud83d\ude00@opus now", "recipients": [], "unknown": [], "references": [] }
   ]
 }
