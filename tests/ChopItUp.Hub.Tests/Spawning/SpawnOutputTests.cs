@@ -49,6 +49,22 @@ public sealed class SpawnOutputTests
             SpawnOutput.ClaudeWebRequests(ClaudeStream));
     }
 
+    /// <summary>A spawn killed at its timeout or stopped never writes the result line, so its
+    /// permission_denials are missing; the denied call's own tool_result still says so.</summary>
+    [Fact]
+    public void Claude_stream_with_no_result_line_marks_calls_denied_from_their_tool_result()
+    {
+        var killed = string.Join('\n', ClaudeStream.Split('\n').Where(l => !l.Contains("\"type\":\"result\"")))
+            + "\n" + """{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01G","is_error":true,"content":[{"type":"text","text":"Permission to use WebFetch with url http://127.0.0.1:8790/api/rooms has been denied."}]}]}}""";
+        Assert.Equal(
+            [new ShellCommand("echo hello", false), new ShellCommand("git -c user.name=x commit --allow-empty -m probe", true), new ShellCommand("dir ⏎ type probe.txt", false)],
+            SpawnOutput.ClaudeShellCommands(killed));
+        Assert.Equal(
+            [new WebRequest("WebSearch", "IANA example domain", false), new WebRequest("WebFetch", "https://example.com/", false),
+             new WebRequest("WebFetch", "http://127.0.0.1:8790/api/rooms", true)],
+            SpawnOutput.ClaudeWebRequests(killed));
+    }
+
     [Fact]
     public void M9_A9_claude_final_text_comes_from_the_last_result_line_or_from_a_single_object()
     {
