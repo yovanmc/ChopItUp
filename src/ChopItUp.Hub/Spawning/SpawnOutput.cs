@@ -22,7 +22,8 @@ public static class SpawnOutput
     public const int MaxCommandChars = 400;
 
     /// <summary>Claude: every Bash tool_use in assistant messages, in order; one the final result lists
-    /// under permission_denials (by tool_use_id) is marked denied — it never ran.</summary>
+    /// under permission_denials (by tool_use_id), or whose tool_result is the deny message, is marked
+    /// denied — it never ran.</summary>
     public static IReadOnlyList<ShellCommand> ClaudeShellCommands(string stdout) =>
         ClaudeToolCalls(stdout, new Dictionary<string, string> { ["Bash"] = "command" })
             .Select(c => new ShellCommand(Flatten(c.Target), c.Denied)).Take(MaxCommands).ToList();
@@ -35,7 +36,7 @@ public static class SpawnOutput
 
     /// <summary>The tool_use blocks whose name is a key of <paramref name="inputField"/>, with that
     /// input field's string value, in order; a call the final result lists under permission_denials
-    /// (by tool_use_id) is marked denied, since it never ran.</summary>
+    /// (by tool_use_id), or whose tool_result is the deny message, is marked denied, since it never ran.</summary>
     private static List<(string Tool, string Target, bool Denied)> ClaudeToolCalls(string stdout, IReadOnlyDictionary<string, string> inputField)
     {
         var found = new List<(string Id, string Tool, string Target)>();
@@ -56,6 +57,18 @@ public static class SpawnOutput
                     found.Add((Str(block, "id") ?? "", name, target));
                 }
             }
+            else if (type == "user"
+                && root.TryGetProperty("message", out var userMessage)
+                && userMessage.ValueKind == JsonValueKind.Object
+                && userMessage.TryGetProperty("content", out var results)
+                && results.ValueKind == JsonValueKind.Array)
+            {
+                // A spawn killed at its timeout or stopped writes no result line, so the denied call's
+                // own tool_result is the only record that it never ran.
+                foreach (var block in results.EnumerateArray())
+                    if (Str(block, "type") == "tool_result" && Str(block, "tool_use_id") is { Length: > 0 } id && IsDenialResult(block))
+                        denied.Add(id);
+            }
             else if (type == "result"
                 && root.TryGetProperty("permission_denials", out var denials)
                 && denials.ValueKind == JsonValueKind.Array)
@@ -65,6 +78,26 @@ public static class SpawnOutput
             }
         }
         return found.Select(f => (f.Tool, f.Target, f.Id.Length > 0 && denied.Contains(f.Id))).ToList();
+    }
+
+    /// <summary>An error tool_result whose text is one of the CLI's deny messages, measured on 2.1.328:
+    /// "Permission to use Bash with command … has been denied.", "Permission to use Write has been denied
+    /// because Claude Code is running in don't ask mode. …" and "WebFetch denied access to domain:127.0.0.1.".
+    /// Its content is a string or text blocks. A Bash call that ran and failed reads "Exit code 1\n…", so
+    /// its output cannot pass for a denial.</summary>
+    private static bool IsDenialResult(JsonElement block)
+    {
+        if (!block.TryGetProperty("is_error", out var isError) || isError.ValueKind != JsonValueKind.True) return false;
+        if (!block.TryGetProperty("content", out var content)) return false;
+        var text = content.ValueKind switch
+        {
+            JsonValueKind.String => content.GetString(),
+            JsonValueKind.Array => string.Concat(content.EnumerateArray().Select(t => Str(t, "text") ?? "")),
+            _ => null,
+        };
+        return text is not null
+            && ((text.StartsWith("Permission to use ", StringComparison.Ordinal) && text.Contains(" has been denied", StringComparison.Ordinal))
+                || text.StartsWith("WebFetch denied access to domain:", StringComparison.Ordinal));
     }
 
     /// <summary>Codex: every command_execution item in first-seen order, the completed form replacing
