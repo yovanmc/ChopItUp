@@ -41,11 +41,11 @@ const BASE: MemoryProposal = {
 
 const render = (p: MemoryProposal) => renderList([p]);
 
-const renderList = (proposals: MemoryProposal[], locked = false, busyImport: string | null = null) =>
+const renderList = (proposals: MemoryProposal[], locked = false, busyImport: string | null = null, busyId: number | null = null) =>
   renderToStaticMarkup(
     <MemoryPanel
       proposals={proposals}
-      busyId={null}
+      busyId={busyId}
       busyImport={busyImport}
       locked={locked}
       onDecide={() => undefined}
@@ -54,7 +54,7 @@ const renderList = (proposals: MemoryProposal[], locked = false, busyImport: str
   );
 
 /** A folder import can land dozens of proposals at once, and one click per card does not scale. */
-describe('MemoryPanel, approve all for one import (row 56)', () => {
+describe('MemoryPanel, approve all for one import', () => {
   const FROM_A = 'codex:C:/notes/a';
   const FROM_B = 'codex:C:/notes/b';
   const rows = [
@@ -73,9 +73,11 @@ describe('MemoryPanel, approve all for one import (row 56)', () => {
     expect(html).toContain('3 pending from codex:C:/notes/a');
   });
 
-  test('the control is disabled while a spawn runs or an approve all is in flight', () => {
+  test('the control is disabled while a spawn runs or any decision is in flight', () => {
     expect(renderList(rows, true)).toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
-    expect(renderList(rows, false, FROM_A)).toContain('Approving…');
+    expect(renderList(rows, false, FROM_A)).toMatch(/<button[^>]*disabled=""[^>]*>Approving…/);
+    expect(renderList(rows, false, null, 2)).toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
+    expect(renderList(rows)).not.toMatch(/<button[^>]*disabled=""[^>]*>Approve all 3/);
   });
 
   test('editor rows and approved-but-unwritten rows are not part of an import batch', () => {

@@ -729,7 +729,7 @@ export default function App() {
       const colon = origin.indexOf(':');
       setApprovingImport(origin);
       try {
-        const result = await api.approveImport(origin.slice(0, colon) as MemorySource, origin.slice(colon + 1));
+        const result = await api.approveImport(origin.slice(0, colon) as MemorySource, origin.slice(colon + 1), roomId);
         const [first] = result.refused;
         setError(
           first

@@ -319,32 +319,50 @@ public static class MemoryApi
     private static string Provenance(MemoryProposal p, DateTimeOffset at) =>
         $"approved {Timestamps.Stamp(at)} proposal {p.Id} by {p.AuthorId} in room {p.RoomId}";
 
-    /// <summary>Approve all for one import: every PENDING row of that origin, oldest first, through
-    /// <see cref="ApproveCore"/> under <see cref="Decisions"/>, so each row gets the same checks and
-    /// commit a single Approve gives it. A refused row stays pending and is reported, and the rows
-    /// after it still run. One summary note when anything was approved, never one per row.</summary>
+    /// <summary>Approve all for one import in one room: every PENDING row of that origin there, oldest
+    /// first, through <see cref="ApproveCore"/> under <see cref="Decisions"/>, so each row gets the
+    /// same checks and commit a single Approve gives it. The room scopes it because the panel counts
+    /// one room's rows, and the same folder imported into another room is that room's decision. A
+    /// refused row stays pending and is reported, and the rows after it still run. A row that throws
+    /// mid-write stops the batch and is reported too. One summary note when anything was approved,
+    /// posted even when a row threw, never one per row.</summary>
     private static async Task<IResult> ApproveImport(ImportBody body, MemoryProposalStore proposals, MemoryStore memory, MemoryGit git, MessageStore store, MessageSignal signal, SpawnerService spawner)
     {
         var source = (body.Source ?? "").Trim().ToLowerInvariant();
         if (!MemoryImport.Sources.Contains(source, StringComparer.Ordinal) || string.IsNullOrWhiteSpace(body.Path))
             return Results.BadRequest(new { error = "source (claude or codex) and path are required." });
+        if (string.IsNullOrWhiteSpace(body.RoomId) || !store.RoomExists(body.RoomId)) return Results.NotFound(new { error = $"Unknown room '{body.RoomId}'." });
         await Decisions.WaitAsync();
         try
         {
             if (spawner.AnySpawnInFlight) return Results.Conflict(new { error = SpawnRunning });
             var approved = new List<MemoryProposal>();
             var refused = new List<object>();
-            foreach (var p in proposals.PendingOf($"{source}:{body.Path}"))
+            try
             {
-                // A spawn can start while this runs (spawns never take Decisions), and from then on a
-                // write could race its own memory reads, so the rest wait for the next click.
-                if (spawner.AnySpawnInFlight) { refused.Add(new { p.Id, error = SpawnRunning }); continue; }
-                var (refusal, decided) = await ApproveCore(p, proposals, memory, git, store, signal, notes: false);
-                if (decided is not null) approved.Add(decided);
-                else refused.Add(new { p.Id, error = ErrorOf(refusal) });
+                foreach (var p in proposals.PendingOf($"{source}:{body.Path}", body.RoomId))
+                {
+                    // A spawn can start while this runs (spawns never take Decisions), and from then on a
+                    // write could race its own memory reads, so the rest wait for the next click.
+                    if (spawner.AnySpawnInFlight) { refused.Add(new { p.Id, error = SpawnRunning }); continue; }
+                    MemoryProposal? decided;
+                    IResult? refusal;
+                    try { (refusal, decided) = await ApproveCore(p, proposals, memory, git, store, signal, notes: false); }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        // The row may be marked and unwritten, which its own card's Retry finishes.
+                        refused.Add(new { p.Id, error = $"{e.GetType().Name}: {e.Message}" });
+                        break;
+                    }
+                    if (decided is not null) approved.Add(decided);
+                    else refused.Add(new { p.Id, error = ErrorOf(refusal) });
+                }
             }
-            if (approved.Count > 0)
-                Note(store, signal, approved[0].RoomId, HubNotes.ImportApproved(source, body.Path!, approved.Count, refused.Count));
+            finally
+            {
+                if (approved.Count > 0)
+                    Note(store, signal, body.RoomId, HubNotes.ImportApproved(source, body.Path!, approved.Count, refused.Count, approved.Count(p => p.CommitHash is null)));
+            }
             return Results.Json(new { approved = approved.Count, refused });
         }
         finally { Decisions.Release(); }
@@ -401,18 +419,19 @@ public static class MemoryApi
             try { added.Add(proposals.Create(body.RoomId, author, d.Topic, d.Title, d.Body, origin, flags: ProposalFlags.Compute(d.Body, fromDirectory: false))); imported++; }
             catch (ArgumentException) { skipped++; }
         }
-        var coreWarning = CoreWarning(added, memory);
+        var coreWarning = CoreWarning(proposals.PendingOf(origin, body.RoomId), memory);
         var note = HubNotes.Imported(source, body.Path!, imported, skipped);
         Note(store, signal, body.RoomId, coreWarning is null ? note : $"{note} {coreWarning}");
         return Results.Json(new { imported, skipped, coreWarning, proposals = added.Select(Map) }, statusCode: StatusCodes.Status201Created);
     }
 
-    /// <summary>What MEMORY.md would hold if every core row of this import were approved in turn, as a
-    /// warning when that passes <see cref="MemoryStore.CoreChars"/>, else null. Topic rows never
-    /// touch the core, so only drafts from a core file count.</summary>
-    private static string? CoreWarning(IReadOnlyList<MemoryProposal> added, MemoryStore memory)
+    /// <summary>What MEMORY.md would hold if every pending core row of this import were approved in
+    /// turn, as a warning when that passes <see cref="MemoryStore.CoreChars"/>, else null. Rows an
+    /// earlier run of the same import left pending count too. Topic rows never touch the core, so
+    /// only drafts from a core file count.</summary>
+    private static string? CoreWarning(IReadOnlyList<MemoryProposal> pending, MemoryStore memory)
     {
-        var core = added.Where(p => p.Topic == MemoryStore.CoreTopic).ToList();
+        var core = pending.Where(p => p.Topic == MemoryStore.CoreTopic).ToList();
         if (core.Count == 0) return null;
         var current = memory.ReadTopic(MemoryStore.CoreTopic)?.FullChars ?? 0;
         var now = DateTimeOffset.UtcNow;

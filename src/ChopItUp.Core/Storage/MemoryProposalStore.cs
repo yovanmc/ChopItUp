@@ -147,13 +147,14 @@ public sealed class MemoryProposalStore(ChopDb db)
         return cmd.ExecuteNonQuery() == 1 ? Get(id) : null;
     }
 
-    /// <summary>Every PENDING proposal of one import, oldest first.</summary>
-    public IReadOnlyList<MemoryProposal> PendingOf(string source)
+    /// <summary>Every PENDING proposal of one import in one room, oldest first.</summary>
+    public IReadOnlyList<MemoryProposal> PendingOf(string source, string roomId)
     {
         using var conn = db.Open();
         using var cmd = conn.CreateCommand();
-        cmd.CommandText = Select + " WHERE source = $source AND status = 'pending' ORDER BY id";
+        cmd.CommandText = Select + " WHERE source = $source AND room_id = $room AND status = 'pending' ORDER BY id";
         cmd.Parameters.AddWithValue("$source", source);
+        cmd.Parameters.AddWithValue("$room", roomId);
         using var reader = cmd.ExecuteReader();
         var rows = new List<MemoryProposal>();
         while (reader.Read()) rows.Add(Map(reader));

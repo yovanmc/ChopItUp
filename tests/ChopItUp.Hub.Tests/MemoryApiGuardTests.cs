@@ -36,6 +36,23 @@ public sealed class MemoryApiGuardTests
     }
 
     [Fact]
+    public async Task Without_git_an_approve_all_notes_how_many_writes_were_not_committed()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "chopitup_memnogitall_" + Guid.NewGuid().ToString("N"));
+        await using var host = await HubTestHost.StartAsync(dir, memoryGit: root => new MemoryGit(root, () => throw new FileNotFoundException("'git' was not found on PATH")));
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var proposals = host.Services.GetRequiredService<MemoryProposalStore>();
+        proposals.Create("general", "codex", "notes", "A", "a", "codex:C:/x");
+        proposals.Create("general", "codex", "notes", "B", "b", "codex:C:/x");
+
+        var r = await host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "codex", path = "C:/x", roomId = "general" });
+
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        using var doc = JsonDocument.Parse(await host.Client.GetStringAsync("api/rooms/general/messages?afterId=0&limit=200"));
+        Assert.Equal("Memory import from codex (C:/x): 2 proposal(s) approved (2 not committed: git unavailable or failed; see the hub log).", doc.RootElement.GetProperty("messages").EnumerateArray().Last().GetProperty("body").GetString());
+    }
+
+    [Fact]
     public async Task A5_decisions_are_refused_while_a_spawn_is_in_flight_and_allowed_after_it_ends()
     {
         var dir = Path.Combine(Path.GetTempPath(), "chopitup_memguard_" + Guid.NewGuid().ToString("N"));
@@ -60,7 +77,7 @@ public sealed class MemoryApiGuardTests
         File.WriteAllText(Path.Combine(planted, "x.md"), "---\nname: x\ndescription: Planted\nmetadata:\n  type: user\n---\nBy a spawn.\n");
         Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsJsonAsync("api/memory/import", new { source = "claude", path = planted, roomId = "general" })).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await host.Client.DeleteAsync($"api/memory/proposals?source=claude&path={Uri.EscapeDataString(planted)}")).StatusCode);
-        Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "claude", path = dir })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "claude", path = dir, roomId = "general" })).StatusCode);
         Assert.Equal("pending", proposals.Get(1)!.Status);
         Assert.Equal(2, proposals.List(null, null).Count);
 

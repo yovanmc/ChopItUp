@@ -85,7 +85,7 @@ describe('the owner token on writes', () => {
     ['a write', () => json({ id: 1 }), () => api.postMessage('lab', 'hello')],
     ['the background read-cursor write', () => json({ roomId: 'lab', unread: 0 }), () => api.markRead('lab')],
     ['a DELETE', () => json({ discarded: 2 }), () => api.discardImport('claude', 'C:/x/CLAUDE.md')],
-    ['an approve all', () => json({ approved: 2, refused: [] }), () => api.approveImport('codex', 'C:/x/notes')],
+    ['an approve all', () => json({ approved: 2, refused: [] }), () => api.approveImport('codex', 'C:/x/notes', 'lab')],
   ])('%s carries the stored token', async (_name, reply, send) => {
     storeToken('owner-secret');
     const calls = stubFetch(reply);

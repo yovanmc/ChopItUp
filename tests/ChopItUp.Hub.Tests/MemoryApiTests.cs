@@ -198,7 +198,7 @@ public sealed class MemoryApiTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A6_approve_all_writes_every_pending_row_of_one_import_with_one_note()
+    public async Task Approve_all_writes_every_pending_row_of_one_import_in_one_room_with_one_note()
     {
         File.WriteAllText(Memory.CorePath, "# Memory\n\n" + new string('x', 5_950) + "\n");
         var src = Path.Combine(_dir, "codex-memory"); Directory.CreateDirectory(src);
@@ -209,46 +209,81 @@ public sealed class MemoryApiTests : IAsyncLifetime
         await Post("api/memory/import", new { source = "codex", path = src, roomId = "general" });
         await Post("api/memory/import", new { source = "codex", path = other, roomId = "general" });
         Proposals.Create("general", "opus", "notes", "Live", "Said live.", null);                    // id 5
+        var lab = (await Post("api/rooms", new { name = "Lab" })).GetProperty("id").GetString()!;
+        Proposals.Create(lab, "codex", "notes", "Elsewhere", "Same folder, other room.", "codex:" + src);   // id 6
         var notesBefore = (await Messages()).Count;
 
-        var result = await Post("api/memory/import/approve", new { source = "codex", path = src });
+        var result = await Post("api/memory/import/approve", new { source = "codex", path = src, roomId = "general" });
 
         Assert.Equal(2, result.GetProperty("approved").GetInt32());
         var refused = Assert.Single(result.GetProperty("refused").EnumerateArray());
         Assert.Equal(1, refused.GetProperty("id").GetInt64());
         Assert.Contains("over the 6000 cap", refused.GetProperty("error").GetString());
-        Assert.Equal(["pending", "approved", "approved", "pending", "pending"], Enumerable.Range(1, 5).Select(i => Proposals.Get(i)!.Status));
+        Assert.Equal(["pending", "approved", "approved", "pending", "pending", "pending"], Enumerable.Range(1, 6).Select(i => Proposals.Get(i)!.Status));
         Assert.Contains("## A", File.ReadAllText(Path.Combine(Memory.TopicsDir, "notes.md")));
         Assert.Contains("## B", File.ReadAllText(Path.Combine(Memory.TopicsDir, "notes.md")));
         var added = (await Messages()).Skip(notesBefore).ToList();
-        Assert.Equal($"Memory import from codex ({src}): 2 proposal(s) approved, 1 refused and still pending.", Assert.Single(added).Body);
+        Assert.Equal($"Memory import from codex ({src}): 2 proposal(s) approved, 1 not written; see the memory panel.", Assert.Single(added).Body);
 
-        var again = await Post("api/memory/import/approve", new { source = "codex", path = src });
+        var again = await Post("api/memory/import/approve", new { source = "codex", path = src, roomId = "general" });
         Assert.Equal(0, again.GetProperty("approved").GetInt32());
         Assert.Equal(notesBefore + 1, (await Messages()).Count);
 
-        Assert.Equal(HttpStatusCode.BadRequest, (await _host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "gemini", path = src })).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await _host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "codex" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "gemini", path = src, roomId = "general" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await _host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "codex", roomId = "general" })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await _host.Client.PostAsJsonAsync("api/memory/import/approve", new { source = "codex", path = src, roomId = "nope" })).StatusCode);
     }
 
     [Fact]
-    public async Task A6_an_import_whose_core_entries_would_pass_the_cap_says_so()
+    public async Task Approve_all_stops_at_a_row_that_throws_and_still_notes_what_it_wrote()
     {
-        File.WriteAllText(Memory.CorePath, "# Memory\n\n" + new string('x', 5_950) + "\n");
+        var src = Path.Combine(_dir, "locked"); Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "first.md"), "## One\nWritten.\n");     // id 1
+        File.WriteAllText(Path.Combine(src, "second.md"), "## Two\nBlocked.\n");    // id 2, its topic file is read-only
+        File.WriteAllText(Path.Combine(src, "third.md"), "## Three\nNever tried.\n"); // id 3
+        await Post("api/memory/import", new { source = "codex", path = src, roomId = "general" });
+        Directory.CreateDirectory(Memory.TopicsDir);
+        var locked = Path.Combine(Memory.TopicsDir, "second.md");
+        File.WriteAllText(locked, "# second\n");
+        File.SetAttributes(locked, FileAttributes.ReadOnly);
+        try
+        {
+            var notesBefore = (await Messages()).Count;
+
+            var result = await Post("api/memory/import/approve", new { source = "codex", path = src, roomId = "general" });
+
+            Assert.Equal(1, result.GetProperty("approved").GetInt32());
+            var refused = Assert.Single(result.GetProperty("refused").EnumerateArray());
+            Assert.Equal(2, refused.GetProperty("id").GetInt64());
+            Assert.StartsWith("UnauthorizedAccessException", refused.GetProperty("error").GetString());
+            Assert.Equal("pending", Proposals.Get(3)!.Status);
+            Assert.Equal($"Memory import from codex ({src}): 1 proposal(s) approved, 1 not written; see the memory panel.", Assert.Single((await Messages()).Skip(notesBefore)).Body);
+        }
+        finally { File.SetAttributes(locked, FileAttributes.Normal); }
+    }
+
+    [Fact]
+    public async Task An_import_whose_core_entries_together_would_pass_the_cap_says_so()
+    {
+        File.WriteAllText(Memory.CorePath, "# Memory\n\n" + new string('x', 5_700) + "\n");
         var over = Path.Combine(_dir, "over"); Directory.CreateDirectory(over);
-        File.WriteAllText(Path.Combine(over, "core.md"), "## One\n" + new string('y', 30) + "\n## Two\n" + new string('z', 30) + "\n");
+        File.WriteAllText(Path.Combine(over, "core.md"), "## One\n" + new string('y', 100) + "\n## Two\n" + new string('z', 100) + "\n");
         var under = Path.Combine(_dir, "under"); Directory.CreateDirectory(under);
-        File.WriteAllText(Path.Combine(under, "notes.md"), "## Note\nSmall.\n");
+        File.WriteAllText(Path.Combine(under, "core.md"), "## Small\nFits.\n");
 
         var warned = await Post("api/memory/import", new { source = "codex", path = over, roomId = "general" });
-        var plain = await Post("api/memory/import", new { source = "codex", path = under, roomId = "general" });
+        // Each entry alone fits under the cap; only the two together pass it.
+        Assert.All(Proposals.List("general").Where(p => p.Topic == "core"), p => Assert.True(Memory.ProjectedCoreChars(null, p.Title, p.Body, "approved 2026-01-01T00:00:00Z proposal 1 by codex in room general") <= MemoryStore.CoreChars));
+        var again = await Post("api/memory/import", new { source = "codex", path = over, roomId = "general" });
+        var lab = (await Post("api/rooms", new { name = "Lab" })).GetProperty("id").GetString()!;
+        var plain = await Post("api/memory/import", new { source = "codex", path = under, roomId = lab });
 
         var warning = warned.GetProperty("coreWarning").GetString();
         Assert.Matches(@"^Approving every core entry of this import would make the core \d+ characters, over the 6000 cap\. Approvals past the cap are refused\.$", warning);
+        Assert.Equal(warning, again.GetProperty("coreWarning").GetString());   // a re-import still warns while those rows are pending
         Assert.Equal(JsonValueKind.Null, plain.GetProperty("coreWarning").ValueKind);
         var notes = (await Messages()).Where(m => m.Author == ChopDb.HubParticipantId).Select(m => m.Body).ToList();
         Assert.Equal($"Memory import from codex ({over}): 2 proposal(s) added, 0 already proposed. Review them in the memory panel. {warning}", notes[0]);
-        Assert.DoesNotContain("core entry", notes[1]);
     }
 
     [Fact]
