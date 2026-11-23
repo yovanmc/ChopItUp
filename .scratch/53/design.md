@@ -79,3 +79,27 @@ Done when:
 - None.
 
 ## Reviews
+### design1 (dissect-critic, opus): FIX-THEN-SHIP, no REFRAME. Folded as below. These folds override the seam facts and tasks above where they differ.
+
+- MAJOR, a throwing tool-count parse strands `_inFlight` and `_live`: FIXED. Both launch tasks call a never-throws `ToolCountOf` wrapper (catch all, log, return null), like `UsageOf`. `SpawnOutput.ToolCalls` also checks `ValueKind` before every property read. A test feeds `{"type":"item.completed","item":[1]}` and other hostile lines and expects null or a count, never a throw, and a spawner test proves the spawn still finishes.
+- DEFECT, output_limit unreachable: FIXED. Precedence is now worktree_refused, output_limit, launch_failed, timed_out, cancelled, usage_limit, failed, completed. launch_failed also requires `!OutputLimitExceeded`. The parameterized test builds the overflow result exactly as ProcessRunner does (`ExitCode` null, `TimedOut` false, `Cancelled` false, `OutputLimitExceeded` true, stdout empty).
+- DEFECT, overflow reads tool_calls 0: FIXED. `ToolCalls` returns null when the output limit was exceeded or the kept stdout is empty, and 0 only for a kept stream that lists no calls.
+- DEFECT, interrupted race: FIXED. The route reads the in-flight spawn ids and the task rows inside one `InLoopAsync` callback, so no launch or finish can land between them. While the hub stops, `InLoopAsync` throws and the route answers 503.
+- DEFECT, token semantics differ by host: FIXED. The route returns normalized metrics: `inputTokens` is uncached input, `cacheReadTokens` and `cacheWriteTokens` are cache counts, `outputTokens` is output. Claude fields map directly (its input excludes cache). For Codex, `inputTokens` = `input_tokens` minus `cached_input_tokens`, `cacheReadTokens` = `cached_input_tokens`, `cacheWriteTokens` = `cache_write_input_tokens`. inferred: Codex input includes its cached count (OpenAI usage semantics); the measured capture is consistent (cached 11,392 of input 15,789). `cache_write_input_tokens` is in the row 65 Codex capture (`shape\codex.jsonl`, value 0).
+- DEFECT, a hub stop drops finish data: FIXED in the reader. For an interrupted row the route reports posts as the count of `messages` rows with that `spawn_id` (exact, because a spawn whose finish never ran cannot have a hub-published answer). The other finish fields stay NULL.
+- NIT, retry on the run path: ACCEPTED. Criterion 6 now says: a run's conductor reopened after a usage-limit hold (`ResumeDue`) is retry 0, like the synthesis turn, the conductor ask-again, /continue and an owner reopen.
+- NIT, loci: ACCEPTED. `_inFlight` assignments are at SpawnerService.cs:1204 and SpawnerService.Modes.cs:253. Every launch, mode legs included, builds its request at ExchangePolicy.cs:495, which sets `Retry`.
+- NIT, CLI-internal retries: ACCEPTED. Reworded: CLI-internal retries are not counted. Nothing claims the CLIs report them.
+- NIT, Codex types: ACCEPTED. Allow-list `command_execution`, `file_change`, `mcp_tool_call`, `web_search`, counted once per item id (started and completed pair). An item with no id counts once per completed event. The Claude count includes denied `tool_use` blocks and `post_message` calls.
+- NIT, ties: ACCEPTED. Order by `started_at DESC, rowid DESC`.
+- NIT, termination representation: ACCEPTED. String constants, never an enum on the wire.
+- NIT, silent failures: ACCEPTED. A swallowed task write and a Finish that updates zero rows are logged to stderr.
+- NIT, `DetectLimit` on every spawn: ACCEPTED. Called only when the spawn posted nothing.
+- NIT, test names: ACCEPTED. Task 3 tests a runner throw (launch_failed row) and a throw before the handle (no row), and a panel overflow (output_limit, tool_calls NULL). Criterion 8 is checked by the diff: no change under `src/ChopItUp.Core/Model/Message.cs`, `src/ChopItUp.Hub/Mcp/` or `src/ChopItUp.Hub/client/`, and the golden prompt tests stay green.
+- NIT, dry run data: ACCEPTED. The dry run takes a scratch data and rooms folder under %TEMP% only.
+
+Criteria as folded (these supersede the copy at the top for the review):
+- 4. Precedence: worktree_refused, output_limit, launch_failed, timed_out, cancelled, usage_limit, failed, completed.
+- 5. adds: NULL when the output limit was exceeded or no stdout was kept. Codex allow-list as above.
+- 6. Retry is 1 only for the relaunch a usage-limit `Requeue` scheduled (plain and mode exchanges). Every other relaunch, including a run conductor resumed after a hold, is 0. CLI-internal retries are not counted.
+- 7. adds: normalized token metrics as above; posts for an interrupted row come from `messages.spawn_id`; rows and in-flight ids are read in one loop callback; 503 while the hub stops.
