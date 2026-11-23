@@ -1173,12 +1173,12 @@ public sealed partial class SpawnerService : BackgroundService
                     var mcpToolTimeoutMs = activeRun is not null ? (int?)_runLimits.EffectiveGateTimeout.TotalMilliseconds : null;
                     var mcpPath = Path.Combine(workDir, "mcp.json");
                     File.WriteAllText(mcpPath, SpawnCommands.ClaudeMcpConfigJson(McpUrl(), token, mcpToolTimeoutMs));
+                    var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room
+                    File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
                     if (directory is null)
-                        spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, workDir, prompt, label, effort);
+                        spec = SpawnCommands.Claude(Cli("claude"), participant.Model!, mcpPath, settingsPath, SpawnPrompt.PlainRoomTools("claude"), workDir, prompt, label, effort);
                     else
                     {
-                        var settingsPath = Path.Combine(workDir, "settings.json");     // scratch, never the room
-                        File.WriteAllText(settingsPath, SpawnCommands.ClaudeSettingsJson(_options.DataDir));
                         // run_gate joins the allowlist only for an in-run spawn. The built-in tool set
                         // (--tools) is untouched either way.
                         var allowedTools = activeRun is not null ? SpawnCommands.ClaudeRunToolsAllowed : SpawnCommands.ClaudeDirectoryToolsAllowed;

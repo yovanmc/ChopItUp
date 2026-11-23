@@ -17,18 +17,26 @@ public static class SpawnCommands
     /// tools stay off the list: the prompt already carries the transcript.</summary>
     public const string ClaudeToolAllowed = "mcp__" + McpServerName + "__post_message,mcp__" + McpServerName + "__recall,mcp__" + McpServerName + "__propose_memory,mcp__" + McpServerName + "__propose_rewrite";
 
-    /// <summary>`--tools ""` drops every built-in and leaves MCP tools directly callable;
-    /// `--strict-mcp-config` + `--setting-sources ""` keep the owner's own MCP servers and settings
-    /// out of the spawn; `--no-session-persistence` keeps the spawn stateless; `--bare` is never
-    /// used: it switches auth to API key only, and this app holds no key. <paramref name="effort"/>
-    /// is null outside a run and for an ordinary in-run row (nothing appended); a conductor or a
-    /// `judge`-class row gets exactly `--effort high`, never `xhigh` or `max`.</summary>
-    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string workDir, string prompt, string label, string? effort = null) =>
+    /// <summary>The only built-ins a plain-room Claude spawn gets: no file or shell tool.</summary>
+    public const string ClaudePlainBuiltins = "WebSearch,WebFetch";
+
+    /// <summary>A spawn in a plain room. `--tools` holds only the two web tools and MCP tools stay
+    /// directly callable; `dontAsk` plus the allow list runs them without a prompt and denies the rest;
+    /// the deny list in <paramref name="settingsPath"/> (scratch, beside <paramref name="mcpConfigPath"/>)
+    /// keeps WebFetch off loopback (measured on 2.1.328); <paramref name="systemRules"/>
+    /// (`SpawnPrompt.PlainRoomTools`) rides as an appended system prompt; `stream-json` + `--verbose`
+    /// carries the web calls the room note lists. `--strict-mcp-config` + `--setting-sources ""` keep
+    /// the owner's own MCP servers and settings out of the spawn; `--no-session-persistence` keeps the
+    /// spawn stateless; `--bare` is never used: it switches auth to API key only, and this app holds no
+    /// key. <paramref name="effort"/> is null outside a run and for an ordinary in-run row (nothing
+    /// appended); a conductor or a `judge`-class row gets exactly `--effort high`, never `xhigh` or `max`.</summary>
+    public static ProcessSpec Claude(ResolvedCli cli, string model, string mcpConfigPath, string settingsPath, string systemRules, string workDir, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
-             "-p", "--tools", "", "--strict-mcp-config", "--mcp-config", mcpConfigPath,
-             "--allowedTools", ClaudeToolAllowed, "--no-session-persistence", "--model", model,
-             "--output-format", "json", "--disable-slash-commands", "--setting-sources", "",
+             "-p", "--permission-mode", "dontAsk", "--tools", ClaudePlainBuiltins, "--strict-mcp-config", "--mcp-config", mcpConfigPath,
+             "--allowedTools", ClaudePlainBuiltins + "," + ClaudeToolAllowed, "--settings", settingsPath, "--append-system-prompt", systemRules,
+             "--no-session-persistence", "--model", model,
+             "--output-format", "stream-json", "--verbose", "--disable-slash-commands", "--setting-sources", "",
              .. effort is null ? Array.Empty<string>() : new[] { "--effort", effort }],
             new Dictionary<string, string>(),
             workDir, prompt, label) { Utf8Output = true };
@@ -58,11 +66,13 @@ public static class SpawnCommands
     /// CODEX_HOME (verified); `-c` values are literal strings when they are not TOML, so no quotes
     /// and no cmd.exe quoting hazards; `-` reads the prompt from stdin. <paramref name="effort"/> is
     /// passed as `-c model_reasoning_effort=&lt;value&gt;` (null appends nothing); measured on
-    /// codex-cli 0.153.3, the override binds per spawn and `high` is a value the CLI/API accepts.</summary>
+    /// codex-cli 0.153.3, the override binds per spawn and `high` is a value the CLI/API accepts.
+    /// `--json` carries the web search and command items the room note lists; the final text still
+    /// comes from `-o`. Web search is on by default (measured on 0.169.1), so nothing here enables it.</summary>
     public static ProcessSpec Codex(ResolvedCli cli, string model, string mcpUrl, string token, string workDir, string lastMessagePath, string prompt, string label, string? effort = null) =>
         new(cli.FileName,
             [.. cli.LeadingArguments,
-             "exec", "--ephemeral", "--ignore-user-config",
+             "exec", "--ephemeral", "--ignore-user-config", "--json",
              "-c", $"mcp_servers.{McpServerName}.url={mcpUrl}",
              "-c", $"mcp_servers.{McpServerName}.bearer_token_env_var={TokenEnvVar}",
              "-c", $"mcp_servers.{McpServerName}.startup_timeout_sec=20",
@@ -155,6 +165,9 @@ public static class SpawnCommands
         // with them both calls were denied before any connection. Bash can still reach it.
         rules.Add("WebFetch(domain:127.0.0.1)");
         rules.Add("WebFetch(domain:localhost)");
+        // The hub also listens on [::1]. Measured on 2.1.328: WebFetch refuses a dotless host by itself,
+        // and this rule makes that a permission denial: a second lock, not the only one.
+        rules.Add("WebFetch(domain:[::1])");
         if (dataDir is not null)
         {
             var forward = dataDir.Replace('\\', '/');

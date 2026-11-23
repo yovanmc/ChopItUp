@@ -84,6 +84,46 @@ public static class SpawnOutput
         return order.Select(id => new ShellCommand(Flatten(byId[id]), false)).Take(MaxCommands).ToList();
     }
 
+    /// <summary>Codex: every web_search item in first-seen order, the completed form replacing the
+    /// started one (measured on 0.169.1: the started event has an empty query and an <c>other</c>
+    /// action). A search takes <c>action.query</c>, else the item's <c>query</c>; an opened page its
+    /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
+    /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
+    /// WebSearch marked "(not completed)". Same caps as the shell lists.</summary>
+    public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout)
+    {
+        var order = new List<string>();
+        var byId = new Dictionary<string, (WebRequest Call, bool Completed)>(StringComparer.Ordinal);
+        int anonymous = 0;
+        foreach (var root in Lines(stdout))
+        {
+            var type = Str(root, "type");
+            if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item)
+                || item.ValueKind != JsonValueKind.Object || Str(item, "type") != "web_search") continue;
+            var id = Str(item, "id") ?? $"anon-{anonymous++}";
+            if (byId.TryGetValue(id, out var seen) && seen.Completed) continue;
+            if (!byId.ContainsKey(id)) order.Add(id);
+            byId[id] = type == "item.completed"
+                ? (CompletedWebSearch(item), true)
+                : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + " (not completed)", false), false);
+        }
+        return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).Take(MaxCommands).ToList();
+    }
+
+    private const string NoTarget = "(no target)";
+
+    private static WebRequest CompletedWebSearch(JsonElement item)
+    {
+        var action = item.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.Object ? a : (JsonElement?)null;
+        var kind = action is { } act ? NonEmpty(Str(act, "type")) : null;
+        if (kind is null or "search")
+            return new WebRequest("WebSearch", (action is { } s ? NonEmpty(Str(s, "query")) : null) ?? NonEmpty(Str(item, "query")) ?? NoTarget, false);
+        var target = NonEmpty(Str(action!.Value, "url")) ?? NonEmpty(Str(action.Value, "pattern")) ?? NonEmpty(Str(action.Value, "query"));
+        return new WebRequest(kind, target ?? NoTarget, false);
+    }
+
+    private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
     /// <summary>The model's final text from Claude stdout: the <c>result</c> string of a single JSON
     /// object (`--output-format json`) or of the last <c>type: result</c> line of a stream
     /// (`stream-json`). Null when neither is there.</summary>

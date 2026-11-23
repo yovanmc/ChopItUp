@@ -160,6 +160,40 @@ public sealed class SpawnOutputTests
         { "hostile claude shapes never throw", "claude", true, "{\"type\":\"assistant\",\"message\":[1]}\n{\"type\":\"assistant\",\"message\":{\"content\":[1,\"x\",{\"type\":\"tool_use\"}]}}\n", 1 },
     };
 
+    /// <summary>codex-cli 0.169.1 `exec --json`, one default web search (measured 2026-11-23): each item
+    /// carries two <c>id</c> keys, and the started event has an empty query.</summary>
+    private const string CodexWebSearch = """
+        {"type":"thread.started","thread_id":"t"}
+        {"type":"turn.started"}
+        {"type":"item.started","item":{"id":"item_1","type":"web_search","id":"exec-d95b5fd1","query":"","action":{"type":"other"}}}
+        {"type":"item.completed","item":{"id":"item_1","type":"web_search","id":"exec-d95b5fd1","query":"Model Context Protocol specification latest revision","action":{"type":"search","query":"Model Context Protocol specification latest revision"},"results":[{"type":"text_result","domain":"github.com"}]}}
+        {"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"2026-07-28"}}
+        {"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}
+        """;
+
+    [Fact]
+    public void The_measured_codex_web_search_counts_once()
+    {
+        Assert.Equal(1, SpawnOutput.ToolCalls("codex", true, CodexWebSearch));
+        Assert.Equal([new WebRequest("WebSearch", "Model Context Protocol specification latest revision", false)], SpawnOutput.CodexWebRequests(CodexWebSearch));
+    }
+
+    public static TheoryData<string, string, WebRequest[]> CodexWebCases => new()
+    {
+        { "search falls back to the item query", """{"type":"item.completed","item":{"id":"a","type":"web_search","query":"q1","action":{"type":"search"}}}""", [new("WebSearch", "q1", false)] },
+        { "an opened page records its url", """{"type":"item.completed","item":{"id":"b","type":"web_search","action":{"type":"open_page","url":"https://example.com/x"}}}""", [new("open_page", "https://example.com/x", false)] },
+        { "another action records its type and first target", """{"type":"item.completed","item":{"id":"c","type":"web_search","action":{"type":"find_in_page","pattern":"needle"}}}""", [new("find_in_page", "needle", false)] },
+        { "an action with no target says so", """{"type":"item.completed","item":{"id":"d","type":"web_search","action":{"type":"mystery"}}}""", [new("mystery", "(no target)", false)] },
+        { "a search that never completed is marked", """{"type":"item.started","item":{"id":"e","type":"web_search","query":"","action":{"type":"other"}}}""", [new("WebSearch", "(no target) (not completed)", false)] },
+        { "other item types and hostile shapes are skipped", "{\"type\":\"item.completed\",\"item\":[1]}\n[1]\n{\"type\":\"item.completed\",\"item\":{\"id\":\"f\",\"type\":\"command_execution\",\"command\":\"ls\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"g\",\"type\":\"web_search\",\"action\":[1],\"query\":7}}\nnot json\n", [new("WebSearch", "(no target)", false)] },
+        { "nothing listed", "", [] },
+    };
+
+    [Theory]
+    [MemberData(nameof(CodexWebCases))]
+    public void Codex_web_requests_name_each_search_or_page_in_order(string _, string stdout, WebRequest[] expected) =>
+        Assert.Equal(expected, SpawnOutput.CodexWebRequests(stdout));
+
     [Theory]
     [MemberData(nameof(ToolCallCases))]
     public void Tool_calls_are_counted_only_from_streams_that_list_them(string _, string host, bool stream, string stdout, int? expected) =>
