@@ -38,7 +38,7 @@ Done when:
 - inferred: a plain Codex agent message cannot forge a top-level `turn.completed` line, because `--json` escapes newlines inside string fields.
 
 ## Deviations
-- None.
+- Codex search shape, found by the live check (criterion 6). The design measured Codex with no MCP server, where a search is a web_search item. A hub-launched plain-room Codex (MCP configured) searched three times out of three through an mcp_tool_call on Codex's own codex_apps server (search_service.web_run, arguments system2_search_query: [{q}]), captured by a pass-through shim on PATH. No web_search item was in the stream, so the note missed real searches. Rule now: SpawnOutput.CodexCalls also lists every mcp_tool_call whose server is not the hub's own (chopitup). The codex_apps web_run search reads as WebSearch of its queries joined by  | . Any other such call reads as MCP with server.tool and its raw arguments. A call that never completed is marked. Hub calls stay out. Criterion 3's Codex clause covers both search shapes. Queued: BUGS 132 (codex_apps reach in every Codex shape).
 
 ## Reviews
 ### design1 (dissect-critic, opus): FIX-THEN-SHIP, no REFRAME. Folded as below. These folds override the criteria, seam facts and tasks above where they differ.
