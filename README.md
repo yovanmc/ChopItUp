@@ -263,14 +263,16 @@ you make while its turn is running is swept into that turn's commit and shares i
 (or `Not committed for <id>: …`) lands in the room, and the Trail button in the header lists the last 20
 commits. Nothing is ever pushed.
 
-Confinement is asymmetric and stated plainly rather than assumed: Codex runs under its own Windows
-sandbox (`mxc`, workspace-write, network on, measured on codex-cli 0.169.1). Its writes outside the
-room folder, the room's artifacts folder (a plain room: its scratch folder) and the container's own
-temp folder are refused, with no escalation, which includes the owner's real `%TEMP%` and user
-package caches: a package not already in the NuGet cache cannot be restored by a Codex spawn. Its
-reads are not confined, and loopback and `start_job` stay open as described above; Claude Code runs as the owner's own Windows user, confined only by a
-deny list and the prompt, because Claude Code 2.1.220 has no read fence this hub can switch on — a
-read outside the room is a rule the model is told to follow, not a wall it cannot cross.
+Confinement is asymmetric and stated plainly rather than assumed. A Codex room spawn runs under
+Codex's own Windows sandbox (`mxc`, workspace-write, network on, measured on codex-cli 0.169.1).
+Its writes outside its working tree (the room folder or its exchange worktree; a plain room: its
+scratch folder), the room's artifacts folder and the container's own temp folder are refused, with no
+escalation. That includes the owner's real `%TEMP%` and user package caches, so a package not already
+in the NuGet cache cannot be restored by a Codex spawn. Its reads are not confined, its shell can
+reach the hub on loopback, and `start_job` runs with full rights as described above. Panel legs run
+Codex `read-only`. Claude Code runs as the owner's own Windows user, confined only by a deny list and
+the prompt, because Claude Code 2.1.220 has no read fence this hub can switch on: a read outside the
+room is a rule the model is told to follow, not a wall it cannot cross.
 
 The crash window: if the hub itself dies between the model's CLI exiting and the after-spawn commit,
 the model's edits are left uncommitted, and the *next* pre-spawn commit sweeps them in authored as the

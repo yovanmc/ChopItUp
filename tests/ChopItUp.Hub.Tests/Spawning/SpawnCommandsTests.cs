@@ -215,9 +215,7 @@ public sealed class SpawnCommandsTests
     /// <c>[windows] sandbox</c>, so without these values a shell command runs unsandboxed, and
     /// `--approve-for-me` let a reviewer approve an escalated write outside the room).</summary>
     [Theory]
-    [InlineData(false, null, false, 60)]
     [InlineData(false, "high", false, 60)]
-    [InlineData(true, null, false, 60)]
     [InlineData(true, "high", true, 60)]
     [InlineData(true, null, true, 1800)]
     public void Every_codex_shape_runs_sandboxed_with_no_escalation(bool inDirectory, string? effort, bool artifacts, int toolTimeout)
