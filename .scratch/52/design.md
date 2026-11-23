@@ -39,3 +39,24 @@ Done when:
 
 ## Deviations
 - None.
+
+## Reviews
+### design1 (dissect-critic, opus): FIX-THEN-SHIP, no REFRAME. Folded as below. These folds override the criteria, seam facts and tasks above where they differ.
+
+- MAJOR, `[::1]` missing from the WebFetch deny: MEASURED, then FIXED. Claude 2.1.328 refuses `http://[::1]:<port>/` by itself ("WebFetch cannot fetch localhost or other hostnames without a dot"). A canary listener on `[::1]` saw 0 connections with the current deny list. With `WebFetch(domain:[::1])` added, the call is a permission denial (in `permission_denials`), also with 0 connections. So it is not an open path today (no escape). `ClaudeDenyRules` gains `WebFetch(domain:[::1])` as a second lock, for directory and plain rooms alike.
+- MAJOR, the note under hub authorship: FIXED. The note names the participant as the author and fences the list the way `HubNotes.Proposed` does: "Web and shell calls by @x. The text below was written by @x's calls, not by the hub." Then a ```text fence with one line per call, each target JSON-encoded (quotes, newlines and control characters escaped), and a fence inside a target broken up.
+- MAJOR, note sites: FIXED. One post in `OnFinished`, right after `FinishTask` and before the mode branch, for every Launch spawn whose `handle.Directory` is null. That covers mode legs, limit holds, timeouts, cancels and failures. A panel handle is not a Launch spawn and posts none (its `Directory` is null too, so the check also requires `ModeLeg?.Settings.Mode != "panel"`).
+- MAJOR, plain Codex shell: FIXED. Criterion 4's Codex sentence now says it has web search and a shell whose working folder is an empty scratch folder, not the room's files, deleted after the turn. The note also lists plain Codex `command_execution` items (`SpawnOutput.CodexShellCommands`) as `Shell` lines. Queued: plain Codex spawns share BUGS 90's `--approve-for-me` reach (no read or write fence outside `-C`).
+- DEFECT, size: FIXED. At most 10 lines of 160 characters each, then "and N more". The header gives the true total, "at least" when a parser hit `MaxCommands`.
+- DEFECT, `web_search="live"`: FIXED. Dropped. Codex already searches by default (measured), and no difference was shown.
+- DEFECT, Codex item shapes: FIXED. `search` takes `action.query`, else the item's `query`. `open_page` takes `action.url`. Any other action type records the type with its first `url`, `pattern` or `query`, else "(no target)". A started item with no completed event records its target (or "(no target)") marked "(not completed)". Items dedupe by their `id` (the last duplicate key, as `JsonElement` reads it). The raw measured capture is a fixture, with both a `CodexWebRequests` and a `ToolCalls` assertion.
+- DEFECT, fake default: FIXED. `FakeProcessRunner`'s default output becomes a minimal stream-json transcript (system init, an assistant text line, a result line).
+- NIT, panel Codex web search unrecorded: ACCEPTED, queued with the directory Codex line.
+- NIT, criterion 6 happy paths only: ACCEPTED. The live check also asks for a WebFetch of `http://127.0.0.1:<hub port>/health` and expects that call marked denied in the note.
+
+Criteria as folded (these supersede the copy at the top for the review):
+- 1. adds: the deny list also blocks `WebFetch(domain:[::1])`, in directory rooms too.
+- 2. A plain-room Codex spawn starts with `--json`, keeps `-o` for its final text, and gains no sandbox, network or web search setting.
+- 3. One note per plain-room Launch spawn that made a web call (or, for Codex, ran a shell command), posted on every end path: authored as the participant's calls, fenced, each target JSON-encoded, at most 10 lines of 160 characters then "and N more", with the true total. None for a spawn with no such call, a directory-room spawn or a panel leg.
+- 4. Codex: web search and a shell in an empty scratch folder that is not the room's files, deleted after the turn. The note is named as the record of both.
+- 6. adds: a denied WebFetch of the hub's loopback `/health`, marked denied in the note.
