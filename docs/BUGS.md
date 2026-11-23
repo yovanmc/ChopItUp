@@ -34,8 +34,12 @@
 - 94 chore: a test joins commit hashes into the text it searches for a file name, and a hash can never hold that name · `tests/ChopItUp.Hub.Tests/Spawning/SpawnerServiceTests.Rooms.cs:136` "`GitLog(dir, "%H", 50)`" · [V 2026-11-18 af5d5f39]
 =======
 - 93 chore: the artifacts folder check task has no catch, and `Ensure` lets `OperationCanceledException` through, which would leave the room waiting on a check that never answers. No caller cancels it today · `src/ChopItUp.Hub/Spawning/SpawnerService.cs:351` "`RoomArtifacts.WithinAsync`" · [V 2026-11-18 af5d5f39]
+<<<<<<< HEAD
 >>>>>>> f539a7c (bug 94: Search only file names for the artifact that must stay out of history)
 - 95 chore: the artifacts folder check says it reads a file after the run closed, but the run scenarios wait only for the first commit note · `tools/Invoke-ArtifactsFolderCheck.ps1:14` "`file-written`", `:128` "`^Committed `" · [V 2026-11-18 af5d5f39]
+=======
+- 96 chore: the video branch sets `owned = null` before `new FileStream(handle, ...)` runs, so a constructor that throws leaves the handle open until finalization · `src/ChopItUp.Hub/Web/RoomFilesApi.cs:167` "`owned = null;`" · [V 2026-11-19 471cf49e]
+>>>>>>> 3e8b5a0 (bug 95: Say when the artifacts check reads a run's file)
 - 97 chore: no room file test rewrites a served file at the same length and revalidates with the old ETag, and two `./` rows start a hub to drive a strip `RoomFileRefTests` already pins · `tests/ChopItUp.Hub.Tests/RoomFilesApiTests.cs:96-97`, `:113` · [V 2026-11-19 400f2a0c]
 - 98 chore: four copies of the `mklink /J` test helper · `tests/ChopItUp.Hub.Tests/RoomFilesApiTests.cs:47`, `Rooms/RoomArtifactsTests.cs:54`, `Rooms/RoomPathsTests.cs:89`, `Skills/SkillImportTests.cs:77` · [V 2026-11-19 400f2a0c]
 - 99 chore: three factories build `RoomPathRules.ForHub(options.DataDir)` inline beside the registered rules · `src/ChopItUp.Hub/Hosting/HubHost.cs:153-156` · [V 2026-11-19 400f2a0c]

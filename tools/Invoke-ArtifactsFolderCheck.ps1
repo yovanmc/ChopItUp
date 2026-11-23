@@ -11,8 +11,9 @@
     with the log.
 
     Each of the four scenarios makes three checks, so a complete pass is exactly 12:
-      file-written   the file holds the expected line after the exchange or run closed. A run must
-                     also record it as artifact:run-output.txt, credited to the conductor.
+      file-written   the file holds the expected line once the exchange closed, or once a run posted
+                     its first commit note. A run must also record it as artifact:run-output.txt,
+                     credited to the conductor.
       room-clean     git status in the room directory prints nothing.
       not-in-history no commit on any ref in the room lists the file.
 
