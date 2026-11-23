@@ -268,7 +268,7 @@ public sealed class SpawnerServiceRoomsTests : SpawnerServiceTestBase
         await WaitForMessageIn("lab-art", m => m.Author == "hub" && m.Body.StartsWith($"Exchange #{root} merged into"));
         Assert.False(Directory.Exists(ExchangeWorktrees.PathFor(dir, root)));
         Assert.Equal("pixels", File.ReadAllText(Path.Combine(folder, "render.png")));
-        Assert.DoesNotContain("render.png", await GitLog(dir, "%H", 50) + await GitOutput(dir, "log", "--all", "--name-only", "--format="));
+        Assert.DoesNotContain("render.png", await GitOutput(dir, "log", "--all", "--name-only", "--format="));
         Assert.Equal("", await GitOutput(dir, "status", "--porcelain"));
     }
 

@@ -234,9 +234,9 @@ describe('a failure keeps its status', () => {
    *  branches on. */
   // A markRead that failed for any other reason is not one, so the rail stays quiet.
   test.each([
-    [401, { error: 'unauthorized' }, true],
-    [404, { error: "Unknown room 'lab'." }, false],
-  ])('a markRead refused with %i is a credential refusal: %s', async (status, body, expected) => {
+    [401, 'is', { error: 'unauthorized' }, true],
+    [404, 'is not', { error: "Unknown room 'lab'." }, false],
+  ])('a markRead refused with %i %s a credential refusal', async (status, _is, body, expected) => {
     stubFetch(() => json(body, status));
 
     expect(api.isCredentialRefusal(await refusal(() => api.markRead('lab')))).toBe(expected);

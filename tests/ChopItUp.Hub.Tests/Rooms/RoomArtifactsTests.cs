@@ -150,6 +150,15 @@ public sealed class RoomArtifactsTests : IDisposable
         Assert.Contains("did not answer", lease.Refusal);
     }
 
+    [Fact]
+    public async Task A_check_that_is_cancelled_becomes_a_refusal()
+    {
+        var lease = await RoomArtifacts.WithinAsync(() => throw new OperationCanceledException(), TimeSpan.FromSeconds(5));
+
+        Assert.Null(lease.Path);
+        Assert.NotNull(lease.Refusal);
+    }
+
     private string Folder()
     {
         var folder = Path.Combine(_dir, "scan");

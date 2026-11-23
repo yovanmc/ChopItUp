@@ -389,7 +389,7 @@ public static class SpawnPrompt
             // the worker) owns the commit.
             sb.Append("\nYou are a worker in this run, mentioned by its conductor. The post that mentioned you is your instruction. ")
               .Append("Gates named in it run through the run_gate tool (room_id, gate); do not run their commands yourself. ")
-              .Append("Do not commit: the hub commits your diff when you finish, authored as you. Do not edit ROADMAP.md. Mention nobody; end with one report post.\n");
+              .Append("Do not commit: the hub commits your diff when you finish, crediting you as co-author. Do not edit ROADMAP.md. Mention nobody; end with one report post.\n");
         }
         sb.Append('\n');
     }

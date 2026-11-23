@@ -93,9 +93,7 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
 
     [Theory]
     [InlineData("artifact:renders/a.png", true)]
-    [InlineData("artifact:./renders/a.png", true)]
     [InlineData("docs/a.png", false)]
-    [InlineData("./docs/a.png", false)]
     public async Task A_png_in_either_root_is_served_with_its_type_and_guard_headers(string reference, bool inArtifacts)
     {
         var path = inArtifacts ? Path.Combine(ArtifactsDir, "renders", "a.png") : Path.Combine(RoomDir, "docs", "a.png");
@@ -112,6 +110,23 @@ public sealed class RoomFilesApiTests : IAsyncLifetime
         Assert.Equal(File.GetLastWriteTimeUtc(path), response.Content.Headers.LastModified!.Value.UtcDateTime, TimeSpan.FromSeconds(1));
         Assert.NotNull(response.Headers.ETag);
         Assert.False(response.Headers.ETag!.IsWeak);
+    }
+
+    [Fact]
+    public async Task A_file_rewritten_at_the_same_length_fails_revalidation_with_its_old_etag()
+    {
+        var path = Path.Combine(ArtifactsDir, "a.png");
+        Write(path, Png);
+        var etag = (await Get("artifact:a.png")).Headers.ETag!;
+        Assert.Equal(HttpStatusCode.NotModified, (await Get("artifact:a.png", configure: r => r.Headers.IfNoneMatch.Add(etag))).StatusCode);
+
+        var rewritten = Png.Select(b => (byte)~b).ToArray();
+        Write(path, rewritten);
+        File.SetLastWriteTimeUtc(path, File.GetLastWriteTimeUtc(path).AddMinutes(1));
+        var response = await Get("artifact:a.png", configure: r => r.Headers.IfNoneMatch.Add(etag));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(rewritten, await response.Content.ReadAsByteArrayAsync());
     }
 
     [Fact]

@@ -332,6 +332,7 @@ public sealed class DeployScriptTests : IClassFixture<DeployScriptFixture>
             using var deployV2Result = ParseDeployResult(deployV2.Stdout);
             string backupDir = deployV2Result.RootElement.GetProperty("backup_dir").GetString()!;
             Assert.Equal(v1ExeBytes, File.ReadAllBytes(Path.Combine(backupDir, "ChopItUp.Hub.exe")));
+            Assert.Equal(v2ExeBytes, File.ReadAllBytes(Path.Combine(target, "ChopItUp.Hub.exe")));
             Assert.True(File.Exists(Path.Combine(target, "wwwroot", "assets", "index-v2-only.js")));
 
             var restore = RunRestore(target, backupDir);

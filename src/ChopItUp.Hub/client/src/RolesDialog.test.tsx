@@ -10,7 +10,6 @@ import {
   reseedDrafts,
   RolesEditor,
   seedDrafts,
-  SOURCE_LABEL,
   saveStanding,
   sourceOf,
   type SaveHooks,
@@ -213,7 +212,13 @@ describe('which text is actually in force', () => {
     });
 
     expect(markup).toContain('WHAT THE HUB RENDERS');
-    expect(markup).toContain(SOURCE_LABEL.global);
+    expect(markup).toContain('In force here, from the global role:');
+  });
+
+  test('a room override row names the override as its source', () => {
+    const markup = render({ roomId: 'lab', persona: null, conductorEffort: 'high', participants: [SCRIBE] });
+
+    expect(markup).toContain('In force here, from the override in this room:');
   });
 
   test('each of the four states names its own source', () => {
@@ -226,7 +231,7 @@ describe('which text is actually in force', () => {
   test('a suppressed row says so rather than presenting the global role as in force', () => {
     const markup = render({ roomId: 'lab', persona: null, conductorEffort: 'high', participants: [SILENT] });
 
-    expect(markup).toContain(SOURCE_LABEL.suppressed);
+    expect(markup).toContain('Nothing is in force here: no role in this room.');
     // The in-force text element is absent entirely: there is no text in force, and the global role
     // this row is hiding must not be shown as though there were.
     expect(markup).toContain('roles-inforce-empty');
@@ -236,7 +241,7 @@ describe('which text is actually in force', () => {
   test('a participant with no role anywhere reads as that, not as an error', () => {
     const markup = render(EMPTY);
 
-    expect(markup).toContain(SOURCE_LABEL.none);
+    expect(markup).toContain('Nothing is in force here: no role anywhere yet.');
     expect(markup).not.toContain('roles-inforce-text');
   });
 

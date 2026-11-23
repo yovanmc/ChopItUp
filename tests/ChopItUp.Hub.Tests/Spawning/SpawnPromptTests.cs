@@ -356,7 +356,7 @@ public sealed class SpawnPromptTests
         var worker = SpawnPrompt.Render(Input(1, 3, Msg(1, "owner", "@opus hi")) with { Run = RunView(selfIsConductor: false) }, SpawnLimits.Default);
         Assert.Contains("You are a worker in this run, mentioned by its conductor.", worker);
         Assert.Contains("run_gate tool (room_id, gate)", worker);
-        Assert.Contains("Do not commit: the hub commits your diff when you finish, authored as you.", worker);
+        Assert.Contains("Do not commit: the hub commits your diff when you finish, crediting you as co-author.", worker);
         Assert.Contains("Do not edit ROADMAP.md.", worker);
         Assert.Contains("Mention nobody; end with one report post.", worker);
 
