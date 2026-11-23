@@ -63,12 +63,21 @@ describe('RecipientStrip', () => {
     expect(markup).toContain('Nobody is addressed. @opus is inside the text, so it is a reference.');
   });
 
-  test('a leading @hub draft is unknown, not addressed: kind system is never a recipient', () => {
+  // The hub's reference note names only rows it could have spawned, so the strip does too.
+  test('an inline row the hub cannot spawn is not named as a reference', () => {
+    expect(render('please ask @claude')).toBe('');
+    const markup = render('please ask @claude and @opus');
+    expect(markup).toContain('Nobody is addressed. @opus is inside the text, so it is a reference.');
+    expect(markup).not.toContain('@claude');
+  });
+
+  test('a leading @hub draft says what the hub says: kind system is never a recipient', () => {
     const markup = render('@hub hi');
     expect(markup).not.toContain('class="recipient-chip"');
     expect(markup).toContain('class="recipient-chip unknown"');
-    expect(markup).toContain('@hub · no such participant');
-    expect(markup).toContain('@hub matches nobody.');
+    expect(markup).toContain('@hub · cannot be addressed');
+    expect(markup).toContain('The hub cannot be addressed; it only posts notes.');
+    expect(markup).not.toContain('matches nobody');
   });
 
   test('a word still being typed is not flagged until a separator follows it', () => {
