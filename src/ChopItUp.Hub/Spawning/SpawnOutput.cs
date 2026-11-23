@@ -4,7 +4,8 @@ namespace ChopItUp.Hub.Spawning;
 
 public sealed record ShellCommand(string Command, bool Denied);
 
-/// <summary>One web call a Claude spawn made: <c>WebSearch</c> with its query or <c>WebFetch</c> with its URL.</summary>
+/// <summary>One call a spawn made, for a commit trail or a plain room's calls note: a Claude <c>WebSearch</c> query or
+/// <c>WebFetch</c> URL, or a Codex web search, shell command or MCP call outside the hub.</summary>
 public sealed record WebRequest(string Tool, string Target, bool Denied);
 
 /// <summary>Reads the two CLIs' structured stdout for what the trail records: which shell commands
@@ -84,6 +85,87 @@ public static class SpawnOutput
         return order.Select(id => new ShellCommand(Flatten(byId[id]), false)).Take(MaxCommands).ToList();
     }
 
+    /// <summary>Codex: every web_search item in first-seen order, the completed form replacing the
+    /// started one (measured on 0.169.1: the started event has an empty query and an <c>other</c>
+    /// action). A search takes <c>action.query</c>, else the item's <c>query</c>; an opened page its
+    /// <c>action.url</c>; any other action its type with its first <c>url</c>, <c>pattern</c> or
+    /// <c>query</c>. A missing target reads "(no target)", and an item that never completed is a
+    /// WebSearch marked "(not completed)". MCP calls outside the hub are included as
+    /// <see cref="CodexCalls"/> reads them. It filters after the cap, so it can hold fewer than
+    /// <see cref="MaxCommands"/> calls.</summary>
+    public static IReadOnlyList<WebRequest> CodexWebRequests(string stdout) =>
+        CodexCalls(stdout).Where(c => c.Tool != ShellTool).ToList();
+
+    public const string ShellTool = "Shell";
+
+    /// <summary>Codex: every web_search item (as <see cref="CodexWebRequests"/> reads it), every
+    /// command_execution item (as a <see cref="ShellTool"/> call with its command) and every
+    /// mcp_tool_call item on a server other than the hub's own (<see cref="CodexMcpCall"/>), in one
+    /// first-seen order, for a plain room's calls note. Same caps as the shell lists.</summary>
+    public static IReadOnlyList<WebRequest> CodexCalls(string stdout)
+    {
+        var order = new List<string>();
+        var byId = new Dictionary<string, (WebRequest Call, bool Completed)>(StringComparer.Ordinal);
+        int anonymous = 0;
+        foreach (var root in Lines(stdout))
+        {
+            var type = Str(root, "type");
+            if (type is not ("item.started" or "item.completed") || !root.TryGetProperty("item", out var item) || item.ValueKind != JsonValueKind.Object) continue;
+            var kind = Str(item, "type");
+            if (kind is not ("web_search" or "command_execution" or "mcp_tool_call")) continue;
+            if (kind == "command_execution" && Str(item, "command") is null) continue;
+            if (kind == "mcp_tool_call" && Str(item, "server") == SpawnCommands.McpServerName) continue;
+            var id = Str(item, "id") ?? $"anon-{anonymous++}";
+            if (byId.TryGetValue(id, out var seen) && seen.Completed) continue;
+            if (!byId.ContainsKey(id)) order.Add(id);
+            var completed = type == "item.completed";
+            byId[id] = kind switch
+            {
+                "command_execution" => (new WebRequest(ShellTool, Str(item, "command")!, false), completed),
+                "mcp_tool_call" => (CodexMcpCall(item, completed), completed),
+                _ => completed
+                    ? (CompletedWebSearch(item), true)
+                    : (new WebRequest("WebSearch", (NonEmpty(Str(item, "query")) ?? NoTarget) + NotCompleted, false), false),
+            };
+        }
+        return order.Select(id => byId[id].Call with { Target = Flatten(byId[id].Call.Target) }).Take(MaxCommands).ToList();
+    }
+
+    private const string NoTarget = "(no target)";
+    private const string NotCompleted = " (not completed)";
+
+    /// <summary>One Codex MCP call on a server the hub did not configure. Measured on 0.169.1: a
+    /// hub-launched spawn searches the web through Codex's own <c>codex_apps</c> server
+    /// (<c>search_service.web_run</c> with <c>system2_search_query: [{q}]</c>), not as a web_search
+    /// item. That search reads as a WebSearch of its queries; any other call reads as
+    /// <c>MCP "server.tool {arguments}"</c>, so reach outside the hub is never silent.</summary>
+    private static WebRequest CodexMcpCall(JsonElement item, bool completed)
+    {
+        var server = NonEmpty(Str(item, "server")) ?? "(unknown server)";
+        var tool = NonEmpty(Str(item, "tool")) ?? "(unknown tool)";
+        var args = item.TryGetProperty("arguments", out var a) && a.ValueKind == JsonValueKind.Object ? a : (JsonElement?)null;
+        var suffix = completed ? "" : NotCompleted;
+        if (server == "codex_apps" && tool == "search_service.web_run" && args is { } search
+            && search.TryGetProperty("system2_search_query", out var queries) && queries.ValueKind == JsonValueKind.Array)
+        {
+            var qs = queries.EnumerateArray().Select(q => NonEmpty(Str(q, "q"))).OfType<string>().ToList();
+            if (qs.Count > 0) return new WebRequest("WebSearch", string.Join(" | ", qs) + suffix, false);
+        }
+        return new WebRequest("MCP", $"{server}.{tool}" + (args is { } raw ? " " + raw.GetRawText() : "") + suffix, false);
+    }
+
+    private static WebRequest CompletedWebSearch(JsonElement item)
+    {
+        var action = item.TryGetProperty("action", out var a) && a.ValueKind == JsonValueKind.Object ? a : (JsonElement?)null;
+        var kind = action is { } act ? NonEmpty(Str(act, "type")) : null;
+        if (kind is null or "search")
+            return new WebRequest("WebSearch", (action is { } s ? NonEmpty(Str(s, "query")) : null) ?? NonEmpty(Str(item, "query")) ?? NoTarget, false);
+        var target = NonEmpty(Str(action!.Value, "url")) ?? NonEmpty(Str(action.Value, "pattern")) ?? NonEmpty(Str(action.Value, "query"));
+        return new WebRequest(kind, target ?? NoTarget, false);
+    }
+
+    private static string? NonEmpty(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+
     /// <summary>The model's final text from Claude stdout: the <c>result</c> string of a single JSON
     /// object (`--output-format json`) or of the last <c>type: result</c> line of a stream
     /// (`stream-json`). Null when neither is there.</summary>
@@ -108,7 +190,7 @@ public static class SpawnOutput
     /// <paramref name="stream"/> is true only for the shapes that list calls: Claude `stream-json`
     /// (every <c>tool_use</c> block, denied ones and <c>post_message</c> included) and Codex `--json`
     /// (each command, file change, MCP call or web search item, once per item id; an item without a
-    /// string id counts once per completed event). Plain Claude json, plain Codex text and an empty kept
+    /// string id counts once per completed event). Claude `json` (a panel leg), text output and an empty kept
     /// stream (an output overflow keeps none) give null, never 0. Shapes it does not expect are
     /// skipped.</summary>
     public static int? ToolCalls(string host, bool stream, string stdout)
@@ -143,7 +225,7 @@ public static class SpawnOutput
     /// Claude: <c>usage</c> and <c>modelUsage</c> from the result object (`json`) or the last result
     /// line (`stream-json`). Codex: <c>usage</c> from the last <c>turn.completed</c> line (`--json`).
     /// <paramref name="host"/> is the hub's record of the CLI it launched, not a reported value, and
-    /// <c>modelUsage</c>'s keys are the only model names a reader may attribute. Plain Codex output
+    /// <c>modelUsage</c>'s keys are the only model names a reader may attribute. Codex text output
     /// (<paramref name="structured"/> false) is the model's own text and is never parsed. Every other
     /// result field (session, uuid, credential expiry, text) is dropped. Null over
     /// <see cref="MaxUsageBytes"/>; never throws.</summary>

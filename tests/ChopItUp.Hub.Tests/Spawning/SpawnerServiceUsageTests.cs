@@ -92,7 +92,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.True(openBeforeStart);
         var root = Row("general", "@opus two parts please").Id;
         Assert.Equal(new TaskStart(SpawnIdOf(spec), "general", "opus", "claude", "opus", null, root, 1, null, false, task.Start.StartedAt), task.Start);
-        Assert.Equal(new TaskEnd(task.End!.EndedAt, 1, 0, TaskTermination.Completed, null, 2, Block("claude-opus-5-5", 7)), task.End);
+        Assert.Equal(new TaskEnd(task.End!.EndedAt, 1, 0, TaskTermination.Completed, 0, 2, Block("claude-opus-5-5", 7)), task.End);
         Assert.True(task.End.EndedAt >= task.Start.StartedAt);
     }
 
@@ -183,23 +183,26 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "posted then killed").Id));
     }
 
+    /// <summary>The event quoted in the agent's text comes last and carries its own usage, so a parse
+    /// of the text as a stream line would store that usage instead.</summary>
     [Fact]
-    public async Task A_plain_codex_reply_quoting_an_event_line_is_stamped_and_reads_as_not_reported()
+    public async Task A_plain_room_codex_spawn_stores_its_turn_usage_and_never_an_event_quoted_in_its_text()
     {
         _runner.Handler = async (_, _, _) =>
         {
             await PostAs("gpt-6-astra", "codex reply");
-            return FakeProcessRunner.Ok("codex reply\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n");
+            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"i1\",\"type\":\"agent_message\",\"text\":\"{\\\"type\\\":\\\"turn.completed\\\",\\\"usage\\\":{\\\"input_tokens\\\":999}}\"}}\n");
         };
         await PostAsOwner("@gpt-6-astra show me an event");
         var spec = await _runner.NextSpecAsync(Wait);
         await WaitForStatus("concluded");
         await Spawner.InLoopAsync(() => true);
 
-        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "codex reply").Id));
+        Assert.Equal(new SpawnUsage(SpawnIdOf(spec), """{"host":"codex","usage":{"input_tokens":1}}"""), await WaitForUsage(Row("general", "codex reply").Id));
         var task = await WaitForTask("general", SpawnIdOf(spec));
-        Assert.Equal(("codex", "gpt-6-astra", TaskTermination.Completed, (int?)null, (string?)null),
-            (task.Start.Host, task.Start.RequestedModel, task.End!.Termination, task.End.ToolCalls, task.End.Usage));
+        Assert.Equal(("codex", "gpt-6-astra", TaskTermination.Completed, (int?)0),
+            (task.Start.Host, task.Start.RequestedModel, task.End!.Termination, task.End.ToolCalls));
     }
 
     [Fact]
@@ -311,7 +314,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Mode("panel");
         _runner.Handler = (spec, _, _) => Task.FromResult(FakeProcessRunner.Ok(spec.WorkingDirectory.EndsWith("synthesis")
             ? Result("panel combined", "claude-sonnet-5-5", 30)
-            : FakeProcessRunner.ParticipantOf(spec) == "sonnet" ? Result("panel sonnet", "claude-sonnet-5-5", 21) : Result("panel opus", "claude-opus-5-5", 22)));
+            : FakeProcessRunner.ParticipantOf(spec) == "sonnet" ? PanelSearch + Result("panel sonnet", "claude-sonnet-5-5", 21) : Result("panel opus", "claude-opus-5-5", 22)));
         await PostAsOwner("Panel this.");
         var specs = new[] { await _runner.NextSpecAsync(Wait), await _runner.NextSpecAsync(Wait), await _runner.NextSpecAsync(Wait) };
         await WaitForStatus("concluded");
@@ -328,10 +331,56 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
             Assert.Equal((FakeProcessRunner.ParticipantOf(leg), (string?)null, TaskTermination.Completed, (int?)null, 0),
                 (task.Start.ParticipantId, task.Start.Effort, task.End!.Termination, task.End.ToolCalls, task.End.Posts));
         }
+        // A panel leg is not a Launch spawn: its web call posts no calls note.
+        Assert.DoesNotContain(Store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by"));
     }
 
+    /// <summary>A spawn that finishes while the loop is busy after its drain (here, held inside
+    /// LaunchDue by the codex CLI lookup) leaves its finish event queued when the hub stops, because
+    /// the loop's next wait sees the cancelled token first. The stop drains it and posts the calls note.</summary>
     [Fact]
-    public async Task A_hub_stopped_while_a_spawn_that_posted_still_runs_keeps_the_stamp_without_usage()
+    public async Task A_spawn_that_finished_while_the_loop_was_busy_at_a_hub_stop_still_posts_its_calls_note()
+    {
+        var codexLookup = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseLookup = new ManualResetEventSlim(false);
+        CliLocator locator = name =>
+        {
+            if (name == "codex") { codexLookup.TrySetResult(); releaseLookup.Wait(Wait); }
+            return new ResolvedCli($"fake-{name}.exe", [], $"fake-{name}.exe");
+        };
+        await using var host = await HubTestHost.StartAsync(_dir + "_drain", processRunner: _runner, limits: Fast with { Timeout = TimeSpan.FromMinutes(5) }, cliLocator: locator);
+        host.AuthorizeAs(ChopDb.OwnerParticipantId);
+        var store = host.Services.GetRequiredService<MessageStore>();
+        store.CreateRoom("side", "SIDE", null);
+        var sonnetGo = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var sonnetReturning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _runner.Handler = async (spec, timeout, cancellation) =>
+        {
+            if (FakeProcessRunner.ParticipantOf(spec) != "sonnet") return await FakeProcessRunner.HangUntilKilled(timeout, cancellation);
+            await sonnetGo.Task;
+            sonnetReturning.SetResult();
+            return FakeProcessRunner.Ok("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"at the stop\"}}]}}\n");
+        };
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@sonnet look it up" })).StatusCode);
+        await _runner.NextSpecAsync(Wait);
+        Assert.Equal(System.Net.HttpStatusCode.Created, (await host.Client.PostAsJsonAsync("api/rooms/side/messages", new { body = "@gpt-6-astra hi" })).StatusCode);
+        await codexLookup.Task.WaitAsync(Wait);                  // the loop is now held inside LaunchDue
+        sonnetGo.SetResult();
+        await sonnetReturning.Task.WaitAsync(Wait);
+        await Task.Delay(500);                                    // the launch task's finally queues the finish event
+
+        var stop = host.Services.GetRequiredService<SpawnerService>().StopAsync(CancellationToken.None);
+        releaseLookup.Set();
+        await stop.WaitAsync(Wait);
+
+        Assert.Single(store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by sonnet (1).") && m.Body.Contains("WebSearch \"at the stop\""));
+    }
+    private const string PanelSearch = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"panel\"}}]}}\n";
+
+    /// <summary>The stop closes the loop's event channel before it kills the spawns, so the launch task
+    /// posts a plain room's calls note itself: the note is posted on every end path.</summary>
+    [Fact]
+    public async Task A_hub_stopped_while_a_spawn_that_posted_still_runs_keeps_the_stamp_without_usage_and_posts_its_calls_note()
     {
         await using var host = await HubTestHost.StartAsync(_dir + "_stop", processRunner: _runner, limits: Fast with { Timeout = TimeSpan.FromMinutes(5) });
         host.AuthorizeAs(ChopDb.OwnerParticipantId);
@@ -340,7 +389,8 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         {
             await using var client = await host.ClientFor("opus");
             HubTestHost.Json(await client.CallToolAsync("post_message", new Dictionary<string, object?> { ["room_id"] = "general", ["body"] = "posted before stop" }));
-            return await FakeProcessRunner.HangUntilKilled(timeout, cancellation);
+            try { await Task.Delay(timeout, cancellation); } catch (OperationCanceledException) { }
+            return new ProcessResult(null, false, true, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"w1\",\"name\":\"WebSearch\",\"input\":{\"query\":\"before the stop\"}}]}}\n", "", TimeSpan.Zero);
         };
         var post = await host.Client.PostAsJsonAsync("api/rooms/general/messages", new { body = "@opus then the hub stops" });
         Assert.Equal(System.Net.HttpStatusCode.Created, post.StatusCode);
@@ -356,5 +406,6 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), store.GetSpawnUsage(row!.Id));
         var open = Assert.Single(host.Services.GetRequiredService<TaskStore>().ForRoom("general", 10));
         Assert.Equal((SpawnIdOf(spec), (TaskEnd?)null), (open.Start.SpawnId, open.End));
+        Assert.Single(store.ReadLast("general", 100), m => m.AuthorId == ChopDb.HubParticipantId && m.Body.StartsWith("Web and shell calls by opus (1).") && m.Body.Contains("WebSearch \"before the stop\""));
     }
 }

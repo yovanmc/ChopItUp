@@ -12,7 +12,7 @@
       - requested model sonnet, host claude, retry false, no effort flag
       - termination completed, exit code 0, a positive duration, one post
       - token numbers present (input and output) and a reported model naming Sonnet
-      - tool calls null, because a plain room's Claude spawn prints no event stream
+      - a tool call count of at least 1 (its post_message call), read from the stream-json events
 
     No real data folder or rooms folder is read or written. The last line is "Results: n/m PASS".
 #>
@@ -75,7 +75,7 @@ try {
         Add-Check 'task.token-numbers' ($t.inputTokens -ge 0 -and $null -ne $t.inputTokens -and $t.outputTokens -gt 0) "input=$($t.inputTokens) output=$($t.outputTokens) cacheRead=$($t.cacheReadTokens) cacheWrite=$($t.cacheWriteTokens)"
         $models = @($t.reportedModels)
         Add-Check 'task.reported-sonnet' (@($models | Where-Object { $_ -like '*sonnet*' }).Count -ge 1) "models=$($models -join ',')"
-        Add-Check 'task.tool-calls-unknown' ($null -eq $t.toolCalls) "toolCalls=$($t.toolCalls)"
+        Add-Check 'task.tool-calls-counted' ($null -ne $t.toolCalls -and $t.toolCalls -ge 1) "toolCalls=$($t.toolCalls)"
     }
 }
 catch {
