@@ -91,5 +91,16 @@ public sealed class TaskStore(ChopDb db)
         return list;
     }
 
+    /// <summary>How many messages carry <paramref name="spawnId"/>: the posts of a spawn whose finish
+    /// never ran.</summary>
+    public int StampedPosts(string spawnId)
+    {
+        using var conn = db.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM messages WHERE spawn_id = $id";
+        cmd.Parameters.AddWithValue("$id", spawnId);
+        return Convert.ToInt32(cmd.ExecuteScalar());
+    }
+
     private static string? Text(SqliteDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
 }

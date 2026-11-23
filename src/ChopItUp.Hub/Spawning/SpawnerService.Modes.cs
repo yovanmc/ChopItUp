@@ -40,6 +40,13 @@ public sealed partial class SpawnerService
         return reply.Task;
     }
 
+    /// <summary>A room's task rows and the ids of every spawn in flight, read in one loop callback so no
+    /// launch or finish lands between them. Throws <see cref="InvalidOperationException"/> while the hub
+    /// stops.</summary>
+    public Task<(IReadOnlyList<TaskRecord> Rows, IReadOnlySet<string> InFlight)> TasksAsync(string roomId, int limit) =>
+        InLoopAsync<(IReadOnlyList<TaskRecord>, IReadOnlySet<string>)>(() =>
+            (_tasks.ForRoom(roomId, limit), _inFlight.Values.Select(h => h.SpawnId).ToHashSet(StringComparer.Ordinal)));
+
     public Task<RoomModeSettings> SetModeAsync(string roomId, string mode, string first, string? second) => InLoopAsync(() =>
     {
         if (_runs.Active(roomId) is not null) throw new ArgumentException("A run is active; change the mode when it finishes.");
@@ -251,6 +258,7 @@ public sealed partial class SpawnerService
             SpawnId = "panel-" + Guid.NewGuid().ToString("N"), WorkDir = directory, Token = "", Cancel = new(),
             Timeout = _store.GetRoom(exchange.RoomId)?.Directory is null ? _limits.Timeout : _limits.EffectiveOutsideDirectoryTimeout, StartedAt = now };
         _inFlight[(request.RoomId, participant.Id)] = handle;
+        StartTask(handle, effort: null, runId: null);   // a panel command passes no effort flag and counts against no run
         Interlocked.Increment(ref _live);
         Console.Error.WriteLine($"spawn {handle.SpawnId}: {participant.Id} panel {stage} starting (root {exchange.RootMessageId})");
         handle.Run = Task.Run(async () =>
@@ -262,8 +270,10 @@ public sealed partial class SpawnerService
                 result = await _runner.RunAsync(spec with { RoomId = request.RoomId, ParticipantId = participant.Id }, handle.Timeout, handle.Cancel.Token);
             }
             catch (Exception e) { result = new(null, false, false, "", e.Message, TimeSpan.Zero); }
-            // Both panel commands ask for structured output (Claude json, Codex --json).
-            _events.Writer.TryWrite(new FinishedEvent(handle, result, null, UsageOf(participant.Host, structured: true, result, handle.Token)));
+            // Both panel commands ask for structured output (Claude json, Codex --json); only the Codex
+            // one streams its events.
+            _events.Writer.TryWrite(new FinishedEvent(handle, result, null, UsageOf(participant.Host, structured: true, result, handle.Token),
+                ToolCountOf(participant.Host, stream: participant.Host == "codex", result)));
         });
     }
 

@@ -7,10 +7,23 @@ using Microsoft.Extensions.DependencyInjection;
 namespace ChopItUp.Hub.Tests.Spawning;
 
 /// <summary>Each message a spawn posts carries that spawn's id, and the usage block it
-/// reported lands on exactly one of its rows; "not reported" is a stamped row with no block.</summary>
+/// reported lands on exactly one of its rows; "not reported" is a stamped row with no block. Each
+/// launch also writes one task row before its process starts, completed once at its finish.</summary>
 public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
 {
     private MessageStore Store => _host.Services.GetRequiredService<MessageStore>();
+    private TaskStore Tasks => _host.Services.GetRequiredService<TaskStore>();
+
+    private async Task<TaskRecord> WaitForTask(string room, string spawnId)
+    {
+        var deadline = DateTime.UtcNow + Wait;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (Tasks.ForRoom(room, 200).SingleOrDefault(t => t.Start.SpawnId == spawnId) is { End: not null } done) return done;
+            await Task.Delay(25);
+        }
+        throw new TimeoutException($"task {spawnId} never finished");
+    }
 
     private static string SpawnIdOf(ProcessSpec spec) => spec.Label.Split('/')[1];
 
@@ -58,8 +71,10 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
     [Fact]
     public async Task A_spawn_that_posts_twice_stamps_both_rows_and_keeps_its_usage_on_the_last_only()
     {
+        var openBeforeStart = false;
         _runner.Handler = async (spec, _, _) =>
         {
+            openBeforeStart = Tasks.ForRoom("general", 10).Any(t => t.Start.SpawnId == SpawnIdOf(spec) && t.End is null);
             await PostAs("opus", "usage first");
             await PostAs("opus", "usage last");
             return FakeProcessRunner.Ok(Result("done", "claude-opus-5-5", 7));
@@ -72,6 +87,68 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), Block("claude-opus-5-5", 7)), last);
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "usage first").Id));
         Assert.Equal(new SpawnUsage(null, null), Store.GetSpawnUsage(Row("general", "@opus two parts please").Id));
+
+        var task = await WaitForTask("general", SpawnIdOf(spec));
+        Assert.True(openBeforeStart);
+        var root = Row("general", "@opus two parts please").Id;
+        Assert.Equal(new TaskStart(SpawnIdOf(spec), "general", "opus", "claude", "opus", null, root, 1, null, false, task.Start.StartedAt), task.Start);
+        Assert.Equal(new TaskEnd(task.End!.EndedAt, 1, 0, TaskTermination.Completed, null, 2, Block("claude-opus-5-5", 7)), task.End);
+        Assert.True(task.End.EndedAt >= task.Start.StartedAt);
+    }
+
+    [Fact]
+    public async Task A_runner_that_throws_finishes_its_task_as_launch_failed()
+    {
+        _runner.Handler = (_, _, _) => throw new InvalidOperationException("no such file");
+        await PostAsOwner("@opus never starts");
+        var spec = await _runner.NextSpecAsync(Wait);
+
+        var task = await WaitForTask("general", SpawnIdOf(spec));
+        Assert.Equal((TaskTermination.LaunchFailed, (int?)null, (int?)null, 0, (string?)null),
+            (task.End!.Termination, task.End.ExitCode, task.End.ToolCalls, task.End.Posts, task.End.Usage));
+    }
+
+    [Fact]
+    public async Task A_spawn_that_could_not_be_started_writes_no_task()
+    {
+        File.WriteAllText(Path.Combine(_dir, "spawns"), "a file where the spawns folder goes");
+        await PostAsOwner("@opus no folder for you");
+        await WaitForMessage(m => m.Author == ChopDb.HubParticipantId && m.Body.Contains("could not be started"));
+        await Spawner.InLoopAsync(() => true);
+
+        Assert.Empty(Tasks.ForRoom("general", 10));
+    }
+
+    [Fact]
+    public async Task A_directory_spawn_with_hostile_stream_lines_still_finishes_its_task()
+    {
+        await MakeRoom("lab-hostile");
+        _runner.Handler = async (_, _, _) =>
+        {
+            await PostAsIn("opus", "lab-hostile", "hostile reply");
+            return FakeProcessRunner.Ok("{\"type\":\"assistant\",\"message\":{\"content\":[1,\"x\",{\"type\":\"tool_use\"}]}}\n{\"type\":\"assistant\",\"message\":[1]}\nnot json\n"
+                + Result("done", "claude-opus-5-5", 1) + "\n");
+        };
+        await PostAsOwnerIn("lab-hostile", "@opus odd output");
+        var spec = await _runner.NextSpecAsync(Wait);
+
+        var task = await WaitForTask("lab-hostile", SpawnIdOf(spec));
+        Assert.Equal((TaskTermination.Completed, (int?)1, 1), (task.End!.Termination, task.End.ToolCalls, task.End.Posts));
+    }
+
+    [Fact]
+    public async Task A_panel_first_pass_over_the_output_limit_finishes_as_output_limit_with_no_tool_count()
+    {
+        Mode("panel");
+        _runner.Handler = (spec, _, _) => Task.FromResult(!spec.WorkingDirectory.EndsWith("synthesis") && FakeProcessRunner.ParticipantOf(spec) == "opus"
+            ? new ProcessResult(null, false, false, "", "", TimeSpan.FromMilliseconds(5), OutputLimitExceeded: true)
+            : FakeProcessRunner.Ok(Result("panel ok", "claude-sonnet-5-5", 1)));
+        await PostAsOwner("Panel with an overflow.");
+        var specs = new[] { await _runner.NextSpecAsync(Wait), await _runner.NextSpecAsync(Wait) };
+        var opus = specs.Single(s => FakeProcessRunner.ParticipantOf(s) == "opus");
+
+        var task = await WaitForTask("general", SpawnIdOf(opus));
+        Assert.Equal((TaskTermination.OutputLimit, (int?)null, (int?)null, 5L), (task.End!.Termination, task.End.ExitCode, task.End.ToolCalls, task.End.DurationMs));
     }
 
     [Fact]
@@ -86,6 +163,8 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         var spec = await _runner.NextSpecAsync(Wait);
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), Block("claude-opus-5-5", 3)), await WaitForUsage(Row("general", "posted then hung").Id));
+        var task = await WaitForTask("general", SpawnIdOf(spec));
+        Assert.Equal((TaskTermination.TimedOut, (int?)null, 1, (long)Fast.Timeout.TotalMilliseconds), (task.End!.Termination, task.End.ExitCode, task.End.Posts, task.End.DurationMs));
     }
 
     [Fact]
@@ -118,6 +197,9 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         await Spawner.InLoopAsync(() => true);
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), Store.GetSpawnUsage(Row("general", "codex reply").Id));
+        var task = await WaitForTask("general", SpawnIdOf(spec));
+        Assert.Equal(("codex", "gpt-6-astra", TaskTermination.Completed, (int?)null, (string?)null),
+            (task.Start.Host, task.Start.RequestedModel, task.End!.Termination, task.End.ToolCalls, task.End.Usage));
     }
 
     [Fact]
@@ -139,12 +221,16 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         _runner.Handler = async (_, _, _) =>
         {
             await PostAsIn("opus", "lab", "lab reply");
-            return FakeProcessRunner.Ok("{\"type\":\"system\",\"subtype\":\"init\"}\n" + Result("done", "claude-opus-5-5", 5) + "\n");
+            return FakeProcessRunner.Ok("{\"type\":\"system\",\"subtype\":\"init\"}\n"
+                + "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\"},{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"mcp__chopitup__post_message\"}]}}\n"
+                + Result("done", "claude-opus-5-5", 5) + "\n");
         };
         await PostAsOwnerIn("lab", "@opus work here");
         var spec = await _runner.NextSpecAsync(Wait);
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), Block("claude-opus-5-5", 5)), await WaitForUsage(Row("lab", "lab reply").Id));
+        var task = await WaitForTask("lab", SpawnIdOf(spec));
+        Assert.Equal((TaskTermination.Completed, (int?)2, 1), (task.End!.Termination, task.End.ToolCalls, task.End.Posts));
     }
 
     [Fact]
@@ -197,6 +283,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         await Spawner.StopAsync("general");
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), Block("claude-opus-5-5", 4)), await WaitForUsage(Row("general", "posted then stopped").Id));
+        Assert.Equal(TaskTermination.Cancelled, (await WaitForTask("general", SpawnIdOf(spec))).End!.Termination);
     }
 
     [Fact]
@@ -206,12 +293,16 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         _runner.Handler = async (_, _, _) =>
         {
             await PostAsIn("gpt-6-astra", "lab-codex", "codex lab reply");
-            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":15,\"output_tokens\":6}}\n");
+            return FakeProcessRunner.Ok("{\"type\":\"turn.started\"}\n"
+                + "{\"type\":\"item.started\",\"item\":{\"id\":\"i1\",\"type\":\"command_execution\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"i1\",\"type\":\"command_execution\"}}\n"
+                + "{\"type\":\"item.completed\",\"item\":{\"id\":\"i2\",\"type\":\"agent_message\"}}\n"
+                + "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":15,\"output_tokens\":6}}\n");
         };
         await PostAsOwnerIn("lab-codex", "@gpt-6-astra work here");
         var spec = await _runner.NextSpecAsync(Wait);
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), """{"host":"codex","usage":{"input_tokens":15,"output_tokens":6}}"""), await WaitForUsage(Row("lab-codex", "codex lab reply").Id));
+        Assert.Equal((int?)1, (await WaitForTask("lab-codex", SpawnIdOf(spec))).End!.ToolCalls);
     }
 
     [Fact]
@@ -231,6 +322,12 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         Assert.Equal(new SpawnUsage(SpawnIdOf(sonnet), Block("claude-sonnet-5-5", 21)), await WaitForUsage(Row("general", "panel sonnet").Id));
         Assert.Equal(new SpawnUsage(SpawnIdOf(opus), Block("claude-opus-5-5", 22)), await WaitForUsage(Row("general", "panel opus").Id));
         Assert.Equal(new SpawnUsage(SpawnIdOf(synthesis), Block("claude-sonnet-5-5", 30)), await WaitForUsage(Row("general", "panel combined").Id));
+        foreach (var leg in specs)
+        {
+            var task = await WaitForTask("general", SpawnIdOf(leg));
+            Assert.Equal((FakeProcessRunner.ParticipantOf(leg), (string?)null, TaskTermination.Completed, (int?)null, 0),
+                (task.Start.ParticipantId, task.Start.Effort, task.End!.Termination, task.End.ToolCalls, task.End.Posts));
+        }
     }
 
     [Fact]
@@ -257,5 +354,7 @@ public sealed class SpawnerServiceUsageTests : SpawnerServiceTestBase
         await host.Services.GetRequiredService<SpawnerService>().StopAsync(CancellationToken.None).WaitAsync(Wait);
 
         Assert.Equal(new SpawnUsage(SpawnIdOf(spec), null), store.GetSpawnUsage(row!.Id));
+        var open = Assert.Single(host.Services.GetRequiredService<TaskStore>().ForRoom("general", 10));
+        Assert.Equal((SpawnIdOf(spec), (TaskEnd?)null), (open.Start.SpawnId, open.End));
     }
 }

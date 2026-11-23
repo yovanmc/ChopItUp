@@ -142,4 +142,4 @@ public sealed class ModeLeg
 
 /// <summary>What the service launches: who, why (the trigger ids), which exchange, and the two
 /// numbers the prompt states.</summary>
-public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter, SpawnReason Reason = SpawnReason.Mention, long? RefusedAt = null);
+public sealed record SpawnRequest(string RoomId, string ParticipantId, IReadOnlyList<long> TriggerIds, long RootMessageId, int TurnNumber, int RemainingAfter, SpawnReason Reason = SpawnReason.Mention, long? RefusedAt = null, bool Retry = false);

@@ -141,6 +141,7 @@ public static class HubHost
             // own DI lifetime (RunTools, like RoomTools/MemoryTools, holds no state of its own).
             builder.Services.AddSingleton<GateLocks>();
             builder.Services.AddSingleton<RunNoticeBus>();
+            builder.Services.AddSingleton(new TaskStore(db));
             builder.Services.AddSingleton<SpawnerService>();
             builder.Services.AddHostedService(sp => sp.GetRequiredService<SpawnerService>());
             // Background jobs. Registered after the spawner so the host stops it first: its stop
@@ -215,6 +216,7 @@ public static class HubHost
             app.MapRolesApi();
             app.MapExchangeApi();
             app.MapRunsApi();
+            app.MapTasksApi();
             app.MapRunNoticeStream();
             app.MapMemoryApi();
             app.MapSkillsApi();
